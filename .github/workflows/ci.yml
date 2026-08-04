@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: build (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # example-provider is included for typecheck + unit tests ONLY. Its end-to-end path spawns a
+        # real `claude` and calls a live model, which would make CI depend on a model being reachable
+        # and on what it happens to say. Those tests replay a recorded turn instead.
+        package: [reference-provider, example-provider]
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  conformance:
+    # The point of this job: it proves on every change that the runner and the reference
+    # implementation still agree — the same thing every partner is asked to prove about their own
+    # endpoint. If the runner drifts from the spec, this is where it shows.
+    name: conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: reference-provider/package-lock.json
+
+      - run: npm ci
+        working-directory: reference-provider
+
+      - name: Start the reference provider
+        working-directory: reference-provider
+        run: |
+          STEP_DELAY_MS=0 npx tsx src/server.ts &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:4501/.well-known/agent-card.json >/dev/null && exit 0
+            sleep 1
+          done
+          echo "reference provider did not come up"; exit 1
+
+      - name: Run the conformance suite
+        working-directory: reference-provider
+        # The runner exits non-zero on any failure. The two flags unlock the three clauses that need
+        # provider-specific knowledge; without them those report SKIP with a reason, which is correct
+        # but weaker cover than we want on our own reference.
+        run: |
+          npx tsx src/conformance.ts \
+            --url http://127.0.0.1:4501 \
+            --key ci \
+            --bad-key bad-key \
+            --ask-phrase "ask me something"

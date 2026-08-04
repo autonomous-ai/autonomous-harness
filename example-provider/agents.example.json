@@ -1,0 +1,8 @@
+[
+  {
+    "id": "scratch",
+    "name": "Scratch",
+    "description": "A throwaway directory. Claude runs here with permissions skipped — point this somewhere you are happy to hand over.",
+    "cwd": "/tmp/example-provider-scratch"
+  }
+]

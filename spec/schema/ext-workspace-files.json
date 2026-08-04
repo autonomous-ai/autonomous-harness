@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.autonomous.ai/api/a2a/ext/workspace-files",
+  "title": "Extension: workspace-files",
+  "description": "Read-only file browsing for a project. Declared in AgentCard.extensions (HP-300). Absent means the client hides the file browser entirely. Each $defs entry carries its own examples so they validate against the shape they illustrate, not against a permissive root.",
+  "type": "object",
+  "$defs": {
+    "fileNode": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "enum": ["file", "dir"] },
+        "size": { "type": "integer", "minimum": 0 },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fileNode" },
+          "description": "Present on directories. A provider MAY return a shallow tree and populate children lazily on a subsequent listFiles call scoped to a path."
+        }
+      },
+      "examples": [
+        { "name": "README.md", "type": "file", "size": 240 },
+        { "name": "reports", "type": "dir", "children": [{ "name": "weekly.sql", "type": "file", "size": 812 }] }
+      ]
+    },
+    "listFilesRequest": {
+      "type": "object",
+      "required": ["projectId"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "path": { "type": "string", "description": "Omit for the project root." }
+      },
+      "examples": [
+        { "projectId": "acme-reporting" },
+        { "projectId": "acme-reporting", "path": "reports" }
+      ]
+    },
+    "listFilesResponse": {
+      "type": "object",
+      "required": ["files"],
+      "properties": {
+        "files": { "type": "array", "items": { "$ref": "#/$defs/fileNode" } }
+      },
+      "examples": [
+        {
+          "files": [
+            { "name": "reports", "type": "dir", "children": [{ "name": "weekly.sql", "type": "file", "size": 812 }] },
+            { "name": "README.md", "type": "file", "size": 240 }
+          ]
+        },
+        { "files": [] }
+      ]
+    },
+    "readFileRequest": {
+      "type": "object",
+      "required": ["projectId", "path"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "path": { "type": "string" }
+      },
+      "examples": [{ "projectId": "acme-reporting", "path": "README.md" }]
+    },
+    "readFileResponse": {
+      "type": "object",
+      "required": ["path", "content"],
+      "properties": {
+        "path": { "type": "string" },
+        "content": { "type": "string", "description": "UTF-8 text. Binary files SHOULD be refused rather than returned base64 in this revision." },
+        "truncated": { "type": "boolean", "description": "Set when the provider capped the response. Silent truncation is a violation (mirrors HP-203)." }
+      },
+      "examples": [
+        { "path": "README.md", "content": "# Acme reporting\n" },
+        { "path": "reports/weekly.sql", "content": "SELECT 1", "truncated": true }
+      ]
+    }
+  }
+}

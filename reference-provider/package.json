@@ -1,0 +1,28 @@
+{
+  "name": "@autonomous/reference-provider",
+  "version": "0.1.0",
+  "description": "Scripted, deterministic reference implementation of the Autonomous harness provider profile, plus the conformance runner partners point at their own endpoint.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/autonomous-ai/harness-provider.git",
+    "directory": "reference-provider"
+  },
+  "homepage": "https://github.com/autonomous-ai/harness-provider#readme",
+  "bugs": "https://github.com/autonomous-ai/harness-provider/issues",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "conformance": "tsx src/conformance.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.autonomous.ai/api/a2a/schema/agent-card.ext.json",
+  "title": "Autonomous extension entries in an A2A Agent Card",
+  "description": "Constrains the `extensions` array of a standard A2A AgentCard to the URIs this profile recognises. Entries with other URIs are permitted and ignored. See HP-022 in harness-provider-a2a.md.",
+  "type": "object",
+  "properties": {
+    "extensions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/extensionEntry" }
+    }
+  },
+  "$defs": {
+    "extensionEntry": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": { "type": "string", "format": "uri" },
+        "description": { "type": "string" },
+        "required": {
+          "type": "boolean",
+          "description": "A2A-standard field. Autonomous extensions are never required of the client; a provider MUST NOT set this to true for a https://harness.autonomous.ai/api/a2a/ext/* URI."
+        },
+        "params": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "uri": { "enum": ["https://harness.autonomous.ai/api/a2a/ext/workspace-write"] }
+            },
+            "required": ["uri"]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "type": "object",
+                "properties": {
+                  "projects": {
+                    "type": "boolean",
+                    "description": "Provider accepts project create/rename/delete. Default false."
+                  },
+                  "sessions": {
+                    "type": "boolean",
+                    "description": "Provider accepts session title-change/delete. Default false."
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "recognisedUris": {
+      "enum": [
+        "https://harness.autonomous.ai/api/a2a/ext/workspace-files",
+        "https://harness.autonomous.ai/api/a2a/ext/workspace-write",
+        "https://harness.autonomous.ai/api/a2a/ext/session-recap",
+        "https://harness.autonomous.ai/api/a2a/ext/voice"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "extensions": [
+        {
+          "uri": "https://harness.autonomous.ai/api/a2a/ext/workspace-files",
+          "description": "Browse and read files in a project."
+        },
+        {
+          "uri": "https://harness.autonomous.ai/api/a2a/ext/workspace-write",
+          "params": { "projects": false, "sessions": true }
+        }
+      ]
+    },
+    { "extensions": [] }
+  ]
+}

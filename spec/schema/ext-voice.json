@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.autonomous.ai/api/a2a/ext/voice",
+  "title": "Extension: voice",
+  "description": "Provider-side routing of a transcribed spoken task to one of its projects. RARELY NEEDED (HP-303): Autonomous routes from AgentCard skills[] names and descriptions by default. Declare this only to override that routing with provider-side knowledge the card cannot express. Each $defs entry carries its own examples.",
+  "type": "object",
+  "$defs": {
+    "routeRequest": {
+      "type": "object",
+      "required": ["transcript"],
+      "properties": {
+        "transcript": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the user said, already transcribed by Autonomous."
+        },
+        "candidateProjectIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional shortlist. When present the provider MUST choose from it or decline."
+        }
+      },
+      "examples": [
+        { "transcript": "check whether acme blew through budget this week" },
+        { "transcript": "pull the weekly numbers", "candidateProjectIds": ["acme-reporting", "globex-reporting"] }
+      ]
+    },
+    "routeResponse": {
+      "type": "object",
+      "required": ["projectId"],
+      "properties": {
+        "projectId": {
+          "type": ["string", "null"],
+          "description": "The chosen project, or null to decline and let Autonomous fall back to its own routing."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reason": { "type": "string", "maxLength": 500 }
+      },
+      "examples": [
+        { "projectId": "acme-reporting", "confidence": 0.86, "reason": "Names the Acme account and asks about pacing." },
+        { "projectId": null, "reason": "No project clearly matches." }
+      ]
+    }
+  }
+}

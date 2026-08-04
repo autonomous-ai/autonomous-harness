@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.tsbuildinfo
+
+# Per-deployment state, not source:
+#   agents.json   points at real directories on this machine
+#   sessions.json is the contextId ↔ claudeSessionId map
+agents.json
+sessions.json
