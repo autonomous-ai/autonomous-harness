@@ -88,6 +88,6 @@ harnesses are then marked with a specific reason — never a generic failure.
 
 ## Questions
 
-Open an issue at <https://github.com/autonomous-ai/harness-provider/issues>. Anything touching
+Open an issue at <https://github.com/autonomous-ai/autonomous-harness/issues>. Anything touching
 credentials or a vulnerability goes to the address in `SECURITY.md` instead — not to the issue
 tracker.

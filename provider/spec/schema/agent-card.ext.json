@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://harness.autonomous.ai/api/a2a/schema/agent-card.ext.json",
   "title": "Autonomous extension entries in an A2A Agent Card",
-  "description": "Constrains the `extensions` array of a standard A2A AgentCard to the URIs this profile recognises. Entries with other URIs are permitted and ignored. See HP-022 in harness-provider-a2a.md.",
+  "description": "Constrains the `extensions` array of a standard A2A AgentCard to the URIs this profile recognises. Entries with other URIs are permitted and ignored. See HP-022 in the spec (spec/README.md).",
   "type": "object",
   "properties": {
     "extensions": {

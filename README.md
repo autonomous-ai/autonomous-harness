@@ -1,79 +1,40 @@
-# Autonomous Harness — Provider Protocol
+# Autonomous Harness
 
-Make your agent platform available on the [Autonomous Harness](https://www.autonomous.ai/harness).
-A user connects it with a **URL and a credential**, then drives it from the web app or from the
-hardware device on their desk.
+The [Autonomous Harness](https://www.autonomous.ai/harness) is a device and a service for running
+coding agents: one sentence, spoken to a disc on your desk, dispatched to the agents already running
+on your laptop, your server, and in the cloud.
 
-**This is a profile of [A2A](https://github.com/a2aproject/A2A) v1.0.1, not a new protocol.** If you
-already run a conformant A2A agent, most of it is done. Everything specific to Autonomous is either
-standard A2A used as intended, or a declared A2A extension — nothing here forks the standard.
+This repository is where the parts other people need to build against are published — specs,
+reference implementations, and the tools to check your own work against them.
 
 | | |
 |---|---|
-| [`spec/`](spec/README.md) | The contract. 40 numbered clauses (`HP-xxx`) |
-| [`spec/onboarding.md`](spec/onboarding.md) | What to do once you conform, and what to expect from us |
-| [`reference-provider/`](reference-provider/) | Scripted and deterministic — **and it ships the conformance runner** |
-| [`example-provider/`](example-provider/) | A real one, backed by the Claude Code CLI |
+| [`provider/`](provider/README.md) | **Provider protocol** — make your own agent platform available on the Harness. Users connect it with a URL and a credential, then drive it from the web app or the device. A profile of [A2A](https://github.com/a2aproject/A2A) v1.0.1, with a reference implementation and a conformance runner |
 
-## Quick start
+More will be published here as it stabilises. Each section is self-contained: its own README, its own
+packages, its own tests.
 
-See it work before reading the spec:
+## Getting started
 
-```bash
-cd reference-provider && npm install && npm run dev     # http://127.0.0.1:4501
-curl localhost:4501/.well-known/agent-card.json
-```
-
-Then point the runner at your own endpoint. **Zero failures is the bar:**
+Every section stands on its own — start with its README. For the provider protocol:
 
 ```bash
+cd provider/reference-provider && npm install && npm run dev
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
 
-It names the clause on every line, so a red result points at a section of the spec rather than at a
-symptom:
+## Conventions across this repository
 
-```
-✔ HP-021  capabilities.streaming is true
-✖ HP-200  ListTasks filters by contextId
-            3 task(s) from another context leaked into the filter
-```
-
-## What you actually have to implement
-
-**Tier 0 is all A2A core.** There is no Autonomous-specific work in it at all:
-
-| | Backs |
-|---|---|
-| Agent Card at `/.well-known/agent-card.json` | capability discovery, and your project list |
-| `SendStreamingMessage` → SSE | a turn |
-| `CancelTask` | stopping one |
-| `ListTasks` · `GetTask` | history |
-
-History is required, not optional: **Autonomous stores no transcript for a provider harness.** Without
-those two, a page refresh loses the conversation.
-
-**Everything else is an optional, declared extension** — file browsing, workspace writes, per-turn
-recaps, voice routing. An extension you do not declare is simply absent, and the product hides the
-feature rather than offering a control that fails.
-
-Two things are deliberately **not** in the profile: model selection (you own your model configuration)
-and end-to-end encryption (the plaintext originates on your side; users are told this in our UI).
-
-## Repository
-
-```
-spec/                 the contract + JSON Schemas
-reference-provider/   zero runtime dependencies — readable end to end
-example-provider/     a real agent; runs Claude with permissions skipped ⚠ read its README first
-```
-
-Both packages are plain TypeScript on Node ≥ 20 with **no runtime dependencies**. That is on purpose:
-you should be able to read `reference-provider/src/server.ts` and know exactly what your own endpoint
-has to do.
+- **Specs are numbered.** Every normative statement has a stable id, so a failure can point at a
+  clause rather than a symptom, and a conformance runner can assert one check per id.
+- **Specs are compatibility contracts.** Optional fields may be added; nothing published is renamed,
+  removed, retyped or reinterpreted without a new revision served alongside the old one.
+- **Reference implementations carry no runtime dependencies.** You should be able to read one end to
+  end and know what your own implementation has to do, without installing anything to understand it.
 
 ## Contributing, security, licence
 
-- Found a gap in the spec, or a clause the runner cannot actually check? [Open an issue](https://github.com/autonomous-ai/harness-provider/issues) — see [CONTRIBUTING.md](CONTRIBUTING.md).
+- Gaps in a spec, or a clause its runner cannot actually verify, are the most useful thing to report —
+  see [CONTRIBUTING.md](CONTRIBUTING.md).
 - Security reports: **not the issue tracker** — see [SECURITY.md](SECURITY.md).
 - Licensed under [Apache-2.0](LICENSE).

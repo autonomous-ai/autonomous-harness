@@ -5,11 +5,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/autonomous-ai/harness-provider.git",
+    "url": "git+https://github.com/autonomous-ai/autonomous-harness.git",
     "directory": "example-provider"
   },
-  "homepage": "https://github.com/autonomous-ai/harness-provider#readme",
-  "bugs": "https://github.com/autonomous-ai/harness-provider/issues",
+  "homepage": "https://github.com/autonomous-ai/autonomous-harness#readme",
+  "bugs": "https://github.com/autonomous-ai/autonomous-harness/issues",
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",

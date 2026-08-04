@@ -18,14 +18,14 @@ jobs:
         package: [reference-provider, example-provider]
     defaults:
       run:
-        working-directory: ${{ matrix.package }}
+        working-directory: provider/${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+          cache-dependency-path: provider/${{ matrix.package }}/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -42,13 +42,13 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: reference-provider/package-lock.json
+          cache-dependency-path: provider/reference-provider/package-lock.json
 
       - run: npm ci
-        working-directory: reference-provider
+        working-directory: provider/reference-provider
 
       - name: Start the reference provider
-        working-directory: reference-provider
+        working-directory: provider/reference-provider
         run: |
           STEP_DELAY_MS=0 npx tsx src/server.ts &
           for _ in $(seq 1 60); do
@@ -58,7 +58,7 @@ jobs:
           echo "reference provider did not come up"; exit 1
 
       - name: Run the conformance suite
-        working-directory: reference-provider
+        working-directory: provider/reference-provider
         # The runner exits non-zero on any failure. The two flags unlock the three clauses that need
         # provider-specific knowledge; without them those report SKIP with a reason, which is correct
         # but weaker cover than we want on our own reference.
