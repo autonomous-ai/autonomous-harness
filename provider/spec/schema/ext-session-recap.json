@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://harness.autonomous.ai/api/a2a/ext/session-recap",
   "title": "Extension: session-recap",
-  "description": "Short persisted per-turn summaries for a project. The Harness device restores its tiles from these after a reboot; without the extension the device shows nothing rather than stale text (HP-302). Each $defs entry carries its own examples.",
+  "description": "Short persisted per-turn summaries for an agent. The Harness device restores its tiles from these after a reboot; without the extension the device shows nothing rather than stale text (HP-302). Each $defs entry carries its own examples.",
   "type": "object",
   "$defs": {
     "recapRequest": {
       "type": "object",
-      "required": ["projectId"],
+      "required": ["agentId"],
       "properties": {
-        "projectId": { "type": "string" },
+        "agentId": { "type": "string" },
         "n": {
           "type": "integer",
           "minimum": 1,
@@ -19,8 +19,8 @@
         }
       },
       "examples": [
-        { "projectId": "acme-reporting", "n": 2 },
-        { "projectId": "acme-reporting" }
+        { "agentId": "acme-reporting", "n": 2 },
+        { "agentId": "acme-reporting" }
       ]
     },
     "recapEntry": {
@@ -44,9 +44,9 @@
     },
     "recapResponse": {
       "type": "object",
-      "required": ["projectId", "entries"],
+      "required": ["agentId", "entries"],
       "properties": {
-        "projectId": { "type": "string" },
+        "agentId": { "type": "string" },
         "entries": {
           "type": "array",
           "items": { "$ref": "#/$defs/recapEntry" },
@@ -55,13 +55,13 @@
       },
       "examples": [
         {
-          "projectId": "acme-reporting",
+          "agentId": "acme-reporting",
           "entries": [
             { "recap": "Flagged Acme overspend at 118% of pacing", "contextId": "ctx-91af", "timestamp": "2026-08-03T09:14:00Z" },
             { "recap": "Built weekly budget alert query", "contextId": "ctx-77bc" }
           ]
         },
-        { "projectId": "acme-reporting", "entries": [] }
+        { "agentId": "acme-reporting", "entries": [] }
       ]
     }
   }

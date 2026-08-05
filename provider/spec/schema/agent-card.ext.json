@@ -36,9 +36,9 @@
               "params": {
                 "type": "object",
                 "properties": {
-                  "projects": {
+                  "agents": {
                     "type": "boolean",
-                    "description": "Provider accepts project create/rename/delete. Default false."
+                    "description": "Provider accepts agent create/rename/delete. Default false."
                   },
                   "sessions": {
                     "type": "boolean",
@@ -65,11 +65,11 @@
       "extensions": [
         {
           "uri": "https://harness.autonomous.ai/api/a2a/ext/workspace-files",
-          "description": "Browse and read files in a project."
+          "description": "Browse and read files in an agent."
         },
         {
           "uri": "https://harness.autonomous.ai/api/a2a/ext/workspace-write",
-          "params": { "projects": false, "sessions": true }
+          "params": { "agents": false, "sessions": true }
         }
       ]
     },

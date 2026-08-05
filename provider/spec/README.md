@@ -1,9 +1,9 @@
 # Harness Provider Protocol (A2A profile)
 
-**Status:** DRAFT. Not published. Expect edits once the reference provider (P2) and the backend client
-(P5) exercise it.
+**Status:** DRAFT, revision **0.2.0**. Public but not yet implemented by anyone outside Autonomous,
+so it is still changing. Treat §12 as binding from 0.2.0 onward.
 
-**Audience:** a third party who wants their agent platform to appear as a `provider` harness in the
+**Audience:** a third party who wants their agent platform to appear as a `provider` machine in the
 Autonomous product — reachable from the web app and from the Harness device.
 
 **What this document is:** a *profile* of the Agent2Agent (A2A) protocol, not a new protocol. If you
@@ -18,7 +18,7 @@ implementations of everything below.
 
 ## 1. Target revision
 
-This profile targets **A2A v1.0.1** (`github.com/a2aproject/A2A`, released 2026-05-28), the current
+This profile targets **A2A v1.0.1** (`github.com/a2aagent/A2A`, released 2026-05-28), the current
 stable release under Linux Foundation governance.
 
 A2A v1.0 ships official SDKs in **Python, JavaScript, Java, Go and .NET**. Autonomous therefore
@@ -60,13 +60,19 @@ renders under a tight frame budget, so the prefix is kept short on purpose.
 
 | Autonomous concept | A2A concept | Notes |
 |---|---|---|
-| **harness** | one A2A agent endpoint | The credential the user supplies selects *which* workspace/tenant on the provider side |
-| **project** (web calls it a project; the wire calls it an agent) | `AgentCard.skills[]` entry | Read-only in Tier 0 |
+| **machine** | one A2A agent endpoint | The credential the user supplies selects *which* workspace/tenant on the provider side |
+| **agent** — one working unit inside a machine | `AgentCard.skills[]` entry | Read-only in Tier 0. **Not** the A2A sense of "agent" — see the note below |
 | **session** (a chat thread) | `contextId` | Starting a new chat mints a new `contextId`; no call is required |
 | **turn** (one user message until the agent stops) | `taskId` | Task lifecycle *is* turn lifecycle |
 | **turn start / end** | `TASK_STATE_WORKING` → `COMPLETED` / `FAILED` / `CANCELED` | |
 | **permission prompt / question to the user** | `TASK_STATE_INPUT_REQUIRED` | Native A2A. No extension |
 | **credential rejected** | `TASK_STATE_AUTH_REQUIRED` | Distinguishable from an outage, so the UI can say "re-enter credential" |
+
+> **One word, two meanings — read this before implementing.** A2A calls *your whole endpoint* an
+> agent: that is what an `AgentCard` describes. Autonomous calls *one working unit inside a machine*
+> an agent, and those map to the **skills** on your card. So a single A2A agent (you) exposes many
+> Autonomous agents (your skills). The product model is **machine → agent → session**; on your side
+> that reads **endpoint → skill → `contextId`**.
 
 ---
 
@@ -100,8 +106,8 @@ renders under a tight frame budget, so the prefix is kept short on purpose.
 > `AgentCard.extensions` by its exact URI (§8). An extension that is implemented but undeclared MUST
 > be treated by clients as absent.
 
-> **HP-023** `skills[]` is the project list. Each skill's `name` and `description` are shown to the
-> user. A provider with no meaningful project concept SHOULD expose exactly one skill representing the
+> **HP-023** `skills[]` is the agent list. Each skill's `name` and `description` are shown to the
+> user. A provider with no meaningful agent concept SHOULD expose exactly one skill representing the
 > whole workspace.
 
 Schema for the extension entries: `schema/agent-card.ext.json`.
@@ -139,7 +145,7 @@ Schema for the extension entries: `schema/agent-card.ext.json`.
 ## 6. History (HP-2xx)
 
 Chat history lives **entirely on the provider side**. Autonomous stores no transcript for a `provider`
-harness — there is no database to fall back on. This is why the two methods below are required rather
+machine — there is no database to fall back on. This is why the two methods below are required rather
 than recommended: without them, a page refresh loses the conversation.
 
 > **HP-200** The provider MUST implement `ListTasks`, and MUST support grouping/filtering by
@@ -196,10 +202,10 @@ entirely when an extension is absent, rather than offering a control that fails.
 
 | URI | Adds |
 |---|---|
-| `https://harness.autonomous.ai/api/a2a/ext/workspace-files` | browse and read files in a project |
-| `https://harness.autonomous.ai/api/a2a/ext/workspace-write` | create / rename / delete projects and sessions |
+| `https://harness.autonomous.ai/api/a2a/ext/workspace-files` | browse and read files in an agent |
+| `https://harness.autonomous.ai/api/a2a/ext/workspace-write` | create / rename / delete agents and sessions |
 | `https://harness.autonomous.ai/api/a2a/ext/session-recap` | short persisted per-turn summaries (used by the device) |
-| `https://harness.autonomous.ai/api/a2a/ext/voice` | provider-side routing of a spoken task to a project |
+| `https://harness.autonomous.ai/api/a2a/ext/voice` | provider-side routing of a spoken task to an agent |
 
 ### 8.1 Method naming
 
@@ -215,29 +221,29 @@ Extension methods travel on the **same JSON-RPC endpoint** as A2A core — there
 
 ### 8.2 The extensions
 
-> **HP-300** `workspace-files` — read-only file access, scoped to a project.
-> Methods: **`autonomous.ListFiles`** (`{ projectId, path? }` → `{ files }`) and
-> **`autonomous.ReadFile`** (`{ projectId, path }` → `{ path, content, truncated? }`).
+> **HP-300** `workspace-files` — read-only file access, scoped to an agent.
+> Methods: **`autonomous.ListFiles`** (`{ agentId, path? }` → `{ files }`) and
+> **`autonomous.ReadFile`** (`{ agentId, path }` → `{ path, content, truncated? }`).
 > Schema: `schema/ext-workspace-files.json`.
 
-> **HP-301** `workspace-write` — mutations on projects and sessions. Methods:
-> **`autonomous.CreateProject`**, **`autonomous.RenameProject`**, **`autonomous.DeleteProject`**,
+> **HP-301** `workspace-write` — mutations on agents and sessions. Methods:
+> **`autonomous.CreateAgent`**, **`autonomous.RenameAgent`**, **`autonomous.DeleteAgent`**,
 > **`autonomous.SetSessionTitle`**, **`autonomous.DeleteSession`**.
-> `AgentCard.extensions[].params` declares which halves are supported: `{ projects: bool, sessions: bool }`.
+> `AgentCard.extensions[].params` declares which halves are supported: `{ agents: bool, sessions: bool }`.
 > A provider declaring this extension MUST enforce that every operation stays inside the tenant
 > identified by the credential. Schema: `schema/ext-workspace-write.json`.
 
 > **HP-302** `session-recap` — short persisted per-turn summaries.
-> Method: **`autonomous.GetRecap`** (`{ projectId, n? }` → `{ projectId, entries }`).
+> Method: **`autonomous.GetRecap`** (`{ agentId, n? }` → `{ agentId, entries }`).
 > Used to restore the device's tiles after a reboot; the device shows nothing rather than stale text
 > when this is absent. An empty `entries` array is correct before any turn has been summarised.
 > Schema: `schema/ext-session-recap.json`.
 
-> **HP-303** `voice` — the provider chooses which project a transcribed spoken task belongs to.
-> Method: **`autonomous.RouteVoice`** (`{ transcript, candidateProjectIds? }` → `{ projectId, confidence?, reason? }`).
+> **HP-303** `voice` — the provider chooses which agent a transcribed spoken task belongs to.
+> Method: **`autonomous.RouteVoice`** (`{ transcript, candidateAgentIds? }` → `{ agentId, confidence?, reason? }`).
 > **Optional and rarely needed**: Autonomous can route from `skills[]` names and descriptions without
 > provider help, and does so by default. Declare this only to override that routing with your own.
-> A `projectId` of `null` declines and hands routing back to Autonomous.
+> A `agentId` of `null` declines and hands routing back to Autonomous.
 > Schema: `schema/ext-voice.json`.
 
 ---
@@ -248,13 +254,13 @@ Deliberate omissions. Listed so their absence is a decision on record and not a 
 
 | Not in this profile | Why |
 |---|---|
-| Model / effort selection | The provider owns its own model configuration. Reaching into it from the Autonomous UI would fight the provider's own surface and expose a control we cannot honour consistently. No model picker is shown for `provider` harnesses |
+| Model / effort selection | The provider owns its own model configuration. Reaching into it from the Autonomous UI would fight the provider's own surface and expose a control we cannot honour consistently. No model picker is shown for `provider` machines |
 | Agent login flows | The provider owns authentication. The credential field in the Autonomous UI is the entire story |
 | Explicit context compaction | The provider manages its own context window. Autonomous never asks a provider to compact; the `context_compact` event kind (§7) exists only so a provider can *report* that it did |
-| End-to-end encryption | `provider` harnesses are **not** end-to-end encrypted. Plaintext already originates at the provider, so E2EE between the user and the provider would hide content from Autonomous, not from the provider. Users are shown this explicitly. Providers are onboarded under a data-processing agreement, which is the control that replaces the cryptographic one |
+| End-to-end encryption | `provider` machines are **not** end-to-end encrypted. Plaintext already originates at the provider, so E2EE between the user and the provider would hide content from Autonomous, not from the provider. Users are shown this explicitly. Providers are onboarded under a data-processing agreement, which is the control that replaces the cryptographic one |
 
 Additionally, a set of frames exists on the Autonomous data plane that **never crosses this boundary**:
-live speaking-presence indicators, client-count bookkeeping, harness metadata and revocation, and
+live speaking-presence indicators, client-count bookkeeping, machine metadata and revocation, and
 device pairing. These are handled entirely inside Autonomous. A provider neither sends nor receives
 them, and MUST NOT attempt to.
 
@@ -280,20 +286,20 @@ provider hits the 5 MB ceiling of HP-203. Recorded as a known limitation, not an
 
 ### 10.2 `engine`
 
-The client models an engine as one of eight local CLIs. A provider harness is none of them.
+The client models an engine as one of eight local CLIs. A provider machine is none of them.
 
-**Resolution:** the field is **omitted** for provider-backed projects. The client treats an absent
+**Resolution:** the field is **omitted** for provider-backed agents. The client treats an absent
 engine as provider-backed and skips every engine-specific branch. Providers MUST NOT invent a value.
 
-### 10.3 Skill → project projection
+### 10.3 Skill → agent projection
 
 | Client field | Source |
 |---|---|
 | `id` | the skill's id |
 | `name`, `description` | the skill's `name`, `description` |
-| `userId` | **synthesised** by the backend — the Autonomous owner of the harness |
+| `userId` | **synthesised** by the backend — the Autonomous owner of the machine |
 | `status` | **synthesised** — constant `active` |
-| `createdAt`, `updatedAt` | **synthesised** — the harness's own timestamps unless the skill carries better |
+| `createdAt`, `updatedAt` | **synthesised** — the machine's own timestamps unless the skill carries better |
 | `engine` | omitted (§10.2) |
 
 ### 10.4 Task → session-list item projection
@@ -320,7 +326,7 @@ engine as provider-backed and skips every engine-specific branch. Providers MUST
 > boundary; a provider MUST NOT rely on being able to inject arbitrary client-side structures.
 > Non-conforming frames are dropped and logged, and a stream that repeats the violation is closed.
 
-> **HP-902** Providers are rate limited per harness. Sustained excess closes the stream.
+> **HP-902** Providers are rate limited per machine. Sustained excess closes the stream.
 
 > **HP-903** A provider MUST NOT log or transmit the supplied credential beyond what is required to
 > authenticate the request.
@@ -340,6 +346,13 @@ codebase applies to its own launcher/daemon contract applies here.
 > **HP-912** When a new revision exists, providers and clients MUST be able to negotiate through the
 > Agent Card. A revision MUST be served alongside its predecessor for a deprecation window; removing
 > support without one breaks deployed integrations.
+
+**0.1.0 → 0.2.0 was an exception, and the only one.** It renamed published fields (`projectId` →
+`agentId`) and dropped 0.1.0 rather than serving both, which is precisely what HP-911 and HP-912
+forbid. It was taken because 0.1.0 was one day old and had no implementers — there was no deployed
+integration for the rule to protect. From 0.2.0 on there is, so the rule binds: a rename now means a
+0.3.0 served alongside 0.2.0 for a deprecation window. If you are reading this because you already
+implemented 0.1.0, contact us — that is a case we did not think existed.
 
 ---
 
@@ -398,7 +411,7 @@ gap in the spec.** Re-run this audit whenever the client gains an operation.
 | `claude_login_start` / `_submit` / `_status` | **Out of scope** — §9, provider owns authentication |
 | `e2ee_pairings_list` / `_pairing_unpair` / `_pairings_unpair_all` / `e2ee_browser_link_create` | **Out of scope** — §9, no E2EE for `provider` |
 | `speaking` | **Never crosses this boundary** — ephemeral presence, fanned out inside Autonomous |
-| `__clients`, `harness_meta`, `harness_revoked`, `device_e2ee_pair` | **Never crosses this boundary** — Autonomous-internal control frames |
+| `__clients`, `machine_meta`, `machine_revoked`, `device_e2ee_pair` | **Never crosses this boundary** — Autonomous-internal control frames |
 
 ### Client-operation coverage — how to re-run this audit
 
@@ -439,7 +452,7 @@ profile.
 }
 ```
 
-The client now shows one project ("Acme reporting"). No file browser, no rename — those extensions
+The client now shows one agent ("Acme reporting"). No file browser, no rename — those extensions
 are absent. No model picker either; that is out of scope for every provider (§9).
 
 **2. The user types a message.** Autonomous calls `SendStreamingMessage` with the user's credential in

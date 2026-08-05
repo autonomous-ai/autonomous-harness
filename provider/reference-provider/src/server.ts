@@ -1,5 +1,5 @@
 /**
- * Reference provider for the Autonomous harness provider profile.
+ * Reference provider for the Autonomous machine provider profile.
  *
  * See `../spec/README.md`. Clause IDs (HP-xxx) in the comments below point at the
  * requirement each block satisfies, so this file doubles as a worked reading of the spec.
@@ -110,9 +110,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, store: TaskStor
       // `workspace-files` is deliberately NOT declared by this provider — see agentCard.ts.
       sendRpcError(res, rpc.id ?? null, RpcErrors.METHOD_NOT_FOUND)
       return
-    case 'autonomous.CreateProject':
-    case 'autonomous.RenameProject':
-    case 'autonomous.DeleteProject':
+    case 'autonomous.CreateAgent':
+    case 'autonomous.RenameAgent':
+    case 'autonomous.DeleteAgent':
     case 'autonomous.SetSessionTitle':
     case 'autonomous.DeleteSession':
       // `workspace-write` is deliberately NOT declared either.
@@ -144,8 +144,8 @@ const declaresExtension = (uri: string): boolean =>
  * rather than resurrecting stale text.
  */
 function getRecap(res: ServerResponse, store: TaskStore, params: Record<string, unknown>, id: string | number | null): void {
-  const projectId = typeof params.projectId === 'string' ? params.projectId : ''
-  if (!SKILL_IDS.includes(projectId)) {
+  const agentId = typeof params.agentId === 'string' ? params.agentId : ''
+  if (!SKILL_IDS.includes(agentId)) {
     sendRpcError(res, id, RpcErrors.INVALID_PARAMS)
     return
   }
@@ -159,7 +159,7 @@ function getRecap(res: ServerResponse, store: TaskStore, params: Record<string, 
       contextId: t.contextId,
       taskId: t.id,
     }))
-  sendRpcResult(res, id, { projectId, entries })
+  sendRpcResult(res, id, { agentId, entries })
 }
 
 // ── SendStreamingMessage (HP-100 … HP-106) ───────────────────────────────────────────────────────

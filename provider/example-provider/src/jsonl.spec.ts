@@ -45,7 +45,7 @@ describe('session files', () => {
 })
 
 describe('readTranscript', () => {
-  const projectsDir = join(root, 'projects')
+  const projectsDir = join(root, 'agents')
 
   it('keeps only conversation lines and drops the rest', () => {
     transcript(projectsDir, '/w1', 's1', [
@@ -82,7 +82,7 @@ describe('readTranscript', () => {
 
 describe('listSessions', () => {
   it('orders newest first and titles from the first user message', () => {
-    const projectsDir = join(root, 'projects-list')
+    const projectsDir = join(root, 'agents-list')
     transcript(projectsDir, '/w', 'old', [userLine('the older question', '2026-08-04T08:00:00Z')])
     transcript(projectsDir, '/w', 'new', [userLine('the newer question', '2026-08-04T10:00:00Z')])
     const sessions = listSessions(projectsDir, '/w')
@@ -91,7 +91,7 @@ describe('listSessions', () => {
   })
 
   it('ignores subagent mirrors', () => {
-    const projectsDir = join(root, 'projects-mirror')
+    const projectsDir = join(root, 'agents-mirror')
     transcript(projectsDir, '/w', 's1', [userLine('real', '2026-08-04T08:00:00Z')])
     const dir = join(projectsDir, mangleCwd('/w'))
     writeFileSync(join(dir, 'agent-sub.jsonl'), JSON.stringify(userLine('sub', '2026-08-04T09:00:00Z')))

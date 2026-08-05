@@ -7,7 +7,7 @@
 > a real repository. `agents.example.json` ships pointing at `/tmp/example-provider-scratch` on
 > purpose.
 
-A **real** A2A provider for the Autonomous harness provider profile
+A **real** A2A provider for the Autonomous machine provider profile
 (`../spec/README.md`), backed by the local `claude` CLI.
 
 Where `apps/reference-provider` is scripted and deterministic, this one runs an actual agent. That is
@@ -45,7 +45,7 @@ curl -N localhost:4502 \
 | `CLAUDE_MODEL` | `claude-sonnet-5`. Pinned, not left to the CLI default: a provider owns its model choice, and Autonomous never sends one (spec §9) |
 | `PORT` | `4502` |
 | `STATE_FILE` | `./sessions.json` |
-| `WORKSPACE_ROOT` | `/tmp/example-provider-scratch` — where `autonomous.CreateProject` puts a new agent's directory |
+| `WORKSPACE_ROOT` | `/tmp/example-provider-scratch` — where `autonomous.CreateAgent` puts a new agent's directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` |
 
 ## How it works
@@ -76,7 +76,7 @@ way to make the live view and the post-refresh view disagree.
 - **No `INPUT_REQUIRED`.** With permissions skipped, Claude never asks, so HP-104 stays demonstrated
   only by `reference-provider`'s scripted path.
 - **No `SubscribeToTask`** — deliberately out of scope.
-- **No session writes.** `workspace-write` is declared with `params: { projects: true, sessions: false }`:
+- **No session writes.** `workspace-write` is declared with `params: { agents: true, sessions: false }`:
   creating an agent is ours to do, but retitling or deleting a session would mean editing the user's
   own Claude transcripts under `~/.claude`.
 - **No images.** Refused loudly rather than dropped silently (HP-106).

@@ -1,8 +1,8 @@
 # reference-provider
 
-A minimal, deterministic implementation of the **Autonomous harness provider profile**
+A minimal, deterministic implementation of the **Autonomous machine provider profile**
 (`../spec/README.md`) — an A2A agent that Autonomous can attach to as a `provider`
-harness.
+machine.
 
 It runs no model. Every reply is scripted, which is the point: it exists to prove the spec is
 implementable, to give the backend client something real to talk to, and to be the target the

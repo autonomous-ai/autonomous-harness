@@ -1,5 +1,5 @@
 /**
- * Conformance runner for the harness provider profile (`../spec/README.md`).
+ * Conformance runner for the machine provider profile (`../spec/README.md`).
  *
  * Point it at ANY provider endpoint. It asserts one check per normative clause and names the clause in
  * its output, so a red line points at a section of the spec rather than at a symptom:
@@ -56,7 +56,7 @@ const EXT = {
 
 const KNOWN_EXTENSIONS: string[] = Object.values(EXT)
 
-/** Scope an extension probe to a real project without guessing an id. */
+/** Scope an extension probe to a real agent without guessing an id. */
 const firstSkillId = (ctx: Ctx): string | undefined =>
   ((ctx.card.skills ?? []) as Array<{ id?: string }>)[0]?.id
 
@@ -210,10 +210,10 @@ export const CHECKS: Check[] = [
   },
   {
     id: 'HP-023',
-    title: 'skills[] is a non-empty project list',
+    title: 'skills[] is a non-empty agent list',
     run: (ctx) => {
       const skills = (ctx.card.skills ?? []) as Array<{ id?: string; name?: string }>
-      if (!skills.length) return fail('no skills — the client would show no projects at all')
+      if (!skills.length) return fail('no skills — the client would show no agents at all')
       const unnamed = skills.filter((s) => !s.id || !s.name)
       return unnamed.length ? fail(`${unnamed.length} skill(s) missing id or name`) : pass(`${skills.length} skill(s)`)
     },
@@ -388,9 +388,9 @@ export const CHECKS: Check[] = [
     title: 'workspace-files: autonomous.ListFiles and autonomous.ReadFile',
     run: async (ctx) => {
       if (!declares(ctx, EXT.FILES)) return skip('not declared — absence is a legitimate answer (HP-022)')
-      const projectId = firstSkillId(ctx)
-      if (!projectId) return fail('extension declared but the card exposes no skill to scope a call to')
-      const b = await body(await rpc(ctx, 'autonomous.ListFiles', { projectId }))
+      const agentId = firstSkillId(ctx)
+      if (!agentId) return fail('extension declared but the card exposes no skill to scope a call to')
+      const b = await body(await rpc(ctx, 'autonomous.ListFiles', { agentId }))
       const err = b.error as { code?: number } | undefined
       if (err?.code === -32601) return fail('declared in the Agent Card but autonomous.ListFiles is not implemented')
       if (err) return fail(`autonomous.ListFiles returned error ${err.code}`)
@@ -406,9 +406,9 @@ export const CHECKS: Check[] = [
       // Probe WITHOUT mutating: call with deliberately missing params and require "invalid params"
       // rather than "method not found". Running a real create/delete against someone's live workspace
       // is not something a conformance runner gets to do.
-      const b = await body(await rpc(ctx, 'autonomous.RenameProject', {}))
+      const b = await body(await rpc(ctx, 'autonomous.RenameAgent', {}))
       const err = b.error as { code?: number } | undefined
-      if (err?.code === -32601) return fail('declared in the Agent Card but autonomous.RenameProject is not implemented')
+      if (err?.code === -32601) return fail('declared in the Agent Card but autonomous.RenameAgent is not implemented')
       if (err?.code === -32602) return pass('method present (probed non-destructively with empty params)')
       return warn(`probe returned ${err ? `error ${err.code}` : 'a result'} — verify the mutation methods by hand; the runner will not mutate a live workspace`)
     },
@@ -418,9 +418,9 @@ export const CHECKS: Check[] = [
     title: 'session-recap: autonomous.GetRecap',
     run: async (ctx) => {
       if (!declares(ctx, EXT.RECAP)) return skip('not declared — absence is a legitimate answer (HP-022)')
-      const projectId = firstSkillId(ctx)
-      if (!projectId) return fail('extension declared but the card exposes no skill to scope a call to')
-      const b = await body(await rpc(ctx, 'autonomous.GetRecap', { projectId, n: 2 }))
+      const agentId = firstSkillId(ctx)
+      if (!agentId) return fail('extension declared but the card exposes no skill to scope a call to')
+      const b = await body(await rpc(ctx, 'autonomous.GetRecap', { agentId, n: 2 }))
       const err = b.error as { code?: number } | undefined
       if (err?.code === -32601) return fail('declared in the Agent Card but autonomous.GetRecap is not implemented')
       if (err) return fail(`autonomous.GetRecap returned error ${err.code}`)
@@ -441,10 +441,10 @@ export const CHECKS: Check[] = [
       const err = b.error as { code?: number } | undefined
       if (err?.code === -32601) return fail('declared in the Agent Card but autonomous.RouteVoice is not implemented')
       if (err) return fail(`autonomous.RouteVoice returned error ${err.code}`)
-      const result = (b.result ?? {}) as { projectId?: unknown }
-      return 'projectId' in result
-        ? pass(result.projectId === null ? 'declined, routing handed back' : String(result.projectId))
-        : fail('response has no `projectId` (use null to decline)')
+      const result = (b.result ?? {}) as { agentId?: unknown }
+      return 'agentId' in result
+        ? pass(result.agentId === null ? 'declined, routing handed back' : String(result.agentId))
+        : fail('response has no `agentId` (use null to decline)')
     },
   },
   {
@@ -464,7 +464,7 @@ export const CHECKS: Check[] = [
     run: async (ctx) => {
       const undeclared = ([
         [EXT.FILES, 'autonomous.ListFiles'],
-        [EXT.WRITE, 'autonomous.CreateProject'],
+        [EXT.WRITE, 'autonomous.CreateAgent'],
         [EXT.RECAP, 'autonomous.GetRecap'],
         [EXT.VOICE, 'autonomous.RouteVoice'],
       ] as const).filter(([uri]) => !declares(ctx, uri))
@@ -581,7 +581,7 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   const badKey = arg('bad-key')
   const askPhrase = arg('ask-phrase')
 
-  console.log(`Harness provider conformance — ${url}`)
+  console.log(`Machine provider conformance — ${url}`)
   console.log(`Spec: spec/README.md · ${CHECKS.length} clauses\n`)
   const summary = await runConformance({ url, key, badKey, askPhrase })
   console.log(format(summary))

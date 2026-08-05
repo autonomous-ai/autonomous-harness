@@ -20,7 +20,7 @@ export interface AgentEntry {
 export interface Config {
   agents: AgentEntry[]
   /**
-   * Where `autonomous.CreateProject` puts a new agent's directory.
+   * Where `autonomous.CreateAgent` puts a new agent's directory.
    *
    * Deliberately its own setting rather than "the parent of the first agent": creating an agent is a
    * write, and a write needs a root it cannot escape. Everything created lands under here.

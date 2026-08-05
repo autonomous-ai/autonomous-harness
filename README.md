@@ -1,6 +1,6 @@
 # Autonomous Harness
 
-The [Autonomous Harness](https://www.autonomous.ai/harness) is a device and a service for running
+The [Autonomous Harness](https://www.autonomous.ai/machine) is a device and a service for running
 coding agents: one sentence, spoken to a disc on your desk, dispatched to the agents already running
 on your laptop, your server, and in the cloud.
 
@@ -11,7 +11,7 @@ reference implementations, and the tools to check your own work against them.
 
 | | |
 |---|---|
-| [`provider/`](provider/README.md) | **Provider protocol** — make your own agent platform available on the Harness. Users connect it with a URL and a credential, then drive it from the web app or the device. A profile of [A2A](https://github.com/a2aproject/A2A) v1.0.1, with a reference implementation and a conformance runner |
+| [`provider/`](provider/README.md) | **Provider protocol** — make your own agent platform available on the Machine. Users connect it with a URL and a credential, then drive it from the web app or the device. A profile of [A2A](https://github.com/a2aagent/A2A) v1.0.1, with a reference implementation and a conformance runner |
 
 More will be published here as it stabilises. Each section is self-contained: its own README, its own
 packages, its own tests.

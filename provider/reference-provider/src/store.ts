@@ -2,7 +2,7 @@
  * In-memory task store.
  *
  * A real provider would persist this; the shape is what matters. Note that HISTORY LIVES HERE — the
- * Autonomous backend keeps no transcript for a provider harness, which is why `GetTask` and `ListTasks`
+ * Autonomous backend keeps no transcript for a provider machine, which is why `GetTask` and `ListTasks`
  * are Tier 0 rather than optional (HP-200, HP-201).
  */
 import { isTerminal, TaskState, type Message, type Task, type TaskStateValue } from './types.js'

@@ -19,7 +19,7 @@ export const EXT = {
  *   - `workspace-files` — the agent has a real working directory, so a file tree is meaningful.
  *   - `session-recap`   — Claude's transcripts give us recent turns for free.
  *
- *   - `workspace-write` — projects only. A new agent is a new directory under WORKSPACE_ROOT, which
+ *   - `workspace-write` — agents only. A new agent is a new directory under WORKSPACE_ROOT, which
  *     is why that root is separate from the agent directories themselves: creating one must never
  *     be able to write outside it.
  *
@@ -42,7 +42,7 @@ export function buildAgentCard(agents: AgentEntry[]): Record<string, unknown> {
     defaultInputModes: ['text/plain'],
     defaultOutputModes: ['text/plain'],
 
-    // HP-023 — the project list the user sees. `cwd` stays server-side: it is a filesystem path and
+    // HP-023 — the agent list the user sees. `cwd` stays server-side: it is a filesystem path and
     // nothing the client needs.
     skills: agents.map((a) => ({ id: a.id, name: a.name, description: a.description })),
 
@@ -55,7 +55,7 @@ export function buildAgentCard(agents: AgentEntry[]): Record<string, unknown> {
         description: 'Create and remove agents. Each one is a directory under the workspace root.',
         // `sessions: false` — deleting or retitling a Claude transcript would mean writing into
         // ~/.claude, which is the user's own history and not ours to edit.
-        params: { projects: true, sessions: false },
+        params: { agents: true, sessions: false },
       },
     ],
   }

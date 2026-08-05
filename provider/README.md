@@ -1,10 +1,10 @@
 # Provider Protocol
 
-Make your agent platform available on the [Autonomous Harness](https://www.autonomous.ai/harness).
+Make your agent platform available on the [Autonomous Harness](https://www.autonomous.ai/machine).
 A user connects it with a **URL and a credential**, then drives it from the web app or from the
 hardware device on their desk.
 
-**This is a profile of [A2A](https://github.com/a2aproject/A2A) v1.0.1, not a new protocol.** If you
+**This is a profile of [A2A](https://github.com/a2aagent/A2A) v1.0.1, not a new protocol.** If you
 already run a conformant A2A agent, most of it is done. Everything specific to Autonomous is either
 standard A2A used as intended, or a declared A2A extension — nothing here forks the standard.
 
@@ -45,12 +45,12 @@ symptom:
 
 | | Backs |
 |---|---|
-| Agent Card at `/.well-known/agent-card.json` | capability discovery, and your project list |
+| Agent Card at `/.well-known/agent-card.json` | capability discovery, and your agent list |
 | `SendStreamingMessage` → SSE | a turn |
 | `CancelTask` | stopping one |
 | `ListTasks` · `GetTask` | history |
 
-History is required, not optional: **Autonomous stores no transcript for a provider harness.** Without
+History is required, not optional: **Autonomous stores no transcript for a provider machine.** Without
 those two, a page refresh loses the conversation.
 
 **Everything else is an optional, declared extension** — file browsing, workspace writes, per-turn

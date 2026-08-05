@@ -8,7 +8,7 @@
 export const AGENT_CARD = {
   name: 'Autonomous Reference Provider',
   description:
-    'A minimal, deterministic provider used to validate the harness provider profile. It runs no model — every reply is scripted.',
+    'A minimal, deterministic provider used to validate the machine provider profile. It runs no model — every reply is scripted.',
   version: '0.1.0',
 
   // HP-021: non-negotiable. The product renders assistant output token by token.
@@ -22,7 +22,7 @@ export const AGENT_CARD = {
   defaultInputModes: ['text/plain', 'image/png', 'image/jpeg'],
   defaultOutputModes: ['text/plain'],
 
-  // HP-023: skills are the project list shown to the user.
+  // HP-023: skills are the agent list shown to the user.
   skills: [
     {
       id: 'acme-reporting',
@@ -49,5 +49,5 @@ export const AGENT_CARD = {
 
 export type AgentCard = typeof AGENT_CARD
 
-/** Skill ids, for validating a project reference without trusting the caller. */
+/** Skill ids, for validating an agent reference without trusting the caller. */
 export const SKILL_IDS: readonly string[] = AGENT_CARD.skills.map((s) => s.id)

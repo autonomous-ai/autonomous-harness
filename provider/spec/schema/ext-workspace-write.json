@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://harness.autonomous.ai/api/a2a/ext/workspace-write",
   "title": "Extension: workspace-write",
-  "description": "Create, rename and delete projects and sessions. Declared in AgentCard.extensions with params.projects / params.sessions indicating which halves are supported (HP-301). A provider MUST enforce that every operation stays inside the tenant identified by the credential. Each $defs entry carries its own examples.",
+  "description": "Create, rename and delete agents and sessions. Declared in AgentCard.extensions with params.agents / params.sessions indicating which halves are supported (HP-301). A provider MUST enforce that every operation stays inside the tenant identified by the credential. Each $defs entry carries its own examples.",
   "type": "object",
   "$defs": {
-    "projectCreateRequest": {
+    "agentCreateRequest": {
       "type": "object",
       "required": ["name"],
       "properties": {
@@ -17,22 +17,22 @@
         { "name": "Globex Q3" }
       ]
     },
-    "projectRenameRequest": {
+    "agentRenameRequest": {
       "type": "object",
-      "required": ["projectId", "name"],
+      "required": ["agentId", "name"],
       "properties": {
-        "projectId": { "type": "string" },
+        "agentId": { "type": "string" },
         "name": { "type": "string", "minLength": 1, "maxLength": 200 }
       },
-      "examples": [{ "projectId": "acme-reporting", "name": "Acme reporting (2026)" }]
+      "examples": [{ "agentId": "acme-reporting", "name": "Acme reporting (2026)" }]
     },
-    "projectDeleteRequest": {
+    "agentDeleteRequest": {
       "type": "object",
-      "required": ["projectId"],
-      "properties": { "projectId": { "type": "string" } },
-      "examples": [{ "projectId": "acme-reporting" }]
+      "required": ["agentId"],
+      "properties": { "agentId": { "type": "string" } },
+      "examples": [{ "agentId": "acme-reporting" }]
     },
-    "projectResponse": {
+    "agentResponse": {
       "type": "object",
       "required": ["id", "name"],
       "properties": {
@@ -40,7 +40,7 @@
         "name": { "type": "string" },
         "description": { "type": "string" }
       },
-      "description": "The remaining client-side project fields (userId, status, timestamps) are synthesised by the Autonomous backend — see §10.3 of the spec. A provider MUST NOT invent them, and MUST NOT report an `engine`.",
+      "description": "The remaining client-side agent fields (userId, status, timestamps) are synthesised by the Autonomous backend — see §10.3 of the spec. A provider MUST NOT invent them, and MUST NOT report an `engine`.",
       "examples": [
         { "id": "acme-reporting", "name": "Acme weekly reporting" },
         { "id": "globex-q3", "name": "Globex Q3", "description": "Quarterly rollup" }
@@ -68,7 +68,7 @@
         "ok": { "type": "boolean" },
         "message": { "type": "string" }
       },
-      "examples": [{ "ok": true }, { "ok": false, "message": "Project not found" }]
+      "examples": [{ "ok": true }, { "ok": false, "message": "Agent not found" }]
     }
   }
 }

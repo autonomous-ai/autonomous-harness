@@ -115,7 +115,7 @@ export class SessionStore {
       .sort((a, b) => b.startedAt - a.startedAt)
   }
 
-  /** Contexts belonging to one agent, used to answer ListTasks scoped to a project. */
+  /** Contexts belonging to one agent, used to answer ListTasks scoped to an agent. */
   contextsForAgent(agentId: string): ContextRecord[] {
     return Object.values(this.state.contexts).filter((c) => c.agentId === agentId)
   }

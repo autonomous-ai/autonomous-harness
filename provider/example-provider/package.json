@@ -1,7 +1,7 @@
 {
   "name": "@autonomous/example-provider",
-  "version": "0.1.0",
-  "description": "A real Autonomous harness provider backed by the local Claude Code CLI. Not deterministic — keep it out of CI.",
+  "version": "0.2.0",
+  "description": "A real Autonomous provider backed by the local Claude Code CLI. Not deterministic — keep it out of CI.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

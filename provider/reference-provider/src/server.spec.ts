@@ -83,7 +83,7 @@ describe('agent card (HP-020 … HP-023)', () => {
     expect(card.capabilities.streaming).toBe(true)
   })
 
-  it('exposes skills as the project list and declares its extensions by exact URI', async () => {
+  it('exposes skills as the agent list and declares its extensions by exact URI', async () => {
     const card = await json(await fetch(`${base}/.well-known/agent-card.json`))
     expect(card.skills.length).toBeGreaterThan(0)
     expect(card.extensions.map((e: { uri: string }) => e.uri)).toContain('https://harness.autonomous.ai/api/a2a/ext/session-recap')

@@ -13,7 +13,7 @@ import { join, normalize, relative, resolve as resolvePath } from 'node:path'
 import { buildAgentCard, EXT } from './agentCard.js'
 import { runTurn } from './claude.js'
 import { loadConfig, type AgentEntry, type Config } from './config.js'
-import { createProject, deleteProject, renameProject, WorkspaceError } from './workspace.js'
+import { createAgent, deleteAgent, renameAgent, WorkspaceError } from './workspace.js'
 import { epoch, listSessions, readTranscript, sliceByTime } from './jsonl.js'
 import { messageToParts, pairToolNames, sessionIdOf, streamLineToOutcome } from './mapper.js'
 import { SessionStore, type TaskRecord } from './sessions.js'
@@ -102,10 +102,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: Deps): Pr
     case 'autonomous.ReadFile':  return readFile(res, deps, params, id)
     case 'autonomous.GetRecap':  return getRecap(res, deps, params, id)
 
-    // `workspace-write` — projects only; the card declares params.sessions: false.
-    case 'autonomous.CreateProject':
-    case 'autonomous.RenameProject':
-    case 'autonomous.DeleteProject':
+    // `workspace-write` — agents only; the card declares params.sessions: false.
+    case 'autonomous.CreateAgent':
+    case 'autonomous.RenameAgent':
+    case 'autonomous.DeleteAgent':
       return workspaceWrite(res, deps, rpc.method, params, id)
 
     // HP-311 — undeclared extension methods MUST be rejected, or the Agent Card means nothing.
@@ -127,12 +127,12 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: Deps): Pr
  * Which configured agent a message targets.
  *
  * NOTE — spec gap: A2A carries no "which skill" selector on a Message, and the profile never says how
- * a client picks one. This reads `message.metadata['autonomous.ai/projectId']` and otherwise falls
+ * a client picks one. This reads `message.metadata['autonomous.ai/agentId']` and otherwise falls
  * back to the first configured agent, which keeps plain A2A clients (including the conformance
  * runner) working. Worth a clause in the spec.
  */
 function pickAgent(deps: Deps, message: Message | undefined): AgentEntry {
-  const requested = (message as { metadata?: Record<string, unknown> } | undefined)?.metadata?.['autonomous.ai/projectId']
+  const requested = (message as { metadata?: Record<string, unknown> } | undefined)?.metadata?.['autonomous.ai/agentId']
   if (typeof requested === 'string') {
     const found = deps.config.agents.find((a) => a.id === requested)
     if (found) return found
@@ -323,7 +323,7 @@ function taskToWire(deps: Deps, record: TaskRecord, opts: { history?: boolean } 
     contextId: record.contextId,
     status: { state: record.state },
     history,
-    metadata: { title: record.title, projectId: record.agentId },
+    metadata: { title: record.title, agentId: record.agentId },
   }
 }
 
@@ -356,7 +356,7 @@ function safeJoin(root: string, rel: string): string {
 }
 
 function listFiles(res: ServerResponse, deps: Deps, params: Record<string, unknown>, id: string | number | null): void {
-  const agent = agentById(deps, String(params.projectId ?? ''))
+  const agent = agentById(deps, String(params.agentId ?? ''))
   if (!agent) { sendRpcError(res, id, RpcErrors.INVALID_PARAMS); return }
   let dir: string
   try {
@@ -380,7 +380,7 @@ function listFiles(res: ServerResponse, deps: Deps, params: Record<string, unkno
 const MAX_FILE_BYTES = 512 * 1024
 
 function readFile(res: ServerResponse, deps: Deps, params: Record<string, unknown>, id: string | number | null): void {
-  const agent = agentById(deps, String(params.projectId ?? ''))
+  const agent = agentById(deps, String(params.agentId ?? ''))
   const path = typeof params.path === 'string' ? params.path : ''
   if (!agent || !path) { sendRpcError(res, id, RpcErrors.INVALID_PARAMS); return }
   let file: string
@@ -397,7 +397,7 @@ function readFile(res: ServerResponse, deps: Deps, params: Record<string, unknow
   sendRpcResult(res, id, { path, content: truncated ? raw.slice(0, MAX_FILE_BYTES) : raw, ...(truncated ? { truncated: true } : {}) })
 }
 
-/** HP-301 — project create / rename / delete, all contained under the workspace root. */
+/** HP-301 — agent create / rename / delete, all contained under the workspace root. */
 function workspaceWrite(
   res: ServerResponse,
   deps: Deps,
@@ -406,21 +406,21 @@ function workspaceWrite(
   id: string | number | null,
 ): void {
   try {
-    if (method === 'autonomous.CreateProject') {
-      const entry = createProject(deps.config, String(params.name ?? ''), String(params.description ?? ''))
+    if (method === 'autonomous.CreateAgent') {
+      const entry = createAgent(deps.config, String(params.name ?? ''), String(params.description ?? ''))
       // The card is BUILT from the agent list, so it has to be rebuilt for the new agent to be
       // discoverable at all — the card is the capability surface (HP-001).
       deps.card = buildAgentCard(deps.config.agents)
       sendRpcResult(res, id, { id: entry.id, name: entry.name, description: entry.description })
       return
     }
-    if (method === 'autonomous.RenameProject') {
-      const entry = renameProject(deps.config, String(params.projectId ?? ''), String(params.name ?? ''))
+    if (method === 'autonomous.RenameAgent') {
+      const entry = renameAgent(deps.config, String(params.agentId ?? ''), String(params.name ?? ''))
       deps.card = buildAgentCard(deps.config.agents)
       sendRpcResult(res, id, { id: entry.id, name: entry.name, description: entry.description })
       return
     }
-    deleteProject(deps.config, String(params.projectId ?? ''))
+    deleteAgent(deps.config, String(params.agentId ?? ''))
     deps.card = buildAgentCard(deps.config.agents)
     sendRpcResult(res, id, { ok: true })
   } catch (err) {
@@ -438,7 +438,7 @@ function workspaceWrite(
  * even though this provider streams nothing live for them.
  */
 function getRecap(res: ServerResponse, deps: Deps, params: Record<string, unknown>, id: string | number | null): void {
-  const agent = agentById(deps, String(params.projectId ?? ''))
+  const agent = agentById(deps, String(params.agentId ?? ''))
   if (!agent) { sendRpcError(res, id, RpcErrors.INVALID_PARAMS); return }
   const n = Math.max(1, Math.min(5, Number(params.n) || 2))
   const entries = listSessions(deps.config.claudeProjectsDir, agent.cwd)
@@ -448,7 +448,7 @@ function getRecap(res: ServerResponse, deps: Deps, params: Record<string, unknow
       contextId: s.sessionId,
       timestamp: new Date(s.updatedAt).toISOString(),
     }))
-  sendRpcResult(res, id, { projectId: agent.id, entries })
+  sendRpcResult(res, id, { agentId: agent.id, entries })
 }
 
 // ── Wire helpers ─────────────────────────────────────────────────────────────────────────────────

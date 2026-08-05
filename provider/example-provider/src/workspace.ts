@@ -28,7 +28,7 @@ function containedDir(root: string, slug: string): string {
   return target
 }
 
-export function createProject(config: Config, name: string, description = ''): AgentEntry {
+export function createAgent(config: Config, name: string, description = ''): AgentEntry {
   const trimmed = name.trim()
   if (!trimmed) throw new WorkspaceError('name is required')
   const id = slugify(trimmed)
@@ -43,7 +43,7 @@ export function createProject(config: Config, name: string, description = ''): A
   return entry
 }
 
-export function deleteProject(config: Config, id: string): void {
+export function deleteAgent(config: Config, id: string): void {
   const index = config.agents.findIndex((a) => a.id === id)
   if (index === -1) throw new WorkspaceError('unknown agent')
   const [removed] = config.agents.splice(index, 1)
@@ -53,7 +53,7 @@ export function deleteProject(config: Config, id: string): void {
   void removed
 }
 
-export function renameProject(config: Config, id: string, name: string): AgentEntry {
+export function renameAgent(config: Config, id: string, name: string): AgentEntry {
   const entry = config.agents.find((a) => a.id === id)
   if (!entry) throw new WorkspaceError('unknown agent')
   const trimmed = name.trim()

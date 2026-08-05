@@ -11,7 +11,7 @@ What to do once your endpoint implements the profile in `README.md`, and what to
 | A public HTTPS endpoint | HP-010. Not an IP address, not a tunnel, not "we'll expose it later" |
 | An Agent Card at `/.well-known/agent-card.json` | HP-020 |
 | A test credential | So the checks below run against a real tenant rather than a stub |
-| A named technical contact | Your endpoint backs every harness connected to it; when it goes down, they all go down at once |
+| A named technical contact | Your endpoint backs every machine connected to it; when it goes down, they all go down at once |
 
 **You do not need an SDK from us.** A2A v1.0 ships official SDKs for Python, JavaScript, Java, Go and
 .NET — use the one for your stack. What this repository gives you instead is the contract, a working
@@ -57,7 +57,7 @@ Four clauses cannot be verified from outside and become a written question inste
 
 We review the endpoint's TLS configuration, its declared `securitySchemes`, and how it handles the
 credential. Expect a conversation about data handling before anything is switched on: a provider
-harness is **not end-to-end encrypted** — the plaintext originates on your side, and users are told
+machine is **not end-to-end encrypted** — the plaintext originates on your side, and users are told
 so plainly in our UI.
 
 We will also ask you to plan for a **signed Agent Card** (HP-004). The card is this profile's single
@@ -68,21 +68,21 @@ source of truth for capability, so signing it is what makes that trust verifiabl
 ## 4. What happens next
 
 1. We add your endpoint to our provider registry, initially in staging.
-2. We soak it against real traffic on a small number of harnesses — a full turn, cancellation, an
+2. We soak it against real traffic on a small number of machines — a full turn, cancellation, an
    `INPUT_REQUIRED` round trip, a page refresh rebuilding the transcript, your endpoint going away and
    coming back, and a revoked credential reporting as *re-enter credential* rather than an outage.
 3. It becomes selectable in the product.
 
-"It worked once" is not a soak. One outage on your side takes down every harness behind it
+"It worked once" is not a soak. One outage on your side takes down every machine behind it
 simultaneously, and that blast radius is why this step exists.
 
 ---
 
 ## 5. If you stop
 
-Tell us and we will stop offering your endpoint to new harnesses while existing ones keep working,
+Tell us and we will stop offering your endpoint to new machines while existing ones keep working,
 notify their owners with a date, and delete the stored credentials at the end of it. Existing
-harnesses are then marked with a specific reason — never a generic failure.
+machines are then marked with a specific reason — never a generic failure.
 
 ---
 
