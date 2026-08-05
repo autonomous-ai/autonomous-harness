@@ -4,6 +4,8 @@ The [Autonomous Harness](https://www.autonomous.ai/harness) is a device and a se
 coding agents: one sentence, spoken to a disc on your desk, dispatched to the agents already running
 on your laptop, your server, and in the cloud.
 
+https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
+
 This repository is where the parts other people need to build against are published — specs,
 reference implementations, and the tools to check your own work against them.
 
