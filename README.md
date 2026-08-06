@@ -17,23 +17,23 @@ It drives the agents you already use — and if yours isn't here,
 [you can add it](#add-your-agent-to-harness):
 
 <p align="center">
-  <img src=".github/assets/engines/claude.png"      height="56" alt="Claude Code"  title="Claude Code">
+  <img src=".github/assets/engines/claude.png"      height="80" alt="Claude Code"  title="Claude Code">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/codex.png"       height="56" alt="Codex"        title="Codex">
+  <img src=".github/assets/engines/codex.png"       height="80" alt="Codex"        title="Codex">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/cursor.png"      height="56" alt="Cursor"       title="Cursor">
+  <img src=".github/assets/engines/cursor.png"      height="80" alt="Cursor"       title="Cursor">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/opencode.png"    height="56" alt="OpenCode"     title="OpenCode">
+  <img src=".github/assets/engines/opencode.png"    height="80" alt="OpenCode"     title="OpenCode">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/pi.png"          height="56" alt="Pi"           title="Pi">
+  <img src=".github/assets/engines/pi.png"          height="80" alt="Pi"           title="Pi">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/hermes.png"      height="56" alt="Hermes"       title="Hermes">
+  <img src=".github/assets/engines/hermes.png"      height="80" alt="Hermes"       title="Hermes">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/commandcode.png" height="56" alt="Command Code" title="Command Code">
+  <img src=".github/assets/engines/commandcode.png" height="80" alt="Command Code" title="Command Code">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/devin.png"       height="56" alt="Devin"        title="Devin">
+  <img src=".github/assets/engines/devin.png"       height="80" alt="Devin"        title="Devin">
   &nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/muse.png"        height="56" alt="Muse Code"    title="Muse Code">
+  <img src=".github/assets/engines/muse.png"        height="80" alt="Muse Code"    title="Muse Code">
 </p>
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
