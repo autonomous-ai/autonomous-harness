@@ -27,6 +27,7 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installHermesHooks, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { ENGINES, aliasesFor, engineBin, engineCommand, resolveEngine } from './lib/engineBin.js'
+import { refuseDuplicateAgent } from './lib/duplicateAgent.js'
 import { launcherSessions } from './lib/launcherSessions.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
@@ -130,6 +131,12 @@ const ENGINE_SPAWN_GRACE_MS = 2_500
 /** Between repair attempts for the same launcher. Scanning an engine's store on every 5s tick, for a
  *  launcher whose session cannot be resolved at all, is pure noise. */
 const REPAIR_RETRY_MS = 60_000
+/** …but a NEW agent is a different case: it is waiting for something that is about to happen. Muse makes
+ *  this concrete — its session is only claimable once the user has typed, because a file with no turn in
+ *  it cannot be told apart from the ones muse opens for itself. Backing off a full minute there costs the
+ *  FIRST message: the pane answers while web and device show nothing. So keep sweeping for a while first,
+ *  then settle into the slow rhythm for launchers that will never resolve. */
+const REPAIR_EAGER_ATTEMPTS = 24   // ≈2 min at the 5s sweep
 
 function usage(): never {
   console.log(`harness v${VERSION} — connect this computer to your machine
@@ -906,6 +913,7 @@ async function runForeground(token: string): Promise<void> {
    */
   const agentIdFor = (sessionId: string): string => registry.bySession(sessionId)?.agentId ?? sessionId
 
+
   backend.runtimeModelsProvider = (sessionId) => {
     if (!sessionId) return runtimeProfiles.modelsForSessions(registry.list())
     const session = registry.resolve(sessionId)
@@ -1144,6 +1152,8 @@ async function runForeground(token: string): Promise<void> {
    * worst case is staying invisible one more turn — never binding an agent to someone else's transcript.
    */
   const lastRepairAttempt = new Map<string, number>()
+  /** Attempts so far per agent — the first few run on every sweep, see REPAIR_EAGER_ATTEMPTS. */
+  const repairAttempts = new Map<string, number>()
   /**
    * Bind the agents that have no engine session yet.
    *
@@ -1158,8 +1168,10 @@ async function runForeground(token: string): Promise<void> {
       if (!launcher) continue
       // An engine we cannot resolve (or one still starting) would otherwise be re-scanned every tick.
       const attemptedAt = lastRepairAttempt.get(agent.agentId) ?? 0
-      if (Date.now() - attemptedAt < REPAIR_RETRY_MS) continue
+      const attempts = repairAttempts.get(agent.agentId) ?? 0
+      if (attempts >= REPAIR_EAGER_ATTEMPTS && Date.now() - attemptedAt < REPAIR_RETRY_MS) continue
       lastRepairAttempt.set(agent.agentId, Date.now())
+      repairAttempts.set(agent.agentId, attempts + 1)
       const cwd = agent.cwd ?? launcher.cwd
       if (!cwd) continue
       const identity = await resolvePaneEngineProcess(agent.tmuxPane, agent.engine)
@@ -1234,6 +1246,14 @@ async function runForeground(token: string): Promise<void> {
     // record the LAUNCHER's pid as the session's process identity, and the reaper compares pid + start
     // time — the moment the engine appeared it would read as "process changed under pane" and evict a
     // live session. The periodic scan remains the backstop if this one is early anyway.
+    // Turned away at the door, before hooks are installed or an engine is spawned — see the module for
+    // why muse alone cannot host two agents in one directory.
+    // Two filters, both learned the hard way: the registry is PERSISTED, so after a daemon restart it is
+    // full of agents that may no longer exist, and a launcher reconnecting arrives under the agent id it
+    // already owns. Without either guard the rule refused the very launchers it was meant to protect —
+    // measured: a restart killed both live muse panes, because each was turned away by its own saved entry.
+    refuseLauncher: ({ engine, cwd, launcherId, isLive }) =>
+      refuseDuplicateAgent(registry.list(), engine, cwd, { selfId: launcherId, isLive }),
     onLauncherOpened: (launcher) => {
       // The agent IS the launcher: it exists from the moment `harness <engine>` runs, before the engine
       // has picked a session. Binding that session comes later (onRegistered / the reconcile sweep) —

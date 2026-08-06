@@ -411,6 +411,15 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
   // spawn a stale binary name and install stale hook definitions. Bounded wait — a wedged daemon must
   // never stop the agent from starting, so on timeout we fall back to this build's own answers.
   const ack = await link.waitForAck(ACK_WAIT_MS)
+  // The daemon can turn a launch away outright — today only "one muse agent per directory", where a
+  // second agent could never be told apart from the first. It arrives as `exit` in place of the ack, so
+  // there is no `opened` and `waitForAck` simply times out. Bail HERE, in the gap before the spawn: the
+  // engine has not started, so the pane returns to the shell instead of flashing a CLI that something
+  // else kills a moment later (which is what an older launcher, acting on this only after spawning, does).
+  if (link.exitRequested !== false) {
+    console.error(`harness: ${link.exitRequested || 'this agent was refused by the machine'}`)
+    process.exit(1)
+  }
   const bin = ack?.bin || engineBin(engine)
   if (!ack?.hooksReady && !env.DISABLE_HOOK_INSTALL) {
     // Fallback only. The installers narrate to stdout, which here is the user's pane — a stray

@@ -42,6 +42,16 @@ export interface HookServerHandlers {
    * this to go look (see adoptResumedSessions). Without it, a resumed agent stays invisible.
    */
   onLauncherOpened?: (session: { launcherId: string; engine: RegisteredSession['engine']; tmuxPane: string; cwd?: string | null }) => void
+  /** Turn a launcher away before it spawns anything; the string returned is shown to the person in the
+   *  pane. Used for engines that cannot have two agents in one directory (see `refuseDuplicateAgent`). */
+  refuseLauncher?: (session: {
+    engine: RegisteredSession['engine']
+    cwd?: string | null
+    /** This launcher's own agent id — it RECONNECTS under the same one, so it must never block itself. */
+    launcherId: string
+    /** Whether an agent id still has a launcher on the socket; a persisted entry alone proves nothing. */
+    isLive: (agentId: string) => boolean
+  }) => string | null
   /** A turn is now running (Command Code's PreToolUse — its only live turn-open signal). Idempotent:
    *  it fires once per tool call, and every call after the first in a turn must be a no-op. */
   onTurnStart?: (body: { sessionId: string }) => void
@@ -441,6 +451,24 @@ function handleLauncherSocket(ws: WebSocket, handlers: HookServerHandlers, port:
     // engine; the binary for an engine can be renamed — `commandcode` → `cmd` already happened). A
     // long-lived launcher from an older build would otherwise install stale hooks and spawn a stale
     // binary name, so the daemon — always the newest build — owns both.
+    // Before anything is installed or spawned: some engines cannot have two agents in one directory,
+    // because nothing in what they write says which of the two a session belongs to. `exit` — not
+    // `error` — is what carries this: a launcher that predates this rule ignores an unknown `error`
+    // reason and runs on regardless, while `exit` has always meant "stop this agent", so the rule holds
+    // on old builds too. A new launcher acts on it before it spawns the engine at all.
+    const refusal = handlers.refuseLauncher?.({
+      engine: opened.engine,
+      cwd: opened.cwd ?? null,
+      launcherId: opened.launcherId,
+      isLive: (agentId) => launcherSessions.has(agentId),
+    })
+    if (refusal) {
+      console.warn(`[machine] refused ${sid(opened.launcherId)} · engine=${opened.engine} · ${refusal}`)
+      send({ t: 'exit', reason: refusal })
+      try { ws.close() } catch { /* ignore */ }
+      return
+    }
+
     let hooksReady = false
     if (!env.DISABLE_HOOK_INSTALL) {
       try { installHooksFor(opened.engine, port); hooksReady = true } catch { /* launcher falls back */ }

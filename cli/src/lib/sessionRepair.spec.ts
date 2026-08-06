@@ -169,3 +169,84 @@ describe('session repair', () => {
     await expect(findLiveSession('cursor', CWD, STARTED_AT)).resolves.toBeNull()
   })
 })
+
+/**
+ * Muse opens sessions of its OWN under the user's workspace — memory reminders are the ones seen live.
+ * They share the workspace_root, sit at the same depth, and are BORN LATER, so they beat the real session
+ * on every signal repair used to look at. Measured on a live machine: the daemon tailed an 11-line
+ * reminder session while the conversation ran on in another file, and web and device received nothing.
+ */
+describe('session repair — muse', () => {
+  /** `<MUSE_HOME>/sessions/YYYY/MM/DD/<uuid>/session.jsonl`, with the workspace on line one. */
+  function writeMuseSession(
+    home: string,
+    id: string,
+    workspace: string,
+    events: ReadonlyArray<{ scope: string; event: Record<string, unknown> }>,
+    mtimeMs: number,
+  ): void {
+    const dir = join(home, 'sessions', '2026', '08', '06', id)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'session.jsonl')
+    const lines = [JSON.stringify({ payload: { record: { workspace_root: workspace } } })]
+    for (const { scope, event } of events) lines.push(JSON.stringify({ payload: { kind: scope, event } }))
+    writeFileSync(file, `${lines.join('\n')}\n`)
+    utimesSync(file, new Date(mtimeMs), new Date(mtimeMs))
+  }
+
+  // `payload.kind` is the discriminator: a RUN is a conversation turn, a TASK is scheduler bookkeeping.
+  // Note the run is asserted WITHOUT a prompt — a scheduled run is a real turn nobody typed.
+  const runTurn = { scope: 'run', event: { kind: 'started', prompt: 'xin chao' } }
+  const scheduledRun = { scope: 'run', event: { kind: 'started', prompt: '' } }
+  const taskOnly = [
+    { scope: 'task', event: { kind: 'started', task_id: 't-1' } },
+    { scope: 'task', event: { kind: 'status', message: 'opening' } },
+  ]
+
+  async function loadMuse(museHome: string) {
+    vi.resetModules()
+    process.env.MUSE_HOME = museHome
+    return import('./sessionRepair.js')
+  }
+
+  it('ignores a session nobody typed into, and binds the one they did', async () => {
+    const home = tempRoot()
+    writeMuseSession(home, 'real-session', CWD, [runTurn], STARTED_AT + 5_000)
+    writeMuseSession(home, 'reminder-session', CWD, taskOnly, STARTED_AT + 9_000) // younger: used to win
+    const { findLiveSession } = await loadMuse(home)
+
+    await expect(findLiveSession('muse', CWD, STARTED_AT))
+      .resolves.toMatchObject({ sessionId: 'real-session' })
+  })
+
+  it('binds a SCHEDULED run, whose prompt is empty because nobody typed it', async () => {
+    // The filter must key on the run lifecycle, not on the presence of a prompt: a scheduled run is a
+    // real turn the scheduler triggered. Requiring a prompt would leave those sessions unbindable.
+    const home = tempRoot()
+    writeMuseSession(home, 'scheduled-session', CWD, [scheduledRun], STARTED_AT + 5_000)
+    const { findLiveSession } = await loadMuse(home)
+
+    await expect(findLiveSession('muse', CWD, STARTED_AT))
+      .resolves.toMatchObject({ sessionId: 'scheduled-session' })
+  })
+
+  it('binds nothing at all when the only candidate has no user turn', async () => {
+    const home = tempRoot()
+    writeMuseSession(home, 'reminder-session', CWD, taskOnly, STARTED_AT + 5_000)
+    const { findLiveSession } = await loadMuse(home)
+
+    await expect(findLiveSession('muse', CWD, STARTED_AT)).resolves.toBeNull()
+  })
+
+  it('still refuses when two real sessions share a directory', async () => {
+    // The filter narrows the field; it must not resolve a genuine tie. Two sessions someone typed into
+    // is the case the "one muse agent per directory" rule prevents upstream — repair stays fail-closed,
+    // because guessing here wires one agent's tile to the other's transcript.
+    const home = tempRoot()
+    writeMuseSession(home, 'session-a', CWD, [runTurn], STARTED_AT + 5_000)
+    writeMuseSession(home, 'session-b', CWD, [runTurn], STARTED_AT + 6_000)
+    const { findLiveSession } = await loadMuse(home)
+
+    await expect(findLiveSession('muse', CWD, STARTED_AT)).resolves.toBeNull()
+  })
+})

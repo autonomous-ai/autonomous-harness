@@ -26,7 +26,7 @@ import { readdir, readFile, realpath, stat } from 'fs/promises'
 import { basename, dirname, join, sep } from 'path'
 import { promisify } from 'util'
 import { env } from '../config/env.js'
-import { museWorkspaceRoot } from '../engines/muse/normalizer.js'
+import { museEvent, museWorkspaceRoot } from '../engines/muse/normalizer.js'
 import type { AgentEngine } from '../engines/types.js'
 import { readCodexRolloutMeta } from '../engines/codex/rollout.js'
 
@@ -109,7 +109,7 @@ function idFromFile(path: string): string {
  * other describe the SAME directory and would never match textually — measured: a repair that resolved
  * correctly for `/private/tmp/synctest` returned null for `/tmp/synctest`.
  */
-async function sameDir(a: string, b: string): Promise<boolean> {
+export async function sameDir(a: string, b: string): Promise<boolean> {
   if (a === b) return true
   const [ra, rb] = await Promise.all([
     realpath(a).catch(() => a),
@@ -129,6 +129,23 @@ async function sameDir(a: string, b: string): Promise<boolean> {
  * so it qualifies for neither tier and the pane stays unbound until the real session appears.
  */
 interface TranscriptMeta { cwd: string | null; sessionId?: string }
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+/**
+ * True once a muse session has opened a RUN — the lifecycle a conversation is made of.
+ *
+ * Not "has a prompt": a scheduled run is a real turn whose prompt is empty, because the scheduler
+ * triggered it rather than a person. `payload.kind` is what separates the two lifecycles that share the
+ * name `started`; a `task` one is scheduler bookkeeping and several fire inside a single run.
+ */
+function hasRun(lines: string[]): boolean {
+  for (const line of lines) {
+    const record = museEvent(line)
+    if (record?.scope === 'run' && str(record.event.kind) === 'started') return true
+  }
+  return false
+}
 
 async function fileEngineSession(
   root: string,
@@ -226,8 +243,17 @@ export async function findLiveSession(
       // files live one level deeper under `subagent/`, and must never be adopted as agents of their own.
       return fileEngineSession(join(env.MUSE_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
         if (path.includes(`${sep}subagent${sep}`)) return null
-        const root = museWorkspaceRoot((await readFile(path, 'utf-8').catch(() => '')).split('\n', 1)[0] ?? '')
-        return root ? { cwd: root, sessionId: basename(dirname(path)) } : null
+        const lines = (await readFile(path, 'utf-8').catch(() => '')).split('\n')
+        const root = museWorkspaceRoot(lines[0] ?? '')
+        if (!root) return null
+        // Muse opens sessions of its OWN under the same workspace_root — memory reminders
+        // (`memory_reminder_child_session_linked`) are the ones seen live. They are indistinguishable from
+        // the user's session by path, workspace or birth time, and being younger they WIN the `born` tier:
+        // measured, the daemon tailed an 11-line reminder session while the real conversation ran on in
+        // another file, so web and device received nothing at all. What separates them is that a session
+        // being conversed in has opened a RUN.
+        if (!hasRun(lines)) return null
+        return { cwd: root, sessionId: basename(dirname(path)) }
       }, opts)
     case 'opencode':
       // time_created is epoch MILLISECONDS here.
