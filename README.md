@@ -11,6 +11,7 @@ reference implementations, and the tools to check your own work against them.
 
 | | |
 |---|---|
+| [`cli/`](cli/README.md) | **`harness` CLI** — run the coding-agent CLIs you already use (Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin) in tmux on your own machine and drive them from the web app or the device. End-to-end encrypted browser channel; the agents stay your processes with your credentials |
 | [`provider/`](provider/README.md) | **Provider protocol** — make your own agent platform available on the Machine. Users connect it with a URL and a credential, then drive it from the web app or the device. A profile of [A2A](https://github.com/a2aagent/A2A) v1.0.1, with a reference implementation and a conformance runner |
 
 More will be published here as it stabilises. Each section is self-contained: its own README, its own

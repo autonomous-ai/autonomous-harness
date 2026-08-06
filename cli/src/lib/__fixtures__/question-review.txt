@@ -1,0 +1,45 @@
+
+⏺ You picked durian (via the custom "Other" option, not Apple or Mango).
+
+✻ Worked for 5s
+
+❯ Ask me two questions in ONE AskUserQuestion call: (1) which colors? multiSelect true, options Red, Blue, Green. (2)
+  which size? single, options S, M. Nothing else.
+
+⏺ User answered Claude's questions:
+  ⎿  · Which colors do you like? → Green, Red
+     · Which size do you want? → M
+
+⏺ Colors: Green and Red. Size: M.
+
+✻ Cooked for 4s
+
+❯ Use AskUserQuestion: pick a drink? options Tea, Coffee. Nothing else.
+
+⏺ User answered Claude's questions:
+  ⎿  · Which drink would you like? → Tea
+
+⏺ You picked Tea.
+
+✻ Churned for 4s
+
+❯ Use AskUserQuestion ONE question multiSelect true: which toppings? options Cheese, Ham, Basil. Nothing else.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Toppings  ✔ Submit  →
+
+Review your answers
+
+ ● Which toppings do you want?
+   → Cheese, Basil
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+
+
+
+
+
+

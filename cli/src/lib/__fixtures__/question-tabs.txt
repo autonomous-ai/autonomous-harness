@@ -1,0 +1,45 @@
+│                /…/scratchpad/qtest                 │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+   Tackle your toughest work with Opus 5. Switch anytime with /model.
+
+❯ Use the AskUserQuestion tool right now to ask me: which color do you like? options Red, Yellow, Orange. Do nothing
+  else.
+
+⏺ User answered Claude's questions:
+  ⎿  · Which color do you like? → Yellow
+
+⏺ You picked Yellow.
+
+✻ Sautéed for 4s
+
+❯ Again: use AskUserQuestion to ask which fruit? options Apple, Mango. Nothing else.
+
+⏺ User answered Claude's questions:
+  ⎿  · Which fruit do you like? → durian please
+
+⏺ You picked durian (via the custom "Other" option, not Apple or Mango).
+
+✻ Worked for 5s
+
+❯ Ask me two questions in ONE AskUserQuestion call: (1) which colors? multiSelect true, options Red, Blue, Green. (2)
+  which size? single, options S, M. Nothing else.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Planning: /Users/example/.claude/plans/use-the-askuserquestion-tool-async-zephyr.md
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Colors  ☐ Size  ✔ Submit  →
+
+Which colors do you like?
+
+❯ 1. [ ] Red
+  A warm, bold color.
+  2. [ ] Blue
+  A cool, calm color.
+  3. [ ] Green
+  A fresh, natural color.
+  4. [ ] Type something
+     Next
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
