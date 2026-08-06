@@ -18,7 +18,6 @@
 
 import { execFile, spawn } from 'child_process'
 import { refusalMessage } from './duplicateAgent.js'
-import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { WebSocket } from 'ws'
 import { env } from '../config/env.js'
@@ -42,25 +41,6 @@ const PANE_RE = /^%\d+$/
 const NOTICE_MS = 6_000
 /** How long to wait for the daemon's `opened` ack before falling back to this build's own answers. */
 const ACK_WAIT_MS = 2_000
-
-/**
- * Where this launcher's engine will keep its data, or undefined when that is the daemon's own default.
- *
- * muse only, and it resolves the way MUSE ITSELF does — measured: muse honours `XDG_DATA_HOME` and puts
- * everything under `<xdg>/muse`, which is how a second provider (a local router in front of another
- * model) gets its own catalog cache and session tree. The daemon scans ONE root, so unless the launcher
- * reports the root it actually used, that agent's transcripts sit somewhere nobody looks: it binds to
- * nothing, and web and device stay blank without an error.
- *
- * Undefined for every other engine — none of them relocate this way, and sending a value the daemon would
- * then have to second-guess is worse than sending nothing.
- */
-function engineDataHome(engine: AgentEngine): string | undefined {
-  if (engine !== 'muse') return undefined
-  if (process.env.MUSE_HOME) return process.env.MUSE_HOME
-  if (process.env.XDG_DATA_HOME) return join(process.env.XDG_DATA_HOME, 'muse')
-  return undefined   // the daemon's default is the same place; let it decide
-}
 
 function fail(lines: string[]): never {
   for (const line of lines) console.error(line)
@@ -238,7 +218,7 @@ class LauncherLink {
       try {
         ws.send(JSON.stringify({
           t: 'open', v: LAUNCHER_PROTOCOL_V, launcherId: this.launcherId, engine: this.engine,
-          tmuxPane: this.pane, cwd: this.cwd, version: VERSION, dataHome: engineDataHome(this.engine),
+          tmuxPane: this.pane, cwd: this.cwd, version: VERSION,
         }))
       } catch { /* the close handler will retry */ }
       if (wasDown) this.onState(true)

@@ -219,23 +219,6 @@ describe('session repair — muse', () => {
       .resolves.toMatchObject({ sessionId: 'real-session' })
   })
 
-  it('scans the AGENT\'s own data root, so two providers can run side by side', async () => {
-    // muse follows XDG_DATA_HOME, which is how a second provider (a local router in front of another
-    // model) gets its own catalog cache and session tree. The daemon used to scan one global root, so an
-    // agent launched with a different one wrote transcripts nowhere anybody looked: it bound to nothing
-    // and web and device stayed blank. Same cwd on purpose — the ROOT is the only thing telling them apart.
-    const dflt = tempRoot()
-    const other = tempRoot()
-    writeMuseSession(dflt, 'default-session', CWD, [runTurn], STARTED_AT + 5_000)
-    writeMuseSession(other, 'router-session', CWD, [runTurn], STARTED_AT + 5_000)
-    const { findLiveSession } = await loadMuse(dflt)
-
-    await expect(findLiveSession('muse', CWD, STARTED_AT, { bornOnly: true }))
-      .resolves.toMatchObject({ sessionId: 'default-session' })
-    await expect(findLiveSession('muse', CWD, STARTED_AT, { bornOnly: true, dataHome: other }))
-      .resolves.toMatchObject({ sessionId: 'router-session' })
-  })
-
   it('binds a SCHEDULED run, whose prompt is empty because nobody typed it', async () => {
     // The filter must key on the run lifecycle, not on the presence of a prompt: a scheduled run is a
     // real turn the scheduler triggered. Requiring a prompt would leave those sessions unbindable.

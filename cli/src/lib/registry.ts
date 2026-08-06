@@ -47,14 +47,6 @@ export interface RegisteredSession {
    */
   agentId: string
   /**
-   * muse only: the engine data root this agent actually uses, when it is not the daemon's default.
-   *
-   * The daemon scans ONE root per engine, so an agent launched with a different `XDG_DATA_HOME` writes
-   * transcripts nowhere anybody looks — it binds to nothing and the web pane stays blank. The launcher
-   * reports the root it ran with; absent means "the daemon's default".
-   */
-  dataHome?: string | null
-  /**
    * The engine session currently BOUND to this agent — internal mapping, not identity. It changes on a
    * rotation and is only ever addressed through the session index.
    */
@@ -117,18 +109,12 @@ function isWithin(root: string, file: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`/`) && !rel.startsWith(`\\`))
 }
 
-/**
- * `dataHome` is the AGENT's engine data root, and it must come from the registry — i.e. from what the
- * launcher told the daemon when it opened — never from anything a client sent. This function is the gate
- * that stops a request-supplied session id from being resolved into an arbitrary path; taking the root
- * from the request would hand that gate its own key.
- */
-export function validTranscriptPath(engine: AgentEngine, filePath: string, dataHome?: string | null): boolean {
+export function validTranscriptPath(engine: AgentEngine, filePath: string): boolean {
   try {
     const actual = realpathSync(filePath)
     const root = realpathSync(
       engine === 'muse'
-        ? join(dataHome || env.MUSE_HOME, 'sessions')
+        ? join(env.MUSE_HOME, 'sessions')
         : engine === 'codex'
         ? join(env.CODEX_HOME, 'sessions')
         : engine === 'cursor'
@@ -240,7 +226,7 @@ class Registry {
         if (
           !pane
           || (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
-          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath, typeof raw?.dataHome === 'string' ? raw.dataHome : null))
+          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath))
         ) {
           changed = true
           continue
@@ -316,7 +302,7 @@ class Registry {
    *
    * An agent whose `sessionId` is empty is UNBOUND: known, addressable, not yet mapped to a transcript.
    */
-  openAgent(input: { agentId: string; engine: AgentEngine; tmuxPane: string; cwd?: string | null; dataHome?: string | null }):
+  openAgent(input: { agentId: string; engine: AgentEngine; tmuxPane: string; cwd?: string | null }):
     { entry: RegisteredSession; isNew: boolean; evicted: string | null } | null {
     const { agentId, engine, tmuxPane } = input
     if (!agentId || !tmuxPane || !PANE_RE.test(tmuxPane)) return null
@@ -324,7 +310,6 @@ class Registry {
     if (existing) {
       existing.tmuxPane = tmuxPane
       existing.cwd = input.cwd ?? existing.cwd
-      existing.dataHome = input.dataHome ?? existing.dataHome
       existing.updatedAt = Date.now()
       this.save()
       return { entry: existing, isNew: false, evicted: null }
@@ -344,7 +329,6 @@ class Registry {
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
-      dataHome: input.dataHome ?? null,
       tmuxPane,
       source: null,
       title: null,
@@ -390,9 +374,7 @@ class Registry {
       || !pane
       || !PANE_RE.test(pane)
       || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
-      // The root comes from the AGENT the daemon already knows — never from this payload, which a
-      // hook (and so anything that can reach the hook port) supplies.
-      || (transcriptPath && !validTranscriptPath(engine, transcriptPath, this.agents.get(agentId)?.dataHome))
+      || (transcriptPath && !validTranscriptPath(engine, transcriptPath))
     ) return null
     if (engine === 'codex' && transcriptPath && readCodexRolloutMeta(transcriptPath)?.isSubagent) return null
 
