@@ -1,6 +1,14 @@
 # Contributing
 
-The most useful contributions here are not code.
+Two kinds of contribution land here, and they have different bars.
+
+**Adding an agent framework** is the code path, and it is welcome — see
+[`cli/src/engines/README.md`](cli/src/engines/README.md) for the whole job in dependency order. Open
+an issue first with a recorded session from the real binary; that recording decides most of the
+design, and it is the difference between an engine that works and one that fails silently.
+
+**Everything about the provider spec** is below, where the most useful contributions are usually not
+code at all.
 
 ## Found a gap in the spec?
 
