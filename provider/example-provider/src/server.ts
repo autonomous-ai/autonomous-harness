@@ -14,7 +14,8 @@ import { buildAgentCard, EXT } from './agentCard.js'
 import { runTurn } from './claude.js'
 import { loadConfig, type AgentEntry, type Config } from './config.js'
 import { createAgent, deleteAgent, renameAgent, WorkspaceError } from './workspace.js'
-import { epoch, listSessions, readTranscript, sliceByTime } from './jsonl.js'
+import { epoch, readTranscript, sliceByTime } from './jsonl.js'
+import { summariseTurn } from './recap.js'
 import { messageToParts, pairToolNames, sessionIdOf, streamLineToOutcome } from './mapper.js'
 import { SessionStore, type TaskRecord } from './sessions.js'
 import {
@@ -270,6 +271,34 @@ async function sendStreamingMessage(res: ServerResponse, deps: Deps, params: Rec
     final: true,
   })
   if (!res.destroyed) res.end()
+
+  // HP-302 — summarise the turn AFTER closing the stream. Not awaited: the turn is over, and holding
+  // the SSE response open for a summary would make every turn look slower than it was.
+  // Only a turn that actually completed: summarising a failure produces a headline that reads like
+  // an accomplishment.
+  if (finalState === TaskState.COMPLETED) void recapTurn(deps, taskId, agent, collected)
+}
+
+/** Summarise one finished turn and persist it on the task, for `autonomous.GetRecap` to serve. */
+async function recapTurn(deps: Deps, taskId: string, agent: AgentEntry, parts: Part[]): Promise<void> {
+  // The assistant's own words only — thinking and tool output are not what the turn accomplished.
+  const turnText = parts
+    .filter((p) => p.metadata?.['autonomous.ai/kind'] === 'text_delta')
+    .map((p) => p.text ?? '')
+    .join('')
+  try {
+    const recap = await summariseTurn({
+      claudeBin: deps.config.claudeBin,
+      cwd: agent.cwd,
+      turnText,
+      model: deps.config.recapModel,
+      disabled: deps.config.recapDisabled,
+    })
+    if (recap) deps.store.setRecap(taskId, recap.recap, recap.body)
+  } catch (err) {
+    // A recap is a nicety. It must never be able to retroactively fail a turn that succeeded.
+    console.warn(`[example-provider] recap failed for ${taskId}:`, err instanceof Error ? err.message : String(err))
+  }
 }
 
 // ── History (HP-200 … HP-202) ────────────────────────────────────────────────────────────────────
@@ -432,22 +461,28 @@ function workspaceWrite(
 // ── Extension: session-recap (HP-302) ────────────────────────────────────────────────────────────
 
 /**
- * Recent turns for the device's tiles, straight out of Claude's transcripts.
+ * Recent turns for the device's tiles.
  *
- * This is where reading the JSONL pays off twice: sessions started in a terminal show up here too,
- * even though this provider streams nothing live for them.
+ * Served from the task records, which is what makes these PER TURN — the unit HP-302 asks for. An
+ * earlier version listed recent *sessions* and used each one's title, which was wrong twice over:
+ * a session is not a turn, and a title is what the user ASKED rather than what the turn accomplished.
+ *
+ * `contextId` is the A2A context the client minted, never Claude's own session id. A client uses it
+ * to reopen the conversation, so handing back an id we never issued would simply not resolve.
  */
 function getRecap(res: ServerResponse, deps: Deps, params: Record<string, unknown>, id: string | number | null): void {
   const agent = agentById(deps, String(params.agentId ?? ''))
   if (!agent) { sendRpcError(res, id, RpcErrors.INVALID_PARAMS); return }
   const n = Math.max(1, Math.min(5, Number(params.n) || 2))
-  const entries = listSessions(deps.config.claudeProjectsDir, agent.cwd)
-    .slice(0, n)
-    .map((s) => ({
-      recap: s.title.slice(0, 200), // the device renders under a 200-char ceiling
-      contextId: s.sessionId,
-      timestamp: new Date(s.updatedAt).toISOString(),
-    }))
+  // Empty until a turn has been summarised — which the schema calls correct. The device shows
+  // nothing rather than resurrecting stale text.
+  const entries = deps.store.recentRecaps(agent.id, n).map((t) => ({
+    recap: t.recap!,
+    body: t.body,
+    contextId: t.contextId,
+    taskId: t.taskId,
+    timestamp: new Date(t.endedAt ?? t.startedAt).toISOString(),
+  }))
   sendRpcResult(res, id, { agentId: agent.id, entries })
 }
 

@@ -140,6 +140,14 @@ const declaresExtension = (uri: string): boolean =>
 /**
  * HP-302 — `autonomous.GetRecap`. Headline-style summaries of recent turns, for the device's tiles.
  *
+ * `recap` is what the turn ACCOMPLISHED, so it comes from the ASSISTANT's own words. It is emphatically
+ * not `metadata.title`, which is the first user message — i.e. what was ASKED. An earlier version
+ * returned the title, which made the device tile read the user's own prompt back at them.
+ *
+ * A real provider would summarise with a model. This one is scripted and must stay deterministic, so
+ * it excerpts instead: headline = the reply's opening sentence, body = the reply. That is honest, and
+ * it demonstrates the two-field shape a client renders (tile + tap-to-read).
+ *
  * An empty array is the correct answer before anything has been summarised: the device shows nothing
  * rather than resurrecting stale text.
  */
@@ -152,14 +160,34 @@ function getRecap(res: ServerResponse, store: TaskStore, params: Record<string, 
   const n = Math.max(1, Math.min(5, Number(params.n) || 2))
   const entries = store
     .list()
-    .filter((t) => isTerminal(t.status.state))
+    .filter((t) => t.status.state === TaskState.COMPLETED) // a failed turn accomplished nothing
+    .map((t) => ({ task: t, said: assistantTextOf(t) }))
+    .filter((e) => !!e.said)
     .slice(0, n)
-    .map((t) => ({
-      recap: (t.metadata?.title ?? 'Untitled').slice(0, 200),
-      contextId: t.contextId,
-      taskId: t.id,
+    .map((e) => ({
+      recap: firstSentence(e.said).slice(0, 200), // `recapEntry.recap` is capped at 200 by the schema
+      body: e.said.slice(0, 2000),
+      contextId: e.task.contextId,
+      taskId: e.task.id,
     }))
   sendRpcResult(res, id, { agentId, entries })
+}
+
+/** Everything the assistant said in a turn, flattened to the one line a tile renders. */
+function assistantTextOf(task: Task): string {
+  return task.history
+    .filter((m) => m.role === 'ROLE_AGENT')
+    .flatMap((m) => m.parts)
+    .filter((p) => (p.metadata?.['autonomous.ai/kind'] ?? 'text_delta') === 'text_delta')
+    .map((p) => p.text ?? '')
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function firstSentence(text: string): string {
+  const match = /[.!?](\s|$)/.exec(text)
+  return match ? text.slice(0, match.index + 1) : text
 }
 
 // ── SendStreamingMessage (HP-100 … HP-106) ───────────────────────────────────────────────────────

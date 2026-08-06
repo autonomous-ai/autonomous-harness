@@ -20,6 +20,14 @@ export interface TaskRecord {
   endedAt?: number
   /** First user text of the turn — the session title projection (spec §10.4). */
   title: string
+  /**
+   * Headline of what this turn ACCOMPLISHED (HP-302). Absent until the turn has been summarised, and
+   * absent forever on a turn that failed — deliberately NOT the same thing as `title`, which is what
+   * the user asked.
+   */
+  recap?: string
+  /** The fuller summary behind the headline; `recapEntry.body` on the wire. */
+  body?: string
 }
 
 export interface ContextRecord {
@@ -118,5 +126,28 @@ export class SessionStore {
   /** Contexts belonging to one agent, used to answer ListTasks scoped to an agent. */
   contextsForAgent(agentId: string): ContextRecord[] {
     return Object.values(this.state.contexts).filter((c) => c.agentId === agentId)
+  }
+
+  /** Attach a summary to a finished turn. Persisted, because HP-302 says "persisted". */
+  setRecap(taskId: string, recap: string, body: string): void {
+    const task = this.state.tasks[taskId]
+    if (!task || !recap) return
+    task.recap = recap
+    task.body = body
+    this.save()
+  }
+
+  /**
+   * The most recent SUMMARISED turns for one agent, newest first.
+   *
+   * Per TURN, not per session: HP-302 is "short persisted per-turn summaries", and a session can
+   * hold dozens of turns. Turns still running, and turns that failed, carry no recap and are simply
+   * not here — an empty array before anything has been summarised is the correct answer.
+   */
+  recentRecaps(agentId: string, n: number): TaskRecord[] {
+    return Object.values(this.state.tasks)
+      .filter((t) => t.agentId === agentId && !!t.recap)
+      .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
+      .slice(0, n)
   }
 }

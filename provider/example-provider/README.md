@@ -47,6 +47,8 @@ curl -N localhost:4502 \
 | `STATE_FILE` | `./sessions.json` |
 | `WORKSPACE_ROOT` | `/tmp/example-provider-scratch` — where `autonomous.CreateAgent` puts a new agent's directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` |
+| `CLAUDE_RECAP_MODEL` | `claude-haiku-4-5-20251001` — the per-turn recap is a one-line headline, not the work, so it gets a small model |
+| `RECAP_DISABLED` | unset. `1` skips the recap model entirely and excerpts the turn instead |
 
 ## How it works
 
@@ -71,6 +73,23 @@ too** — it just does not stream live, since this app implements no `SubscribeT
 events and JSONL lines carry the same Anthropic message shape, so writing two parsers is the reliable
 way to make the live view and the post-refresh view disagree.
 
+**Recaps are generated per TURN**, after the stream closes, by a disposable one-shot `claude --print`
+(`src/recap.ts`). Three details are load-bearing:
+
+- **No `--resume`.** The summariser must never touch the live session, or the summary lands in the
+  transcript and the next turn's history contains a summary of the previous one.
+- **`recap` is what the turn ACCOMPLISHED, not what was asked.** Those are different sentences, and
+  `metadata.title` — the first user message — is the wrong one. A device tile that echoes the user's
+  own prompt back at them is worse than no tile.
+- **The caps are re-applied after the model answers.** A model asked for 15 words will sometimes give
+  40, and `recapEntry.recap` is capped at 200 characters by the schema. Nothing ever appends an
+  ellipsis: the tile renders on a small round display, where a line advertising its own truncation
+  reads worse than one that simply ends.
+
+A failed or cancelled turn gets no recap. If the one-shot fails, times out, or `RECAP_DISABLED=1`,
+the turn's own opening sentence is excerpted instead — a recap is a nicety and must never be able to
+retroactively fail a turn that succeeded.
+
 ## What it does not do
 
 - **No `INPUT_REQUIRED`.** With permissions skipped, Claude never asks, so HP-104 stays demonstrated
@@ -84,7 +103,7 @@ way to make the live view and the post-refresh view disagree.
 ## Verification
 
 ```bash
-npm test         # 31 tests, deterministic — replays a RECORDED real turn
+npm test         # 43 tests, deterministic — replays a RECORDED real turn; never spawns a model
 npm run typecheck
 ```
 
@@ -130,5 +149,6 @@ All three are pinned by tests, and all three tests were mutation-checked.
 | `src/claude.ts` | spawn, stdin frame, stdout lines, process-group kill |
 | `src/mapper.ts` | **the** Claude → A2A mapping, shared by the live and history paths |
 | `src/jsonl.ts` | transcript discovery, reading and time-slicing |
-| `src/sessions.ts` | `contextId ↔ claudeSessionId`, and task windows |
+| `src/sessions.ts` | `contextId ↔ claudeSessionId`, task windows, and persisted per-turn recaps |
+| `src/recap.ts` | the per-turn recap one-shot, its caps, and the no-model fallback |
 | `src/server.ts` | JSON-RPC + SSE, with HP-xxx clause references inline |

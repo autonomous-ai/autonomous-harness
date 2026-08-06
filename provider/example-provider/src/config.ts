@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, resolve } from 'node:path'
+import { DEFAULT_RECAP_MODEL } from './recap.js'
 
 export interface AgentEntry {
   id: string
@@ -35,6 +36,10 @@ export interface Config {
   /** Where sessions.json lives. */
   stateFile: string
   claudeProjectsDir: string
+  /** Model for the per-turn recap one-shot — a headline is not the work, so it gets a small model. */
+  recapModel: string
+  /** Skip the recap one-shot and excerpt the turn instead. Keeps the example cheap to run. */
+  recapDisabled: boolean
 }
 
 /**
@@ -127,5 +132,7 @@ export function loadConfig(): Config {
     port: Number(process.env.PORT ?? 4502),
     stateFile: process.env.STATE_FILE ?? resolve(process.cwd(), 'sessions.json'),
     claudeProjectsDir: process.env.CLAUDE_PROJECTS_DIR ?? `${homedir()}/.claude/projects`,
+    recapModel: process.env.CLAUDE_RECAP_MODEL || DEFAULT_RECAP_MODEL,
+    recapDisabled: process.env.RECAP_DISABLED === '1',
   }
 }
