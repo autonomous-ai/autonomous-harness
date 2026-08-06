@@ -106,7 +106,7 @@ result, or the name of what you are working on — not because of a policy, beca
 
 The crypto core is a byte-identical twin of the browser's copy, with a drift-guard test that fails if
 the two ever diverge, and committed self-vectors that catch a crypto library changing underneath it.
-Read it yourself: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
+It's all in [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
 
 ## Contributing, security, licence
 
