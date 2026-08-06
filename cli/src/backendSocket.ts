@@ -765,6 +765,23 @@ export class BackendSocket {
             return
           }
 
+          // Muse has no windower, so it must not fall through to the raw one: that pairs claude's
+          // line-uuid cursor with claude's normalizer, and a muse transcript comes back EMPTY — the web
+          // pane opened blank with no error anywhere. Until a muse window exists, answer the page with
+          // the whole transcript (`hasMore: false` ends the scroll honestly, and these sessions are
+          // small: a real one measured 271 lines).
+          if (s.engine === 'muse') {
+            reply(type, requestId, {
+              id: sessionId,
+              title: projectDisplayName(s),
+              events: museMessagesToEvents(lines),
+              timestamp,
+              engine: s.engine,
+              hasMore: false,
+              oldestCursor: null,
+            })
+            return
+          }
           const w = s.engine === 'codex'
             ? windowCodexLines(lines, { limit, before })
             : s.engine === 'cursor'
@@ -793,7 +810,8 @@ export class BackendSocket {
                 : s.engine === 'commandcode'
                   ? commandcodeMessagesToEvents(w.window)
                   : messagesToEvents(w.window)
-          if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode' && s.engine !== 'muse') await enrichSubagentStats(events, s.transcriptPath)
+          // muse is answered above and never reaches here, so it is absent from this list on purpose.
+          if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode') await enrichSubagentStats(events, s.transcriptPath)
           // Older pages must not inject a spurious end-of-transcript marker mid-scroll.
           if (before && events[events.length - 1]?.type === 'done') events.pop()
           reply(type, requestId, {
