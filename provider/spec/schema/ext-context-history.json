@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.autonomous.ai/api/a2a/ext/context-history",
+  "title": "Extension: context-history",
+  "description": "A whole conversation's transcript, in one call and optionally windowed (HP-304). `GetTask` returns one TURN; a client opening a chat wants the CONTEXT, which is many turns, and for a long one it wants only the newest slice. Without this extension a client must fall back to HP-201/HP-202 and pull every turn separately at full size. Each $defs entry carries its own examples.",
+  "type": "object",
+  "$defs": {
+    "historyRequest": {
+      "type": "object",
+      "required": ["contextId"],
+      "properties": {
+        "contextId": {
+          "type": "string",
+          "description": "The A2A context — the id the CLIENT minted, never the provider's own internal session id."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Window size. ABSENT means the complete transcript, and the provider then MUST omit hasMore/oldestCursor/staleCursor entirely — that absence is what tells the client this response is not windowed. A window may come back LONGER than `limit`: see oldestCursor."
+        },
+        "before": {
+          "type": "string",
+          "description": "A `messageId` — the oldest message the client already holds, taken from a previous response's `oldestCursor`. The window returned ends immediately BEFORE it (exclusive), so pages never overlap. Paging is backwards-only; there is no `after` (live turns arrive on the stream instead). Honoured only together with `limit`."
+        }
+      },
+      "examples": [
+        { "contextId": "ctx-91af", "limit": 60 },
+        { "contextId": "ctx-91af", "limit": 60, "before": "b3f2c1d0-5a44-4e1b-9c77-2f0a1e6d8b31" },
+        { "contextId": "ctx-91af" }
+      ]
+    },
+    "historyResponse": {
+      "type": "object",
+      "required": ["contextId", "messages"],
+      "properties": {
+        "contextId": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "description": "Standard A2A Messages, ALWAYS oldest-first, so a client prepends a page exactly as received. An empty array is a legitimate answer for a context that has not spoken yet.",
+          "items": { "type": "object" }
+        },
+        "hasMore": {
+          "type": "boolean",
+          "description": "Older messages exist before this window. Omitted when the request carried no `limit`."
+        },
+        "oldestCursor": {
+          "type": ["string", "null"],
+          "description": "The `messageId` of the window's FIRST message — pass it back as `before` to page older. Null when nothing older remains. Because the window start is snapped back to a real turn boundary (so a window never splits a tool call from its result), the returned window MAY contain more messages than `limit` asked for; `limit` is a floor, not an exact count."
+        },
+        "staleCursor": {
+          "type": "boolean",
+          "description": "The `before` cursor is no longer in the transcript — typically a compaction moved it out from under the client. The provider MUST then answer with empty `messages`, `hasMore: false` and `oldestCursor: null` rather than an error, and the client reloads the context from the newest page. Omitted when false."
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "Content was dropped to stay under the HP-203 size ceiling. Silent truncation is a violation (HP-203), so this MUST be set whenever anything was cut."
+        }
+      },
+      "examples": [
+        {
+          "contextId": "ctx-91af",
+          "messages": [
+            { "role": "ROLE_USER", "messageId": "b3f2c1d0-5a44-4e1b-9c77-2f0a1e6d8b31", "parts": [{ "text": "How is Acme pacing?" }] },
+            { "role": "ROLE_AGENT", "messageId": "7c1e9a22-08d3-4f5a-bb90-1d6e4c2f7a55", "parts": [{ "text": "Acme is at 118% of pacing.", "metadata": { "autonomous.ai/kind": "text_delta" } }] }
+          ],
+          "hasMore": true,
+          "oldestCursor": "b3f2c1d0-5a44-4e1b-9c77-2f0a1e6d8b31"
+        },
+        {
+          "contextId": "ctx-91af",
+          "messages": [],
+          "hasMore": false,
+          "oldestCursor": null,
+          "staleCursor": true
+        },
+        { "contextId": "ctx-91af", "messages": [] }
+      ]
+    }
+  }
+}

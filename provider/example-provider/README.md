@@ -69,12 +69,29 @@ The user's message is passed **verbatim** — no wrapper text, no prepended hint
 nothing. A pleasant side effect: **a turn typed straight into a terminal shows up in the session list
 too** — it just does not stream live, since this app implements no `SubscribeToTask`.
 
+`GetTask` returns one TURN, which is not what a client opening a chat wants: a conversation is many
+turns, and a long one should arrive a page at a time. That is `autonomous.GetContextHistory`
+(`context-history`, HP-304) — a whole context, newest window first, `before` walking backwards. It
+reads the transcript whole rather than per-task, so nothing can fall into the gap between two turns'
+time windows, and a window's left edge is snapped back to a real user prompt so a page can never begin
+between a tool call and its result.
+
 **One mapper, two callers.** `src/mapper.ts` is the only place Claude's shape becomes A2A. Stdout
 events and JSONL lines carry the same Anthropic message shape, so writing two parsers is the reliable
 way to make the live view and the post-refresh view disagree.
 
-**Recaps are generated per TURN**, after the stream closes, by a disposable one-shot `claude --print`
-(`src/recap.ts`). Three details are load-bearing:
+**Recaps are generated per TURN**, on the turn's own stream and just before its terminal event, by a
+disposable one-shot `claude --print` (`src/recap.ts`). The turn therefore stays open while the summary
+is written — deliberately, and announced: a `recap_start` part goes out before the wait and a
+`recap_end` after it (HP-212), so the client can say "preparing a recap" instead of showing a stall.
+
+The alternative — close the stream, summarise afterwards, let the client pull it with
+`autonomous.GetRecap` — is what this used to do, and it cannot work: that method is scoped to an AGENT
+and takes no task id, so a client asking the instant a turn ends gets either nothing or the PREVIOUS
+turn's headline. The recap is still persisted as well, because a device restoring its tiles after a
+reboot has no stream to read.
+
+Four details are load-bearing:
 
 - **No `--resume`.** The summariser must never touch the live session, or the summary lands in the
   transcript and the next turn's history contains a summary of the previous one.
@@ -86,9 +103,12 @@ way to make the live view and the post-refresh view disagree.
   ellipsis: the tile renders on a small round display, where a line advertising its own truncation
   reads worse than one that simply ends.
 
-A failed or cancelled turn gets no recap. If the one-shot fails, times out, or `RECAP_DISABLED=1`,
-the turn's own opening sentence is excerpted instead — a recap is a nicety and must never be able to
-retroactively fail a turn that succeeded.
+- **A `recap_start` is always followed by a `recap_end`**, even when there is nothing to say — the end
+  then carries no headline. An indicator that is opened and never closed is worse than one never shown.
+
+A failed or cancelled turn gets no recap, and no start/end pair either. If the one-shot fails, times
+out, or `RECAP_DISABLED=1`, the turn's own opening sentence is excerpted instead — a recap is a nicety
+and must never be able to retroactively fail a turn that succeeded.
 
 ## What it does not do
 

@@ -154,8 +154,9 @@ than recommended: without them, a page refresh loses the conversation.
 > **HP-201** The provider MUST implement `GetTask`, returning the full message history of the task.
 > This backs the transcript view.
 
-> **HP-202** For v1 the provider MUST return the complete transcript in a single `GetTask` response.
-> Pagination is **not** part of this revision — see §10.1.
+> **HP-202** The provider MUST return the complete transcript in a single `GetTask` response.
+> `GetTask` itself is never paged; a provider that wants windowing declares `context-history`
+> (HP-304), which pages a whole context rather than a turn. See §10.1.
 
 > **HP-203** A transcript exceeding **5 MB** serialized MAY be truncated by the provider, which MUST
 > then mark the response so the client can tell the user the view is partial. Silent truncation is a
@@ -187,9 +188,38 @@ this contract does not inherit an internal shape:
 | `tool_end` | a tool invocation finished (with output, error flag, summary) |
 | `context_compact` | the provider compacted its own context |
 | `done` | the turn's final result text |
+| `recap_start` | the turn is being summarised (HP-212) |
+| `recap_end` | the summary, or its absence — the recap phase is over (HP-212) |
 
 Turn lifecycle (`turn_started` / `turn_ended`) is **not** metadata — it is derived from A2A task
 states, per HP-102.
+
+> **HP-212** A provider MAY deliver the turn's recap in-stream, as a **pair** of parts on non-terminal
+> status events emitted after the turn's output and **before** the terminal event:
+>
+> - `recap_start` — summarising has begun. Carries no content; it exists so the client can show a
+>   "preparing a recap" indicator and hold its busy state open for a wait it cannot otherwise see.
+> - `recap_end` — the phase is over. The headline travels in `autonomous.ai/recap` (≤ 200 chars) and
+>   the fuller body as the Part's own `text`, meaning exactly what `recapEntry.recap` and
+>   `recapEntry.body` mean in HP-302. **`autonomous.ai/recap` absent means no recap was produced** —
+>   a turn that said nothing, or a summariser that failed. The client then clears its indicator and
+>   paints nothing.
+>
+> A provider that emits `recap_start` MUST emit a matching `recap_end` before the terminal event, even
+> when there is no recap: an indicator that is opened and never closed is worse than no indicator.
+> A client that receives a `recap_end` MUST prefer it over `autonomous.GetRecap`, because it is
+> unambiguously **this** turn's recap.
+>
+> The problem this solves: `autonomous.GetRecap` is scoped to an AGENT and takes no task id, so a
+> client asking for "the latest recap" the moment a turn ends can only guess — and if the provider
+> has not finished summarising yet, the newest entry it holds is the PREVIOUS turn's. Pushing the
+> recap on the turn's own stream removes the guess. The cost is honest and bounded: the terminal event
+> waits for the summary, so the turn stays open for as long as summarising takes — which is precisely
+> what `recap_start` lets the client explain to the user. A provider that would rather close the turn
+> immediately simply emits neither kind and keeps HP-302 alone.
+>
+> This does NOT replace HP-302: a device restoring its tiles after a reboot has no stream to read, so
+> a provider that pushes SHOULD also persist.
 
 Schema: `schema/part-metadata.json`.
 
@@ -205,6 +235,7 @@ entirely when an extension is absent, rather than offering a control that fails.
 | `https://harness.autonomous.ai/api/a2a/ext/workspace-files` | browse and read files in an agent |
 | `https://harness.autonomous.ai/api/a2a/ext/workspace-write` | create / rename / delete agents and sessions |
 | `https://harness.autonomous.ai/api/a2a/ext/session-recap` | short persisted per-turn summaries (used by the device) |
+| `https://harness.autonomous.ai/api/a2a/ext/context-history` | a whole context's transcript in one call, optionally windowed |
 | `https://harness.autonomous.ai/api/a2a/ext/voice` | provider-side routing of a spoken task to an agent |
 
 ### 8.1 Method naming
@@ -246,6 +277,21 @@ Extension methods travel on the **same JSON-RPC endpoint** as A2A core — there
 > A `agentId` of `null` declines and hands routing back to Autonomous.
 > Schema: `schema/ext-voice.json`.
 
+> **HP-304** `context-history` — one context's transcript in a single call, optionally windowed.
+> Method: **`autonomous.GetContextHistory`** (`{ contextId, limit?, before? }` →
+> `{ contextId, messages, hasMore?, oldestCursor?, staleCursor?, truncated? }`).
+> `GetTask` (HP-201) returns one TURN, but a client opening a chat wants the whole CONTEXT — without
+> this it must call `ListTasks` then `GetTask` once per turn, each at full size. `limit` absent means
+> the complete transcript, and the provider MUST then omit the three paging fields entirely; that
+> absence is how a client tells a windowed response from a whole one. Paging runs backwards only:
+> `before` is a `messageId` the client already holds (exclusive), taken from the previous response's
+> `oldestCursor`. `messages` is ALWAYS oldest-first so a page can be prepended as received. A window's
+> start MUST be snapped back to a turn boundary so it never splits a tool call from its result — which
+> is why a window may be LONGER than `limit`, and why `limit` is a floor rather than a count. A
+> `before` that is no longer in the transcript MUST answer `staleCursor: true` with empty `messages`
+> rather than an error, so the client can reload instead of showing a broken chat.
+> Schema: `schema/ext-context-history.json`.
+
 ---
 
 ## 9. Out of scope
@@ -278,11 +324,16 @@ have to guess. **Most are synthesised by the Autonomous backend — the provider
 ### 10.1 Transcript pagination
 
 The Autonomous client can request a windowed transcript (a limit plus a cursor). A2A `GetTask` has no
-equivalent.
+equivalent — and it is scoped to one TURN besides, while the client is opening a whole CONTEXT.
 
-**Resolution for v1:** the provider returns the full transcript (HP-202); the backend serves windowed
-requests from that response and reports no further pages. A paging extension is deferred until a real
-provider hits the 5 MB ceiling of HP-203. Recorded as a known limitation, not an oversight.
+**Resolution:** the `context-history` extension (HP-304). It takes `{ contextId, limit?, before? }`
+and answers `{ messages, hasMore?, oldestCursor?, staleCursor? }` — deliberately the same field names
+the Autonomous client already sends and reads, so nothing has to be translated in the middle.
+
+A provider that does not declare it is still fully conformant: HP-202 stands unchanged, and a client
+falls back to `ListTasks` + `GetTask` per turn at full size. What that fallback cannot do is page —
+so a long conversation arrives whole or not at all, which is exactly what the 5 MB ceiling of HP-203
+was there to bound.
 
 ### 10.2 `engine`
 
@@ -395,7 +446,7 @@ gap in the spec.** Re-run this audit whenever the client gains an operation.
 | `new_chat` | Tier 0 — no call; mint a fresh `contextId` (§2) |
 | `agents_list` | Tier 0 — `AgentCard.skills` (HP-023) |
 | `sessions_list` | Tier 0 — `ListTasks` (HP-200) |
-| `session_get` | Tier 0 — `GetTask` (HP-201) |
+| `session_get` | Tier 0 — `GetTask` (HP-201); whole-context and paged via `context-history` (HP-304) when declared |
 | `agent_files` | Extension — `workspace-files` (HP-300) |
 | `agent_read_file` | Extension — `workspace-files` (HP-300) |
 | `agent_create` | Extension — `workspace-write` (HP-301) |
@@ -421,10 +472,15 @@ unresolved gap, not an implicit "no" — if you find one, say so rather than gue
 
 ### Event-kind coverage
 
-The eight kinds in §7 (`user_message`, `thinking_delta`, `thinking_title`, `text_delta`, `tool_start`,
-`tool_end`, `context_compact`, `done`) cover the client's full render vocabulary. Turn lifecycle
-(`turn_started` / `turn_ended`) is carried by A2A task states per HP-102 and is deliberately not a
-metadata kind. Nothing in the client's vocabulary is unrepresented.
+The ten kinds in §7 (`user_message`, `thinking_delta`, `thinking_title`, `text_delta`, `tool_start`,
+`tool_end`, `context_compact`, `done`, `recap_start`, `recap_end`) cover the client's full render
+vocabulary. Turn lifecycle (`turn_started` / `turn_ended`) is carried by A2A task states per HP-102 and
+is deliberately not a metadata kind. Nothing in the client's vocabulary is unrepresented.
+
+`recap_start` / `recap_end` are the two kinds that are not raw turn output: they are the summary OF the
+turn. They exist as kinds because the alternative — asking for it afterwards with
+`autonomous.GetRecap` — cannot say WHICH turn it wants, and because the wait between them is real time
+the user is watching (HP-212).
 
 ---
 

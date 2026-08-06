@@ -40,6 +40,8 @@ export interface PartMetadata {
     | 'tool_end'
     | 'context_compact'
     | 'done'
+    | 'recap_start'
+    | 'recap_end'
   'autonomous.ai/thinkingId'?: string
   'autonomous.ai/toolCallId'?: string
   'autonomous.ai/parentToolCallId'?: string
@@ -49,6 +51,11 @@ export interface PartMetadata {
   'autonomous.ai/summary'?: string
   'autonomous.ai/durationSeconds'?: number
   'autonomous.ai/title'?: string
+  /**
+   * `recap_end` only (HP-212): the headline. The Part's own `text` carries the fuller body.
+   * ABSENT on a `recap_end` means the turn produced no recap — the phase is over, show nothing.
+   */
+  'autonomous.ai/recap'?: string
   'autonomous.ai/compacted'?: {
     userMessages?: number
     assistantMessages?: number

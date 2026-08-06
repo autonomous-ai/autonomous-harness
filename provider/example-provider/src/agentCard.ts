@@ -11,6 +11,7 @@ export const EXT = {
   WORKSPACE_FILES: 'https://harness.autonomous.ai/api/a2a/ext/workspace-files',
   WORKSPACE_WRITE: 'https://harness.autonomous.ai/api/a2a/ext/workspace-write',
   SESSION_RECAP: 'https://harness.autonomous.ai/api/a2a/ext/session-recap',
+  CONTEXT_HISTORY: 'https://harness.autonomous.ai/api/a2a/ext/context-history',
   VOICE: 'https://harness.autonomous.ai/api/a2a/ext/voice',
 } as const
 
@@ -50,6 +51,7 @@ export function buildAgentCard(agents: AgentEntry[]): Record<string, unknown> {
     extensions: [
       { uri: EXT.WORKSPACE_FILES, description: 'Browse and read files in the agent working directory.' },
       { uri: EXT.SESSION_RECAP, description: 'Recent turn summaries, from Claude transcripts.' },
+      { uri: EXT.CONTEXT_HISTORY, description: 'A whole conversation in one call, paged newest-first.' },
       {
         uri: EXT.WORKSPACE_WRITE,
         description: 'Create and remove agents. Each one is a directory under the workspace root.',

@@ -62,7 +62,7 @@ const firstSkillId = (ctx: Ctx): string | undefined =>
 
 const KNOWN_KINDS = [
   'user_message', 'thinking_delta', 'thinking_title', 'text_delta',
-  'tool_start', 'tool_end', 'context_compact', 'done',
+  'tool_start', 'tool_end', 'context_compact', 'done', 'recap_start', 'recap_end',
 ]
 
 const TERMINAL = ['TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED']

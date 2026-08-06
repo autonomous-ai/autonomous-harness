@@ -14,7 +14,9 @@
         "tool_start",
         "tool_end",
         "context_compact",
-        "done"
+        "done",
+        "recap_start",
+        "recap_end"
       ]
     },
     "autonomous.ai/thinkingId": {
@@ -52,6 +54,11 @@
     "autonomous.ai/title": {
       "type": "string",
       "description": "thinking_title only."
+    },
+    "autonomous.ai/recap": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "recap_end only (HP-212): the headline of what the turn ACCOMPLISHED, rendered on one line of a small round display. The fuller body travels as the Part's own text. Same 200-character ceiling as recapEntry.recap in ext-session-recap.json — the two carry the same value by different routes. ABSENT on a recap_end means the turn produced no recap: the phase is over and the client clears its indicator without painting a card."
     },
     "autonomous.ai/compacted": {
       "type": "object",
@@ -106,6 +113,9 @@
       "autonomous.ai/durationSeconds": 1.4
     },
     { "autonomous.ai/kind": "done" },
+    { "autonomous.ai/kind": "recap_start" },
+    { "autonomous.ai/kind": "recap_end", "autonomous.ai/recap": "Flagged Acme overspend at 118% of pacing" },
+    { "autonomous.ai/kind": "recap_end" },
     {
       "autonomous.ai/kind": "context_compact",
       "autonomous.ai/compacted": { "userMessages": 12, "assistantMessages": 12, "toolUses": 41 }

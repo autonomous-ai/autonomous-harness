@@ -14,9 +14,9 @@ import { buildAgentCard, EXT } from './agentCard.js'
 import { runTurn } from './claude.js'
 import { loadConfig, type AgentEntry, type Config } from './config.js'
 import { createAgent, deleteAgent, renameAgent, WorkspaceError } from './workspace.js'
-import { epoch, readTranscript, sliceByTime } from './jsonl.js'
+import { epoch, readTranscript, sliceByTime, type TranscriptLine } from './jsonl.js'
 import { summariseTurn } from './recap.js'
-import { messageToParts, pairToolNames, sessionIdOf, streamLineToOutcome } from './mapper.js'
+import { isTurnStart, messageToParts, meta, pairToolNames, sessionIdOf, streamLineToOutcome } from './mapper.js'
 import { SessionStore, type TaskRecord } from './sessions.js'
 import {
   isTerminal,
@@ -102,6 +102,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: Deps): Pr
     case 'autonomous.ListFiles': return listFiles(res, deps, params, id)
     case 'autonomous.ReadFile':  return readFile(res, deps, params, id)
     case 'autonomous.GetRecap':  return getRecap(res, deps, params, id)
+    case 'autonomous.GetContextHistory': return getContextHistory(res, deps, params, id)
 
     // `workspace-write` — agents only; the card declares params.sessions: false.
     case 'autonomous.CreateAgent':
@@ -264,6 +265,15 @@ async function sendStreamingMessage(res: ServerResponse, deps: Deps, params: Rec
   }
 
   deps.store.finishTask(taskId, finalState)
+
+  // HP-212 — summarise BEFORE the terminal event, on the stream that is still open, so the recap is
+  // unambiguously THIS turn's. The turn therefore stays open for as long as the one-shot takes.
+  // That cost buys correctness the pull cannot give: `autonomous.GetRecap` is scoped to an AGENT and
+  // takes no task id, so a client asking the instant a turn ends either gets nothing (this turn is
+  // not summarised yet) or the PREVIOUS turn's headline. Only a turn that actually completed gets
+  // one — summarising a failure produces a headline that reads like an accomplishment.
+  if (finalState === TaskState.COMPLETED) await recapTurn(deps, res, taskId, contextId, agent, collected)
+
   writeSse(res, {
     taskId,
     contextId,
@@ -271,23 +281,46 @@ async function sendStreamingMessage(res: ServerResponse, deps: Deps, params: Rec
     final: true,
   })
   if (!res.destroyed) res.end()
-
-  // HP-302 — summarise the turn AFTER closing the stream. Not awaited: the turn is over, and holding
-  // the SSE response open for a summary would make every turn look slower than it was.
-  // Only a turn that actually completed: summarising a failure produces a headline that reads like
-  // an accomplishment.
-  if (finalState === TaskState.COMPLETED) void recapTurn(deps, taskId, agent, collected)
 }
 
-/** Summarise one finished turn and persist it on the task, for `autonomous.GetRecap` to serve. */
-async function recapTurn(deps: Deps, taskId: string, agent: AgentEntry, parts: Part[]): Promise<void> {
+/**
+ * Summarise one finished turn: push it on the still-open stream (HP-212) AND persist it on the task
+ * (HP-302).
+ *
+ * Both, not either. The stream serves the client watching this turn; the persisted copy serves a
+ * device restoring its tiles after a reboot, which has no stream to read.
+ */
+async function recapTurn(
+  deps: Deps,
+  res: ServerResponse,
+  taskId: string,
+  contextId: string,
+  agent: AgentEntry,
+  parts: Part[],
+): Promise<void> {
   // The assistant's own words only — thinking and tool output are not what the turn accomplished.
   const turnText = parts
     .filter((p) => p.metadata?.['autonomous.ai/kind'] === 'text_delta')
     .map((p) => p.text ?? '')
     .join('')
+
+  // Non-terminal on purpose, both of them: the terminal event is still to come, and HP-102 is
+  // satisfied by the LAST event. Emitting either as terminal would end the turn twice.
+  const emit = (part: Part): void => {
+    writeSse(res, {
+      taskId,
+      contextId,
+      status: { state: TaskState.WORKING, message: agentMessage(taskId, contextId, [part]) },
+    })
+  }
+
+  // Announced BEFORE the wait, not after it: summarising is seconds of real time during which the
+  // turn has stopped speaking, and without this the client has nothing to show for it.
+  emit({ text: '', metadata: meta('recap_start') })
+
+  let recap: Awaited<ReturnType<typeof summariseTurn>> = null
   try {
-    const recap = await summariseTurn({
+    recap = await summariseTurn({
       claudeBin: deps.config.claudeBin,
       cwd: agent.cwd,
       turnText,
@@ -296,9 +329,16 @@ async function recapTurn(deps: Deps, taskId: string, agent: AgentEntry, parts: P
     })
     if (recap) deps.store.setRecap(taskId, recap.recap, recap.body)
   } catch (err) {
-    // A recap is a nicety. It must never be able to retroactively fail a turn that succeeded.
+    // A recap is a nicety. It must never be able to retroactively fail a turn that succeeded, so the
+    // terminal event goes out either way — the caller emits it after this returns.
     console.warn(`[example-provider] recap failed for ${taskId}:`, err instanceof Error ? err.message : String(err))
   }
+
+  // ALWAYS, even with nothing to say (HP-212). A `recap_start` with no `recap_end` leaves the client
+  // spinning on an indicator that will never close — worse than never having opened one.
+  emit(recap
+    ? { text: recap.body, metadata: meta('recap_end', { 'autonomous.ai/recap': recap.recap }) }
+    : { text: '', metadata: meta('recap_end') })
 }
 
 // ── History (HP-200 … HP-202) ────────────────────────────────────────────────────────────────────
@@ -326,9 +366,37 @@ function listTasks(res: ServerResponse, deps: Deps, params: Record<string, unkno
   sendRpcResult(res, id, { tasks })
 }
 
+/**
+ * Transcript lines → A2A Messages.
+ *
+ * Tool names are paired across the WHOLE run rather than inside one line: a `tool_result` lands on a
+ * different transcript line than its `tool_use`, so pairing line by line leaves every `tool_end`
+ * anonymous. Lines that map to nothing renderable (an image block, a bare stop) are dropped.
+ */
+function linesToMessages(lines: TranscriptLine[], contextId: string, taskId?: string): Message[] {
+  const perLine = lines.map((line) => messageToParts(line.message))
+  const paired = pairToolNames(perLine.flat())
+  const out: Message[] = []
+  let cut = 0
+  for (const [index, parts] of perLine.entries()) {
+    const mine = paired.slice(cut, cut + parts.length)
+    cut += parts.length
+    if (!mine.length) continue
+    const line = lines[index]!
+    out.push({
+      role: line.type === 'user' ? 'ROLE_USER' : 'ROLE_AGENT',
+      messageId: line.uuid ?? '',
+      ...(taskId ? { taskId } : {}),
+      contextId,
+      parts: mine,
+    })
+  }
+  return out
+}
+
 function taskToWire(deps: Deps, record: TaskRecord, opts: { history?: boolean } = {}): Record<string, unknown> {
   const withHistory = opts.history !== false
-  let history: unknown[] = []
+  let history: Message[] = []
   if (withHistory) {
     const context = deps.store.context(record.contextId)
     const agent = agentById(deps, record.agentId)
@@ -338,13 +406,7 @@ function taskToWire(deps: Deps, record: TaskRecord, opts: { history?: boolean } 
         record.startedAt - 5_000, // Claude timestamps the line slightly before we record the task
         record.endedAt ? record.endedAt + 5_000 : undefined,
       )
-      history = lines.map((line) => ({
-        role: line.type === 'user' ? 'ROLE_USER' : 'ROLE_AGENT',
-        messageId: line.uuid ?? '',
-        taskId: record.taskId,
-        contextId: record.contextId,
-        parts: pairToolNames(messageToParts(line.message)),
-      })).filter((m) => (m.parts as Part[]).length > 0)
+      history = linesToMessages(lines, record.contextId, record.taskId)
     }
   }
   return {
@@ -352,7 +414,15 @@ function taskToWire(deps: Deps, record: TaskRecord, opts: { history?: boolean } 
     contextId: record.contextId,
     status: { state: record.state },
     history,
-    metadata: { title: record.title, agentId: record.agentId },
+    // `startedAt`/`endedAt` so a client can order and date a session from real events. Without them
+    // it can only stamp "now" on every row, which sorts a session list at random (HP-220: omit
+    // rather than invent — a task still running genuinely has no end).
+    metadata: {
+      title: record.title,
+      agentId: record.agentId,
+      startedAt: new Date(record.startedAt).toISOString(),
+      ...(record.endedAt ? { endedAt: new Date(record.endedAt).toISOString() } : {}),
+    },
   }
 }
 
@@ -484,6 +554,83 @@ function getRecap(res: ServerResponse, deps: Deps, params: Record<string, unknow
     timestamp: new Date(t.endedAt ?? t.startedAt).toISOString(),
   }))
   sendRpcResult(res, id, { agentId: agent.id, entries })
+}
+
+// ── Extension: context-history (HP-304) ──────────────────────────────────────────────────────────
+
+/** The window ceiling. The client asks for 60; this only stops a caller asking for the moon. */
+const MAX_HISTORY_LIMIT = 500
+
+/**
+ * A whole context's transcript, optionally windowed.
+ *
+ * Why this exists next to `GetTask`: a task is one TURN, but a client opening a chat wants the
+ * CONTEXT, which is many turns. Reading the transcript whole also removes the per-task time-window
+ * slicing, so nothing can fall into a gap between two turns' windows.
+ */
+function getContextHistory(res: ServerResponse, deps: Deps, params: Record<string, unknown>, id: string | number | null): void {
+  const contextId = typeof params.contextId === 'string' ? params.contextId : ''
+  const context = contextId ? deps.store.context(contextId) : undefined
+  const agent = context ? agentById(deps, context.agentId) : undefined
+  if (!context || !agent) {
+    sendRpcError(res, id, RpcErrors.INVALID_PARAMS)
+    return
+  }
+
+  // No claude session id yet = a context nobody has spoken in. Empty is the correct answer.
+  const all = linesToMessages(
+    context.claudeSessionId ? readTranscript(deps.config.claudeProjectsDir, agent.cwd, context.claudeSessionId) : [],
+    contextId,
+  )
+
+  // No `limit` = the complete transcript, and then NONE of the paging fields are emitted: their
+  // absence is exactly how the client tells a windowed answer from a whole one.
+  const raw = params.limit
+  const limit = typeof raw === 'number' && raw > 0 ? Math.min(Math.floor(raw), MAX_HISTORY_LIMIT) : undefined
+  if (!limit) {
+    sendRpcResult(res, id, { contextId, messages: all })
+    return
+  }
+
+  let end = all.length
+  const before = typeof params.before === 'string' && params.before ? params.before : undefined
+  if (before) {
+    const at = all.findIndex((m) => m.messageId === before)
+    if (at < 0) {
+      // The cursor is no longer in the transcript — a compaction moved it out from under the client
+      // between requests. Say so instead of erroring or quietly answering a different window: the
+      // client's recovery is a full reload, and it can only do that if it is told.
+      sendRpcResult(res, id, { contextId, messages: [], hasMore: false, oldestCursor: null, staleCursor: true })
+      return
+    }
+    end = at // exclusive — the client already holds this one
+  }
+
+  const start = snapToTurnStart(all, Math.max(0, end - limit))
+  const oldestCursor = all[start]?.messageId || null
+  sendRpcResult(res, id, {
+    contextId,
+    messages: all.slice(start, end),
+    // A page we cannot name a cursor for is a page the client could never ask for; promising one
+    // would loop it on the same window forever. Claude always writes a uuid, so this is a guard
+    // rather than a case.
+    hasMore: start > 0 && !!oldestCursor,
+    oldestCursor,
+  })
+}
+
+/**
+ * Walk the window's left edge back to the message that STARTS a turn.
+ *
+ * Without this a page can begin between a `tool_start` and its `tool_end`, and the client renders a
+ * result with no call above it. The cost is that a window may come back longer than `limit` — which
+ * is why HP-304 calls `limit` a floor rather than a count.
+ */
+function snapToTurnStart(messages: Message[], from: number): number {
+  for (let i = from; i > 0; i--) {
+    if (isTurnStart(messages[i]!.parts)) return i
+  }
+  return 0
 }
 
 // ── Wire helpers ─────────────────────────────────────────────────────────────────────────────────

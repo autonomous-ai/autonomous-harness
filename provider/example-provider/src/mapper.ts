@@ -32,10 +32,21 @@ export interface AnthropicMessage {
   content?: unknown
 }
 
-const meta = (kind: NonNullable<PartMetadata['autonomous.ai/kind']>, extra: PartMetadata = {}): PartMetadata => ({
+export const meta = (kind: NonNullable<PartMetadata['autonomous.ai/kind']>, extra: PartMetadata = {}): PartMetadata => ({
   'autonomous.ai/kind': kind,
   ...extra,
 })
+
+/**
+ * Does this message BEGIN a turn?
+ *
+ * A real user prompt carries a `user_message` part. A `user`-role message carrying only tool results
+ * does NOT — it is the middle of an assistant's turn, wearing the user role because that is how the
+ * Anthropic format returns tool output. HP-304 snaps a history window back to one of these so a page
+ * can never start between a `tool_start` and its `tool_end`.
+ */
+export const isTurnStart = (parts: Part[]): boolean =>
+  parts.some((p) => p.metadata?.['autonomous.ai/kind'] === 'user_message')
 
 /** Tool results arrive as a string or as an array of text blocks; normalise to one string. */
 export function toolResultText(content: unknown): string {
