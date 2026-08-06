@@ -48,7 +48,13 @@ const resultLine = (failed = false): unknown => ({
 
 function config(claudeBin: string): Config {
   return {
-    agents: [{ id: 'scratch', name: 'Scratch', description: 'test agent', cwd: AGENT_CWD }],
+    // Three, because the bug this file has to keep out only appears with more than one: a provider
+    // that cannot tell which skill a turn belongs to files every conversation under the first.
+    agents: [
+      { id: 'scratch', name: 'Scratch', description: 'test agent', cwd: AGENT_CWD },
+      { id: 'agent-2', name: 'Second', description: 'second agent', cwd: AGENT_CWD },
+      { id: 'agent-3', name: 'Third', description: 'third agent', cwd: AGENT_CWD },
+    ],
     workspaceRoot: ROOT,
     agentsFile: join(ROOT, 'agents.json'),
     claudeBin,
@@ -94,7 +100,7 @@ async function rpc<T = Record<string, unknown>>(port: number, method: string, pa
 }
 
 /** Run a turn and collect every SSE event, in order. */
-async function runTurn(port: number, text: string, contextId?: string): Promise<SseEvent[]> {
+async function runTurn(port: number, text: string, opts: { contextId?: string; agentId?: string } = {}): Promise<SseEvent[]> {
   const res = await fetch(`http://127.0.0.1:${port}/`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': 'test-key' },
@@ -102,7 +108,16 @@ async function runTurn(port: number, text: string, contextId?: string): Promise<
       jsonrpc: '2.0',
       id: 1,
       method: 'SendStreamingMessage',
-      params: { message: { role: 'ROLE_USER', messageId: 'm1', parts: [{ text }], ...(contextId ? { contextId } : {}) } },
+      params: {
+        message: {
+          role: 'ROLE_USER',
+          messageId: 'm1',
+          parts: [{ text }],
+          ...(opts.contextId ? { contextId: opts.contextId } : {}),
+          // HP-107 — the skill selector A2A has no field for.
+          ...(opts.agentId ? { metadata: { 'autonomous.ai/agentId': opts.agentId } } : {}),
+        },
+      },
     }),
   })
   const raw = await res.text()
@@ -181,6 +196,50 @@ describe('SendStreamingMessage — the recap rides the stream (HP-212)', () => {
     expect(entries[0]!.recap).toBe('Shipped the pacing alert.')
     // The pull carries the taskId, which is what lets a client tell THIS turn's recap from the last one.
     expect(entries[0]!.taskId).toBeTruthy()
+  })
+})
+
+describe('which skill a turn belongs to (HP-107 / HP-204)', () => {
+  interface WireTask { id: string; contextId?: string; metadata?: { agentId?: string } }
+
+  it('files the turn under the skill the client named, not the first one', async () => {
+    // The bug: with no selector the provider falls back to agents[0], so EVERY conversation on a
+    // multi-skill provider is attributed to the first skill — and the client, whose session list is
+    // scoped to one agent, shows the other agents as empty however much the user talked to them.
+    const bin = fakeClaude('claude-agent2.sh', [textLine('Done for the second agent.'), resultLine()])
+    const tasks = await withServer(bin, async (port) => {
+      await runTurn(port, 'hello agent two', { agentId: 'agent-2' })
+      const out = await rpc<{ tasks: WireTask[] }>(port, 'ListTasks', {})
+      return out.tasks
+    })
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0]!.metadata?.agentId).toBe('agent-2')
+  })
+
+  it('keeps a follow-up on its task’s original skill, whatever the selector says', async () => {
+    const bin = fakeClaude('claude-followup.sh', [textLine('First.'), resultLine()])
+    const tasks = await withServer(bin, async (port) => {
+      const first = await runTurn(port, 'start here', { agentId: 'agent-3' })
+      const contextId = first[0]!.contextId!
+      // Same conversation, a different skill named. Moving a live context between skills mid-thread
+      // would split one chat across two agents in the session list.
+      await runTurn(port, 'and again', { contextId, agentId: 'scratch' })
+      const out = await rpc<{ tasks: WireTask[] }>(port, 'ListTasks', { contextId })
+      return out.tasks
+    })
+    expect(tasks).toHaveLength(2)
+    expect(tasks.map((t) => t.metadata?.agentId)).toEqual(['agent-3', 'agent-3'])
+  })
+
+  it('still answers a plain A2A client that names no skill at all', async () => {
+    // HP-107 is a MAY. The conformance runner sends no metadata, and a turn must not fail for it.
+    const bin = fakeClaude('claude-noselector.sh', [textLine('Fine.'), resultLine()])
+    const tasks = await withServer(bin, async (port) => {
+      await runTurn(port, 'no selector')
+      const out = await rpc<{ tasks: WireTask[] }>(port, 'ListTasks', {})
+      return out.tasks
+    })
+    expect(tasks[0]!.metadata?.agentId).toBe('scratch')
   })
 })
 

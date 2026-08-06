@@ -128,10 +128,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: Deps): Pr
 /**
  * Which configured agent a message targets.
  *
- * NOTE — spec gap: A2A carries no "which skill" selector on a Message, and the profile never says how
- * a client picks one. This reads `message.metadata['autonomous.ai/agentId']` and otherwise falls
- * back to the first configured agent, which keeps plain A2A clients (including the conformance
- * runner) working. Worth a clause in the spec.
+ * HP-107 — A2A carries no "which skill" selector on a Message, so the profile puts one in
+ * `Message.metadata` as `autonomous.ai/agentId`. Falling back to the first configured agent keeps
+ * plain A2A clients (including the conformance runner) working — but it is only ever a fallback: a
+ * client that sends nothing gets every conversation filed under the same skill.
  */
 function pickAgent(deps: Deps, message: Message | undefined): AgentEntry {
   const requested = (message as { metadata?: Record<string, unknown> } | undefined)?.metadata?.['autonomous.ai/agentId']
@@ -191,7 +191,15 @@ async function sendStreamingMessage(res: ServerResponse, deps: Deps, params: Rec
   }
 
   const contextId = resuming?.contextId ?? (typeof incoming.contextId === 'string' && incoming.contextId ? incoming.contextId : `ctx-${Date.now()}`)
-  const agent = resuming ? agentById(deps, resuming.agentId) ?? pickAgent(deps, incoming) : pickAgent(deps, incoming)
+  // Which skill runs this turn, most specific first. A conversation belongs to ONE skill for its
+  // whole life: the context was bound to one when it was created, and honouring a selector that
+  // disagrees would split a single chat across two agents in the client's session list — the client
+  // scopes that list to one agent, so half the thread would simply vanish from each.
+  const known = deps.store.context(contextId)
+  const agent =
+    (resuming ? agentById(deps, resuming.agentId) : undefined)
+    ?? (known ? agentById(deps, known.agentId) : undefined)
+    ?? pickAgent(deps, incoming)
   const context = deps.store.ensureContext(contextId, agent.id)
 
   const taskId = deps.store.nextTaskId()

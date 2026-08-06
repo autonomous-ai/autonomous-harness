@@ -140,6 +140,19 @@ Schema for the extension entries: `schema/agent-card.ext.json`.
 > involved. A provider that cannot accept images MUST fail the task with a clear message rather than
 > silently discarding them; silent loss reads to the user as the agent ignoring what they sent.
 
+> **HP-107** A client MAY name the skill a turn belongs to in `Message.metadata` as
+> `autonomous.ai/agentId`, matching an `AgentCard.skills[].id`. A2A has no skill selector on a
+> Message, so without this a provider serving more than one skill can only guess — and a provider
+> that guesses "the first one" attributes every conversation to the same skill no matter which one
+> the user picked. A provider MAY ignore the field and choose its own skill; it MUST NOT fail a turn
+> because of it.
+>
+> The field selects a skill only when there is nothing more specific: a turn continuing an existing
+> `contextId`, or carrying a `taskId`, keeps the skill that conversation already belongs to, whatever
+> the field says. A conversation belongs to one skill for its whole life — the client's session list
+> is scoped to a single agent (HP-204), so a thread that changed skill mid-way would lose half its
+> turns from each agent's list.
+
 ---
 
 ## 6. History (HP-2xx)
@@ -161,6 +174,12 @@ than recommended: without them, a page refresh loses the conversation.
 > **HP-203** A transcript exceeding **5 MB** serialized MAY be truncated by the provider, which MUST
 > then mark the response so the client can tell the user the view is partial. Silent truncation is a
 > violation.
+
+> **HP-204** A task SHOULD carry `metadata.agentId` — the `AgentCard.skills[].id` whose skill ran it.
+> The client's model is machine → agent → session, so its session list is always scoped to ONE agent;
+> a task that does not say which skill it belongs to cannot be placed in that list, and selecting an
+> agent then shows either every conversation on the machine or none of them. A provider serving a
+> single skill MAY omit it: with one skill there is nothing to disambiguate.
 
 ---
 
@@ -414,8 +433,8 @@ implemented 0.1.0, contact us — that is a case we did not think existed.
 | HP-001 … HP-004 | Target revision and canonical base |
 | HP-010 … HP-013 | Transport and authentication |
 | HP-020 … HP-023 | Agent Card |
-| HP-100 … HP-106 | Messaging |
-| HP-200 … HP-203 | History |
+| HP-100 … HP-107 | Messaging |
+| HP-200 … HP-204 | History |
 | HP-210 … HP-220 | Event vocabulary and projections |
 | HP-300 … HP-311 | Extensions |
 | HP-400 | Unknown frames |
