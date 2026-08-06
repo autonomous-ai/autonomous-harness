@@ -8,14 +8,14 @@ What to do once your endpoint implements the profile in `README.md`, and what to
 
 | | |
 |---|---|
-| A public HTTPS endpoint | HP-010. Not an IP address, not a tunnel, not "we'll expose it later" |
-| An Agent Card at `/.well-known/agent-card.json` | HP-020 |
-| A test credential | So the checks below run against a real tenant rather than a stub |
+| A public HTTPS endpoint | Not an IP address, not a tunnel, not "we'll expose it later". The machine's OWNER types this URL into our web app, so it has to be one you can publish in your own product |
+| A test credential | So the checks below run against a real tenant rather than a stub. It travels as `Authorization: Bearer` — there is nothing to configure and nothing to declare |
 | A named technical contact | Your endpoint backs every machine connected to it; when it goes down, they all go down at once |
 
-**You do not need an SDK from us.** A2A v1.0 ships official SDKs for Python, JavaScript, Java, Go and
-.NET — use the one for your stack. What this repository gives you instead is the contract, a working
-reference implementation, and a runner that tells you when you are done.
+**There is no SDK, and you do not need one.** The whole protocol is eight JSON-RPC methods over
+HTTPS — smaller than a client library for it would be. This repository gives you the contract, a
+scripted reference implementation, `example-provider/` as copyable prior art, and a runner that tells
+you when you are done.
 
 ---
 
@@ -29,23 +29,25 @@ npm run conformance -- --url https://your-endpoint --key <test credential> \
 
 **Zero failures is the bar.** Warnings and skips are expected, and each prints its reason.
 
-The two extra flags unlock three more clauses that need knowledge only you have: a credential you know
-to be invalid (HP-013), and a prompt that reliably makes your agent ask the user something
-(HP-103, HP-104).
+The two extra flags unlock four more checks that need knowledge only you have: a credential you know
+to be invalid, and a prompt that reliably makes your agent ask the user something.
 
 If you are debugging your implementation by emailing us, something has gone wrong — the runner is
 meant to answer that question without us.
 
 ### Read the skips, do not just count them
 
-Four clauses cannot be verified from outside and become a written question instead:
+Six things cannot be verified from outside and become a written question instead. Each is named by
+the check that skipped:
 
-| Clause | What we will ask you |
+| Check | What we will ask you |
 |---|---|
-| **HP-012** | How a credential is scoped — one credential must not reach another tenant's data |
-| **HP-203** | What happens to a transcript over the size ceiling: marked, or silently truncated |
-| **HP-220** | Whether any statistic is estimated rather than measured — omission is correct, a wrong number is not |
-| **HP-903** | Whether the credential we send is written to logs or forwarded anywhere |
+| `tenant-isolation` | How a credential is scoped — one credential must not reach another tenant's data |
+| `transcript-truncation` | What happens to a transcript over your size ceiling: marked, or silently truncated |
+| `no-fabricated-stats` | Whether any statistic is estimated rather than measured — omission is correct, a wrong number is not |
+| `credential-not-logged` | Whether the credential we send is written to logs or forwarded anywhere |
+| `attachments` | What an image attachment does — the runner can see the turn succeed, but not whether the image was read or quietly dropped |
+| `agent-mutations` | Whether tenant scoping is enforced on **every** mutation, not only on the message path. (Declining to mutate at all is fine — answer `invalid_request` with a message we can show the user) |
 
 ---
 
@@ -55,22 +57,19 @@ Four clauses cannot be verified from outside and become a written question inste
 - Written answers to the four questions above.
 - Your technical contact and an escalation path.
 
-We review the endpoint's TLS configuration, its declared `securitySchemes`, and how it handles the
-credential. Expect a conversation about data handling before anything is switched on: a provider
+We review the endpoint's TLS configuration and how you handle the credential. Expect a conversation about data handling before anything is switched on: a provider
 machine is **not end-to-end encrypted** — the plaintext originates on your side, and users are told
 so plainly in our UI.
-
-We will also ask you to plan for a **signed Agent Card** (HP-004). The card is this profile's single
-source of truth for capability, so signing it is what makes that trust verifiable.
 
 ---
 
 ## 4. What happens next
 
-1. We add your endpoint to our provider registry, initially in staging.
-2. We soak it against real traffic on a small number of machines — a full turn, cancellation, an
-   `INPUT_REQUIRED` round trip, a page refresh rebuilding the transcript, your endpoint going away and
-   coming back, and a revoked credential reporting as *re-enter credential* rather than an outage.
+1. We stage your endpoint against a small number of machines.
+2. We soak it against real traffic — a full turn, cancellation (including a cancel in the first
+   moment, which is what a client-minted `turnId` buys), a `turn_input_required` round trip resumed on the same
+   `turnId`, a page refresh rebuilding the transcript, your endpoint going away and coming back, and
+   a revoked credential reporting as *re-enter credential* rather than an outage.
 3. It becomes selectable in the product.
 
 "It worked once" is not a soak. One outage on your side takes down every machine behind it
@@ -80,7 +79,7 @@ simultaneously, and that blast radius is why this step exists.
 
 ## 5. If you stop
 
-Tell us and we will stop offering your endpoint to new machines while existing ones keep working,
+Tell us and we will stop offering your endpoint for new machines while existing ones keep working,
 notify their owners with a date, and delete the stored credentials at the end of it. Existing
 machines are then marked with a specific reason — never a generic failure.
 

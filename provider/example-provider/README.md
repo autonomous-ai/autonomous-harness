@@ -7,18 +7,18 @@
 > a real repository. `agents.example.json` ships pointing at `/tmp/example-provider-scratch` on
 > purpose.
 
-A **real** A2A provider for the Autonomous machine provider profile
-(`../spec/README.md`), backed by the local `claude` CLI.
+A **real** provider for the Autonomous machine provider protocol (`../spec/README.md`), backed by the
+local `claude` CLI.
 
-Where `apps/reference-provider` is scripted and deterministic, this one runs an actual agent. That is
-the point: it answers the question a scripted provider cannot — **does the profile survive a real
+Where `reference-provider` is scripted and deterministic, this one runs an actual agent. That is the
+point: it answers the question a scripted provider cannot — **does the protocol survive a real
 agent?** Real agents stream partial tokens, call tools, resume sessions, and keep history in their own
 format.
 
 |  | `reference-provider` | `example-provider` |
 |---|---|---|
 | Replies | scripted | a real Claude turn |
-| Job | conformance target, hostile scenarios, CI | prove the profile survives a real agent |
+| Job | conformance target, hostile scenarios, CI | prove the protocol survives a real agent |
 | Determinism | total | none — **keep it out of CI** |
 
 ## Run it
@@ -32,28 +32,29 @@ npm run dev                             # http://127.0.0.1:4502
 
 ```bash
 curl -N localhost:4502 \
-  -H 'content-type: application/json' -H 'x-api-key: demo' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage",
-       "params":{"message":{"role":"ROLE_USER","messageId":"m1",
-                 "parts":[{"text":"what files are here?"}]}}}'
+  -H 'content-type: application/json' -H 'authorization: Bearer demo' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"agent.send",
+       "params":{"agentId":"scratch","turnId":"t-1",
+                 "message":{"text":"what files are here?"}}}'
 ```
 
 | Env | Default |
 |---|---|
 | `AGENTS_FILE` | `./agents.json` |
 | `CLAUDE_PATH` | resolved via `which claude`, then the usual install locations |
-| `CLAUDE_MODEL` | `claude-sonnet-5`. Pinned, not left to the CLI default: a provider owns its model choice, and Autonomous never sends one (spec §9) |
+| `CLAUDE_MODEL` | `claude-sonnet-5`. Pinned, not left to the CLI default: a provider owns its model choice, and Autonomous never sends one |
 | `PORT` | `4502` |
 | `STATE_FILE` | `./sessions.json` |
-| `WORKSPACE_ROOT` | `/tmp/example-provider-scratch` — where `autonomous.CreateAgent` puts a new agent's directory |
+| `WORKSPACE_ROOT` | `/tmp/example-provider-scratch` — where `agent.create` puts a new agent's directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` |
 | `CLAUDE_RECAP_MODEL` | `claude-haiku-4-5-20251001` — the per-turn recap is a one-line headline, not the work, so it gets a small model |
 | `RECAP_DISABLED` | unset. `1` skips the recap model entirely and excerpts the turn instead |
 
 ## How it works
 
-**Agents come from `agents.json`** — `[{ id, name, description, cwd }]`. Each becomes an
-`AgentCard.skills[]` entry; `cwd` is where `claude` is spawned.
+**Agents come from `agents.json`** — `[{ id, name, description, cwd }]`. Each becomes an `agent.list`
+entry; `cwd` is where `claude` is spawned. `agent.create` / `agent.rename` / `agent.delete` really
+mutate that file, so an agent created a moment ago is addressable by its very next `agent.send`.
 
 **One turn = one `claude` process**, invoked the way `apps/agent-node/brain` does it:
 
@@ -65,31 +66,28 @@ claude --print --verbose --output-format stream-json --input-format stream-json
 The user's message is passed **verbatim** — no wrapper text, no prepended hints.
 
 **History comes from Claude's own transcripts** at
-`~/.claude/projects/<mangled-cwd>/<sessionId>.jsonl`, so `GetTask` and `ListTasks` cost this provider
-nothing. A pleasant side effect: **a turn typed straight into a terminal shows up in the session list
-too** — it just does not stream live, since this app implements no `SubscribeToTask`.
+`~/.claude/projects/<mangled-cwd>/<sessionId>.jsonl`, so `agent.history` costs this provider nothing to
+store. A pleasant side effect: **a turn typed straight into a terminal shows up in the transcript
+too** — it just does not stream live, since nothing was watching when it ran.
 
-`GetTask` returns one TURN, which is not what a client opening a chat wants: a conversation is many
-turns, and a long one should arrive a page at a time. That is `autonomous.GetContextHistory`
-(`context-history`, HP-304) — a whole context, newest window first, `before` walking backwards. It
-reads the transcript whole rather than per-task, so nothing can fall into the gap between two turns'
-time windows, and a window's left edge is snapped back to a real user prompt so a page can never begin
-between a tool call and its result.
+One agent is one Claude session, resumed on every turn, so the whole transcript is one file. A long
+one arrives a page at a time: `agent.history` takes `limit` and an opaque `before` cursor and walks
+backwards, and stops offering a cursor once the start is reached.
 
-**One mapper, two callers.** `src/mapper.ts` is the only place Claude's shape becomes A2A. Stdout
-events and JSONL lines carry the same Anthropic message shape, so writing two parsers is the reliable
-way to make the live view and the post-refresh view disagree.
+**One mapper, two callers.** `src/mapper.ts` is the only place Claude's shape becomes a provider
+event. Stdout lines and JSONL lines carry the same Anthropic message shape, so writing two parsers is
+the reliable way to make the live view and the post-refresh view disagree about the same turn — which
+is exactly what `agent.history` returning the stream's own objects forbids.
 
 **Recaps are generated per TURN**, on the turn's own stream and just before its terminal event, by a
 disposable one-shot `claude --print` (`src/recap.ts`). The turn therefore stays open while the summary
-is written — deliberately, and announced: a `recap_start` part goes out before the wait and a
-`recap_end` after it (HP-212), so the client can say "preparing a recap" instead of showing a stall.
+is written — deliberately, and announced: `recap_start` goes out before the wait and `recap_end` after
+it, so the client can say "preparing a recap" instead of showing a stall.
 
-The alternative — close the stream, summarise afterwards, let the client pull it with
-`autonomous.GetRecap` — is what this used to do, and it cannot work: that method is scoped to an AGENT
-and takes no task id, so a client asking the instant a turn ends gets either nothing or the PREVIOUS
-turn's headline. The recap is still persisted as well, because a device restoring its tiles after a
-reboot has no stream to read.
+The recap is pushed on the turn's OWN stream and also persisted for `agent.recap`. Both, not either: the stream serves the client watching this turn,
+and the persisted copy serves a device restoring its tiles after a reboot, which has no stream to
+read. Pushing is what makes the recap unambiguously THIS turn's — the pull is scoped to an agent and
+takes no turn id, so a client asking the instant a turn ends can only get the previous one.
 
 Four details are load-bearing:
 
@@ -99,7 +97,7 @@ Four details are load-bearing:
   `metadata.title` — the first user message — is the wrong one. A device tile that echoes the user's
   own prompt back at them is worse than no tile.
 - **The caps are re-applied after the model answers.** A model asked for 15 words will sometimes give
-  40, and `recapEntry.recap` is capped at 200 characters by the schema. Nothing ever appends an
+  40, and `recap` is capped at 200 characters. Nothing ever appends an
   ellipsis: the tile renders on a small round display, where a line advertising its own truncation
   reads worse than one that simply ends.
 
@@ -112,13 +110,12 @@ and must never be able to retroactively fail a turn that succeeded.
 
 ## What it does not do
 
-- **No `INPUT_REQUIRED`.** With permissions skipped, Claude never asks, so HP-104 stays demonstrated
-  only by `reference-provider`'s scripted path.
-- **No `SubscribeToTask`** — deliberately out of scope.
-- **No session writes.** `workspace-write` is declared with `params: { agents: true, sessions: false }`:
-  creating an agent is ours to do, but retitling or deleting a session would mean editing the user's
-  own Claude transcripts under `~/.claude`.
-- **No images.** Refused loudly rather than dropped silently (HP-106).
+- **No `turn_input_required`.** With permissions skipped, Claude never asks, so that path stays
+  demonstrated only by `reference-provider`'s scripted one.
+- **`agent.delete` leaves the directory alone.** Removing an agent from the list is reversible;
+  deleting whatever work it produced is not, and an example provider is the last place to be
+  destructive.
+- **No images.** Refused loudly rather than dropped silently.
 
 ## Verification
 
@@ -132,11 +129,10 @@ Conformance, against a running instance:
 ```bash
 cd ../reference-provider
 npx tsx src/conformance.ts --url http://127.0.0.1:4502 --key demo --bad-key bad-key
-# 21 passed · 0 failed · 2 manual · 10 not verifiable from outside
 ```
 
-**That result is the headline.** The conformance runner was written against a scripted provider; a
-real Claude-backed one passing it is what validates the profile, the runner, and this app at once.
+**Zero failures is the headline.** The conformance runner was written against a scripted provider; a
+real Claude-backed one passing it is what validates the protocol, the runner, and this app at once.
 
 ## Two real bugs the fixtures caught
 
@@ -154,8 +150,7 @@ And one the **conformance suite** caught against the live agent:
 
 3. **macOS `/tmp` is a symlink to `/private/tmp`**, and Claude records the resolved path. A configured
    `/tmp/x` made this provider look in `-tmp-x` while Claude had written `-private-tmp-x`, so every
-   history read came back empty and HP-201 failed. `agents.json` paths are now `realpath`-resolved at
-   load.
+   history read came back empty. `agents.json` paths are now `realpath`-resolved at load.
 
 All three are pinned by tests, and all three tests were mutation-checked.
 
@@ -163,12 +158,12 @@ All three are pinned by tests, and all three tests were mutation-checked.
 
 | File | Role |
 |---|---|
-| `src/types.ts` | the A2A subset, copied from `reference-provider` — apps do not import each other |
+| `src/types.ts` | the wire surface, copied from `reference-provider` — the apps do not import each other |
 | `src/config.ts` | `agents.json` loading and validation; resolves the `claude` binary |
-| `src/agentCard.ts` | the card, built **from** the agent list |
+| `src/agents.ts` | the agent list, read from config on every call so a new agent is instantly addressable |
 | `src/claude.ts` | spawn, stdin frame, stdout lines, process-group kill |
-| `src/mapper.ts` | **the** Claude → A2A mapping, shared by the live and history paths |
+| `src/mapper.ts` | **the** Claude → provider-event mapping, shared by the live and history paths |
 | `src/jsonl.ts` | transcript discovery, reading and time-slicing |
-| `src/sessions.ts` | `contextId ↔ claudeSessionId`, task windows, and persisted per-turn recaps |
+| `src/sessions.ts` | `agentId ↔ claudeSessionId` — one agent is one Claude session — plus turn windows and persisted per-turn recaps |
 | `src/recap.ts` | the per-turn recap one-shot, its caps, and the no-model fallback |
-| `src/server.ts` | JSON-RPC + SSE, with HP-xxx clause references inline |
+| `src/server.ts` | JSON-RPC + SSE |

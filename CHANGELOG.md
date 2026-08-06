@@ -1,44 +1,54 @@
 # Changelog
 
-The spec is a compatibility contract (see §12 of `spec/README.md`), so every change here says whether
-it is additive or breaking. Additive changes are safe for a deployed integration; breaking ones are
-not, and get a new revision served alongside the old.
+The spec is a compatibility contract, so every entry says whether it is additive or breaking.
+Additive changes are safe for a deployed integration; breaking ones are not, and get a new revision
+served alongside the old.
 
-## [0.2.0] — 2026-08-05
+## [0.3.0] — 2026-08-06
 
-**BREAKING.** The product vocabulary changed and this profile follows it. Safe to take now only
-because 0.1.0 is one day old, is marked DRAFT, and nothing has been built against it yet — see the
-note in `spec/README.md` §12. There is no compatibility shim: 0.1.0 is withdrawn, not deprecated.
+The first revision anything is built against. Earlier drafts were withdrawn without implementers, so
+they are not carried here; from 0.3.0 on a breaking change requires serving both revisions side by
+side for a deprecation window.
 
-The unit of work inside a machine is an **agent** everywhere now — in the product, on the internal
-wire, and here. It used to be called a *project* on this profile and an *agent* on the internal wire,
-which is exactly the ambiguity the rename removed.
+**The protocol.** Authenticate, call a method, handle the response. JSON-RPC 2.0 over HTTPS on a
+single URL, with Server-Sent Events for the one method that streams. The credential travels as
+`Authorization: Bearer` — one header, fixed by convention. There is no discovery document, no SDK,
+and no capability negotiation.
 
-- **Renamed methods**: `autonomous.CreateProject` → `autonomous.CreateAgent`,
-  `autonomous.RenameProject` → `autonomous.RenameAgent`, `autonomous.DeleteProject` →
-  `autonomous.DeleteAgent`.
-- **Renamed request field**: `projectId` → `agentId` in every extension schema.
-- **Renamed capability flag**: `AgentCard.extensions[].params.projects` → `params.agents` (HP-301).
-- **Renamed `$defs`**: `projectCreateRequest` / `projectRenameRequest` / `projectDeleteRequest` /
-  `projectResponse` → their `agent*` equivalents.
-- **Prose**: the Autonomous entity a provider backs is a **machine**, not a *harness*. "Harness"
-  remains the product name — the domain, the device and this repository keep it.
-- **Added** a note under §2 on the one collision this creates: A2A calls *your endpoint* an agent,
-  Autonomous calls *a skill on your card* an agent. `machine → agent → session` on our side reads
-  `endpoint → skill → contextId` on yours.
+| Method | For |
+|---|---|
+| `agent.list` | the agents a user picks from — **authenticated**, so it can differ per tenant |
+| `agent.send` | one turn, streamed |
+| `agent.history` | rebuilding the conversation, windowed |
+| `turn.cancel` | stopping a turn |
+| `agent.create` / `agent.rename` / `agent.delete` | managing the agent list |
+| `agent.recap` | short per-turn summaries the hardware device restores its tiles from |
 
-Unchanged: every `HP-xxx` clause id, every extension URI, every schema `$id`. Those are opaque
-identifiers (HP-003) and renaming them would break tooling for no gain.
+All eight are required, and **"required" does not mean "pretend"**: a provider whose agents live in
+its own product answers `invalid_request` with a message, and Autonomous shows that message to the
+user. An explanation beats a control that silently vanished, which is why nothing has to be declared
+in advance.
 
-## [0.1.0] — 2026-08-04
+**The model has only agents.** One agent is one continuous transcript; there is no session, thread or
+context on this boundary. Autonomous synthesises what its own clients need from the agent, which is
+entirely its side of the line.
 
-First public release.
+**Events are flat and self-describing**, discriminated on `kind`, and the same objects serve the live
+stream and `agent.history` — one shape, so a replayed transcript and the live view cannot disagree.
+`kind` is optional: an event carrying only `text` is conformant and renders as plain assistant output,
+which is the smallest correct implementation a partner can ship.
 
-- **Spec**: the provider profile of A2A v1.0.1 — 40 numbered clauses, six JSON Schemas, a worked
-  example of a complete turn, and a coverage audit of the full client surface.
-- **`reference-provider`**: scripted and deterministic, including the hostile scenarios (a stream cut
-  with no terminal state, failure after partial output, a provider emitting no metadata at all), plus
-  the conformance runner.
-- **`example-provider`**: a real provider backed by the Claude Code CLI.
+Three rules worth calling out, because each exists to prevent a specific user-visible failure:
 
-Nothing is deprecated, because nothing has shipped before this.
+- **Exactly one terminal frame ends every stream.** Zero leaves a spinner that never resolves; two
+  ends the turn twice.
+- **The client mints `turnId`**, so a user pressing stop in the first moment has something to name.
+- **A rejected credential has its own error code**, so the product can say "re-enter your credential"
+  rather than "something went wrong".
+
+**Conformance.** `provider/reference-provider/` ships a scripted implementation and a runner, each of
+whose checks carries a stable slug. The runner is itself tested against eleven deliberately broken
+providers, each violating one rule, each of which it must catch — a suite that only ever goes green
+converts "we did not check" into "we checked and it was fine". `provider/e2e/` then runs everything
+against **both** reference implementations, which is what distinguishes a spec that is implementable
+from one that is merely self-consistent.

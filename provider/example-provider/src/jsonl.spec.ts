@@ -99,7 +99,7 @@ describe('listSessions', () => {
   })
 })
 
-describe('sliceByTime — one A2A task out of a whole Claude session', () => {
+describe('sliceByTime — one turn out of a whole Claude session', () => {
   const lines = [
     userLine('turn one', '2026-08-04T09:00:00Z'),
     assistantLine('reply one', '2026-08-04T09:00:05Z'),
@@ -122,7 +122,7 @@ describe('agent cwd resolution', () => {
   it('resolves symlinks, because Claude records the resolved path', () => {
     // REGRESSION: on macOS `/tmp` is a symlink to `/private/tmp`. Configuring `/tmp/x` made this
     // provider look in `-tmp-x` while Claude wrote `-private-tmp-x`, so every history read came back
-    // empty and HP-201 failed against a live agent.
+    // empty and `agent.history` came back empty against a live agent.
     const real = join(root, 'real-dir')
     const link = join(root, 'link-dir')
     mkdirSync(real, { recursive: true })

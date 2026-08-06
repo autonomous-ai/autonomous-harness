@@ -9,7 +9,7 @@
  * by `-`. **It is lossy and not reversible** — never try to un-mangle it; the real working directory
  * is carried on the `cwd` field of the lines themselves.
  *
- * This is why `GetTask`/`ListTasks` are Tier 0 in the profile and cost this provider nothing: the
+ * This is why `agent.history` is required and costs this provider nothing to store: the
  * history already exists on disk. A turn typed straight into a terminal lands here too, so it shows
  * up in the session list — it just does not stream live (this app implements no SubscribeToTask).
  *

@@ -1,10 +1,9 @@
 # reference-provider
 
-A minimal, deterministic implementation of the **Autonomous machine provider profile**
-(`../spec/README.md`) — an A2A agent that Autonomous can attach to as a `provider`
-machine.
+A minimal, deterministic implementation of the **Autonomous machine provider protocol**
+(`../spec/README.md`) — an endpoint Autonomous can attach to as a `provider` machine.
 
-It runs no model. Every reply is scripted, which is the point: it exists to prove the spec is
+It runs no model. Every reply is scripted, which is the point: it exists to prove the protocol is
 implementable, to give the backend client something real to talk to, and to be the target the
 conformance suite runs against.
 
@@ -15,18 +14,17 @@ conformance suite runs against.
 
 ```bash
 npm install
-npm run dev                 # http://127.0.0.1:4501
-curl localhost:4501/.well-known/agent-card.json
+npm run dev                 # http://127.0.0.1:4319
 ```
 
-Send a turn (any non-empty `x-api-key` is accepted except the literal `bad-key`):
+Any non-empty credential is accepted except the literal `bad-key`:
 
 ```bash
-curl -N localhost:4501 \
-  -H 'content-type: application/json' -H 'x-api-key: demo' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage",
-       "params":{"message":{"role":"ROLE_USER","messageId":"m1",
-                 "parts":[{"text":"did acme blow through budget?"}]}}}'
+curl -N localhost:4319 \
+  -H 'content-type: application/json' -H 'authorization: Bearer demo' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"agent.send",
+       "params":{"agentId":"alpha","turnId":"t-1",
+                 "message":{"text":"did acme blow through budget?"}}}'
 ```
 
 `STEP_DELAY_MS` (default 20) controls the pause between streamed steps; the tests set it to 0.
@@ -39,21 +37,17 @@ the failure modes their integration will actually hit.
 
 | Say this | What happens | Why it's here |
 |---|---|---|
-| *(anything else)* | thinking → tool call → text → `COMPLETED` | the full-fidelity turn |
-| `plain` | one text part, **no metadata at all** | HP-211 — a bare provider is conformant |
-| `ask me` | parks in `INPUT_REQUIRED` | HP-104 — answer arrives on the same `taskId` |
-| `fail` | emits output, then `FAILED` | failure after partial output |
-| `die` | stream cut with **no terminal state** | deliberately violates HP-102, so the client can be hardened |
-| `compact` | reports `context_compact` | the provider compacted its own context (spec §9) |
-| *(image attachment)* | `FAILED` with a clear message | HP-106 — silent discarding is a violation |
+| *(anything else)* | thinking → tool call → text → `turn_completed` | the full-fidelity turn |
+| `everything` | every content kind in one turn | proves the vocabulary is reachable — from outside, a kind nobody emits is indistinguishable from one nobody supports |
+| `plain` | one event with **no `kind` at all** | a bare provider is conformant |
+| `ask me` | ends with `turn_input_required` | the answer arrives on the same `turnId` |
+| `fail` | emits output, then `turn_failed` | failure after partial output |
+| `die` | stream cut with **no terminal frame** | deliberately breaks the one-terminal rule, so the client can be hardened |
+| `compact` | reports `context_compact` | the provider compacted its own context |
+| `recap` | `recap_start` / `recap_end` around the summary | the recap pushed on the turn's own stream |
 
-Credential `bad-key` fails every call with HTTP 401 + `-32001`, for exercising HP-013.
-
-## What it deliberately does NOT declare
-
-`workspace-files` and `workspace-write` are absent from the agent card. That is not an oversight — it
-exercises the degradation path, where the client must hide those features rather than offer controls
-that fail (HP-022).
+Credential `bad-key` fails every call with HTTP 401 and `unauthenticated`, so the runner's `--bad-key`
+probe has something to hit.
 
 ## Conformance suite
 
@@ -62,58 +56,59 @@ Point it at **any** provider endpoint — yours, or someone else's:
 ```bash
 npm run conformance -- --url https://agent.example.com --key <credential>
 
-# two optional flags unlock three more clauses:
-#   --bad-key <invalid credential>   → HP-013 (a rejection must be distinguishable from an outage)
-#   --ask-phrase "<prompt>"          → HP-103, HP-104 (cancel, and the INPUT_REQUIRED round trip)
+# two optional flags unlock four more checks:
+#   --bad-key <invalid credential>   → a rejection must be distinguishable from an outage
+#   --ask-phrase "<prompt>"          → the turn_input_required round trip
 ```
 
-Against this reference provider: **22 passed · 0 failed · 2 need manual review · 9 not verifiable from outside**.
+Against this reference provider: **19 passed · 0 failed · 2 need manual review · 5 not verifiable
+from outside**.
 
 Two rules it follows, both deliberate:
 
-- **Nothing is skipped silently.** A clause that genuinely cannot be checked from outside — tenant
-  isolation, the 5 MB transcript ceiling, whether the credential gets logged — is reported as SKIP
-  **with the reason printed**. A suite that claims to check everything while quietly checking half of
-  it is worse than no suite at all.
-- **An undeclared extension is a SKIP, not a failure.** Absence is a legitimate answer (HP-022).
-
-Output names the clause, so a red line points at a section of the spec rather than at a symptom:
+- **Nothing is skipped silently.** A rule that genuinely cannot be checked from outside — tenant
+  isolation, the truncation flag, whether the credential gets logged — is reported as SKIP **with the
+  reason printed**. A suite that claims to check everything while quietly checking half of it is worse
+  than no suite at all.
+- **Every check has a stable `id` slug.** The slug is what the tests match on; the title is what a
+  partner reads. Rewording a title must never break the suite that proves the suite works.
 
 ```
-✖ HP-200  ListTasks filters by contextId
-            3 task(s) from another context leaked into the filter
+✔ terminal-frame           Every stream ends with EXACTLY ONE terminal event
+✖ history-matches-stream   History returns the SAME event objects the stream emitted
+             history and the live stream disagree about the same events
 ```
 
-Extension checks are **real calls**, not stubs: `autonomous.GetRecap` is invoked and its response
-validated (including the 200-character ceiling the device renders under). `workspace-write` is probed
-**non-destructively** — empty params must yield `-32602` (invalid params) rather than `-32601` (method
-not found), which proves the method exists without a conformance runner mutating someone's live
-workspace.
+Checks are **real calls**, not stubs. `agent.recap` is invoked and its response validated. The
+mutations are probed **non-destructively** — `agent.create` with an empty name — which proves the
+method is reachable, and distinguishes a provider that declines with a reason (conformant, and the
+reason is shown to the user) from one that answers `unsupported` (not).
 
-The suite itself has been mutation-tested. Six deliberate breaks, each turning exactly one clause red:
-`streaming: false` → HP-021 · a mistyped extension URI → HP-003 · ignoring the `contextId` filter →
-HP-200 · an unrecognised metadata kind → HP-210 · answering an **undeclared** extension method →
-HP-311 · a recap longer than 200 characters → HP-302.
+**The suite is itself tested against deliberate breaks** — see `conformance.spec.ts`. Eleven broken
+providers, each violating exactly one rule, each of which the runner must catch: a stream with no
+terminal frame and one with two · `agent.send` answering with ordinary JSON instead of SSE · a bad
+credential being accepted · a bad credential getting a list back instead of an error · an empty agent
+list · tool events with no id · an early cancel ignored · history disagreeing with the stream · an
+unknown method being answered · an unknown request field being fatal. A runner that only ever goes
+green converts "we did not check" into "we checked and it was fine".
 
 ## Tests
 
 ```bash
-npm test        # 30 tests — provider + the conformance runner itself
+npm test        # 48 tests — provider + the conformance runner itself
 npm run typecheck
 ```
 
-Each test names the clause it pins. When the spec changes, these should be the first thing to go red.
-The suite has been mutation-tested: dropping `final` on terminal states, silently discarding images,
-and allowing a finished task to be cancelled each turn it red.
+Each test names the rule it pins. When the spec changes, these should be the first thing to go red.
 
 ## Layout
 
 | File | Role |
 |---|---|
-| `src/types.ts` | the A2A subset used here, plus the `autonomous.ai/*` metadata — hand-written so the whole wire surface is readable in one file |
-| `src/agentCard.ts` | the entire capability negotiation (HP-020 … HP-023) |
+| `src/types.ts` | the whole wire surface, hand-written so it is readable in one file |
+| `src/agents.ts` | the agent list and the mutations on it — ids derived on read, never snapshotted |
 | `src/scenarios.ts` | the scripted turns, happy and hostile |
-| `src/store.ts` | in-memory tasks — note that **history lives here**, which is why `GetTask`/`ListTasks` are Tier 0 |
-| `src/server.ts` | JSON-RPC dispatch and SSE, with HP-xxx clause references inline |
+| `src/store.ts` | in-memory transcripts — note that **history lives here**, which is why `agent.history` is required |
+| `src/server.ts` | JSON-RPC dispatch and SSE |
 | `src/conformance.ts` | the runner partners point at their own endpoint |
-| `src/conformance.spec.ts` | regression cover for the runner — including that it **reports** an unreachable endpoint instead of throwing, and never reports PASS for a clause it did not actually check |
+| `src/conformance.spec.ts` | regression cover for the runner — including that it **reports** an unreachable endpoint instead of throwing, and never reports PASS for a rule it did not actually check |

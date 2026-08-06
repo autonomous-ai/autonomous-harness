@@ -4,13 +4,13 @@ Make your agent platform available on the [Autonomous Harness](https://www.auton
 A user connects it with a **URL and a credential**, then drives it from the web app or from the
 hardware device on their desk.
 
-**This is a profile of [A2A](https://github.com/a2aagent/A2A) v1.0.1, not a new protocol.** If you
-already run a conformant A2A agent, most of it is done. Everything specific to Autonomous is either
-standard A2A used as intended, or a declared A2A extension — nothing here forks the standard.
+**Authenticate, call a method, handle the response.** JSON-RPC 2.0 over HTTPS to one URL, with
+Server-Sent Events for the one method that streams. Eight methods, no SDK, nothing to discover, and
+no capability negotiation — if you can serve JSON over HTTPS, you can implement this in an afternoon.
 
 | | |
 |---|---|
-| [`spec/`](spec/README.md) | The contract. 40 numbered clauses (`HP-xxx`) |
+| [`spec/`](spec/README.md) | The contract — one page |
 | [`spec/onboarding.md`](spec/onboarding.md) | What to do once you conform, and what to expect from us |
 | [`reference-provider/`](reference-provider/) | Scripted and deterministic — **and it ships the conformance runner** |
 | [`example-provider/`](example-provider/) | A real one, backed by the Claude Code CLI |
@@ -21,7 +21,8 @@ See it work before reading the spec:
 
 ```bash
 cd reference-provider && npm install && npm run dev     # http://127.0.0.1:4501
-curl localhost:4501/.well-known/agent-card.json
+curl -H 'Authorization: Bearer any-key' -H 'content-type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"agent.list","params":{}}' localhost:4501
 ```
 
 Then point the runner at your own endpoint. **Zero failures is the bar:**
@@ -30,35 +31,35 @@ Then point the runner at your own endpoint. **Zero failures is the bar:**
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
 
-It names the clause on every line, so a red result points at a section of the spec rather than at a
-symptom:
+Every line names a rule, so a red result points at something specific rather than at a symptom:
 
 ```
-✔ HP-021  capabilities.streaming is true
-✖ HP-200  ListTasks filters by contextId
-            3 task(s) from another context leaked into the filter
+✔ terminal-frame           Every stream ends with EXACTLY ONE terminal event
+✖ history-matches-stream   History returns the SAME event objects the stream emitted
+             history and the live stream disagree about the same events
 ```
 
 ## What you actually have to implement
 
-**Tier 0 is all A2A core.** There is no Autonomous-specific work in it at all:
+**Eight methods.** All of them are required, and that is the whole surface:
 
 | | Backs |
 |---|---|
-| Agent Card at `/.well-known/agent-card.json` | capability discovery, and your agent list |
-| `SendStreamingMessage` → SSE | a turn |
-| `CancelTask` | stopping one |
-| `ListTasks` · `GetTask` | history |
+| `agent.list` | the agents a user picks from — authenticated, so it can differ per tenant |
+| `agent.send` → SSE | a turn |
+| `agent.history` | rebuilding the conversation |
+| `turn.cancel` | stopping a turn |
+| `agent.create` / `agent.rename` / `agent.delete` | managing the agent list |
+| `agent.recap` | short per-turn summaries the hardware device shows |
 
 History is required, not optional: **Autonomous stores no transcript for a provider machine.** Without
-those two, a page refresh loses the conversation.
+it, a page refresh loses the conversation.
 
-**Everything else is an optional, declared extension** — file browsing, workspace writes, per-turn
-recaps, voice routing. An extension you do not declare is simply absent, and the product hides the
-feature rather than offering a control that fails.
-
-Two things are deliberately **not** in the profile: model selection (you own your model configuration)
-and end-to-end encryption (the plaintext originates on your side; users are told this in our UI).
+**"Required" does not mean "pretend".** If your agents are managed inside your own product, answer
+`invalid_request` with a message instead of faking a mutation — we show that message to the user
+(*"Agents are managed in Example Co"*), which tells them more than a control that silently vanished.
+A provider that summarises nothing answers `agent.recap` with an empty list, and we derive one from
+the turn's own text.
 
 ## What is in this section
 
@@ -74,6 +75,6 @@ has to do.
 
 ## Contributing, security, licence
 
-- Found a gap in the spec, or a clause the runner cannot actually check? [Open an issue](https://github.com/autonomous-ai/autonomous-harness/issues) — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+- Found a gap in the spec, or a rule the runner cannot actually check? [Open an issue](https://github.com/autonomous-ai/autonomous-harness/issues) — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 - Security reports: **not the issue tracker** — see [SECURITY.md](../SECURITY.md).
 - Licensed under [Apache-2.0](../LICENSE).

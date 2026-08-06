@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harness.autonomous.ai/api/provider/schema/event.json",
+  "title": "A provider event",
+  "description": "One flat, self-describing object. The SAME shape is used in two places: each `data:` frame of an `agent.send` stream, and each entry of `agent.history.events`. That is deliberate — one schema pins both, so a replayed transcript and the live view cannot disagree about the same event. An event MUST be readable without the events before it. A provider that emits no `kind` at all is conformant: `{\"text\": \"…\"}` renders as plain assistant output. Clients ignore an unrecognised `kind` rather than failing.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "description": "Absent means plain assistant text. Unrecognised values are ignored, not rejected.",
+      "enum": [
+        "turn_started",
+        "user_message",
+        "thinking_title",
+        "thinking_delta",
+        "text_delta",
+        "tool_start",
+        "tool_end",
+        "context_compact",
+        "done",
+        "recap_start",
+        "recap_end",
+        "turn_completed",
+        "turn_failed",
+        "turn_cancelled",
+        "turn_input_required"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "description": "The event's text. Its meaning follows `kind`: assistant output for text_delta, reasoning for thinking_delta, the final result for done, the recap body for recap_end. With no `kind` at all it is plain assistant output."
+    },
+    "turnId": { "type": "string", "description": "On turn_started, echoing the client-minted id." },
+    "agentId": { "type": "string", "description": "On turn_started." },
+    "at": { "type": "string", "format": "date-time", "description": "ISO-8601 UTC. Omit rather than invent one." },
+    "title": { "type": "string", "description": "thinking_title: the label for a reasoning block. `text` is accepted as a fallback." },
+    "thinkingId": { "type": "string", "description": "Groups thinking_delta chunks with their thinking_title." },
+    "toolId": {
+      "type": "string",
+      "description": "REQUIRED on tool_start and tool_end, and unique within the turn. Tools can overlap, so pairing by position is not available; an event without one is dropped, because an unpaired call renders as a row that never resolves."
+    },
+    "tool": { "type": "string", "description": "The tool's display name." },
+    "input": { "description": "tool_start: whatever the tool was called with. Any JSON." },
+    "ok": {
+      "type": "boolean",
+      "description": "tool_end: false marks failure. ABSENT is not failure — it is the provider not saying."
+    },
+    "output": { "type": "string", "description": "tool_end: the tool's output. `text` is accepted as a fallback." },
+    "summary": { "type": "string", "description": "tool_end: a one-line description of what the tool did." },
+    "durationSeconds": { "type": "number", "minimum": 0, "description": "tool_end. Omit rather than fabricate." },
+    "recap": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "recap_end: the headline. ABSENT means no recap was produced — a turn that said nothing, or a summariser that failed — and the client then clears its indicator and paints nothing."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "REQUIRED on turn_input_required: what to ask the user. The answer arrives as a resumed agent.send on the same turnId."
+    },
+    "error": { "$ref": "#/$defs/error", "description": "On turn_failed." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "tool_start" } }, "required": ["kind"] },
+      "then": { "required": ["toolId"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "tool_end" } }, "required": ["kind"] },
+      "then": { "required": ["toolId"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "turn_input_required" } }, "required": ["kind"] },
+      "then": { "required": ["prompt"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "done" } }, "required": ["kind"] },
+      "then": { "required": ["text"] }
+    }
+  ],
+  "$defs": {
+    "error": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "$ref": "#/$defs/errorCode" },
+        "message": { "type": "string" }
+      }
+    },
+    "errorCode": {
+      "description": "Codes are STRINGS. `unauthenticated` is its own code because 'your credential is wrong' and 'the provider is down' need different words in front of the user, and once collapsed the distinction cannot be recovered.",
+      "enum": ["unauthenticated", "not_found", "unsupported", "invalid_request", "rate_limited", "internal"]
+    },
+    "terminalKinds": {
+      "description": "Exactly ONE of these ends every stream. Not referenced by validation — a single event cannot express a whole-stream rule — but named here so implementers and the conformance runner share one list.",
+      "enum": ["turn_completed", "turn_failed", "turn_cancelled", "turn_input_required"]
+    }
+  }
+}

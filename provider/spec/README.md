@@ -1,600 +1,361 @@
-# Harness Provider Protocol (A2A profile)
+# Autonomous machine provider protocol
 
-**Status:** DRAFT, revision **0.2.0**. Public but not yet implemented by anyone outside Autonomous,
-so it is still changing. Treat §12 as binding from 0.2.0 onward.
+A **provider** backs an Autonomous *machine* with your agent platform instead of a CLI running on the
+user's own computer. This document is the whole contract.
 
-**Audience:** a third party who wants their agent platform to appear as a `provider` machine in the
-Autonomous product — reachable from the web app and from the Harness device.
+**Authenticate, call a method, handle the response.** JSON-RPC 2.0 over HTTPS POST to one URL, with
+Server-Sent Events for the one method that streams. No WebSocket, nothing long-lived, no SDK, and
+nothing to discover — the eight methods below are the entire surface.
 
-**What this document is:** a *profile* of the Agent2Agent (A2A) protocol, not a new protocol. If you
-already run a conformant A2A agent, most of Tier 0 is already done. Everything Autonomous-specific is
-expressed as declared A2A extensions or as metadata on standard objects — nothing here forks A2A.
+```http
+POST /  HTTP/1.1
+Host: agent.example.com
+Authorization: Bearer <credential>
+Content-Type: application/json
 
-**Related:** `onboarding.md` in this folder — what to do once your endpoint conforms.
-The `reference-provider/` and `example-provider/` packages in this repository are working
-implementations of everything below.
+{"jsonrpc":"2.0","id":1,"method":"agent.list","params":{}}
+```
+```jsonc
+{"jsonrpc":"2.0","id":1,"result":{"agents":[{"id":"seo","name":"SEO Analyst"}]}}
+```
+
+Field names are camelCase. Ids are strings. Timestamps are ISO-8601 UTC.
 
 ---
 
-## 1. Target revision
+## The model
 
-This profile targets **A2A v1.0.1** (`github.com/a2aagent/A2A`, released 2026-05-28), the current
-stable release under Linux Foundation governance.
+```
+machine   one provider endpoint + one credential          ← what the user creates and pays for
+  └── agent    one working unit inside it                 ← what the user picks and talks to
+        └── turn     one user message until the agent stops
+```
 
-A2A v1.0 ships official SDKs in **Python, JavaScript, Java, Go and .NET**. Autonomous therefore
-publishes **no SDK of its own** — use the one for your stack. What Autonomous publishes instead is
-this profile, a reference implementation, and a conformance runner you can point at your own endpoint.
+**There are only agents.** A provider has no session, thread, or conversation concept here: **one
+agent is one continuous transcript.** Autonomous presents a session to its own clients and synthesises
+it from the agent — entirely our side of the line, and nothing you need to model.
 
-> **HP-001** An implementation MUST declare its A2A protocol support through its Agent Card. Clients
-> MUST NOT infer capability from anything else — the card is the single source of truth.
-
-> **HP-002** A provider MUST implement A2A v1.0 or later. Autonomous pins to v1.0.1 and will state a
-> new pin, with a deprecation window, before requiring anything newer.
-
-> **HP-004** A provider SHOULD serve a **signed Agent Card** (A2A v1.0), so Autonomous can verify the
-> card was issued by the domain owner rather than merely served from it. Because the card is this
-> profile's single source of truth for capability (HP-001), signing it is the one control that makes
-> that trust verifiable. Expect this to become a MUST in a future revision; providers onboarding now
-> should plan for it.
-
-### Canonical base
-
-Everything this profile publishes lives under **`https://harness.autonomous.ai/api/a2a/`**:
-
-| Path | What |
+| Autonomous concept | On your side |
 |---|---|
-| `ext/<name>` | extension identifier URIs, used verbatim in `AgentCard.extensions` |
-| `schema/<name>.json` | the JSON Schemas accompanying this document |
-
-> **HP-003** Extension URIs are opaque identifiers and MUST be sent byte-for-byte as written in §8.
-> A provider MUST NOT normalise, shorten, or re-host them; a mismatched URI means the extension is
-> undeclared (HP-022).
-
-Note that the `Part.metadata` key prefix is `autonomous.ai/` — a short reverse-DNS **key namespace**,
-deliberately not a URL. It appears on every part of every streamed event, and the Harness device
-renders under a tight frame budget, so the prefix is kept short on purpose.
+| machine | your endpoint; the credential selects *which* tenant |
+| agent | an entry in `agent.list` |
+| turn | one `agent.send` call and the stream it returns |
+| a question to the user | a `turn_input_required` frame, answered by a resumed `agent.send` |
+| credential rejected | the `unauthenticated` error code |
 
 ---
 
-## 2. Object mapping
+## Authentication
 
-| Autonomous concept | A2A concept | Notes |
+The credential is pasted by the end user into the Autonomous web app and sent on every request as
+`Authorization: Bearer <credential>`. One header, fixed by convention: there is no descriptor to name
+a different one.
+
+It identifies **one tenant**, and must not grant access beyond that tenant.
+
+A rejected credential must answer the `unauthenticated` error code, never a generic failure — the
+product says a different sentence for "your credential is wrong" than for "the provider is down", and
+cannot tell them apart otherwise.
+
+---
+
+## The eight methods
+
+All eight are required. There is nothing to declare, and no capability negotiation.
+
+| Method | Params | Result |
 |---|---|---|
-| **machine** | one A2A agent endpoint | The credential the user supplies selects *which* workspace/tenant on the provider side |
-| **agent** — one working unit inside a machine | `AgentCard.skills[]` entry | Read-only in Tier 0. **Not** the A2A sense of "agent" — see the note below |
-| **session** (a chat thread) | `contextId` | Starting a new chat mints a new `contextId`; no call is required |
-| **turn** (one user message until the agent stops) | `taskId` | Task lifecycle *is* turn lifecycle |
-| **turn start / end** | `TASK_STATE_WORKING` → `COMPLETED` / `FAILED` / `CANCELED` | |
-| **permission prompt / question to the user** | `TASK_STATE_INPUT_REQUIRED` | Native A2A. No extension |
-| **credential rejected** | `TASK_STATE_AUTH_REQUIRED` | Distinguishable from an outage, so the UI can say "re-enter credential" |
-
-> **One word, two meanings — read this before implementing.** A2A calls *your whole endpoint* an
-> agent: that is what an `AgentCard` describes. Autonomous calls *one working unit inside a machine*
-> an agent, and those map to the **skills** on your card. So a single A2A agent (you) exposes many
-> Autonomous agents (your skills). The product model is **machine → agent → session**; on your side
-> that reads **endpoint → skill → `contextId`**.
-
----
-
-## 3. Transport and authentication
-
-> **HP-010** The endpoint MUST be reachable over HTTPS at a stable, publicly resolvable URL. The URL
-> is registered by Autonomous, not supplied by end users.
-
-> **HP-011** The provider MUST declare its authentication requirement using standard A2A
-> `securitySchemes`. `APIKey` and `HTTPAuth` (bearer) are the schemes Autonomous supports today.
-> OAuth2 and OpenIdConnect are reserved for a later revision and MUST NOT be relied on.
-
-> **HP-012** The credential is supplied by the end user in the Autonomous web app and presented by the
-> Autonomous backend on every request. The provider MUST treat it as identifying **one tenant/user**
-> on its side and MUST NOT grant it access beyond that tenant.
-
-> **HP-013** A rejected credential MUST surface as `TASK_STATE_AUTH_REQUIRED` on a task, or as the
-> A2A-standard authentication error on a non-task call — never as a generic failure. The product
-> distinguishes "your credential is wrong" from "the provider is down", and cannot do so without this.
-
----
-
-## 4. Agent Card (HP-0xx)
-
-> **HP-020** The provider MUST serve an Agent Card at `/.well-known/agent-card.json`.
-
-> **HP-021** `capabilities.streaming` MUST be `true`. A non-streaming provider is not usable: the
-> product renders assistant output token by token.
-
-> **HP-022** Every Autonomous extension the provider implements MUST be listed in
-> `AgentCard.extensions` by its exact URI (§8). An extension that is implemented but undeclared MUST
-> be treated by clients as absent.
-
-> **HP-023** `skills[]` is the agent list. Each skill's `name` and `description` are shown to the
-> user. A provider with no meaningful agent concept SHOULD expose exactly one skill representing the
-> whole workspace.
-
-Schema for the extension entries: `schema/agent-card.ext.json`.
-
----
-
-## 5. Messaging (HP-1xx)
-
-> **HP-100** The provider MUST implement `SendStreamingMessage` and return Server-Sent Events.
-
-> **HP-101** A message that begins a new chat carries a fresh `contextId` and no `taskId`. A follow-up
-> within the same chat carries the existing `contextId`.
-
-> **HP-102** The provider MUST emit a terminal task state on every stream. A stream that ends without
-> one is a protocol violation; clients will treat the turn as failed.
-
-> **HP-103** The provider MUST implement `CancelTask`. After a successful cancel, the corresponding
-> SSE stream MUST terminate and the task MUST report `TASK_STATE_CANCELED`.
-
-> **HP-104** When the agent needs an answer from the user (a permission prompt, a clarifying
-> question), the provider MUST enter `TASK_STATE_INPUT_REQUIRED` and MUST accept a subsequent Message
-> carrying the same `taskId` as the answer.
-
-> **HP-105** Assistant output MUST be delivered as `TaskStatusUpdateEvent` messages containing `Part`
-> objects. Files produced by the turn SHOULD be delivered as `Artifact` via
-> `TaskArtifactUpdateEvent`.
-
-> **HP-106** A user message MAY carry image attachments. These travel as standard A2A `Part` objects
-> using `raw` (base64) with `mediaType`, alongside the text part — no Autonomous extension is
-> involved. A provider that cannot accept images MUST fail the task with a clear message rather than
-> silently discarding them; silent loss reads to the user as the agent ignoring what they sent.
-
-> **HP-107** A client MAY name the skill a turn belongs to in `Message.metadata` as
-> `autonomous.ai/agentId`, matching an `AgentCard.skills[].id`. A2A has no skill selector on a
-> Message, so without this a provider serving more than one skill can only guess — and a provider
-> that guesses "the first one" attributes every conversation to the same skill no matter which one
-> the user picked. A provider MAY ignore the field and choose its own skill; it MUST NOT fail a turn
-> because of it.
->
-> The field selects a skill only when there is nothing more specific: a turn continuing an existing
-> `contextId`, or carrying a `taskId`, keeps the skill that conversation already belongs to, whatever
-> the field says. A conversation belongs to one skill for its whole life — the client's session list
-> is scoped to a single agent (HP-204), so a thread that changed skill mid-way would lose half its
-> turns from each agent's list.
-
----
-
-## 6. History (HP-2xx)
-
-Chat history lives **entirely on the provider side**. Autonomous stores no transcript for a `provider`
-machine — there is no database to fall back on. This is why the two methods below are required rather
-than recommended: without them, a page refresh loses the conversation.
-
-> **HP-200** The provider MUST implement `ListTasks`, and MUST support grouping/filtering by
-> `contextId`. This backs the session list.
-
-> **HP-201** The provider MUST implement `GetTask`, returning the full message history of the task.
-> This backs the transcript view.
-
-> **HP-202** The provider MUST return the complete transcript in a single `GetTask` response.
-> `GetTask` itself is never paged; a provider that wants windowing declares `context-history`
-> (HP-304), which pages a whole context rather than a turn. See §10.1.
-
-> **HP-203** A transcript exceeding **5 MB** serialized MAY be truncated by the provider, which MUST
-> then mark the response so the client can tell the user the view is partial. Silent truncation is a
-> violation.
-
-> **HP-204** A task SHOULD carry `metadata.agentId` — the `AgentCard.skills[].id` whose skill ran it.
-> The client's model is machine → agent → session, so its session list is always scoped to ONE agent;
-> a task that does not say which skill it belongs to cannot be placed in that list, and selecting an
-> agent then shows either every conversation on the machine or none of them. A provider serving a
-> single skill MAY omit it: with one skill there is nothing to disambiguate.
-
----
-
-## 7. Event vocabulary on `Part.metadata`
-
-A2A core has no representation for thinking, tool calls, or the fine structure the product renders.
-This profile defines a namespace on `Part.metadata`.
-
-> **HP-210** Autonomous-specific metadata MUST be namespaced under keys beginning `autonomous.ai/`.
-> Clients MUST ignore unknown keys in that namespace rather than failing.
-
-> **HP-211** A provider that emits no `autonomous.ai/*` metadata is conformant. Its output renders as
-> plain assistant text. Richness is opt-in.
-
-The recognised event kinds — declared here **independently** of any Autonomous internal type, so that
-this contract does not inherit an internal shape:
-
-| `autonomous.ai/kind` | Meaning |
-|---|---|
-| `user_message` | the user's own turn, replayed in history |
-| `thinking_delta` | a chunk of reasoning text |
-| `thinking_title` | a short label for a reasoning block |
-| `text_delta` | a chunk of assistant output |
-| `tool_start` | a tool invocation began |
-| `tool_end` | a tool invocation finished (with output, error flag, summary) |
-| `context_compact` | the provider compacted its own context |
-| `done` | the turn's final result text |
-| `recap_start` | the turn is being summarised (HP-212) |
-| `recap_end` | the summary, or its absence — the recap phase is over (HP-212) |
-
-Turn lifecycle (`turn_started` / `turn_ended`) is **not** metadata — it is derived from A2A task
-states, per HP-102.
-
-> **HP-212** A provider MAY deliver the turn's recap in-stream, as a **pair** of parts on non-terminal
-> status events emitted after the turn's output and **before** the terminal event:
->
-> - `recap_start` — summarising has begun. Carries no content; it exists so the client can show a
->   "preparing a recap" indicator and hold its busy state open for a wait it cannot otherwise see.
-> - `recap_end` — the phase is over. The headline travels in `autonomous.ai/recap` (≤ 200 chars) and
->   the fuller body as the Part's own `text`, meaning exactly what `recapEntry.recap` and
->   `recapEntry.body` mean in HP-302. **`autonomous.ai/recap` absent means no recap was produced** —
->   a turn that said nothing, or a summariser that failed. The client then clears its indicator and
->   paints nothing.
->
-> A provider that emits `recap_start` MUST emit a matching `recap_end` before the terminal event, even
-> when there is no recap: an indicator that is opened and never closed is worse than no indicator.
-> A client that receives a `recap_end` MUST prefer it over `autonomous.GetRecap`, because it is
-> unambiguously **this** turn's recap.
->
-> The problem this solves: `autonomous.GetRecap` is scoped to an AGENT and takes no task id, so a
-> client asking for "the latest recap" the moment a turn ends can only guess — and if the provider
-> has not finished summarising yet, the newest entry it holds is the PREVIOUS turn's. Pushing the
-> recap on the turn's own stream removes the guess. The cost is honest and bounded: the terminal event
-> waits for the summary, so the turn stays open for as long as summarising takes — which is precisely
-> what `recap_start` lets the client explain to the user. A provider that would rather close the turn
-> immediately simply emits neither kind and keeps HP-302 alone.
->
-> This does NOT replace HP-302: a device restoring its tiles after a reboot has no stream to read, so
-> a provider that pushes SHOULD also persist.
-
-Schema: `schema/part-metadata.json`.
-
----
-
-## 8. Extensions (HP-3xx)
-
-Each extension is optional and MUST be declared per HP-022. A client hides the corresponding feature
-entirely when an extension is absent, rather than offering a control that fails.
-
-| URI | Adds |
-|---|---|
-| `https://harness.autonomous.ai/api/a2a/ext/workspace-files` | browse and read files in an agent |
-| `https://harness.autonomous.ai/api/a2a/ext/workspace-write` | create / rename / delete agents and sessions |
-| `https://harness.autonomous.ai/api/a2a/ext/session-recap` | short persisted per-turn summaries (used by the device) |
-| `https://harness.autonomous.ai/api/a2a/ext/context-history` | a whole context's transcript in one call, optionally windowed |
-| `https://harness.autonomous.ai/api/a2a/ext/voice` | provider-side routing of a spoken task to an agent |
-
-### 8.1 Method naming
-
-Extension methods travel on the **same JSON-RPC endpoint** as A2A core — there is no second URL.
-
-> **HP-310** Extension methods MUST be named `autonomous.<Verb>`. The prefix keeps them from ever
-> colliding with a current or future A2A core method name, and makes it obvious in a log which calls
-> are profile extensions rather than standard A2A.
-
-> **HP-311** A provider MUST reject a call to an extension method it has not declared, with JSON-RPC
-> `-32601` (method not found). Answering a method the Agent Card does not advertise contradicts
-> HP-022 and leaves the client unable to trust the card.
-
-### 8.2 The extensions
-
-> **HP-300** `workspace-files` — read-only file access, scoped to an agent.
-> Methods: **`autonomous.ListFiles`** (`{ agentId, path? }` → `{ files }`) and
-> **`autonomous.ReadFile`** (`{ agentId, path }` → `{ path, content, truncated? }`).
-> Schema: `schema/ext-workspace-files.json`.
-
-> **HP-301** `workspace-write` — mutations on agents and sessions. Methods:
-> **`autonomous.CreateAgent`**, **`autonomous.RenameAgent`**, **`autonomous.DeleteAgent`**,
-> **`autonomous.SetSessionTitle`**, **`autonomous.DeleteSession`**.
-> `AgentCard.extensions[].params` declares which halves are supported: `{ agents: bool, sessions: bool }`.
-> A provider declaring this extension MUST enforce that every operation stays inside the tenant
-> identified by the credential. Schema: `schema/ext-workspace-write.json`.
-
-> **HP-302** `session-recap` — short persisted per-turn summaries.
-> Method: **`autonomous.GetRecap`** (`{ agentId, n? }` → `{ agentId, entries }`).
-> Used to restore the device's tiles after a reboot; the device shows nothing rather than stale text
-> when this is absent. An empty `entries` array is correct before any turn has been summarised.
-> Schema: `schema/ext-session-recap.json`.
-
-> **HP-303** `voice` — the provider chooses which agent a transcribed spoken task belongs to.
-> Method: **`autonomous.RouteVoice`** (`{ transcript, candidateAgentIds? }` → `{ agentId, confidence?, reason? }`).
-> **Optional and rarely needed**: Autonomous can route from `skills[]` names and descriptions without
-> provider help, and does so by default. Declare this only to override that routing with your own.
-> A `agentId` of `null` declines and hands routing back to Autonomous.
-> Schema: `schema/ext-voice.json`.
-
-> **HP-304** `context-history` — one context's transcript in a single call, optionally windowed.
-> Method: **`autonomous.GetContextHistory`** (`{ contextId, limit?, before? }` →
-> `{ contextId, messages, hasMore?, oldestCursor?, staleCursor?, truncated? }`).
-> `GetTask` (HP-201) returns one TURN, but a client opening a chat wants the whole CONTEXT — without
-> this it must call `ListTasks` then `GetTask` once per turn, each at full size. `limit` absent means
-> the complete transcript, and the provider MUST then omit the three paging fields entirely; that
-> absence is how a client tells a windowed response from a whole one. Paging runs backwards only:
-> `before` is a `messageId` the client already holds (exclusive), taken from the previous response's
-> `oldestCursor`. `messages` is ALWAYS oldest-first so a page can be prepended as received. A window's
-> start MUST be snapped back to a turn boundary so it never splits a tool call from its result — which
-> is why a window may be LONGER than `limit`, and why `limit` is a floor rather than a count. A
-> `before` that is no longer in the transcript MUST answer `staleCursor: true` with empty `messages`
-> rather than an error, so the client can reload instead of showing a broken chat.
-> Schema: `schema/ext-context-history.json`.
-
----
-
-## 9. Out of scope
-
-Deliberate omissions. Listed so their absence is a decision on record and not a gap:
-
-| Not in this profile | Why |
-|---|---|
-| Model / effort selection | The provider owns its own model configuration. Reaching into it from the Autonomous UI would fight the provider's own surface and expose a control we cannot honour consistently. No model picker is shown for `provider` machines |
-| Agent login flows | The provider owns authentication. The credential field in the Autonomous UI is the entire story |
-| Explicit context compaction | The provider manages its own context window. Autonomous never asks a provider to compact; the `context_compact` event kind (§7) exists only so a provider can *report* that it did |
-| End-to-end encryption | `provider` machines are **not** end-to-end encrypted. Plaintext already originates at the provider, so E2EE between the user and the provider would hide content from Autonomous, not from the provider. Users are shown this explicitly. Providers are onboarded under a data-processing agreement, which is the control that replaces the cryptographic one |
-
-Additionally, a set of frames exists on the Autonomous data plane that **never crosses this boundary**:
-live speaking-presence indicators, client-count bookkeeping, machine metadata and revocation, and
-device pairing. These are handled entirely inside Autonomous. A provider neither sends nor receives
-them, and MUST NOT attempt to.
-
-> **HP-400** A provider MUST ignore any frame it does not recognise rather than failing the stream.
-> Autonomous replies `UNSUPPORTED` on behalf of a provider for any capability the Agent Card does not
-> declare, so an undeclared feature never reaches the provider at all.
-
----
-
-## 10. Field projections and resolved gaps
-
-The Autonomous client requires fields A2A does not carry. Each is resolved here so implementers do not
-have to guess. **Most are synthesised by the Autonomous backend — the provider burden is small.**
-
-### 10.1 Transcript pagination
-
-The Autonomous client can request a windowed transcript (a limit plus a cursor). A2A `GetTask` has no
-equivalent — and it is scoped to one TURN besides, while the client is opening a whole CONTEXT.
-
-**Resolution:** the `context-history` extension (HP-304). It takes `{ contextId, limit?, before? }`
-and answers `{ messages, hasMore?, oldestCursor?, staleCursor? }` — deliberately the same field names
-the Autonomous client already sends and reads, so nothing has to be translated in the middle.
-
-A provider that does not declare it is still fully conformant: HP-202 stands unchanged, and a client
-falls back to `ListTasks` + `GetTask` per turn at full size. What that fallback cannot do is page —
-so a long conversation arrives whole or not at all, which is exactly what the 5 MB ceiling of HP-203
-was there to bound.
-
-### 10.2 `engine`
-
-The client models an engine as one of eight local CLIs. A provider machine is none of them.
-
-**Resolution:** the field is **omitted** for provider-backed agents. The client treats an absent
-engine as provider-backed and skips every engine-specific branch. Providers MUST NOT invent a value.
-
-### 10.3 Skill → agent projection
-
-| Client field | Source |
-|---|---|
-| `id` | the skill's id |
-| `name`, `description` | the skill's `name`, `description` |
-| `userId` | **synthesised** by the backend — the Autonomous owner of the machine |
-| `status` | **synthesised** — constant `active` |
-| `createdAt`, `updatedAt` | **synthesised** — the machine's own timestamps unless the skill carries better |
-| `engine` | omitted (§10.2) |
-
-### 10.4 Task → session-list item projection
-
-| Client field | Source |
-|---|---|
-| `id` | `contextId` |
-| `title` | task metadata title, else the first user message truncated |
-| `timestamp`, `lastActivity` | task timestamps |
-| `messageCount` | best-effort; **omitted when unknown**, and the client hides the count rather than showing zero |
-| `participants` | not modelled by A2A; the client omits it |
-
-> **HP-220** A provider MUST NOT fabricate `messageCount` or similar statistics. Omission is correct;
-> a wrong number is worse than a missing one.
-
----
-
-## 11. Security (HP-9xx)
-
-> **HP-900** All traffic MUST be over TLS.
-
-> **HP-901** Everything a provider sends is **untrusted input** to the Autonomous web UI and to the
-> physical device screen. The Autonomous backend validates and allowlists every frame crossing this
-> boundary; a provider MUST NOT rely on being able to inject arbitrary client-side structures.
-> Non-conforming frames are dropped and logged, and a stream that repeats the violation is closed.
-
-> **HP-902** Providers are rate limited per machine. Sustained excess closes the stream.
-
-> **HP-903** A provider MUST NOT log or transmit the supplied credential beyond what is required to
-> authenticate the request.
-
----
-
-## 12. Versioning
-
-This document is a **compatibility contract, not ordinary prose.** The same discipline the Autonomous
-codebase applies to its own launcher/daemon contract applies here.
-
-> **HP-910** Optional fields MAY be added to a published revision.
-
-> **HP-911** A published field MUST NOT be renamed, removed, retyped, or reinterpreted. Any of those
-> requires a new revision.
-
-> **HP-912** When a new revision exists, providers and clients MUST be able to negotiate through the
-> Agent Card. A revision MUST be served alongside its predecessor for a deprecation window; removing
-> support without one breaks deployed integrations.
-
-**0.1.0 → 0.2.0 was an exception, and the only one.** It renamed published fields (`projectId` →
-`agentId`) and dropped 0.1.0 rather than serving both, which is precisely what HP-911 and HP-912
-forbid. It was taken because 0.1.0 was one day old and had no implementers — there was no deployed
-integration for the rule to protect. From 0.2.0 on there is, so the rule binds: a rename now means a
-0.3.0 served alongside 0.2.0 for a deprecation window. If you are reading this because you already
-implemented 0.1.0, contact us — that is a case we did not think existed.
-
----
-
-## Appendix A — Clause index
-
-| Range | Area |
-|---|---|
-| HP-001 … HP-004 | Target revision and canonical base |
-| HP-010 … HP-013 | Transport and authentication |
-| HP-020 … HP-023 | Agent Card |
-| HP-100 … HP-107 | Messaging |
-| HP-200 … HP-204 | History |
-| HP-210 … HP-220 | Event vocabulary and projections |
-| HP-300 … HP-311 | Extensions |
-| HP-400 | Unknown frames |
-| HP-900 … HP-903 | Security |
-| HP-910 … HP-912 | Versioning |
-
-Tier 0 (required for any provider) is: HP-003, HP-010–013, HP-020–023, HP-100–105, HP-200–203, HP-900–903,
-HP-910–912. Everything in HP-3xx is optional.
-
-## Appendix B — Conformance
-
-The conformance suite asserts one check per clause ID and names the failing ID in its output, so a red
-result points at a section of this document rather than at a symptom. See phase 6 of the
-implementation plan.
-
-## Appendix C — Coverage of the Autonomous client surface
-
-Every operation the Autonomous client can issue, and where it lands in this profile. This table is the
-audit artifact: **an entry that is neither Tier 0, nor an extension, nor explicitly out of scope is a
-gap in the spec.** Re-run this audit whenever the client gains an operation.
-
-| Client operation | Disposition |
-|---|---|
-| `message` | Tier 0 — HP-100 |
-| `cancel` | Tier 0 — HP-103 |
-| `permission_response` | Tier 0 — HP-104 (answer to `INPUT_REQUIRED`) |
-| `question_response` | Tier 0 — HP-104 |
-| `new_chat` | Tier 0 — no call; mint a fresh `contextId` (§2) |
-| `agents_list` | Tier 0 — `AgentCard.skills` (HP-023) |
-| `sessions_list` | Tier 0 — `ListTasks` (HP-200) |
-| `session_get` | Tier 0 — `GetTask` (HP-201); whole-context and paged via `context-history` (HP-304) when declared |
-| `agent_files` | Extension — `workspace-files` (HP-300) |
-| `agent_read_file` | Extension — `workspace-files` (HP-300) |
-| `agent_create` | Extension — `workspace-write` (HP-301) |
-| `agent_update` (rename) | Extension — `workspace-write` (HP-301) |
-| `agent_delete` | Extension — `workspace-write` (HP-301) |
-| `session_update_title` | Extension — `workspace-write` (HP-301) |
-| `session_delete` | Extension — `workspace-write` (HP-301) |
-| `agent_recent` | Extension — `session-recap` (HP-302) |
-| `voice_route` | Extension — `voice` (HP-303); Autonomous routes from `skills[]` by default |
-| `agent_update` (model) | **Out of scope** — §9, provider owns model configuration |
-| `models_list` | **Out of scope** — §9 |
-| `compact` | **Out of scope** — §9, provider owns its context window |
-| `claude_login_start` / `_submit` / `_status` | **Out of scope** — §9, provider owns authentication |
-| `e2ee_pairings_list` / `_pairing_unpair` / `_pairings_unpair_all` / `e2ee_browser_link_create` | **Out of scope** — §9, no E2EE for `provider` |
-| `speaking` | **Never crosses this boundary** — ephemeral presence, fanned out inside Autonomous |
-| `__clients`, `machine_meta`, `machine_revoked`, `device_e2ee_pair` | **Never crosses this boundary** — Autonomous-internal control frames |
-
-### Client-operation coverage — how to re-run this audit
-
-Autonomous re-runs this audit whenever its client gains an operation: every one must appear above as
-Tier 0, as a named extension, or as explicitly out of scope. An operation absent from this table is an
-unresolved gap, not an implicit "no" — if you find one, say so rather than guessing.
-
-### Event-kind coverage
-
-The ten kinds in §7 (`user_message`, `thinking_delta`, `thinking_title`, `text_delta`, `tool_start`,
-`tool_end`, `context_compact`, `done`, `recap_start`, `recap_end`) cover the client's full render
-vocabulary. Turn lifecycle (`turn_started` / `turn_ended`) is carried by A2A task states per HP-102 and
-is deliberately not a metadata kind. Nothing in the client's vocabulary is unrepresented.
-
-`recap_start` / `recap_end` are the two kinds that are not raw turn output: they are the summary OF the
-turn. They exist as kinds because the alternative — asking for it afterwards with
-`autonomous.GetRecap` — cannot say WHICH turn it wants, and because the wait between them is real time
-the user is watching (HP-212).
-
----
-
-## Appendix D — Worked example
-
-One complete turn, end to end. Every field the Autonomous client needs is derivable from what appears
-here; this example exists to prove that, and doubles as the shortest path to understanding the
-profile.
-
-**1. Discovery.** `GET https://agent.example.com/.well-known/agent-card.json`
-
-```json
-{
-  "name": "Example Marketing Agent",
-  "description": "Answers questions about ad spend and builds reporting queries.",
-  "version": "1.0.0",
-  "capabilities": { "streaming": true },
-  "securitySchemes": { "apiKey": { "type": "apiKey", "in": "header", "name": "x-api-key" } },
-  "skills": [
-    { "id": "acme-reporting", "name": "Acme reporting", "description": "Acme's ad accounts" }
-  ],
-  "extensions": [
-    { "uri": "https://harness.autonomous.ai/api/a2a/ext/session-recap" }
-  ]
-}
+| `agent.list` | — | `{ agents: [{ id, name, description? }] }` |
+| `agent.send` | `{ agentId, turnId, message, resume? }` | **SSE** — see below |
+| `agent.history` | `{ agentId, limit?, before? }` | `{ agentId, events, nextBefore?, truncated? }` |
+| `turn.cancel` | `{ turnId }` | `{ cancelled: true }` |
+| `agent.create` | `{ name, description? }` | `{ id, name, description? }` |
+| `agent.rename` | `{ agentId, name }` | `{ id, name, description? }` |
+| `agent.delete` | `{ agentId }` | `{ deleted: true }` |
+| `agent.recap` | `{ agentId }` | `{ agentId, recap?, text?, turnId? }` |
+
+**"Required" does not mean "pretend".** If your agents are managed inside your own product, do not
+implement a fake mutation — answer `invalid_request` with a message, and Autonomous shows that message
+to the user: *"Agents are managed in Example Co."* An explanation the user can read beats a control
+that is silently missing, which is why nothing has to be declared in advance. Likewise, a provider
+that summarises nothing answers `agent.recap` with no `recap`, and Autonomous derives one from the
+turn's own text instead.
+
+Ignore request fields you do not recognise rather than failing on them, so a client on a newer
+revision still works against you. Reject a method you do not implement with `unsupported`.
+
+### `agent.list`
+
+Authenticated, returning the agents this credential's tenant may use. `id` is stable and opaque to us;
+`name` and `description` are shown to the user.
+
+A provider with no meaningful agent concept returns **exactly one** entry for the whole workspace —
+never an empty list, which reads to the user as a broken machine. An id that disappears between calls
+is treated as deleted, and Autonomous refuses to send to an agent the latest list does not contain.
+
+### `agent.send`
+
+```jsonc
+// → agent.send
+{ "agentId": "seo",
+  "turnId": "t_01J8Z…",
+  "message": { "text": "how is acme pacing?",
+               "attachments": [{ "mediaType": "image/png", "data": "<base64>" }] } }
 ```
 
-The client now shows one agent ("Acme reporting"). No file browser, no rename — those extensions
-are absent. No model picker either; that is out of scope for every provider (§9).
+Returns `Content-Type: text/event-stream`, one JSON object per `data:` frame. Streaming is not
+optional — the product renders assistant output as it arrives.
 
-**2. The user types a message.** Autonomous calls `SendStreamingMessage` with the user's credential in
-the declared header, a fresh `contextId`, and no `taskId` (a new chat):
+`turnId` is minted by the **client** and must be used as given: it is how a turn is cancelled. A
+provider that mints its own leaves an early cancel with nothing to name — the user presses stop, and
+there is no id to send yet.
 
-```json
-{
-  "message": {
-    "role": "ROLE_USER",
-    "messageId": "m-1",
-    "contextId": "ctx-91af",
-    "parts": [{ "text": "did acme blow through budget this week?" }]
-  }
-}
+Attachments are optional to support. A provider that cannot read images must **fail the turn** with a
+clear message rather than silently discarding them; silent loss reads to the user as the agent
+ignoring what they sent.
+
+### The two stream guarantees
+
+**It ends, exactly once.** Every stream ends with one terminal frame — `turn_completed`, `turn_failed`,
+`turn_cancelled` or `turn_input_required`. None leaves the web spinning forever; two ends the turn
+twice.
+
+**What is inside is renderable.** The kinds below, discriminated on `kind`. An unrecognised kind is
+ignored, never fatal, so a later revision may add one. An event with **no `kind` at all** but with
+`text` is conformant and renders as plain assistant output — the smallest correct provider streams
+`{"text":"…"}` then `{"kind":"turn_completed"}`.
+
+### `turn.cancel`
+
+Always accepted, including for a turn that has not started yet — which must then terminate
+immediately if it later begins. After a successful cancel the stream terminates with `turn_cancelled`.
+
+### `agent.history`
+
+Transcripts live **entirely on your side**. Autonomous stores none for a provider machine, which is
+why this is required: without it a page refresh loses the conversation.
+
+Returns that agent's transcript newest-last, in the **same event objects the stream emitted** — one
+shape, so a replayed transcript and the live view cannot disagree about what happened. A provider that
+stores its own richer form converts on the way out.
+
+Streamed **deltas may be coalesced**: `text_delta "Acme is at "` then `text_delta "118% of pace."` may
+come back as one `text_delta "Acme is at 118% of pace."`. Deltas are a streaming detail. Everything
+else — the kinds, their order, the tool ids, the fields — must survive, because that is what a client
+renders from. `turn_started`, the terminal frames, the recap bracket and `done` are live-turn signals
+and need not appear at all; `done` in particular restates text already streamed.
+
+With `limit`, the response is a window ending at the newest event, or at `before` when supplied, plus
+`nextBefore` — an opaque cursor naming the next older window, omitted once the start is reached.
+Clients never construct a cursor. Without `limit`, the whole transcript comes back and `nextBefore` is
+omitted. A transcript you truncate must carry `truncated: true`; silent truncation is a violation.
+
+```jsonc
+// → agent.history  { "agentId": "seo", "limit": 200 }
+{ "agentId": "seo",
+  "events": [ { "kind": "user_message", "text": "how is acme pacing?" },
+              { "kind": "text_delta",   "text": "Acme is at 118%." } ],
+  "nextBefore": "evt_8841",
+  "truncated": false }
 ```
 
-**3. The provider streams SSE.** Abridged to one event per kind:
+### `agent.recap`
 
-```
-event: status-update
-data: {"taskId":"task-77","contextId":"ctx-91af","status":{"state":"TASK_STATE_WORKING"}}
+The agent's **last** recap — one short summary, used to restore the physical device's tile after a
+reboot, since it has no stream to read. There is no history to page through: the device shows one tile
+per agent.
 
-event: status-update
-data: {"taskId":"task-77","status":{"state":"TASK_STATE_WORKING","message":{"role":"ROLE_AGENT",
-       "parts":[{"text":"Checking pacing…","metadata":{"autonomous.ai/kind":"thinking_delta",
-       "autonomous.ai/thinkingId":"t1"}}]}}}
-
-event: status-update
-data: {"taskId":"task-77","status":{"state":"TASK_STATE_WORKING","message":{"role":"ROLE_AGENT",
-       "parts":[{"text":"","metadata":{"autonomous.ai/kind":"tool_start",
-       "autonomous.ai/toolCallId":"c7","autonomous.ai/tool":"query_spend",
-       "autonomous.ai/toolInput":{"account":"acme","window":"7d"}}}]}}}
-
-event: status-update
-data: {"taskId":"task-77","status":{"state":"TASK_STATE_WORKING","message":{"role":"ROLE_AGENT",
-       "parts":[{"text":"7 rows","metadata":{"autonomous.ai/kind":"tool_end",
-       "autonomous.ai/toolCallId":"c7","autonomous.ai/tool":"query_spend",
-       "autonomous.ai/isError":false,"autonomous.ai/summary":"Returned 7 rows",
-       "autonomous.ai/durationSeconds":1.4}}]}}}
-
-event: status-update
-data: {"taskId":"task-77","status":{"state":"TASK_STATE_WORKING","message":{"role":"ROLE_AGENT",
-       "parts":[{"text":"Acme is at 118% of pacing.","metadata":{"autonomous.ai/kind":"text_delta"}}]}}}
-
-event: status-update
-data: {"taskId":"task-77","status":{"state":"TASK_STATE_COMPLETED"},"final":true}
+```jsonc
+// → agent.recap  { "agentId": "seo" }
+{ "agentId": "seo",
+  "recap":  "Acme is over pace",
+  "text":   "Acme is at 118% of pacing this week.",
+  "turnId": "t_01J8Z" }
 ```
 
-A provider that emitted only the two `text_delta`-shaped parts with **no** metadata at all would also
-be conformant (HP-211) — the turn would simply render as plain text.
+**This is the same object `recap_end` carries**, so a recap has one shape whether it was pushed on a
+turn's stream or pulled here. An **absent `recap` means nothing has been summarised yet** — the same
+convention, and the correct answer for a provider that does not summarise at all.
 
-**4. What the client reconstructs.** `TASK_STATE_WORKING` opens the turn and the terminal state closes
-it (HP-102); no metadata kind is involved. Reloading the page calls `GetTask("task-77")`, and the
-same parts rebuild the transcript:
+`turnId` is optional but strongly recommended: this method is scoped to an **agent** and cannot be
+scoped to a turn, so a client asking the instant a turn ends otherwise receives the previous turn's
+summary with no way to tell.
 
-| Client field | Derived from |
+---
+
+## Asking the user something
+
+When the agent needs an answer — a permission prompt, a clarifying question — end the stream with
+`turn_input_required` carrying a `prompt`, and accept a later `agent.send` with the **same `turnId`**
+and `resume: true` as the answer, continuing the same turn.
+
+The stream ends rather than being held open, deliberately: a human decision has no time bound, and an
+HTTP request whose duration a user controls is a connection leak on both sides.
+
+```
+client                                provider
+  │── agent.send {turnId: t1} ──────────►│
+  │◄── … events …                        │
+  │◄── turn_input_required {prompt} ─────│   stream closes
+  │                                      │
+  │── agent.send {turnId: t1, resume} ──►│   same turn continues
+  │◄── … events …                        │
+  │◄── turn_completed ───────────────────│
+```
+
+---
+
+## The event vocabulary
+
+One flat, self-describing object per frame. Every event must be readable without the frames before it
+— that is what lets the same objects serve the live stream and `agent.history`.
+
+| `kind` | Fields | Meaning |
+|---|---|---|
+| `turn_started` | `turnId`, `agentId`, `at?` | the turn is underway |
+| `user_message` | `text` | the user's own turn, replayed in history |
+| `thinking_title` | `title` (or `text`), `thinkingId?` | a short label for a reasoning block |
+| `thinking_delta` | `text`, `thinkingId?` | a chunk of reasoning |
+| `text_delta` | `text` | a chunk of assistant output |
+| `tool_start` | `toolId`, `tool`, `title?`, `input?` | a tool invocation began |
+| `tool_end` | `toolId`, `tool?`, `ok?`, `output?`, `summary?`, `durationSeconds?` | it finished |
+| `context_compact` | `text?` | the provider compacted its own context |
+| `done` | `text` | the turn's final result text |
+| `recap_start` | — | summarising has begun |
+| `recap_end` | `recap?`, `text?` | summarising is over |
+| `turn_completed` | — | terminal |
+| `turn_failed` | `error` | terminal |
+| `turn_cancelled` | — | terminal |
+| `turn_input_required` | `prompt` | terminal; the turn is paused, not over |
+
+`tool_start` and `tool_end` must carry the same `toolId`, unique within the turn — tools can overlap,
+so pairing by position is not available, and an event without one is dropped rather than rendered as a
+row that never resolves. `ok: false` marks failure; **absent `ok` is not a failure**, it is the
+provider not saying.
+
+Statistics are omitted rather than fabricated. A message count nobody counted, or a timestamp nobody
+recorded, is worse than an absent field — the client hides what it did not receive.
+
+Schema: `schema/event.json`.
+
+### The recap phase
+
+A turn may be summarised in-stream, as a **pair** emitted after the output and before the terminal
+frame:
+
+- `recap_start` — summarising has begun. Carries nothing; it exists so the client can show an
+  indicator and hold its busy state open for a wait it cannot otherwise see.
+- `recap_end` — the phase is over. The headline travels in `recap` (≤ 200 characters), the fuller body
+  in `text`. **An absent `recap` means no recap was produced** — a turn that said nothing, or a
+  summariser that failed. The client clears its indicator and paints nothing.
+
+`recap_start` without a matching `recap_end` before the terminal frame leaves an indicator open
+forever, which is worse than never opening one.
+
+A pushed recap is unambiguously **this** turn's, which `agent.recap` cannot promise. A provider that
+pushes should also persist, for the device restoring its tiles.
+
+---
+
+## Errors
+
+JSON-RPC error objects whose `code` is a **string**:
+
+```jsonc
+{ "jsonrpc": "2.0", "id": 1, "error": { "code": "unauthenticated", "message": "…" } }
+```
+
+| Code | Meaning |
 |---|---|
-| session id | `contextId` = `ctx-91af` |
-| title | task metadata title, else the first user message truncated (§10.4) |
-| timestamp | task timestamps |
-| events | the `Part` sequence above, keyed by `autonomous.ai/kind` |
-| status | terminal task state → `idle`; `TASK_STATE_FAILED` → `error` |
-| engine | omitted (§10.2) |
-| messageCount | not sent; the client hides the count rather than showing zero (HP-220) |
-| hasMore / cursors | absent — v1 returns the whole transcript (HP-202) |
+| `unauthenticated` | the credential is missing, wrong or revoked |
+| `not_found` | no such agent or turn |
+| `unsupported` | a method this provider does not implement |
+| `invalid_request` | malformed parameters, or a mutation this provider declines |
+| `rate_limited` | back off and retry |
+| `internal` | anything else |
 
-**5. If the agent needs an answer.** Instead of completing, the provider emits
-`TASK_STATE_INPUT_REQUIRED` with a question in the message. Autonomous renders it, and the user's
-answer returns as a new Message carrying **the same `taskId`** (HP-104). The task then resumes and
-completes as above.
+Only `unauthenticated` is load-bearing — it must be distinguishable, and it should carry HTTP 401 so a
+client that never parses the body can tell a rejected credential from an outage. `message` is shown to
+the user wherever one is present, so write it for them.
+
+---
+
+## Security
+
+All traffic over TLS. The endpoint must be at a stable, publicly resolvable HTTPS URL the owner can
+copy out of your product — no IP literals, no tunnels that move.
+
+Everything a provider sends is **untrusted input** to the Autonomous web UI and to the physical device
+screen. The Autonomous backend validates and allowlists every frame crossing this boundary;
+non-conforming frames are dropped and logged, and a stream that repeats the violation is closed.
+
+Providers are rate limited per machine; sustained excess closes the stream. Do not log or transmit the
+supplied credential beyond what is required to authenticate the request.
+
+Optional fields and new event kinds may be added over time. A published field is never renamed,
+removed, retyped, or reinterpreted.
+
+---
+
+## Conformance
+
+`reference-provider/` contains a scripted implementation and a runner. Point it at your endpoint:
+
+```bash
+npm run conformance -- --url https://agent.example.com --key <credential> \
+                       --bad-key <deliberately invalid> --ask-phrase "<prompt that makes it ask>"
+```
+
+**Pass condition: zero failures.** Warnings and skips are expected and are printed with their reasons
+— read them, do not just count them. Five things cannot be verified from outside and are human review:
+tenant isolation, the truncation flag, fabricated statistics, rate limiting, and credential handling.
+
+---
+
+## Appendix A — A worked turn
+
+```jsonc
+// →  POST /   {"jsonrpc":"2.0","id":1,"method":"agent.send","params":
+//              {"agentId":"seo","turnId":"t_01J8Z","message":{"text":"how is acme pacing?"}}}
+
+// ←  200 text/event-stream
+data: {"kind":"turn_started","turnId":"t_01J8Z","agentId":"seo","at":"2026-08-06T09:12:44Z"}
+
+data: {"kind":"thinking_title","title":"Checking pacing"}
+
+data: {"kind":"tool_start","toolId":"c1","tool":"query","title":"acme · last 30d"}
+
+data: {"kind":"tool_end","toolId":"c1","tool":"query","ok":true,"summary":"1 row"}
+
+data: {"kind":"text_delta","text":"Acme is at "}
+
+data: {"kind":"text_delta","text":"118% of pace."}
+
+data: {"kind":"done","text":"Acme is at 118% of pace."}
+
+data: {"kind":"recap_start"}
+
+data: {"kind":"recap_end","recap":"Acme at 118% of pace","text":"Acme is pacing 18% ahead…"}
+
+data: {"kind":"turn_completed"}
+```
+
+The same objects, minus the lifecycle and recap frames, are what `agent.history` returns for that
+agent.
+
+## Appendix B — The smallest conformant provider
+
+```jsonc
+// agent.list      → { "agents": [{ "id": "main", "name": "Tiny" }] }
+// agent.history   → { "agentId": "main", "events": [] }
+// turn.cancel     → { "cancelled": true }
+// agent.recap     → { "agentId": "main" }
+// agent.create    → error { "code": "invalid_request", "message": "Agents are managed in Tiny" }
+// agent.rename    → the same
+// agent.delete    → the same
+// agent.send      → SSE:
+//                     data: {"text":"Hello."}
+//                     data: {"kind":"turn_completed"}
+```
+
+Everything richer than this is opt-in.

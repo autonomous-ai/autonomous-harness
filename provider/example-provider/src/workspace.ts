@@ -1,5 +1,5 @@
 /**
- * `workspace-write` — creating and removing agents (HP-301).
+ * Creating and removing agents, for `agent.create` / `agent.rename` / `agent.delete`.
  *
  * An agent here IS a directory. Creating one therefore means writing to disk, so the only rule that
  * really matters is the containment check: everything lands under `workspaceRoot` and nothing may

@@ -1,144 +1,94 @@
 /**
- * The subset of A2A this reference implementation uses, plus the `autonomous.ai/*` metadata defined by
- * `../spec/README.md`.
+ * The wire types, as `../../spec/README.md` defines them.
  *
  * Deliberately hand-written rather than generated: a partner reading this file should be able to see
  * the entire wire surface without installing anything.
+ *
+ * An event is one flat, self-describing object discriminated on `kind`, and the SAME objects serve
+ * both the `agent.send` stream and `agent.history` — which is why there is exactly one event
+ * type here and not two.
  */
 
-export const TaskState = {
-  SUBMITTED: 'TASK_STATE_SUBMITTED',
-  WORKING: 'TASK_STATE_WORKING',
-  COMPLETED: 'TASK_STATE_COMPLETED',
-  FAILED: 'TASK_STATE_FAILED',
-  CANCELED: 'TASK_STATE_CANCELED',
-  REJECTED: 'TASK_STATE_REJECTED',
-  INPUT_REQUIRED: 'TASK_STATE_INPUT_REQUIRED',
-  AUTH_REQUIRED: 'TASK_STATE_AUTH_REQUIRED',
-} as const
+/** Content kinds. Terminal kinds are separate — see `TERMINAL_KINDS`. */
+export const EVENT_KINDS = [
+  'turn_started',
+  'user_message',
+  'thinking_title',
+  'thinking_delta',
+  'text_delta',
+  'tool_start',
+  'tool_end',
+  'context_compact',
+  'done',
+  'recap_start',
+  'recap_end',
+] as const
 
-export type TaskStateValue = (typeof TaskState)[keyof typeof TaskState]
+/** Exactly ONE of these ends every stream. */
+export const TERMINAL_KINDS = ['turn_completed', 'turn_failed', 'turn_cancelled', 'turn_input_required'] as const
 
-/** States after which a task accepts no further messages (A2A: "terminal"). */
-export const TERMINAL_STATES: readonly TaskStateValue[] = [
-  TaskState.COMPLETED,
-  TaskState.FAILED,
-  TaskState.CANCELED,
-  TaskState.REJECTED,
-]
+export type EventKind = (typeof EVENT_KINDS)[number] | (typeof TERMINAL_KINDS)[number]
 
-export const isTerminal = (s: TaskStateValue): boolean => TERMINAL_STATES.includes(s)
+export const isTerminalKind = (kind: string | undefined): boolean =>
+  !!kind && (TERMINAL_KINDS as readonly string[]).includes(kind)
 
-/** HP-210: every Autonomous-specific key is namespaced. Unknown keys in the namespace are ignored. */
-export interface PartMetadata {
-  'autonomous.ai/kind'?:
-    | 'user_message'
-    | 'thinking_delta'
-    | 'thinking_title'
-    | 'text_delta'
-    | 'tool_start'
-    | 'tool_end'
-    | 'context_compact'
-    | 'done'
-    | 'recap_start'
-    | 'recap_end'
-  'autonomous.ai/thinkingId'?: string
-  'autonomous.ai/toolCallId'?: string
-  'autonomous.ai/parentToolCallId'?: string
-  'autonomous.ai/tool'?: string
-  'autonomous.ai/toolInput'?: unknown
-  'autonomous.ai/isError'?: boolean
-  'autonomous.ai/summary'?: string
-  'autonomous.ai/durationSeconds'?: number
-  'autonomous.ai/title'?: string
-  /**
-   * `recap_end` only (HP-212): the headline. The Part's own `text` carries the fuller body.
-   * ABSENT on a `recap_end` means the turn produced no recap — the phase is over, show nothing.
-   */
-  'autonomous.ai/recap'?: string
-  'autonomous.ai/compacted'?: {
-    userMessages?: number
-    assistantMessages?: number
-    toolUses?: number
-    contexts?: number
-  }
+/** Codes are STRINGS, and `unauthenticated` is its own so the UI can say the right sentence. */
+export type ErrorCode =
+  | 'unauthenticated'
+  | 'not_found'
+  | 'unsupported'
+  | 'invalid_request'
+  | 'rate_limited'
+  | 'internal'
+
+export interface ProviderError {
+  code: ErrorCode
+  message?: string
 }
 
-export interface Part {
+/**
+ * One event.
+ *
+ * `kind` is optional ON PURPOSE: an event carrying only `text` is conformant and renders as plain
+ * assistant output. That is the simplest correct implementation a partner can ship, and
+ * making `kind` required here would quietly outlaw it.
+ */
+export interface ProviderEvent {
+  kind?: EventKind
   text?: string
-  /** base64 — HP-106 carries image attachments here with `mediaType`. */
-  raw?: string
-  filename?: string
-  mediaType?: string
-  url?: string
-  metadata?: PartMetadata
+  turnId?: string
+  agentId?: string
+  at?: string
+  title?: string
+  thinkingId?: string
+  toolId?: string
+  tool?: string
+  input?: unknown
+  ok?: boolean
+  output?: string
+  summary?: string
+  durationSeconds?: number
+  recap?: string
+  prompt?: string
+  error?: ProviderError
 }
 
-export type Role = 'ROLE_USER' | 'ROLE_AGENT'
-
-export interface Message {
-  role: Role
-  messageId: string
-  parts: Part[]
-  taskId?: string
-  contextId?: string
-}
-
-export interface Artifact {
-  artifactId: string
-  name?: string
-  parts: Part[]
-}
-
-export interface TaskStatus {
-  state: TaskStateValue
-  message?: Message
-}
-
-export interface Task {
+export interface Agent {
   id: string
-  contextId: string
-  status: TaskStatus
-  history: Message[]
-  artifacts?: Artifact[]
-  /** Not A2A core — used to derive a session title (spec §10.4). */
-  metadata?: { title?: string }
+  name: string
+  description?: string
 }
 
-export interface TaskStatusUpdateEvent {
-  taskId: string
-  contextId: string
-  status: TaskStatus
-  final?: boolean
-}
-
-export interface TaskArtifactUpdateEvent {
-  taskId: string
-  contextId: string
-  artifact: Artifact
-}
-
-export interface JsonRpcRequest {
-  jsonrpc: '2.0'
+/** JSON-RPC 2.0 — the only envelope, on one URL. */
+export interface RpcRequest {
+  jsonrpc?: string
   id?: string | number | null
-  method: string
+  method?: string
   params?: Record<string, unknown>
 }
 
-export interface JsonRpcError {
-  code: number
-  message: string
-  data?: unknown
+export interface RecapEntry {
+  recap: string
+  text?: string
+  turnId?: string
 }
-
-/** JSON-RPC reserved codes plus the A2A-flavoured ones this implementation raises. */
-export const RpcErrors = {
-  PARSE_ERROR: { code: -32700, message: 'Parse error' },
-  INVALID_REQUEST: { code: -32600, message: 'Invalid request' },
-  METHOD_NOT_FOUND: { code: -32601, message: 'Method not found' },
-  INVALID_PARAMS: { code: -32602, message: 'Invalid params' },
-  INTERNAL: { code: -32603, message: 'Internal error' },
-  UNAUTHENTICATED: { code: -32001, message: 'Unauthenticated' },
-  TASK_NOT_FOUND: { code: -32002, message: 'Task not found' },
-  TASK_NOT_CANCELABLE: { code: -32003, message: 'Task not cancelable' },
-} as const

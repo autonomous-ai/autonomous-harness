@@ -1,13 +1,14 @@
 /**
  * The wire, end to end: a real HTTP server, a fake `claude`, and a transcript on disk.
  *
- * Two things are pinned here that nothing else can pin:
- *   - **HP-212** — the recap rides the turn's OWN stream, immediately before the terminal event. Its
- *     position is the whole point: a recap that arrives after the stream closes cannot say which turn
- *     it belongs to.
- *   - **HP-304** — paging a context. The windows are asserted with exact indices, because the
- *     turn-snapping rule (a page may be LONGER than `limit`) is easy to "fix" into a plain slice and
- *     only a concrete expectation notices.
+ * Three things are pinned here that nothing else can pin:
+ *   - The recap rides the turn's OWN stream, immediately before the terminal frame. Its position is
+ *     the whole point: a recap that arrives after the stream closes cannot say which turn it belongs
+ *     to.
+ *   - The events `agent.history` returns are the ones the stream emitted. Two shapes is how the live
+ *     view and the post-refresh view drift apart.
+ *   - Windowing a transcript. The cursor is asserted concretely, because "page backwards" is easy to
+ *     implement as something that never terminates.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -17,12 +18,16 @@ import type { AddressInfo } from 'node:net'
 import { createProviderServer } from './server.js'
 import { projectDir } from './jsonl.js'
 import type { Config } from './config.js'
-import type { Message, Part } from './types.js'
+import type { ProviderEvent } from './types.js'
 
 const ROOT = join(tmpdir(), `example-provider-spec-${process.pid}`)
 const AGENT_CWD = join(ROOT, 'agent')
 const PROJECTS = join(ROOT, 'projects')
 const CLAUDE_SESSION = 'sess-1'
+const TERMINAL = ['turn_completed', 'turn_failed', 'turn_cancelled', 'turn_input_required']
+
+let turnSeq = 0
+const nextTurnId = (): string => `t-${++turnSeq}`
 
 /** A `claude` that prints the given stream-json lines and exits. */
 function fakeClaude(name: string, lines: unknown[]): string {
@@ -48,12 +53,9 @@ const resultLine = (failed = false): unknown => ({
 
 function config(claudeBin: string): Config {
   return {
-    // Three, because the bug this file has to keep out only appears with more than one: a provider
-    // that cannot tell which skill a turn belongs to files every conversation under the first.
     agents: [
       { id: 'scratch', name: 'Scratch', description: 'test agent', cwd: AGENT_CWD },
       { id: 'agent-2', name: 'Second', description: 'second agent', cwd: AGENT_CWD },
-      { id: 'agent-3', name: 'Third', description: 'third agent', cwd: AGENT_CWD },
     ],
     workspaceRoot: ROOT,
     agentsFile: join(ROOT, 'agents.json'),
@@ -69,15 +71,11 @@ function config(claudeBin: string): Config {
   }
 }
 
-interface SseEvent {
-  taskId?: string
-  contextId?: string
-  status?: { state?: string; message?: Message }
-  final?: boolean
-}
-
 /** Boot, run one request against it, shut down. Port 0 so tests never collide. */
-async function withServer<T>(claudeBin: string, fn: (port: number, deps: ReturnType<typeof createProviderServer>['deps']) => Promise<T>): Promise<T> {
+async function withServer<T>(
+  claudeBin: string,
+  fn: (port: number, deps: ReturnType<typeof createProviderServer>['deps']) => Promise<T>,
+): Promise<T> {
   const { server, deps } = createProviderServer(config(claudeBin))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const { port } = server.address() as AddressInfo
@@ -91,7 +89,7 @@ async function withServer<T>(claudeBin: string, fn: (port: number, deps: ReturnT
 async function rpc<T = Record<string, unknown>>(port: number, method: string, params: unknown): Promise<T> {
   const res = await fetch(`http://127.0.0.1:${port}/`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': 'test-key' },
+    headers: { 'content-type': 'application/json', authorization: 'Bearer test-key' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   })
   const body = (await res.json()) as { result?: T; error?: unknown }
@@ -99,24 +97,33 @@ async function rpc<T = Record<string, unknown>>(port: number, method: string, pa
   return body.result as T
 }
 
-/** Run a turn and collect every SSE event, in order. */
-async function runTurn(port: number, text: string, opts: { contextId?: string; agentId?: string } = {}): Promise<SseEvent[]> {
+async function rpcError(port: number, method: string, params: unknown): Promise<string> {
   const res = await fetch(`http://127.0.0.1:${port}/`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': 'test-key' },
+    headers: { 'content-type': 'application/json', authorization: 'Bearer test-key' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  })
+  const body = (await res.json()) as { error?: { code?: string } }
+  return body.error?.code ?? '(no error)'
+}
+
+/** Run a turn and collect every SSE event, in order. */
+async function runTurn(
+  port: number,
+  text: string,
+  opts: { agentId?: string; turnId?: string; attachments?: unknown[] } = {},
+): Promise<ProviderEvent[]> {
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer test-key' },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
-      method: 'SendStreamingMessage',
+      method: 'agent.send',
       params: {
-        message: {
-          role: 'ROLE_USER',
-          messageId: 'm1',
-          parts: [{ text }],
-          ...(opts.contextId ? { contextId: opts.contextId } : {}),
-          // HP-107 — the skill selector A2A has no field for.
-          ...(opts.agentId ? { metadata: { 'autonomous.ai/agentId': opts.agentId } } : {}),
-        },
+        agentId: opts.agentId ?? 'scratch',
+        turnId: opts.turnId ?? nextTurnId(),
+        message: { text, ...(opts.attachments ? { attachments: opts.attachments } : {}) },
       },
     }),
   })
@@ -125,11 +132,10 @@ async function runTurn(port: number, text: string, opts: { contextId?: string; a
     .split('\n\n')
     .map((frame) => frame.split('\n').find((l) => l.startsWith('data:')))
     .filter((l): l is string => !!l)
-    .map((l) => JSON.parse(l.slice(5).trim()) as SseEvent)
+    .map((l) => JSON.parse(l.slice(5).trim()) as ProviderEvent)
 }
 
-const kindsOf = (ev: SseEvent): string[] =>
-  (ev.status?.message?.parts ?? []).map((p: Part) => p.metadata?.['autonomous.ai/kind'] ?? '')
+const kinds = (events: ProviderEvent[]): string[] => events.map((e) => e.kind ?? '(none)')
 
 beforeAll(() => {
   mkdirSync(AGENT_CWD, { recursive: true })
@@ -137,115 +143,131 @@ beforeAll(() => {
 })
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }))
 
-describe('SendStreamingMessage — the recap rides the stream (HP-212)', () => {
+describe('agents', () => {
+  it('serves no descriptor — there is nothing to discover', async () => {
+    await withServer(fakeClaude('claude-desc.sh', [resultLine()]), async (port) => {
+      // The endpoint that used to exist is gone rather than deprecated: a client still fetching it
+      // must fail loudly at integration time instead of reading a stale document.
+      expect((await fetch(`http://127.0.0.1:${port}/.well-known/autonomous-provider.json`)).status).toBe(404)
+    })
+  })
+
+  it('lists agents on an authenticated call — the list is per-credential, so it cannot be public', async () => {
+    await withServer(fakeClaude('claude-list.sh', [resultLine()]), async (port) => {
+      const out = await rpc<{ agents: Array<{ id: string }> }>(port, 'agent.list', {})
+      expect(out.agents.map((a) => a.id)).toEqual(['scratch', 'agent-2'])
+    })
+  })
+
+  it('rejects a bad credential distinguishably from an outage', async () => {
+    await withServer(fakeClaude('claude-auth.sh', [resultLine()]), async (port) => {
+      const res = await fetch(`http://127.0.0.1:${port}/`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer bad-key' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'agent.list', params: {} }),
+      })
+      expect(res.status).toBe(401)
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe('unauthenticated')
+    })
+  })
+
+  it('refuses a send to an agent it does not have', async () => {
+    await withServer(fakeClaude('claude-ghost.sh', [resultLine()]), async (port) => {
+      expect(await rpcError(port, 'agent.send', { agentId: 'ghost', turnId: 't', message: { text: 'hi' } }))
+        .toBe('not_found')
+    })
+  })
+})
+
+describe('a turn on the wire', () => {
+  it('opens with turn_started and closes with exactly one terminal frame', async () => {
+    const bin = fakeClaude('claude-basic.sh', [textLine('hello there'), resultLine()])
+    await withServer(bin, async (port) => {
+      const events = await runTurn(port, 'hi')
+      expect(events[0]!.kind).toBe('turn_started')
+      expect(events.filter((e) => TERMINAL.includes(e.kind ?? ''))).toHaveLength(1)
+      expect(events.at(-1)!.kind).toBe('turn_completed')
+      expect(kinds(events)).toContain('text_delta')
+    })
+  })
+
+  it('refuses image attachments LOUDLY rather than discarding them', async () => {
+    // Silent loss reads to the user as the agent ignoring what they sent.
+    const bin = fakeClaude('claude-img.sh', [resultLine()])
+    await withServer(bin, async (port) => {
+      const events = await runTurn(port, 'what is this?', { attachments: [{ mediaType: 'image/png', data: 'AAA' }] })
+      expect(events.at(-1)!.kind).toBe('turn_failed')
+      expect(events.at(-1)!.error?.message).toMatch(/image/i)
+    })
+  })
+
+  it('a cancel BEFORE the turn starts stops it — the point of a client-minted turnId', async () => {
+    const bin = fakeClaude('claude-cancel.sh', [textLine('should never run'), resultLine()])
+    await withServer(bin, async (port) => {
+      const turnId = nextTurnId()
+      await rpc(port, 'turn.cancel', { turnId })
+      const events = await runTurn(port, 'hi', { turnId })
+      expect(events.at(-1)!.kind).toBe('turn_cancelled')
+      expect(kinds(events)).not.toContain('text_delta')
+    })
+  })
+
+  it('accepts a cancel for a turn it has never seen', async () => {
+    await withServer(fakeClaude('claude-c2.sh', [resultLine()]), async (port) => {
+      expect(await rpc<{ cancelled: boolean }>(port, 'turn.cancel', { turnId: 'never' })).toEqual({ cancelled: true })
+    })
+  })
+})
+
+describe('the recap rides the stream', () => {
   it('brackets the wait with recap_start/recap_end, then ends terminal', async () => {
-    const bin = fakeClaude('claude-ok.sh', [textLine('Acme is at 118% of pacing. Nothing else changed.'), resultLine()])
-    const events = await withServer(bin, (port) => runTurn(port, 'how is acme pacing?'))
-
-    // The order IS the contract: start announces a wait the client cannot otherwise see, end closes
-    // it, and the terminal event comes last so HP-102 still reads a terminal state at the tail.
-    const kinds = events.flatMap(kindsOf)
-    expect(kinds.filter((k) => k === 'recap_start')).toHaveLength(1)
-    expect(kinds.filter((k) => k === 'recap_end')).toHaveLength(1)
-    expect(events.findIndex((e) => kindsOf(e).includes('recap_start'))).toBe(events.length - 3)
-    expect(events.findIndex((e) => kindsOf(e).includes('recap_end'))).toBe(events.length - 2)
-
-    const last = events.at(-1)!
-    expect(last.status?.state).toBe('TASK_STATE_COMPLETED')
-    expect(last.final).toBe(true)
-
-    const end = events.at(-2)!
-    expect(end.status?.state).toBe('TASK_STATE_WORKING') // must not end the turn twice
-    const part = end.status!.message!.parts[0]!
-    expect(part.metadata?.['autonomous.ai/recap']).toBe('Acme is at 118% of pacing.')
-    expect(part.text).toContain('Nothing else changed.')
+    const bin = fakeClaude('claude-recap.sh', [textLine('Rebuilt the index across four shards.'), resultLine()])
+    await withServer(bin, async (port) => {
+      const events = await runTurn(port, 'rebuild it')
+      const order = kinds(events)
+      const start = order.indexOf('recap_start')
+      const end = order.indexOf('recap_end')
+      expect(start).toBeGreaterThan(-1)
+      expect(end).toBeGreaterThan(start)
+      // Both BEFORE the terminal frame: a recap after the stream closes cannot say which turn it is.
+      expect(order.indexOf('turn_completed')).toBeGreaterThan(end)
+    })
   })
 
   it('gives a FAILED turn neither half — a headline would read like an accomplishment', async () => {
-    const bin = fakeClaude('claude-fail.sh', [textLine('Started, then hit an error.'), resultLine(true)])
-    const events = await withServer(bin, (port) => runTurn(port, 'do the thing'))
-
-    const kinds = events.flatMap(kindsOf)
-    expect(kinds).not.toContain('recap_start')
-    expect(kinds).not.toContain('recap_end')
-    expect(events.at(-1)?.status?.state).toBe('TASK_STATE_FAILED')
-    expect(events.at(-1)?.final).toBe(true)
+    const bin = fakeClaude('claude-fail.sh', [textLine('starting'), resultLine(true)])
+    await withServer(bin, async (port) => {
+      const order = kinds(await runTurn(port, 'go'))
+      expect(order).not.toContain('recap_start')
+      expect(order).not.toContain('recap_end')
+      expect(order.at(-1)).toBe('turn_failed')
+    })
   })
 
   it('closes the indicator even when a silent turn produces no headline', async () => {
+    // A recap_start with no recap_end leaves the client spinning forever.
     const bin = fakeClaude('claude-silent.sh', [resultLine()])
-    const events = await withServer(bin, (port) => runTurn(port, 'be quiet'))
-
-    // A `recap_start` without its `recap_end` leaves the client spinning forever, so the end must be
-    // there — carrying no headline, which is how it says "nothing to show".
-    const kinds = events.flatMap(kindsOf)
-    expect(kinds).toContain('recap_start')
-    expect(kinds).toContain('recap_end')
-    expect(events.at(-2)!.status!.message!.parts[0]!.metadata?.['autonomous.ai/recap']).toBeUndefined()
-    expect(events.at(-1)?.status?.state).toBe('TASK_STATE_COMPLETED')
+    await withServer(bin, async (port) => {
+      const order = kinds(await runTurn(port, 'say nothing'))
+      expect(order.filter((k) => k === 'recap_start')).toHaveLength(1)
+      expect(order.filter((k) => k === 'recap_end')).toHaveLength(1)
+    })
   })
 
-  it('still persists the recap, so GetRecap keeps working for a device with no stream', async () => {
-    const bin = fakeClaude('claude-persist.sh', [textLine('Shipped the pacing alert. Details follow.'), resultLine()])
-    const entries = await withServer(bin, async (port) => {
-      await runTurn(port, 'ship it')
-      const out = await rpc<{ entries: Array<{ recap: string; taskId?: string }> }>(port, 'autonomous.GetRecap', { agentId: 'scratch', n: 2 })
-      return out.entries
+  it('still persists the recap, so agent.recap keeps working for a device with no stream', async () => {
+    const bin = fakeClaude('claude-persist.sh', [textLine('Fixed the rollback path.'), resultLine()])
+    await withServer(bin, async (port) => {
+      await runTurn(port, 'fix it')
+      const out = await rpc<{ recap?: string; turnId?: string }>(port, 'agent.recap', { agentId: 'scratch' })
+      expect(out.recap).toBeTruthy()
+      // The turnId is what lets a client tell THIS turn's recap from the previous one's.
+      expect(out.turnId).toBeTruthy()
     })
-    expect(entries).toHaveLength(1)
-    expect(entries[0]!.recap).toBe('Shipped the pacing alert.')
-    // The pull carries the taskId, which is what lets a client tell THIS turn's recap from the last one.
-    expect(entries[0]!.taskId).toBeTruthy()
   })
 })
 
-describe('which skill a turn belongs to (HP-107 / HP-204)', () => {
-  interface WireTask { id: string; contextId?: string; metadata?: { agentId?: string } }
-
-  it('files the turn under the skill the client named, not the first one', async () => {
-    // The bug: with no selector the provider falls back to agents[0], so EVERY conversation on a
-    // multi-skill provider is attributed to the first skill — and the client, whose session list is
-    // scoped to one agent, shows the other agents as empty however much the user talked to them.
-    const bin = fakeClaude('claude-agent2.sh', [textLine('Done for the second agent.'), resultLine()])
-    const tasks = await withServer(bin, async (port) => {
-      await runTurn(port, 'hello agent two', { agentId: 'agent-2' })
-      const out = await rpc<{ tasks: WireTask[] }>(port, 'ListTasks', {})
-      return out.tasks
-    })
-    expect(tasks).toHaveLength(1)
-    expect(tasks[0]!.metadata?.agentId).toBe('agent-2')
-  })
-
-  it('keeps a follow-up on its task’s original skill, whatever the selector says', async () => {
-    const bin = fakeClaude('claude-followup.sh', [textLine('First.'), resultLine()])
-    const tasks = await withServer(bin, async (port) => {
-      const first = await runTurn(port, 'start here', { agentId: 'agent-3' })
-      const contextId = first[0]!.contextId!
-      // Same conversation, a different skill named. Moving a live context between skills mid-thread
-      // would split one chat across two agents in the session list.
-      await runTurn(port, 'and again', { contextId, agentId: 'scratch' })
-      const out = await rpc<{ tasks: WireTask[] }>(port, 'ListTasks', { contextId })
-      return out.tasks
-    })
-    expect(tasks).toHaveLength(2)
-    expect(tasks.map((t) => t.metadata?.agentId)).toEqual(['agent-3', 'agent-3'])
-  })
-
-  it('still answers a plain A2A client that names no skill at all', async () => {
-    // HP-107 is a MAY. The conformance runner sends no metadata, and a turn must not fail for it.
-    const bin = fakeClaude('claude-noselector.sh', [textLine('Fine.'), resultLine()])
-    const tasks = await withServer(bin, async (port) => {
-      await runTurn(port, 'no selector')
-      const out = await rpc<{ tasks: WireTask[] }>(port, 'ListTasks', {})
-      return out.tasks
-    })
-    expect(tasks[0]!.metadata?.agentId).toBe('scratch')
-  })
-})
-
-describe('autonomous.GetContextHistory — a whole context, paged (HP-304)', () => {
-  const CONTEXT = 'ctx-history'
-  const TURNS = 6 // → 12 messages: user, assistant, user, assistant, …
+describe('history', () => {
+  const TURNS = 6 // → 12 events: user, assistant, user, assistant, …
 
   /** A transcript of `TURNS` complete turns, written where the provider looks for it. */
   function writeTranscript(): void {
@@ -267,79 +289,110 @@ describe('autonomous.GetContextHistory — a whole context, paged (HP-304)', () 
     writeFileSync(join(dir, `${CLAUDE_SESSION}.jsonl`), `${lines.join('\n')}\n`)
   }
 
-  /** A server whose store already knows this context — no turn needs to run. */
+  /** A server whose store already knows this agent's Claude session — no turn needs to run. */
   async function withHistory<T>(fn: (port: number) => Promise<T>): Promise<T> {
     writeTranscript()
     return withServer(fakeClaude('claude-unused.sh', [resultLine()]), async (port, deps) => {
-      deps.store.ensureContext(CONTEXT, 'scratch')
-      deps.store.setClaudeSession(CONTEXT, CLAUDE_SESSION)
+      deps.store.ensureAgent('scratch')
+      deps.store.setClaudeSession('scratch', CLAUDE_SESSION)
       return fn(port)
     })
   }
 
-  interface HistoryResult {
-    contextId: string
-    messages: Message[]
-    hasMore?: boolean
-    oldestCursor?: string | null
-    staleCursor?: boolean
-  }
+  interface History { agentId: string; events: ProviderEvent[]; nextBefore?: string; truncated?: boolean }
 
-  it('returns the WHOLE context — many turns, not the one GetTask would give', async () => {
-    const out = await withHistory((port) => rpc<HistoryResult>(port, 'autonomous.GetContextHistory', { contextId: CONTEXT }))
-    expect(out.messages).toHaveLength(TURNS * 2)
-    expect(out.messages[0]!.messageId).toBe('u0')
-    expect(out.messages.at(-1)!.messageId).toBe('a5')
-    // No `limit` asked → the paging fields must be ABSENT, not false. Their absence is how a client
-    // tells a complete answer from a windowed one.
-    expect('hasMore' in out).toBe(false)
-    expect('oldestCursor' in out).toBe(false)
+  it('returns the agent’s WHOLE transcript when no window is asked for', async () => {
+    const out = await withHistory((port) => rpc<History>(port, 'agent.history', { agentId: 'scratch' }))
+    expect(out.events).toHaveLength(TURNS * 2)
+    expect(out.events[0]).toMatchObject({ kind: 'user_message', text: 'question 0' })
+    expect(out.events.at(-1)).toMatchObject({ kind: 'text_delta', text: 'answer 5' })
+    // No `limit` asked → no cursor. Its absence is how a client tells a complete answer from a window.
+    expect('nextBefore' in out).toBe(false)
   })
 
-  it('windows to the NEWEST messages and snaps the edge back to a turn start', async () => {
-    const out = await withHistory((port) =>
-      rpc<HistoryResult>(port, 'autonomous.GetContextHistory', { contextId: CONTEXT, limit: 3 }))
-    // limit 3 lands mid-turn at index 9 (an assistant reply); snapping back to index 8 makes the
-    // window 4 long. Longer than asked, and deliberately so — see HP-304.
-    expect(out.messages.map((m) => m.messageId)).toEqual(['u4', 'a4', 'u5', 'a5'])
-    expect(out.hasMore).toBe(true)
-    expect(out.oldestCursor).toBe('u4')
+  it('windows to the NEWEST events and hands back a cursor', async () => {
+    const out = await withHistory((port) => rpc<History>(port, 'agent.history', { agentId: 'scratch', limit: 4 }))
+    expect(out.events).toHaveLength(4)
+    expect(out.events[0]).toMatchObject({ text: 'question 4' })
+    expect(out.nextBefore).toBeTruthy()
   })
 
-  it('pages older with `before`, without overlapping the page already held', async () => {
-    const out = await withHistory((port) =>
-      rpc<HistoryResult>(port, 'autonomous.GetContextHistory', { contextId: CONTEXT, limit: 3, before: 'u4' }))
-    expect(out.messages.map((m) => m.messageId)).toEqual(['u2', 'a2', 'u3', 'a3'])
-    expect(out.hasMore).toBe(true)
-    expect(out.oldestCursor).toBe('u2')
+  it('pages older with the cursor, without repeating the page already held', async () => {
+    await withHistory(async (port) => {
+      const first = await rpc<History>(port, 'agent.history', { agentId: 'scratch', limit: 4 })
+      const older = await rpc<History>(port, 'agent.history', { agentId: 'scratch', limit: 4, before: first.nextBefore })
+      expect(older.events).toHaveLength(4)
+      expect(older.events.at(-1)).not.toEqual(first.events[0])
+      expect(older.events[0]).toMatchObject({ text: 'question 2' })
+    })
   })
 
-  it('reports no further pages once the oldest turn is in the window', async () => {
-    const out = await withHistory((port) =>
-      rpc<HistoryResult>(port, 'autonomous.GetContextHistory', { contextId: CONTEXT, limit: 3, before: 'u2' }))
-    expect(out.messages.map((m) => m.messageId)).toEqual(['u0', 'a0', 'u1', 'a1'])
-    expect(out.hasMore).toBe(false)
-    expect(out.oldestCursor).toBe('u0')
-  })
-
-  it('flags a cursor that is no longer in the transcript instead of erroring', async () => {
-    const out = await withHistory((port) =>
-      rpc<HistoryResult>(port, 'autonomous.GetContextHistory', { contextId: CONTEXT, limit: 3, before: 'compacted-away' }))
-    expect(out.staleCursor).toBe(true)
-    expect(out.messages).toEqual([])
-    expect(out.hasMore).toBe(false)
-    expect(out.oldestCursor).toBeNull()
+  it('omits the cursor once the oldest event is in the window — otherwise paging never ends', async () => {
+    const out = await withHistory((port) => rpc<History>(port, 'agent.history', { agentId: 'scratch', limit: 100 }))
+    expect(out.events).toHaveLength(TURNS * 2)
+    expect(out.nextBefore).toBeUndefined()
   })
 
   it('clamps an absurd limit rather than trusting the caller', async () => {
-    const out = await withHistory((port) =>
-      rpc<HistoryResult>(port, 'autonomous.GetContextHistory', { contextId: CONTEXT, limit: 10_000 }))
-    expect(out.messages).toHaveLength(TURNS * 2)
-    expect(out.hasMore).toBe(false)
+    const out = await withHistory((port) => rpc<History>(port, 'agent.history', { agentId: 'scratch', limit: 10_000 }))
+    expect(out.events).toHaveLength(TURNS * 2)
   })
 
-  it('refuses an unknown context rather than guessing one', async () => {
-    await expect(withHistory((port) =>
-      rpc(port, 'autonomous.GetContextHistory', { contextId: 'ctx-nope' }))).rejects.toThrow(/-32602|Invalid params/)
+  it('refuses an unknown agent rather than answering empty', async () => {
+    await withHistory(async (port) => {
+      expect(await rpcError(port, 'agent.history', { agentId: 'ghost' })).toBe('not_found')
+    })
+  })
+
+  it('an agent that has never run has an empty transcript, not an error', async () => {
+    await withHistory(async (port) => {
+      const out = await rpc<History>(port, 'agent.history', { agentId: 'agent-2' })
+      expect(out.events).toEqual([])
+    })
+  })
+})
+
+describe('the method surface', () => {
+  it('answers every method it defines — there are no optional ones to decline', async () => {
+    await withServer(fakeClaude('claude-surface.sh', [resultLine()]), async (port) => {
+      // Nothing is declared anywhere, so this list IS the surface. `agent.send` is exercised
+      // throughout the file; the rest are checked here for "not refused outright".
+      for (const method of ['agent.list', 'agent.history', 'turn.cancel', 'agent.recap']) {
+        expect(await rpcError(port, method, { agentId: 'scratch', turnId: 't-surface' })).not.toBe('unsupported')
+      }
+    })
+  })
+
+  it('creates, renames and deletes agents, and refuses with a REASON rather than `unsupported`', async () => {
+    await withServer(fakeClaude('claude-crud.sh', [resultLine()]), async (port) => {
+      const created = await rpc<{ id: string; name: string }>(port, 'agent.create', { name: 'Made In A Test' })
+      expect(created.id).toBe('made-in-a-test')
+      // Addressable IMMEDIATELY: the list is read from config on every call, never snapshotted.
+      expect(await rpcError(port, 'agent.history', { agentId: created.id })).toBe('(no error)')
+
+      const renamed = await rpc<{ id: string; name: string }>(port, 'agent.rename', { agentId: created.id, name: 'Renamed' })
+      expect(renamed).toMatchObject({ id: created.id, name: 'Renamed' })
+      expect((await rpc<{ deleted: boolean }>(port, 'agent.delete', { agentId: created.id })).deleted).toBe(true)
+
+      // A provider that cannot mutate says so with a message the UI shows the user. `unsupported`
+      // would leave the product with a control it can neither use nor explain.
+      expect(await rpcError(port, 'agent.rename', { agentId: 'ghost', name: 'x' })).toBe('invalid_request')
+    })
+  })
+
+  it('rejects an unknown method', async () => {
+    await withServer(fakeClaude('claude-cap3.sh', [resultLine()]), async (port) => {
+      expect(await rpcError(port, 'nonsense.method', {})).toBe('unsupported')
+    })
+  })
+
+  it('no longer answers the methods this revision removed', async () => {
+    await withServer(fakeClaude('claude-gone.sh', [resultLine()]), async (port) => {
+      // `workspace.*` and `voice.route` were unreachable from the product and are gone. If the web
+      // ever grows a file browser they come back as new methods, not as re-enabled capabilities.
+      for (const method of ['workspace.list', 'workspace.read', 'voice.route']) {
+        expect(await rpcError(port, method, { agentId: 'scratch', transcript: 'hi' })).toBe('unsupported')
+      }
+    })
   })
 })

@@ -1,5 +1,5 @@
 /**
- * Per-turn recap — the `session-recap` extension's actual content (HP-302).
+ * Per-turn recap — what `agent.recap` hands back, and what rides the turn's own stream.
  *
  * The schema calls `recap` a *"headline-style summary of what the turn accomplished"*, and that is a
  * different thing from the session title: the title is what the user ASKED, the recap is what the

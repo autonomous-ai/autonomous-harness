@@ -3,15 +3,14 @@
  *
  * The point of this file is the HOSTILE cases, not the happy one. A reference implementation that only
  * demonstrates success teaches a partner nothing about the failure modes their integration will
- * actually hit, and gives the backend client (phase 5) nothing to harden against.
+ * actually hit, and gives the backend client nothing to harden against.
  */
-import { TaskState, type Part, type TaskStateValue } from './types.js'
+import type { ProviderEvent } from './types.js'
 
 export type Step =
-  | { kind: 'parts'; parts: Part[] }
-  /** Terminal or intermediate state transition. */
-  | { kind: 'state'; state: TaskStateValue; text?: string }
-  /** Abort the HTTP response mid-frame, without a terminal state. Violates HP-102 on purpose. */
+  /** One event on the stream. */
+  | { kind: 'event'; event: ProviderEvent }
+  /** Abort the HTTP response mid-frame, with NO terminal event. Breaks the one-terminal rule on purpose. */
   | { kind: 'die' }
 
 export interface Scenario {
@@ -22,64 +21,36 @@ export interface Scenario {
   steps: Step[]
 }
 
-const meta = (kind: NonNullable<Part['metadata']>['autonomous.ai/kind'], extra: Part['metadata'] = {}): Part['metadata'] => ({
-  'autonomous.ai/kind': kind,
-  ...extra,
-})
+const ev = (event: ProviderEvent): Step => ({ kind: 'event', event })
 
-/** The full-fidelity turn: thinking, a tool call, assistant text, completion. */
+/** The full-fidelity turn: thinking, a tool call, assistant text, a recap, completion. */
 const RICH: Step[] = [
-  { kind: 'parts', parts: [{ text: 'Checking pacing…', metadata: meta('thinking_delta', { 'autonomous.ai/thinkingId': 't1' }) }] },
-  { kind: 'parts', parts: [{ text: '', metadata: meta('thinking_title', { 'autonomous.ai/thinkingId': 't1', 'autonomous.ai/title': 'Checking the budget data' }) }] },
-  {
-    kind: 'parts',
-    parts: [
-      {
-        text: '',
-        metadata: meta('tool_start', {
-          'autonomous.ai/toolCallId': 'c7',
-          'autonomous.ai/tool': 'query_spend',
-          'autonomous.ai/toolInput': { account: 'acme', window: '7d' },
-        }),
-      },
-    ],
-  },
-  {
-    kind: 'parts',
-    parts: [
-      {
-        text: '7 rows',
-        metadata: meta('tool_end', {
-          'autonomous.ai/toolCallId': 'c7',
-          'autonomous.ai/tool': 'query_spend',
-          'autonomous.ai/isError': false,
-          'autonomous.ai/summary': 'Returned 7 rows',
-          'autonomous.ai/durationSeconds': 1.4,
-        }),
-      },
-    ],
-  },
-  { kind: 'parts', parts: [{ text: 'Acme is at 118% of pacing this week.', metadata: meta('text_delta') }] },
-  { kind: 'state', state: TaskState.COMPLETED },
+  ev({ kind: 'thinking_delta', text: 'Checking pacing…', thinkingId: 't1' }),
+  ev({ kind: 'thinking_title', title: 'Checking the budget data', thinkingId: 't1' }),
+  ev({ kind: 'tool_start', toolId: 'c7', tool: 'query_spend', input: { account: 'acme', window: '7d' } }),
+  ev({ kind: 'tool_end', toolId: 'c7', tool: 'query_spend', ok: true, output: '7 rows', summary: 'Returned 7 rows', durationSeconds: 1.4 }),
+  ev({ kind: 'text_delta', text: 'Acme is at 118% of pacing this week.' }),
+  ev({ kind: 'done', text: 'Acme is at 118% of pacing this week.' }),
+  ev({ kind: 'turn_completed' }),
 ]
 
 export const SCENARIOS: Scenario[] = [
   {
     id: 'plain',
     trigger: 'plain',
-    description: 'HP-211 — a provider that emits NO autonomous.ai/* metadata is conformant. Renders as plain text.',
+    description: 'An event with no `kind` at all is conformant. Renders as plain assistant text.',
     steps: [
-      { kind: 'parts', parts: [{ text: 'Plain text reply, no metadata at all.' }] },
-      { kind: 'state', state: TaskState.COMPLETED },
+      { kind: 'event', event: { text: 'Plain text reply, no kind at all.' } },
+      ev({ kind: 'turn_completed' }),
     ],
   },
   {
     id: 'ask',
     trigger: 'ask me',
-    description: 'HP-104 — the agent needs an answer. Enters INPUT_REQUIRED and waits for a message on the same taskId.',
+    description: 'The agent needs an answer. Ends the stream with turn_input_required and waits for a resumed send on the same turnId.',
     steps: [
-      { kind: 'parts', parts: [{ text: 'Which account did you mean?', metadata: meta('text_delta') }] },
-      { kind: 'state', state: TaskState.INPUT_REQUIRED, text: 'Which account did you mean?' },
+      ev({ kind: 'text_delta', text: 'Which account did you mean?' }),
+      ev({ kind: 'turn_input_required', prompt: 'Which account did you mean?' }),
     ],
   },
   {
@@ -87,35 +58,56 @@ export const SCENARIOS: Scenario[] = [
     trigger: 'fail',
     description: 'A turn that fails partway through, after already emitting output.',
     steps: [
-      { kind: 'parts', parts: [{ text: 'Starting the query…', metadata: meta('text_delta') }] },
-      { kind: 'state', state: TaskState.FAILED, text: 'Upstream data warehouse refused the connection.' },
+      ev({ kind: 'text_delta', text: 'Starting the query…' }),
+      ev({ kind: 'turn_failed', error: { code: 'internal', message: 'Upstream data warehouse refused the connection.' } }),
     ],
   },
   {
     id: 'die',
     trigger: 'die',
-    description: 'The stream is cut without a terminal state — an HP-102 violation, present so the client can be hardened against it.',
+    description: 'The stream is cut with NO terminal event — present so the client can be hardened against it and so the conformance runner can be shown catching it.',
     steps: [
-      { kind: 'parts', parts: [{ text: 'Working on it…', metadata: meta('text_delta') }] },
+      ev({ kind: 'text_delta', text: 'Working on it…' }),
       { kind: 'die' },
     ],
   },
   {
     id: 'compact',
     trigger: 'compact',
-    description: 'The provider compacted its own context and reports it. Autonomous never asks for this (spec §9).',
+    description: 'The provider compacted its own context and reports it. Autonomous never asks for this.',
     steps: [
-      {
-        kind: 'parts',
-        parts: [
-          {
-            text: 'Compacted earlier turns to stay within context.',
-            metadata: meta('context_compact', { 'autonomous.ai/compacted': { userMessages: 12, assistantMessages: 12, toolUses: 41 } }),
-          },
-        ],
-      },
-      { kind: 'parts', parts: [{ text: 'Where were we?', metadata: meta('text_delta') }] },
-      { kind: 'state', state: TaskState.COMPLETED },
+      ev({ kind: 'context_compact', text: 'Compacted earlier turns to stay within context.' }),
+      ev({ kind: 'text_delta', text: 'Where were we?' }),
+      ev({ kind: 'turn_completed' }),
+    ],
+  },
+  {
+    id: 'recap',
+    trigger: 'recap',
+    description: 'The recap pushed on the turn’s own stream, bracketed so the client can show the wait.',
+    steps: [
+      ev({ kind: 'text_delta', text: 'Rebuilt the index.' }),
+      ev({ kind: 'done', text: 'Rebuilt the index.' }),
+      ev({ kind: 'recap_start' }),
+      ev({ kind: 'recap_end', recap: 'Rebuilt the index', text: 'Rebuilt the search index across 4 shards.' }),
+      ev({ kind: 'turn_completed' }),
+    ],
+  },
+  {
+    id: 'full',
+    trigger: 'everything',
+    description: 'Every content kind this protocol defines, in one turn. Exists so the e2e suite can assert the vocabulary is REACHABLE — from outside, a kind nobody emitted is indistinguishable from a kind nobody supports.',
+    steps: [
+      ev({ kind: 'thinking_delta', text: 'Working out what to check…', thinkingId: 'f1' }),
+      ev({ kind: 'thinking_title', title: 'Planning the checks', thinkingId: 'f1' }),
+      ev({ kind: 'tool_start', toolId: 'f7', tool: 'query_spend', input: { account: 'acme', window: '7d' } }),
+      ev({ kind: 'tool_end', toolId: 'f7', tool: 'query_spend', ok: true, output: '7 rows', summary: 'Returned 7 rows', durationSeconds: 1.4 }),
+      ev({ kind: 'context_compact', text: 'Compacted earlier turns to stay within context.' }),
+      ev({ kind: 'text_delta', text: 'Acme is at 118% of pacing this week.' }),
+      ev({ kind: 'done', text: 'Acme is at 118% of pacing this week.' }),
+      ev({ kind: 'recap_start' }),
+      ev({ kind: 'recap_end', recap: 'Acme is over pace', text: 'Acme is at 118% of pacing this week.' }),
+      ev({ kind: 'turn_completed' }),
     ],
   },
   {
@@ -131,7 +123,14 @@ export function pickScenario(userText: string): Scenario {
   return SCENARIOS.find((s) => s.trigger !== null && t.includes(s.trigger)) ?? SCENARIOS[SCENARIOS.length - 1]!
 }
 
-/** Credential that makes every call fail authentication, for exercising HP-013. */
+/** The answer to `ask`, once the client resumes the same turn. */
+export const RESUMED: Step[] = [
+  { kind: 'event', event: { kind: 'text_delta', text: 'Acme, then. It is at 118% of pacing.' } },
+  { kind: 'event', event: { kind: 'done', text: 'Acme is at 118% of pacing.' } },
+  { kind: 'event', event: { kind: 'turn_completed' } },
+]
+
+/** Credential that makes every call fail authentication, for exercising the `credential-rejected` check. */
 export const REJECTED_CREDENTIAL = 'bad-key'
 
 /** Any other non-empty credential is accepted — this provider has no real user database. */

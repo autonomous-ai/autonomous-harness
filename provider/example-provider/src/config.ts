@@ -1,8 +1,8 @@
 /**
  * Configuration: the agent list, and how to reach the `claude` binary.
  *
- * The agent list is the ONLY per-deployment state. Each entry becomes an `AgentCard.skills[]` entry
- * (HP-023) and carries the working directory `claude` is spawned in.
+ * The agent list is the ONLY per-deployment state. Each entry becomes an `agent.list` entry
+ * and carries the working directory `claude` is spawned in.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
@@ -21,7 +21,7 @@ export interface AgentEntry {
 export interface Config {
   agents: AgentEntry[]
   /**
-   * Where `autonomous.CreateAgent` puts a new agent's directory.
+   * Where `agent.create` puts a new agent's directory.
    *
    * Deliberately its own setting rather than "the parent of the first agent": creating an agent is a
    * write, and a write needs a root it cannot escape. Everything created lands under here.
@@ -90,7 +90,7 @@ export function loadAgents(file: string): AgentEntry[] {
     // RESOLVE SYMLINKS. Claude records the fully-resolved path, and the transcript directory name is
     // derived from it — on macOS `/tmp` is a symlink to `/private/tmp`, so a configured `/tmp/x`
     // would look for `-tmp-x` while Claude wrote `-private-tmp-x`, and every history read would come
-    // back empty. The conformance suite caught exactly this (HP-201).
+    // back empty. The conformance suite caught exactly this.
     return { id: e.id, name: e.name.trim(), description: e.description?.trim() ?? '', cwd: realpathSync(resolve(e.cwd)) }
   })
 }

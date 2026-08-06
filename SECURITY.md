@@ -21,11 +21,10 @@ directory.
 
 ## For implementers
 
-Two obligations in the profile are security-relevant, and both are easy to get subtly wrong:
+Two obligations in the protocol are security-relevant, and both are easy to get subtly wrong:
 
-- **HP-012** — a credential identifies **one** tenant. It must not reach another tenant's data through
-  any method, including the extensions.
-- **HP-903** — do not log or forward the credential beyond authenticating the request.
+- A credential identifies **one** tenant. It must not reach another tenant's data through any method.
+- Do not log or forward the credential beyond authenticating the request.
 
 On our side, everything a provider sends is treated as untrusted input: validated, allowlisted, and
 dropped if it is neither. Do not rely on being able to inject arbitrary client-side structures — you
