@@ -82,15 +82,31 @@ export function clip(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit)}…` : value
 }
 
-/** The `payload.event` of one record, or null for the envelopes that carry no event. */
-export function museEvent(line: string): JsonObject | null {
+/** One record's event plus the SCOPE it belongs to. */
+export interface MuseRecord {
+  /** `payload.kind` — `run`, `task`, `tool_batch_effect`, … */
+  scope: string
+  event: JsonObject
+}
+
+/**
+ * The `payload.event` of one record, or null for the envelopes that carry no event.
+ *
+ * The scope comes with it, and it is load-bearing: `run` and `task` are DIFFERENT lifecycles that share
+ * event names. Both emit `started`, and only a run's is a turn — a `task.started` is scheduler
+ * bookkeeping and several fire inside one run. This used to drop `payload.kind`, which left `started`
+ * ambiguous; the only thing separating the two was that a task carries no prompt. That held right up
+ * until a SCHEDULED run arrived — a real turn whose prompt is empty, because nobody typed anything.
+ */
+export function museEvent(line: string): MuseRecord | null {
   let raw: JsonObject | null
   try { raw = obj(JSON.parse(line)) } catch { return null }
   if (!raw) return null
   const payload = obj(raw.payload)
   if (!payload) return null
   const event = obj(payload.event)
-  return event && str(event.kind) ? event : null
+  if (!event || !str(event.kind)) return null
+  return { scope: str(payload.kind), event }
 }
 
 /** `workspace_root` from a session's first record — the only thing tying a session to a directory. */
@@ -127,14 +143,22 @@ function resultBody(text: string): JsonObject | null {
 }
 
 /** One record → events. `mode: 'replay'` emits `user_message` instead of deriving the turn lifecycle. */
-export function museEventToEvents(event: JsonObject, state: MuseTurnState, mode: 'live' | 'replay'): LiveEvent[] {
+export function museEventToEvents(record: MuseRecord, state: MuseTurnState, mode: 'live' | 'replay'): LiveEvent[] {
+  const { scope, event } = record
   const kind = str(event.kind)
   const events: LiveEvent[] = []
 
   if (kind === 'started') {
+    // ONLY a run start is a turn. `task.started` fires several times inside a single run — taking it for
+    // a turn would open, and immediately re-open, one per task.
+    if (scope !== 'run') return []
     const prompt = str(event.prompt).trim()
-    if (!prompt) return []
-    if (mode === 'replay') return [{ type: 'user_message', payload: { content: prompt } }]
+    // An EMPTY prompt is normal and still opens the turn: a SCHEDULED run has no typed message, because
+    // the scheduler triggered it rather than a person. Bailing here is why a reminder's output never
+    // reached the device — no turn opened, so the assistant text belonged to nothing and `terminal`
+    // closed a turn that was never there. Replay is the exception: an empty prompt would draw an empty
+    // user bubble, so it contributes no message and simply renders the assistant side.
+    if (mode === 'replay') return prompt ? [{ type: 'user_message', payload: { content: prompt } }] : []
     if (state.open) events.push({ type: 'turn_ended', payload: {} })
     state.open = true
     state.pendingTools.clear()
@@ -275,8 +299,8 @@ export class MuseNormalizer implements EngineNormalizer {
   }
 
   ingest(line: string): LiveEvent[] {
-    const event = museEvent(line)
-    return event ? museEventToEvents(event, this.state, 'live') : []
+    const record = museEvent(line)
+    return record ? museEventToEvents(record, this.state, 'live') : []
   }
 
   finishReplay(): LiveEvent[] {
@@ -289,8 +313,8 @@ export function museMessagesToEvents(lines: string[]): SessionEvent[] {
   const state = newMuseTurnState()
   const events: SessionEvent[] = []
   for (const line of lines) {
-    const event = museEvent(line)
-    if (event) events.push(...museEventToEvents(event, state, 'replay') as SessionEvent[])
+    const record = museEvent(line)
+    if (record) events.push(...museEventToEvents(record, state, 'replay') as SessionEvent[])
   }
   events.push({ type: 'done', payload: { result: 'success' } })
   return events
@@ -301,12 +325,16 @@ export function lastMuseTurnText(lines: string[]): LastTurnText | null {
   let userMessage = ''
   let assistantText = ''
   for (const line of lines) {
-    const event = museEvent(line)
-    if (!event) continue
+    const record = museEvent(line)
+    if (!record) continue
+    const event = record.event
     const kind = str(event.kind)
-    if (kind === 'started') {
-      const prompt = str(event.prompt).trim()
-      if (prompt) { userMessage = prompt; assistantText = '' }
+    if (kind === 'started' && record.scope === 'run') {
+      // Reset on EVERY run start, prompt or not. Keying the reset on a non-empty prompt meant a series of
+      // scheduled runs never reset it, so the recap of the 4th five-minute reminder carried all four
+      // answers glued together instead of the latest one.
+      userMessage = str(event.prompt).trim()
+      assistantText = ''
     } else if (kind === 'assistant_message_committed') {
       const text = str(event.text).trim()
       if (text) assistantText += `${assistantText ? '\n\n' : ''}${text}`

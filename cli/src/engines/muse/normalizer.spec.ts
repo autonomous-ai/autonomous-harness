@@ -156,7 +156,9 @@ describe('muse device rendering — the three lists the device draws', () => {
  * so the device tile spins "Processing" forever and no recap is ever produced.
  */
 describe('muse sub-agent lifecycle', () => {
-  const rec = (event: unknown) => JSON.stringify({ payload: { event } })
+  // Every real record carries `payload.kind` — the scope the event belongs to. This fixture used to omit
+  // it, which is why a `started` that is NOT a turn (scope `task`) looked identical here to one that is.
+  const rec = (event: unknown, scope = 'run') => JSON.stringify({ payload: { kind: scope, event } })
   const call = (callId: string, name: string, args: unknown) =>
     rec({ kind: 'assistant_tool_calls_committed', tool_calls: [{ call_id: callId, name, args: JSON.stringify(args) }] })
   const result = (callId: string, body: unknown) =>
@@ -191,6 +193,31 @@ describe('muse sub-agent lifecycle', () => {
     ])
     expect(events.filter((e) => e.type === 'subagent_finished')[0].payload)
       .toEqual({ id: 'c1', status: 'failed' })
+  })
+
+  it('opens a turn for a SCHEDULED run, whose prompt is empty because nobody typed one', () => {
+    // A reminder fires with `payload.kind:'run'`, `started`, `prompt:''`. Requiring a non-empty prompt
+    // meant no turn opened, so the answer belonged to nothing and never reached the device — measured on
+    // a five-minute BTC reminder that ran four times and reported none of them.
+    const n = new MuseNormalizer()
+    const events = feed(n, [
+      rec({ kind: 'started', prompt: '' }),
+      rec({ kind: 'assistant_message_committed', text: 'Báo giá Bitcoin — 14:02' }),
+      rec({ kind: 'terminal', terminal: 'completed', turn_duration_ms: 14000 }),
+    ])
+    const types = events.map((e) => e.type)
+    expect(types).toContain('turn_started')
+    expect(types).toContain('turn_ended')
+    expect(n.turnOpen).toBe(false)
+  })
+
+  it('does NOT take a task lifecycle start for a turn', () => {
+    // `task.started` fires several times inside ONE run (measured: 30 of them across four reminder runs).
+    // Treating them as turns would open and re-open a turn per task and shred the real one.
+    const n = new MuseNormalizer()
+    const events = feed(n, [rec({ kind: 'started', task_id: 't-1' }, 'task')])
+    expect(events).toEqual([])
+    expect(n.turnOpen).toBe(false)
   })
 
   it('releases the turn when muse ends it with children nobody waited on', () => {
