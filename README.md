@@ -17,10 +17,10 @@ credentials — Harness watches them and gives you one place to steer them from.
 ```
           Harness (the device)              web app
                      └────────────┬────────────┘
-                                  │  end-to-end encrypted
-                        ┌─────────┴─────────┐
-                        │  Autonomous relay │   ciphertext in, ciphertext out
-                        └─────────┬─────────┘
+                                  │
+                        ╔═════════╧═════════╗
+                        ║  Autonomous relay ║  stores and forwards · holds no keys
+                        ╚═════════╤═════════╝
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
      your laptop             your server            your platform
@@ -30,10 +30,32 @@ credentials — Harness watches them and gives you one place to steer them from.
      cursor · …              opencode · …            your own servers
 
           └───────── CLI ─────────┘             └─────── API ───────┘
+       end-to-end encrypted, always            TLS in transit — see below
 ```
 
-The relay never sees your work in the clear. It moves ciphertext between the device and your
-machines; the keys live on the endpoints.
+## Your work is encrypted before it reaches us
+
+On the CLI path this is not a setting and cannot be turned off. Everything between your machines and
+the device or browser is ciphertext by the time it hits our infrastructure:
+
+- **Ed25519** identity keys, pinned at first pairing and signing every ephemeral after it.
+- A **CPace-style PAKE** over ristretto255 — the 6-character pairing code bootstraps a shared secret
+  across the untrusted relay, and an attacker gets **one online guess**. There is no offline attack
+  on the code.
+- **X25519** ephemeral Diffie–Hellman per connection, through HKDF to pairwise session keys.
+- **ChaCha20-Poly1305** on every frame, with the associated data binding the frame's type and
+  session, so a frame cannot be replayed into a context it was not written for.
+
+The relay routes ciphertext. It holds no key material, so it cannot read a prompt, a diff, a result,
+or the name of what you are working on. The implementation is in
+[`cli/src/lib/e2ee/`](cli/src/lib/e2ee/) — the crypto core is a byte-identical twin of the browser's
+copy, with a drift-guard test that fails if the two diverge.
+
+**Where the encryption stops, stated plainly.** The API path is *not* end-to-end encrypted, and
+cannot be: the plaintext originates at the provider, so encrypting between you and them would hide
+content from us, not from them. That path is TLS in transit, and providers are onboarded under a
+data-processing agreement — a contractual control standing in for a cryptographic one. Users are
+shown this before they connect one. See [`provider/spec/`](provider/spec/README.md) §9.
 
 ## Get started
 
