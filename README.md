@@ -12,14 +12,14 @@ https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 ## How it works
 
 One device, every machine you own. The agents stay your processes, on your hardware, with your
-credentials — Harness watches them and gives you one place to steer them from.
+credentials.
 
 ```
           Harness (the device)              web app
                      └────────────┬────────────┘
                                   │
                         ╔═════════╧═════════╗
-                        ║  Autonomous relay ║  stores and forwards · holds no keys
+                        ║  Autonomous relay ║  end-to-end encrypted · we hold no keys
                         ╚═════════╤═════════╝
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
@@ -30,37 +30,16 @@ credentials — Harness watches them and gives you one place to steer them from.
      cursor · …              opencode · …            your own servers
 
           └───────── CLI ─────────┘             └─────── API ───────┘
-       end-to-end encrypted, always            TLS in transit — see below
 ```
 
-## Your work is encrypted before it reaches us
-
-On the CLI path this is not a setting and cannot be turned off. Everything between your machines and
-the device or browser is ciphertext by the time it hits our infrastructure:
-
-- **Ed25519** identity keys, pinned at first pairing and signing every ephemeral after it.
-- A **CPace-style PAKE** over ristretto255 — the 6-character pairing code bootstraps a shared secret
-  across the untrusted relay, and an attacker gets **one online guess**. There is no offline attack
-  on the code.
-- **X25519** ephemeral Diffie–Hellman per connection, through HKDF to pairwise session keys.
-- **ChaCha20-Poly1305** on every frame, with the associated data binding the frame's type and
-  session, so a frame cannot be replayed into a context it was not written for.
-
-The relay routes ciphertext. It holds no key material, so it cannot read a prompt, a diff, a result,
-or the name of what you are working on. The implementation is in
-[`cli/src/lib/e2ee/`](cli/src/lib/e2ee/) — the crypto core is a byte-identical twin of the browser's
-copy, with a drift-guard test that fails if the two diverge.
-
-**Where the encryption stops, stated plainly.** The API path is *not* end-to-end encrypted, and
-cannot be: the plaintext originates at the provider, so encrypting between you and them would hide
-content from us, not from them. That path is TLS in transit, and providers are onboarded under a
-data-processing agreement — a contractual control standing in for a cryptographic one. Users are
-shown this before they connect one. See [`provider/spec/`](provider/spec/README.md) §9.
+Everything is encrypted on your machine before it reaches us — Ed25519 identities pinned at pairing,
+X25519 per connection, ChaCha20-Poly1305 per frame. The relay routes ciphertext and holds no key
+material. Implementation: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
 
 ## Get started
 
 You need **Node.js 20 or newer** and **tmux**. Create a machine in the web app, copy its token, then
-run this on any computer you want your agents driven from:
+run this on any computer you want your agents driven from — your laptop, a server, a cloud VM:
 
 ```bash
 curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
@@ -68,53 +47,36 @@ harness join          # connect this computer
 harness status        # running? shows the chat link
 ```
 
-Now start `claude`, `codex`, `cursor` or any supported agent in a tmux pane. It shows up as an agent
-you can talk to from the browser and the device. Every `harness` command is documented in
-[`cli/README.md`](cli/README.md).
+Start `claude`, `codex`, `cursor` or any supported agent in a tmux pane and it shows up as an agent
+you can talk to from the browser and the device. Works today with Claude Code, Codex, Cursor,
+OpenCode, Pi, Hermes, Command Code, Devin and Muse Code. Commands: [`cli/README.md`](cli/README.md).
 
 ## Integrate your agent
 
-**There are two ways in: as a CLI, or over your own API.** Which one you want comes down to a single
-question — does your agent run on the user's computer, or on yours?
+**Two ways in, and one question picks it: is your agent a command someone runs, or a service they
+call?**
 
 |  | **CLI** | **API** |
 |---|---|---|
-| **Your agent runs** | on the user's own computer | on your servers |
-| **Harness reaches it by** | reading the transcript your CLI already writes to disk | calling your HTTP API over the network |
-| **You write** | a normalizer, in TypeScript, in this repo | an HTTP endpoint, in any language |
-| **You ship it by** | opening a pull request here | deploying your own service |
-| **The user connects it by** | installing your CLI | pasting a URL and a credential |
-| **Working today** | Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin, Muse Code | your platform |
-| **Start here** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
+| **Your agent is** | a command you run — laptop, server, anywhere | a service on your own infrastructure |
+| **You write** | a normalizer, in TypeScript, here | an HTTP endpoint, in any language |
+| **You ship it** | as a pull request to this repo | by deploying it yourself |
+| **Start at** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
 
-If the user types your agent's name in a terminal, you want the **CLI** path. If they log into your
-service, you want the **API** path.
-
-> In the code and the spec these are named **`engine`** (CLI) and **`provider`** (API). Those are the
-> folder names in this repo, so you will see both words once you start reading.
+Run `harness join` on any machine you can reach and its agents appear next to your laptop's. In the
+code these are named `engine` (CLI) and `provider` (API) — the folder names you will see.
 
 ```bash
-# CLI path — typecheck and replay the recorded-session fixtures
+# CLI — typecheck and replay the recorded-session fixtures
 cd cli && npm install && npm run typecheck && npm test
 
-# API path — run the reference implementation, then check your endpoint against it
+# API — run the reference implementation, then check your endpoint against it
 cd provider/reference-provider && npm install && npm run dev
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
 
-The provider protocol is a profile of [A2A](https://github.com/a2aagent/A2A) v1.0.1, with a reference
-implementation and a conformance runner you can point at your own endpoint.
-
-## What's in here
-
-| | |
-|---|---|
-| [`cli/`](cli/README.md) | The `harness` CLI — bridges the agent CLIs on your machine to the web app and the device |
-| [`cli/src/engines/`](cli/src/engines/README.md) | One folder per agent Harness can drive. Adding the tenth is a pull request |
-| [`provider/`](provider/README.md) | The provider protocol — spec, reference implementation, conformance runner |
-
 ## Contributing, security, licence
 
-- Adding an agent framework, or a gap in the spec — [CONTRIBUTING.md](CONTRIBUTING.md).
+- Adding an agent, or a gap in the spec — [CONTRIBUTING.md](CONTRIBUTING.md).
 - Security reports: **not the issue tracker** — [SECURITY.md](SECURITY.md).
 - [Apache-2.0](LICENSE).
