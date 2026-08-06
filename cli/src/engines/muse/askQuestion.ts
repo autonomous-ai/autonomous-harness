@@ -20,7 +20,22 @@
 import type { PaneView, QuestionRow } from '../../lib/askQuestion.js'
 
 const ROW_RE = /^\s*[›>]?\s*(\d+)[.)]\s+(.+?)\s*$/
-const FOOTER_RE = /enter to select|↑\/↓ to move|esc to interrupt/i
+/**
+ * The dialog's footer, and ONLY the dialog's. It is one line:
+ *
+ *   Enter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt
+ *
+ * `esc to interrupt` used to be a third alternative here. It is a SUFFIX of that same line, so it bought
+ * nothing — and it is also what muse prints on its own status line for any RUNNING turn (see
+ * sessionInput.ts, which relies on exactly that). Any turn whose output happened to contain numbered
+ * lines therefore anchored here and was scraped into a question that nobody asked: reading an HTML file
+ * with a numbered feature list produced the "question" `• 5 Features:` on the device while the terminal
+ * showed no dialog at all.
+ *
+ * `enter to select` is the robust anchor of the two kept: the line is long, and a narrow pane truncates
+ * from the END, which takes `Esc to interrupt` first and leaves this untouched.
+ */
+const FOOTER_RE = /enter to select|↑\/↓ to move/i
 /** Opens a free-text editor; the device's question screen cannot type, so it is never an answer. */
 const NOT_AN_ANSWER = /^none of the above\b/i
 

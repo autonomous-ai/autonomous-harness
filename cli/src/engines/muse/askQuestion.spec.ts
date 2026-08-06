@@ -46,4 +46,21 @@ describe('muse question dialog', () => {
     expect(parseMuseQuestionPane('just some prose\n⟩ ')).toBeNull()
     expect(parseMuseQuestionPane('Enter to select · ↑/↓ to move')).toBeNull()   // footer with no rows
   })
+
+  it('does not invent a question out of a RUNNING turn that printed a numbered list', () => {
+    // Reported live: "read the source of this html file" → the device showed options to pick from while
+    // the terminal asked nothing. `esc to interrupt` is muse's running-turn status line, and it used to
+    // anchor this parser; the numbered lines in the file's own output then became the options and the
+    // bullet above them became the question.
+    const running = [
+      '⟩ read source in autonomous-harness folder to get context',
+      '◆ Bash (12s)',
+      '  • 5 Features:',
+      '    1. Offline-first, no server needed',
+      '    2. Next.js clone, ready locally',
+      '    3. Instant setup',
+      '✧ Working…  esc to interrupt • 23s',
+    ].join('\n')
+    expect(parseMuseQuestionPane(running)).toBeNull()
+  })
 })
