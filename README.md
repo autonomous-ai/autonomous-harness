@@ -38,10 +38,47 @@ It drives the agents you already use — and if yours isn't here,
   <img src=".github/assets/engines/muse.png"        height="72" alt="Muse Code"    title="Muse Code">
 </p>
 
+## Add your agent to Harness
+
+Yours not in that row? Put it there. Two ways in, and one question tells you which: **is your agent a
+command someone runs, or a service they call?**
+
+|  | **CLI** | **API** |
+|---|---|---|
+| **Your agent is** | a command you run — laptop, server, anywhere | a service on your own infrastructure |
+| **You write** | a normalizer, in TypeScript, here | an HTTP endpoint, in any language |
+| **You ship it** | as a pull request to this repo | by deploying it yourself |
+| **Start at** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
+
+In the code these are named `engine` (CLI) and `provider` (API) — the folder names you'll see.
+
+```bash
+# CLI — typecheck and replay the recorded-session fixtures
+cd cli && npm install && npm run typecheck && npm test
+
+# API — run the reference implementation, then check your endpoint against it
+cd provider/reference-provider && npm install && npm run dev
+npm run conformance -- --url https://your-endpoint --key <credential>
+```
+
+Both guides are written so you can do it without talking to us first. If you get stuck, that's a bug
+in the guide — tell us.
+
+## Get started
+
+Node.js 20+ and tmux. Make a machine in the web app, copy its token:
+
+```bash
+curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
+harness join
+```
+
+Start `claude`, `codex` or any supported agent in a tmux pane and it shows up in the browser and on
+the device. Every command: [`cli/README.md`](cli/README.md).
+
 ## How it works
 
-Your agents stay your processes, on your hardware, with your credentials. Harness watches them and
-gives you one place to steer from.
+Your agents stay your processes, on your hardware, with your credentials.
 
 ```
                         Harness (the device)
@@ -63,47 +100,6 @@ gives you one place to steer from.
 Everything is encrypted on your machine before it reaches us — Ed25519 identities pinned at pairing,
 X25519 per connection, ChaCha20-Poly1305 per frame. The relay moves ciphertext and holds no key
 material. Read it yourself: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
-
-## Get started
-
-You need **Node.js 20 or newer** and **tmux**. Make a machine in the web app, copy its token, then run
-this on any computer you want your agents driven from — laptop, server, cloud VM:
-
-```bash
-curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
-harness join          # connect this computer
-harness status        # running? shows the chat link
-```
-
-Start `claude`, `codex`, `cursor` or any supported agent in a tmux pane and it shows up as something
-you can talk to from the browser and from the device. Every command: [`cli/README.md`](cli/README.md).
-
-## Add your agent to Harness
-
-Yours not in that list? Put it there. Two ways in, and one question tells you which: **is your agent a
-command someone runs, or a service they call?**
-
-|  | **CLI** | **API** |
-|---|---|---|
-| **Your agent is** | a command you run — laptop, server, anywhere | a service on your own infrastructure |
-| **You write** | a normalizer, in TypeScript, here | an HTTP endpoint, in any language |
-| **You ship it** | as a pull request to this repo | by deploying it yourself |
-| **Start at** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
-
-Run `harness join` on any machine you can reach and its agents show up next to your laptop's. In the
-code these are named `engine` (CLI) and `provider` (API) — the folder names you'll see.
-
-```bash
-# CLI — typecheck and replay the recorded-session fixtures
-cd cli && npm install && npm run typecheck && npm test
-
-# API — run the reference implementation, then check your endpoint against it
-cd provider/reference-provider && npm install && npm run dev
-npm run conformance -- --url https://your-endpoint --key <credential>
-```
-
-Both guides are written so you can do it without talking to us first. If you get stuck, that's a bug
-in the guide — tell us.
 
 ## Contributing, security, licence
 
