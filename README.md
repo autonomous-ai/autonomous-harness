@@ -2,24 +2,33 @@
 
 **The way we use computers changed. The hardware didn't.**
 
-Mouse and keyboard were built on one assumption: your hands are on the work. You type the character.
-You drag the file. You click the button. That assumption held for forty years.
+Mouse and keyboard assume your hands are on the work — you type the character, you drag the file, you
+click the button. That held for forty years. It stopped about two years ago: most of what you ship
+now, you described and an agent wrote. Your input became intent, target and judgment.
 
-It stopped holding about two years ago. Most of what you ship now, you didn't type — you described
-it, an agent wrote it, and you decided whether it was right. Your input became intent, target and
-judgment. The devices on your desk never moved with it.
+Your desk never caught up. So your agents live in two tmux panes, a browser tab, and a server you
+keep forgetting about, and you alt-tab around to find the one that finished.
 
-So right now you probably have agents running in two tmux panes, a browser tab, and on a server you
-keep forgetting about, and you alt-tab around to find the one that finished. There is no device for
-the way you actually work.
+**[Harness](https://www.autonomous.ai/harness) is the device for that.** Keyboard in the middle,
+mouse on the right, Harness on the left. Say one sentence and the work goes to whichever machine that
+agent lives on. The screen shows all of them at once.
 
-**[Harness](https://www.autonomous.ai/harness) is that device.** It goes where a third input device
-goes — keyboard in the middle, mouse on the right, Harness on the left. Say one sentence and the work
-goes to whichever machine that agent lives on. The screen shows all of them at once.
+It drives the agents you already use. Nine of them today:
 
-Keyboard = type. Mouse = point. **Harness = delegate.**
-
-Run one agent in one terminal and you don't need this. It starts paying for itself around three.
+<p align="center">
+  <img src=".github/assets/engines/claude.png"      height="34" alt="Claude Code"  title="Claude Code">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/codex.png"       height="34" alt="Codex"        title="Codex">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/cursor.png"      height="34" alt="Cursor"       title="Cursor">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/opencode.png"    height="34" alt="OpenCode"     title="OpenCode">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/pi.png"          height="34" alt="Pi"           title="Pi">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/hermes.png"      height="34" alt="Hermes"       title="Hermes">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/commandcode.png" height="34" alt="Command Code" title="Command Code">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/devin.png"       height="34" alt="Devin"        title="Devin">&nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/muse.png"        height="34" alt="Muse Code"    title="Muse Code">
+</p>
+<p align="center">
+  <sub>Claude Code · Codex · Cursor · OpenCode · Pi · Hermes · Command Code · Devin · Muse Code</sub>
+</p>
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
@@ -61,9 +70,8 @@ harness join          # connect this computer
 harness status        # running? shows the chat link
 ```
 
-Start `claude`, `codex`, `cursor` or any supported agent in a tmux pane and it shows up as something
-you can talk to from the browser and from the device. Nine work today: Claude Code, Codex, Cursor,
-OpenCode, Pi, Hermes, Command Code, Devin, Muse Code. Every command: [`cli/README.md`](cli/README.md).
+Start `claude`, `codex`, `cursor` or any of the nine in a tmux pane and it shows up as something you
+can talk to from the browser and from the device. Every command: [`cli/README.md`](cli/README.md).
 
 ## Add your agent to Harness
 
