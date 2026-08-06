@@ -373,3 +373,28 @@ describe('device frames address the agent, not the session', () => {
     expect(frames[0]).toMatchObject({ agentId: 'agent-uuid', dbSessionId: 'engine-session' })
   })
 })
+
+describe('recap lookup spans both ids', () => {
+  beforeEach(() => { vi.useFakeTimers(); dataDir = mkdtempSync(join(tmpdir(), 'adapter-recent-')) })
+  afterEach(() => { vi.useRealTimers(); rmSync(dataDir, { recursive: true, force: true }) })
+
+  it('stores a recap under the session but serves it for the agent', async () => {
+    // The device restores a tile by AGENT id; the recap is filed under the ENGINE session id so a
+    // `--resume` under a new agent still finds it. Ask with the wrong one and every tile came back empty.
+    const mirror = new CommanderMirror({
+      send: () => {}, sendWeb: () => {}, hasDevice: () => true,
+      summarize: async () => 'Short recap\n\nLong body', dataDir,
+    })
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'what happened?' } },
+      { type: 'text_delta', payload: { content: 'It happened.' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'engine-session')
+    await vi.runAllTimersAsync()
+
+    expect(mirror.recent('engine-session')).toHaveLength(1)
+    // …and the daemon's provider resolves an agent id to that session before asking.
+    const resolve = (id: string) => (id === 'agent-uuid' ? 'engine-session' : id)
+    expect(mirror.recent(resolve('agent-uuid'))[0].recap).toBe('Short recap')
+  })
+})

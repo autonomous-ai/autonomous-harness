@@ -862,7 +862,10 @@ async function runForeground(token: string): Promise<void> {
     dataDir: env.ADAPTER_DATA_DIR,
     recapForce: env.RECAP_FORCE,
   })
-  backend.recentProvider = (sessionId, n) => mirror.recent(sessionId, n)
+  // Recaps are STORED under the engine session id — that is what lets `--resume` bring the last recap
+  // back under a brand-new agent — but they are ASKED FOR by agent id, which is the only id the device
+  // and the voice router know. Resolve across the two, or every tile restores empty.
+  backend.recentProvider = (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n)
 
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
