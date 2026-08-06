@@ -1,6 +1,6 @@
 /**
  * Device turn-recap summarizer — self-contained port of the brain's `summarizeTurnText`
- *. Summarizes one turn's assistant text into the
+ * Summarizes one turn's assistant text into the
  * device's `recap\n\nsummary` shape (recap ≤15 words, summary ≤100) via a disposable one-shot
  * from the same CLI engine as the interactive session. Honors an AbortSignal so a newer turn can
  * supersede a stale recap.
@@ -263,6 +263,16 @@ export async function summarizeTurnText(
     `recap omitted. Like the recap it MUST read as finished: end on a COMPLETE sentence, never mid-idea or ` +
     `on a dangling connector, and NEVER use "…", "..." or any ellipsis or trailing dots. If you would run ` +
     `long, drop the least important detail — do not truncate.\n` +
+    `LAY PART 2 OUT SO IT CAN BE READ. Use LINE BREAKS, and let the SOURCE decide where they go — there ` +
+    `is no fixed template to fill:\n` +
+    `  • material that already has its own lines KEEPS them — a poem or lyric one line per line, steps ` +
+    `or a short list one per line. Never run such items together into a single sentence.\n` +
+    `  • a shift to a DIFFERENT point starts a new line.\n` +
+    `  • one continuous explanation of ONE thing stays as ONE block. Do not break for the sake of ` +
+    `breaking; a wrongly chopped paragraph is worse than an unbroken one.\n` +
+    `A LINE BREAK IS THE ONLY FORMATTING YOU HAVE. Still no markdown, no bullet characters, no "-" or ` +
+    `"*" or "1." at the start of a line, no headings, no tables, no emoji — they are shown literally, ` +
+    `as the characters you typed. Break the line and start the text.\n` +
     `For both parts, restate the substance itself; do NOT narrate the process (avoid ` +
     `"I wrote/did…").\n\n---\n${last}\n\n---\n` +
     `IMPORTANT: before you answer, re-check the user's request and source message. Write BOTH parts — ` +
