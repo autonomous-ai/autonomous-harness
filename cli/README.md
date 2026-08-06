@@ -134,19 +134,3 @@ connected*, the adapter runs a disposable one-shot from the session's own CLI en
 body ≤200`, shows a `Summarizing…` indicator while it runs, persists it per session
 (`${ADAPTER_DATA_DIR}/summaries.json`), and returns it on `project_recent` at device boot. A newer
 turn aborts a stale recap.
-
-## v1 limitations
-
-- Permission / question prompts are answered **in your terminal** (claude runs interactively);
-  neither the web nor the device shows those modals for remote agents.
-- `new_chat` / `/compact` from the web are no-ops; `cancel` best-effort sends `C-c` to the pane.
-- **One computer per machine.** The first computer to connect claims the machine; a *different* computer that
-  tries to join the same machine is rejected (HTTP 409) and prints an info message ("already connected
-  from another computer") then stops — it keeps its token but does not take over. Enforced by a stable
-  per-computer id (`${ADAPTER_DATA_DIR}/computer-id`) sent as `?computer=` and a server-side ownership claim, so
-  the *same* machine reconnecting after a blip/restart always reclaims. Stop the adapter on the first
-  machine (or wait for its presence to expire, ~30s) to move the machine to another computer.
-- Projects are tmux sessions — **create / rename / delete are disabled** (web hides them; the
-  adapter rejects the RPCs with `UNSUPPORTED_ON_REMOTE`).
-- Device recap uses the same Claude, Codex, or Cursor CLI engine as the session
-  (device-gated, like the hosted runtime); no sub-agent rows.
