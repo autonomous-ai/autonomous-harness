@@ -6,7 +6,22 @@ identify which agents Harness works with — nominative use, no endorsement impl
 **Do not recolor or redraw these.** If a mark is wrong or its owner wants it changed or removed, open
 an issue and it comes out.
 
-| File | Source | SHA-256 |
+## These are normalised display copies
+
+The upstream files range from 20×20 to 800×800, so at one `height=` they rendered at wildly different
+visual sizes. Each file here has been trimmed of fully transparent margin, scaled so its longest side
+is 224px, and centred on a 256×256 transparent canvas. Aspect ratio and colour are untouched; only
+the canvas and the scale changed.
+
+**The SHA-256 column below is the *upstream* file each was derived from, not the file in this
+directory.** The unmodified originals live in `autonomous-code` at `apps/web/public/engine-icons/`
+and `apps/orangepi/web/public/assets/engine-icons/`; verify provenance against those.
+
+Two marks are upscaled well past their source resolution and look soft — `claude.png` from 20×20
+(×11) and `hermes.png` from 32×32 (×7). **Both need a real high-resolution asset**; no better one
+exists in any Autonomous repo today.
+
+| File | Upstream source | Upstream SHA-256 |
 |---|---|---|
 | `cursor.png` | Cursor's official `CUBE_2D_DARK.svg`, <https://cursor.com/brand>, rendered to transparent PNG | `2e9f8c157ce6ef7a57c2c6ac451033035779ab07b142b7313ec5d301f5489802` |
 | `codex.png` | The transparent Codex product mark bundled as `codex-app-ga-logo--UgmJjKM.png` in the official `com.openai.codex` macOS app v`26.602.30954` | `8e82b26c98a10e45798ce48124515720657f7735fb8d0853b3f087eaa8a6b74e` |

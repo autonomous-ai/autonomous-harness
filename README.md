@@ -13,26 +13,27 @@ keep forgetting about, and you alt-tab around to find the one that finished.
 mouse on the right, Harness on the left. Say one sentence and the work goes to whichever machine that
 agent lives on. The screen shows all of them at once.
 
-It drives the agents you already use. Nine of them today:
+It drives the agents you already use. Nine of them today — and
+[adding the tenth](#add-your-agent-to-harness) is a pull request:
 
 <p align="center">
-  <img src=".github/assets/engines/claude.png"      height="64" alt="Claude Code"  title="Claude Code">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/codex.png"       height="64" alt="Codex"        title="Codex">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/cursor.png"      height="64" alt="Cursor"       title="Cursor">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/opencode.png"    height="64" alt="OpenCode"     title="OpenCode">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/pi.png"          height="64" alt="Pi"           title="Pi">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/hermes.png"      height="64" alt="Hermes"       title="Hermes">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/commandcode.png" height="64" alt="Command Code" title="Command Code">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/devin.png"       height="64" alt="Devin"        title="Devin">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/muse.png"        height="64" alt="Muse Code"    title="Muse Code">
+  <img src=".github/assets/engines/claude.png"      height="56" alt="Claude Code"  title="Claude Code">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/codex.png"       height="56" alt="Codex"        title="Codex">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/cursor.png"      height="56" alt="Cursor"       title="Cursor">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/opencode.png"    height="56" alt="OpenCode"     title="OpenCode">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/pi.png"          height="56" alt="Pi"           title="Pi">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/hermes.png"      height="56" alt="Hermes"       title="Hermes">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/commandcode.png" height="56" alt="Command Code" title="Command Code">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/devin.png"       height="56" alt="Devin"        title="Devin">
+  &nbsp;&nbsp;&nbsp;
+  <img src=".github/assets/engines/muse.png"        height="56" alt="Muse Code"    title="Muse Code">
 </p>
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
@@ -43,8 +44,7 @@ Your agents stay your processes, on your hardware, with your credentials. Harnes
 gives you one place to steer from.
 
 ```
-          Harness (the device)              web app
-                     └────────────┬────────────┘
+                        Harness (the device)
                                   │
                         ╔═════════╧═════════╗
                         ║  Autonomous relay ║  end-to-end encrypted · we hold no keys
