@@ -198,6 +198,12 @@ export function engineProcessMatchScore(
     if (executable === 'pi') return 3
     return /pi-coding-agent[\/\\]dist[\/\\]cli\.js(?:\s|$)|(^|[\/\s])pi(?:[\s]|$)/.test(haystack) ? 1 : 0
   }
+  if (engine === 'muse') {
+    // `~/.local/bin/muse` is a bash launcher that `exec`s the real binary, so the pane process is
+    // `muse-bin-<version>` — the bare name only appears before the exec.
+    if (executable === 'muse' || /^muse-bin-/.test(executable)) return 3
+    return /(^|[\/\s])muse(?:-bin-[^\s]+)?(?:[\s]|$)/.test(haystack) ? 1 : 0
+  }
   if (executable === 'claude') return 3
   return /(^|[\/\s])claude(?:[\s]|$)/.test(haystack) ? 1 : 0
 }
@@ -250,6 +256,9 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
   // Hermes ids are timestamps: 20260728_115628_f2c86a.
   hermes: { flags: ['--resume'], id: /^\d{8}_\d{6}_[0-9a-z]+$/i },
   commandcode: { flags: ['--resume', '-r', '--session'], id: /^[0-9a-f-]{16,}$/i },
+  // `muse resume <uuid>` names the session; `muse resume --last` does not, so that form falls through
+  // to the scan in sessionRepair instead.
+  muse: { flags: ['resume', '--session-id'], id: /^[0-9a-f-]{16,}$/i },
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

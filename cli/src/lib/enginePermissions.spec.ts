@@ -24,6 +24,9 @@ describe('default permission flags', () => {
       // Devin's flag takes a value. Its trust gate has no flag, and harness will not write config to get
       // past one — so `harness devin` still asks once per directory, on purpose.
       devin: ['--permission-mode', 'dangerous'],
+      // Muse's `--yolo` also trusts the workspace for the run, so one flag clears approval, sandbox and
+      // trust in one go — measured from `muse --help`, 0.1.0-R708.1.
+      muse: ['--yolo'],
     })
   })
 

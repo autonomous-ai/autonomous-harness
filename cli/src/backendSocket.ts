@@ -28,6 +28,7 @@ import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normali
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
+import { museMessagesToEvents } from './engines/muse/normalizer.js'
 import { piMessagesToEvents, windowPiLines } from './engines/pi/normalizer.js'
 import { commandcodeMessagesToEvents, windowCommandCodeLines } from './engines/commandcode/normalizer.js'
 import { hermesMessagesToEvents, windowHermesMessages } from './engines/hermes/normalizer.js'
@@ -97,11 +98,11 @@ function clipDeviceAgentName(input: string): string {
 
 export function deviceAgentListItem(
   raw: unknown,
-): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin'; selectedModel?: string | null } {
+): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse'; selectedModel?: string | null } {
   const o = (raw ?? {}) as Record<string, unknown>
-  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin'; selectedModel?: string | null } = { id: o.id }
+  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse'; selectedModel?: string | null } = { id: o.id }
   if (typeof o.name === 'string') item.name = clipDeviceAgentName(o.name)
-  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin') item.engine = o.engine
+  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse') item.engine = o.engine
   // Runtime model/effort profile (opaque runtime-v1:...) — lets the device render + change model/effort.
   if (typeof o.selectedModel === 'string' || o.selectedModel === null) item.selectedModel = o.selectedModel
   return item
@@ -746,12 +747,14 @@ export class BackendSocket {
               ? codexMessagesToEvents(lines)
               : s.engine === 'cursor'
                 ? cursorMessagesToEvents(lines, sessionId, await loadCursorReplayTaskLinks(env.CURSOR_HOME, sessionId))
-                : s.engine === 'pi'
+                : s.engine === 'muse'
+                  ? museMessagesToEvents(lines)
+                  : s.engine === 'pi'
                   ? piMessagesToEvents(lines)
                   : s.engine === 'commandcode'
                     ? commandcodeMessagesToEvents(lines)
                     : messagesToEvents(lines)
-            if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode') await enrichSubagentStats(fullEvents, s.transcriptPath)
+            if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode' && s.engine !== 'muse') await enrichSubagentStats(fullEvents, s.transcriptPath)
             reply(type, requestId, {
               id: sessionId,
               title: projectDisplayName(s),
@@ -790,7 +793,7 @@ export class BackendSocket {
                 : s.engine === 'commandcode'
                   ? commandcodeMessagesToEvents(w.window)
                   : messagesToEvents(w.window)
-          if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode') await enrichSubagentStats(events, s.transcriptPath)
+          if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode' && s.engine !== 'muse') await enrichSubagentStats(events, s.transcriptPath)
           // Older pages must not inject a spurious end-of-transcript marker mid-scroll.
           if (before && events[events.length - 1]?.type === 'done') events.pop()
           reply(type, requestId, {

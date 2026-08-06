@@ -23,6 +23,7 @@
 
 import type { RegisteredSession } from './registry.js'
 import type { AgentEngine } from '../engines/types.js'
+import { parseMuseQuestionPane } from '../engines/muse/askQuestion.js'
 import { parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
@@ -114,6 +115,9 @@ export function shapeQuestions(questions: unknown): ShapedQuestion[] {
  */
 export function parseEngineQuestionPane(engine: AgentEngine, capture: string): PaneView {
   if (engine === 'devin') return parseDevinQuestionPane(capture)
+  // Muse pairs each option with a description on the same line and floats a live Preview box above the
+  // rows — both confuse the shared parser, so it reads its own.
+  if (engine === 'muse') return parseMuseQuestionPane(capture)
   // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
   if (engine === 'opencode') {
@@ -481,7 +485,7 @@ export interface QuestionWatcherDeps {
 }
 
 const POLL_MS = 1500
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode'])
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

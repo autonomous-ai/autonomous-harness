@@ -23,7 +23,7 @@ import { env } from '../config/env.js'
 import { VERSION } from '../version.js'
 import type { AgentEngine } from '../engines/types.js'
 import { daemonPort, hasSavedToken, isDaemonRunning } from './daemonState.js'
-import { engineBin } from './engineBin.js'
+import { engineBin, engineCommand } from './engineBin.js'
 import { permissionArgsFor } from './enginePermissions.js'
 import { MACHINE_WS_PATH } from './launcherSessions.js'
 import {
@@ -333,11 +333,11 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
   const pane = process.env.TMUX_PANE ?? ''
   if (!process.env.TMUX || !PANE_RE.test(pane)) {
     fail([
-      `\n  ✗ machine ${engine} must run inside tmux.`,
+      `\n  ✗ harness ${engineCommand(engine)} must run inside tmux.`,
       '',
       '    Start one, then run it again:',
       '      tmux new -s work',
-      `      machine ${engine}\n`,
+      `      harness ${engineCommand(engine)}\n`,
     ])
   }
 
@@ -384,7 +384,7 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
   // one case where the agent is live but permanently unreachable.
   // Every notice goes to the tmux status bar, never into the pane the TUI is drawing in.
   const incompatibleNotice = (): void =>
-    paneNotice(pane, `harness was updated and can no longer drive this agent · exit and re-run: harness ${engine}`, { level: 'error' })
+    paneNotice(pane, `harness was updated and can no longer drive this agent · exit and re-run: harness ${engineCommand(engine)}`, { level: 'error' })
   // A drop right after the daemon warned us is the daemon restarting ITSELF (an update), and it comes back
   // on its own — telling the user to run `harness join` there would be wrong advice at the worst moment.
   const disconnectedNotice = (): void => link.recentlyWarned()
@@ -401,7 +401,7 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
     paneNotice(pane, frame.text, { level: frame.level, color: frame.color, durationMs: frame.durationMs })
   link.onIncompatible = incompatibleNotice
   link.onStaleBuild = (daemonVersion: string): void => {
-    paneNotice(pane, `harness updated to v${daemonVersion} (this agent runs v${VERSION}) · exit and re-run: harness ${engine}`)
+    paneNotice(pane, `harness updated to v${daemonVersion} (this agent runs v${VERSION}) · exit and re-run: harness ${engineCommand(engine)}`)
   }
 
   link.connect()
@@ -433,7 +433,14 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
   // cannot self-register) — the engine's hook needs the pane, and now the machine id too.
   const child = spawn(bin, launchArgv, {
     stdio: 'inherit',
-    env: { ...process.env, MACHINE_ID: launcherId },
+    env: {
+      ...process.env,
+      MACHINE_ID: launcherId,
+      // Muse's launcher forks a background self-update on every invocation and can replace both the
+      // script and the binary while the user is mid-session. Pin it: an agent must not change under
+      // the person using it.
+      ...(engine === 'muse' ? { MUSE_NO_AUTO_UPDATE: '1' } : {}),
+    },
   })
 
   const closeSession = async (): Promise<void> => { link.dispose() }

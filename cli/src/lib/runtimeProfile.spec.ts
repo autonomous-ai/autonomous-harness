@@ -50,7 +50,7 @@ describe('RuntimeProfileManager', () => {
     // Every engine that can produce options must also parse them back. Widening the picker to a new
     // engine and forgetting this line is silent: the id round-trips through web and device fine, then
     // setProfile rejects it as INVALID_RUNTIME_PROFILE the moment someone picks a row.
-    for (const engine of ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin']) {
+    for (const engine of ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse']) {
       expect(parseRuntimeProfile(`runtime-v1:s1:${engine}:some-model@high`)).toMatchObject({ engine })
     }
     expect(parseRuntimeProfile('runtime-v1:cursor-1:cursor:gpt-5.6-sol@none')).toMatchObject({

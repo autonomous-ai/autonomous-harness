@@ -12,12 +12,12 @@ import type { AgentEngine } from '../engines/types.js'
 
 /** Every engine the adapter can drive — also the set of `harness <engine>` launch subcommands. */
 export const ENGINES: readonly AgentEngine[] = [
-  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin',
+  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse',
 ] as const
 
 /**
  * Names users actually type. Several CLIs install more than one binary for the same product, and people
- * reach for whichever one they know — `machine cmd` must mean Command Code, not "unknown command".
+ * reach for whichever one they know — `harness cmd` must mean Command Code, not "unknown command".
  * Verified on disk: command-code ships `commandcode`/`command-code`/`cmd`/`cmdc` (all the same file), and
  * Cursor's CLI is installed as `agent` / `cursor-agent`.
  */
@@ -33,13 +33,13 @@ const ENGINE_ALIASES: Readonly<Record<string, AgentEngine>> = {
  * The spelling machine ADVERTISES for an engine, which is not always its id. The id is an internal name
  * — it travels to the web, the device and the database, so it stays put — but help should tell you to
  * type what the vendor calls their CLI. Command Code's own usage line reads `cmd <command> [options]`
- * and `cmd` is the first entry in its package `bin`, so the command to show is `machine cmd`.
+ * and `cmd` is the first entry in its package `bin`, so the command to show is `harness cmd`.
  */
 const PRIMARY_COMMAND: Partial<Record<AgentEngine, string>> = {
   commandcode: 'cmd',
 }
 
-/** What to print as `machine <this>` for an engine. Every spelling still works — see aliasesFor. */
+/** What to print as `harness <this>` for an engine. Every spelling still works — see aliasesFor. */
 export function engineCommand(engine: AgentEngine): string {
   return PRIMARY_COMMAND[engine] ?? engine
 }
@@ -81,5 +81,6 @@ export function engineBin(engine: AgentEngine): string {
     // command. (`cmdc`/`command-code`/`commandcode` are the same file, kept as aliases below.)
     case 'commandcode': return env.COMMANDCODE_PATH || 'cmd'
     case 'devin': return env.DEVIN_PATH || 'devin'
+    case 'muse': return env.MUSE_PATH || 'muse'
   }
 }

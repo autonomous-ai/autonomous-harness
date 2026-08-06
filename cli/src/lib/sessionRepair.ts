@@ -23,9 +23,10 @@
 
 import { execFile } from 'child_process'
 import { readdir, readFile, realpath, stat } from 'fs/promises'
-import { join } from 'path'
+import { basename, dirname, join, sep } from 'path'
 import { promisify } from 'util'
 import { env } from '../config/env.js'
+import { museWorkspaceRoot } from '../engines/muse/normalizer.js'
 import type { AgentEngine } from '../engines/types.js'
 import { readCodexRolloutMeta } from '../engines/codex/rollout.js'
 
@@ -218,6 +219,16 @@ export async function findLiveSession(
       return fileEngineSession(join(env.PI_HOME, 'agent', 'sessions'), cwd, startedAtMs, readTranscriptMeta, opts)
     case 'commandcode':
       return fileEngineSession(join(env.COMMANDCODE_HOME, 'projects'), cwd, startedAtMs, readTranscriptMeta, opts)
+    case 'muse':
+      // Muse's hooks never fire, so this scan is the ONLY way a muse pane is ever bound. The tree is
+      // `sessions/YYYY/MM/DD/<session-uuid>/session.jsonl` (4 levels — exactly MAX_DEPTH) and nothing in
+      // the path names the project: `workspace_root` in the first record is the only link. Sub-agent
+      // files live one level deeper under `subagent/`, and must never be adopted as agents of their own.
+      return fileEngineSession(join(env.MUSE_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
+        if (path.includes(`${sep}subagent${sep}`)) return null
+        const root = museWorkspaceRoot((await readFile(path, 'utf-8').catch(() => '')).split('\n', 1)[0] ?? '')
+        return root ? { cwd: root, sessionId: basename(dirname(path)) } : null
+      }, opts)
     case 'opencode':
       // time_created is epoch MILLISECONDS here.
       return dbEngineSession(

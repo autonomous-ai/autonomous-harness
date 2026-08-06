@@ -124,6 +124,12 @@ const envSchema = z.object({
   // Devin CLI state root — history is the SQLite store <DEVIN_HOME>/sessions.db (WAL, no transcript file
   // unless the user passes --export) and <DEVIN_HOME>/session_locks/<id>.lock holds the owning PID.
   DEVIN_HOME: z.string().default(join(homedir(), '.local', 'share', 'devin', 'cli')),
+  // Muse Code state root. Transcripts are JSONL but the layout is DATE-SHARDED, not hashed by project
+  // path: <MUSE_HOME>/sessions/YYYY/MM/DD/<session-uuid>/session.jsonl, with sub-agents one level deeper
+  // under `subagent/<child-uuid>/`. The only link back to a project is `workspace_root`, carried in the
+  // FIRST record of each file — which is why this engine is discovered by scanning rather than by a hook.
+  MUSE_HOME: z.string().default(join(homedir(), '.local', 'share', 'muse')),
+  MUSE_CONFIG_DIR: z.string().default(join(homedir(), '.config', 'muse')),
   // Devin's user-level config, where the adapter merges its hooks under a "hooks" key. Devin reads
   // Claude's hook schema verbatim, so the installed block is shaped exactly like ~/.claude/settings.json.
   DEVIN_CONFIG_PATH: z.string().default(join(homedir(), '.config', 'devin', 'config.json')),
@@ -148,6 +154,7 @@ const envSchema = z.object({
   COMMANDCODE_PATH: z.string().optional(),
   // Path to the `devin` CLI for Devin recap one-shots (else `devin` is resolved from PATH).
   DEVIN_PATH: z.string().optional(),
+  MUSE_PATH: z.string().optional(),
   // Model for the device turn-recap one-shot.
   SUMMARY_MODEL: z.string().default('sonnet'),
   // Balanced Codex counterpart used only for recap workers; never inherits the interactive CLI model.
@@ -164,6 +171,7 @@ const envSchema = z.object({
   COMMANDCODE_SUMMARY_MODEL: z.string().default(''),
   // Devin recap model. Empty → use the user's own account default (their plan decides what is available).
   DEVIN_SUMMARY_MODEL: z.string().default(''),
+  MUSE_SUMMARY_MODEL: z.string().default(''),
   // Shared recap reasoning level for Claude and Codex. Cursor effort is part of its model identifier.
   SUMMARY_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.

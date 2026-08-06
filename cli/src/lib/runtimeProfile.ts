@@ -3,6 +3,7 @@ import { dirname, join } from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { env } from '../config/env.js'
+import { parseMuseSettings } from '../engines/muse/runtimeProfile.js'
 import type { AgentEngine } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import {
@@ -100,7 +101,7 @@ interface CodexCache {
   models?: CodexCacheModel[]
 }
 
-const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes):([^@]+)@([a-z0-9_-]+)$/i
+const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse):([^@]+)@([a-z0-9_-]+)$/i
 const CODEX_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 const CLAUDE_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 const CURSOR_EFFORTS = new Set(['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -648,6 +649,24 @@ export class RuntimeProfileManager {
       const state = this.state(session.sessionId)
       const parsed = parseHermesConfig(await readText(join(env.HERMES_HOME, 'config.yaml')))
       if (parsed.model) state.model = parsed.model.slice(parsed.model.lastIndexOf('/') + 1)
+      state.effort = parsed.effort ?? 'auto'
+      state.observedAt = Date.now()
+      const after = this.selectedModel(session)
+      this.wake(session.sessionId)
+      if (!silent && this.suppressNotifications === 0 && before !== after && !this.controls.has(session.sessionId)) {
+        this.scheduleChanged(session.sessionId)
+      }
+      return before !== after
+    }
+    if (session.engine === 'muse') {
+      // Both axes are plain scalars in ~/.config/muse/settings.json (`model`, `reasoning_effort`) and
+      // neither is announced anywhere, so reading the file IS the only way the chip is ever populated.
+      // `reasoning_effort` is muse's own vocabulary (none|minimal|low|medium|high|xhigh|ultra); the
+      // absence of the key means the CLI default, which its own --help documents as `high`.
+      const before = this.selectedModel(session)
+      const state = this.state(session.sessionId)
+      const parsed = parseMuseSettings(await readText(join(env.MUSE_CONFIG_DIR, 'settings.json')))
+      if (parsed.model) state.model = parsed.model
       state.effort = parsed.effort ?? 'auto'
       state.observedAt = Date.now()
       const after = this.selectedModel(session)

@@ -282,6 +282,16 @@ describe('tmux reaper', () => {
     expect(engineProcessMatchScore({ executable: 'claude', args: 'claude' }, 'devin')).toBe(0)
   })
 
+  it('scores muse through the launcher that execs into a versioned binary', async () => {
+    const { engineProcessMatchScore } = await loadModules()
+    // `~/.local/bin/muse` is a bash launcher that `exec`s `muse-bin-<version>`, so the pane process is
+    // usually the versioned name — measured on 0.1.0-R708.1. Without this branch muse falls through to
+    // the claude matcher, fails runtime validation, and the reaper evicts every live muse session.
+    expect(engineProcessMatchScore({ executable: 'muse', args: 'muse' }, 'muse')).toBe(3)
+    expect(engineProcessMatchScore({ executable: 'muse-bin-0.1.0-R708.1', args: 'muse-bin-0.1.0-R708.1' }, 'muse')).toBe(3)
+    expect(engineProcessMatchScore({ executable: 'claude', args: 'claude' }, 'muse')).toBe(0)
+  })
+
   it('extracts resume session ids per engine, and only when the value looks like an id', async () => {
     const { resumeSessionId } = await loadModules()
 

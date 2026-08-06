@@ -72,6 +72,7 @@ import { CursorTaskHookQueue } from './engines/cursor/taskHookQueue.js'
 import { loadCursorPendingTasks, removeCursorPendingTasks } from './engines/cursor/pendingTasks.js'
 import { OpencodeReader, readOpencodeMessages } from './engines/opencode/reader.js'
 import { lastOpencodeTurnText } from './engines/opencode/normalizer.js'
+import { MuseNormalizer, lastMuseTurnText, museMessagesToEvents } from './engines/muse/normalizer.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
 import { HermesReader, readHermesMessages } from './engines/hermes/reader.js'
 import { DevinReader, readDevinMessages } from './engines/devin/reader.js'
@@ -573,6 +574,7 @@ async function runForeground(token: string): Promise<void> {
   const cursorNormalizers = new Map<string, CursorNormalizer>()
   const opencodeReaders = new Map<string, OpencodeReader>()
   const piNormalizers = new Map<string, PiNormalizer>()
+  const museNormalizers = new Map<string, MuseNormalizer>()
   const hermesReaders = new Map<string, HermesReader>()
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
@@ -660,6 +662,7 @@ async function runForeground(token: string): Promise<void> {
       || cursorNormalizers.has(session.sessionId)
       || opencodeReaders.has(session.sessionId)
       || piNormalizers.has(session.sessionId)
+      || museNormalizers.has(session.sessionId)
       || hermesReaders.has(session.sessionId)
       || devinReaders.has(session.sessionId)
       || commandcodeNormalizers.has(session.sessionId)
@@ -712,6 +715,12 @@ async function runForeground(token: string): Promise<void> {
       })
       opencodeReaders.set(session.sessionId, reader)
       await reader.start()
+    } else if (session.engine === 'muse') {
+      // Same JSONL tail as claude/pi; only the record shape differs.
+      const normalizer = new MuseNormalizer()
+      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
+      historyTurnOpen = normalizer.turnOpen
+      museNormalizers.set(session.sessionId, normalizer)
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
@@ -855,6 +864,7 @@ async function runForeground(token: string): Promise<void> {
       const lines = await tailFile(s.transcriptPath, Infinity)
       if (s.engine === 'codex') return lastCodexTurnText(lines)
       if (s.engine === 'cursor') return lastCursorTurnText(lines)
+      if (s.engine === 'muse') return lastMuseTurnText(lines)
       if (s.engine === 'pi') return lastPiTurnText(lines)
       if (s.engine === 'commandcode') return lastCommandCodeTurnText(lines)
       return lastTurnTextFromRawLines(lines)
@@ -933,6 +943,7 @@ async function runForeground(token: string): Promise<void> {
         ?? cursorNormalizers.get(sessionId)?.turnOpen
         ?? opencodeReaders.get(sessionId)?.turnOpen
         ?? piNormalizers.get(sessionId)?.turnOpen
+        ?? museNormalizers.get(sessionId)?.turnOpen
         ?? hermesReaders.get(sessionId)?.turnOpen
         ?? devinReaders.get(sessionId)?.turnOpen
         ?? commandcodeNormalizers.get(sessionId)?.turnOpen
@@ -1038,6 +1049,7 @@ async function runForeground(token: string): Promise<void> {
     opencodeReaders.get(sessionId)?.stop()
     opencodeReaders.delete(sessionId)
     piNormalizers.delete(sessionId)
+    museNormalizers.delete(sessionId)
     hermesReaders.get(sessionId)?.stop()
     hermesReaders.delete(sessionId)
     devinReaders.get(sessionId)?.stop()
@@ -1487,6 +1499,10 @@ async function runForeground(token: string): Promise<void> {
           cursorNormalizers.set(evt.sessionId, normalizer)
         }
         events = normalizer.ingest(evt.text)
+      } else if (session.engine === 'muse') {
+        let normalizer = museNormalizers.get(evt.sessionId)
+        if (!normalizer) { normalizer = new MuseNormalizer(); museNormalizers.set(evt.sessionId, normalizer) }
+        events = normalizer.ingest(evt.text)
       } else if (session.engine === 'pi') {
         let normalizer = piNormalizers.get(evt.sessionId)
         if (!normalizer) { normalizer = new PiNormalizer('live'); piNormalizers.set(evt.sessionId, normalizer) }
@@ -1527,6 +1543,7 @@ async function runForeground(token: string): Promise<void> {
           ?? cursorNormalizers.get(session.sessionId)?.turnOpen
           ?? opencodeReaders.get(session.sessionId)?.turnOpen
           ?? piNormalizers.get(session.sessionId)?.turnOpen
+          ?? museNormalizers.get(session.sessionId)?.turnOpen
           ?? hermesReaders.get(session.sessionId)?.turnOpen
           ?? devinReaders.get(session.sessionId)?.turnOpen
           ?? commandcodeNormalizers.get(session.sessionId)?.turnOpen
@@ -1640,6 +1657,7 @@ async function runForeground(token: string): Promise<void> {
     cursorNormalizers.get(sessionId)?.closeTurn()
     opencodeReaders.get(sessionId)?.closeTurn()
     piNormalizers.get(sessionId)?.closeTurn()
+    museNormalizers.get(sessionId)?.closeTurn()
     hermesReaders.get(sessionId)?.closeTurn()
     devinReaders.get(sessionId)?.closeTurn()
     commandcodeNormalizers.get(sessionId)?.closeTurn()

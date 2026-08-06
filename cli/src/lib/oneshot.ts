@@ -853,6 +853,68 @@ function hermesBin(): string {
  * same way every other worker does it — `TMUX`/`TMUX_PANE` are scrubbed, and the machine hook only
  * registers a session that has a tmux pane. `--source tool` keeps it out of the user's session list.
  */
+function museBin(): string {
+  return env.MUSE_PATH || 'muse'
+}
+
+/**
+ * One-shot recap through `muse exec`.
+ *
+ * Prompt goes as ARGV (muse has no stdin mode), so this worker cannot be pre-warmed the way a stdin-fed
+ * CLI can — it is deliberately outside the pool. `--json` is not used: the recap wants the answer, not
+ * the event stream. TMUX vars are stripped so the worker cannot register itself as an agent, and
+ * MUSE_NO_AUTO_UPDATE keeps a background self-update from swapping the binary mid-run.
+ */
+export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('muse one-shot aborted'), { name: 'AbortError' }))
+  const args = ['exec', opts.prompt, ...(opts.model ? ['--model', opts.model] : [])]
+  const processEnv: NodeJS.ProcessEnv = { ...process.env, MUSE_NO_AUTO_UPDATE: '1' }
+  delete processEnv.TMUX
+  delete processEnv.TMUX_PANE
+  const timeoutMs = opts.timeoutMs ?? 60_000
+
+  return new Promise<OneShotResult>((resolve, reject) => {
+    const child = spawn(museBin(), args, {
+      cwd: opts.cwd, env: processEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      opts.signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
+    const kill = (): void => {
+      if (child.pid == null || child.exitCode != null) return
+      try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* gone */ } }
+    }
+    const onAbort = (): void => {
+      finish(() => reject(Object.assign(new Error('muse one-shot aborted'), { name: 'AbortError' })))
+      kill()
+    }
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error(`muse one-shot timed out after ${timeoutMs}ms`)))
+      kill()
+    }, timeoutMs)
+    opts.signal?.addEventListener('abort', onAbort)
+
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+    child.on('error', (err) => finish(() => reject(err)))
+    child.on('close', (code) => {
+      // muse prints a `muse: workspace root: …` preamble before the answer — drop it.
+      const text = stdout.split('\n').filter((line) => !/^\s*muse:\s/.test(line)).join('\n').trim()
+      finish(() => {
+        if (!text && code !== 0) reject(new Error(`muse one-shot exited ${code}: ${stderr.slice(0, 500)}`))
+        else resolve({ text, sessionId: null })
+      })
+    })
+  })
+}
+
 export function runHermesOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('hermes one-shot aborted'), { name: 'AbortError' }))
   const args = ['chat', '-q', opts.prompt, '-Q', '--source', 'tool', ...(opts.model ? ['-m', opts.model] : [])]

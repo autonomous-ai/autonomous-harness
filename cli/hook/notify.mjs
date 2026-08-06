@@ -62,7 +62,7 @@ function argValue(name, fallback) {
 function argEngine() {
   const i = process.argv.indexOf('--engine')
   const value = i !== -1 ? process.argv[i + 1] : ''
-  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' ? value : 'claude'
+  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' ? value : 'claude'
 }
 
 function paths() {

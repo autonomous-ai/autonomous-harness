@@ -104,6 +104,13 @@ const PERMISSIONS: Readonly<Record<AgentEngine, EnginePermissions>> = {
     add: [{ axis: 'permission', args: ['--permission-mode', 'dangerous'] }],
     owned: { permission: ['--permission-mode'] },
   },
+  // `--yolo` is muse's own name for the same thing, and it does three jobs at once: no approval prompts,
+  // no sandbox, and trust this workspace for the run. The finer flags are listed as owned so a user who
+  // passes one of them keeps their choice instead of getting ours on top.
+  muse: {
+    add: [{ axis: 'permission', args: ['--yolo'] }],
+    owned: { permission: ['--yolo', '--disable-approval', '--disable-sandbox', '--trust-workspace', '--approval-mode'] },
+  },
 }
 
 /** Whole-argv-entry match; `--flag=value` is the same choice as `--flag value`. */
