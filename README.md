@@ -74,7 +74,7 @@ Your agents stay your processes, on your hardware, with your credentials.
                                 ( ◉ )   Harness
                                   │
                         ╔═════════╧═════════╗
-                        ║   Harness Relay   ║   ciphertext only · we hold no keys
+                        ║   Harness Relay   ║   end-to-end encrypted
                         ╚═════════╤═════════╝
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
