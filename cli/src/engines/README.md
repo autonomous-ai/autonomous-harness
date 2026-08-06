@@ -1,8 +1,11 @@
 # Adding an agent framework to Harness
 
-This directory holds one folder per coding agent Harness can drive. If you maintain an agent CLI —
-or you want Harness to drive one it does not support yet — this page is the whole job, in the order
-it has to be done.
+**This is the CLI path.** Your agent runs on the user's own computer and Harness reads the transcript
+it writes; the code calls that an **engine**, and this directory holds one folder per engine. If your
+agent runs on *your* servers instead, you want the API path — [`provider/`](../../../provider/README.md).
+
+If you maintain an agent CLI — or you want Harness to drive one it does not support yet — this page
+is the whole job, in the order it has to be done.
 
 **What you are building.** Harness does not wrap your agent. Your agent keeps running as the user's
 own process, in their own tmux pane, with their own credentials. Harness *watches the transcript your

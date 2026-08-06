@@ -1,7 +1,8 @@
 # Autonomous Harness
 
-**[Harness](https://www.autonomous.ai/harness) is a disc on your desk that runs your coding agents.**
-Speak one sentence to it and the work goes to the agents already running on your laptop, your
+**[Harness](https://www.autonomous.ai/harness) is a device for working with AI agents.** It sits on
+your desk like any other input device — keyboard in the middle, mouse on the right, Harness on the
+left. Speak one sentence to it and the work goes to the agents already running on your laptop, your
 servers, and in the cloud. The screen shows you what all of them are doing.
 
 Keyboard = type. Mouse = point. **Harness = delegate.**
@@ -14,7 +15,7 @@ One device, every machine you own. The agents stay your processes, on your hardw
 credentials — Harness watches them and gives you one place to steer them from.
 
 ```
-            Harness (the disc)              web app
+          Harness (the device)              web app
                      └────────────┬────────────┘
                                   │  end-to-end encrypted
                         ┌─────────┴─────────┐
@@ -28,7 +29,7 @@ credentials — Harness watches them and gives you one place to steer them from.
      claude · codex          hermes · muse           agents running on
      cursor · …              opencode · …            your own servers
 
-          └─────── ENGINES ───────┘             └──── PROVIDER ────┘
+          └───────── CLI ─────────┘             └─────── API ───────┘
 ```
 
 The relay never sees your work in the clear. It moves ciphertext between the device and your
@@ -36,7 +37,8 @@ machines; the keys live on the endpoints.
 
 ## Get started
 
-Node ≥ 20 and `tmux`. Create a machine in the web app, then paste its token:
+You need **Node.js 20 or newer** and **tmux**. Create a machine in the web app, copy its token, then
+run this on any computer you want your agents driven from:
 
 ```bash
 curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
@@ -45,30 +47,35 @@ harness status        # running? shows the chat link
 ```
 
 Now start `claude`, `codex`, `cursor` or any supported agent in a tmux pane. It shows up as an agent
-you can talk to from the browser and the device. Full CLI reference: [`cli/README.md`](cli/README.md).
+you can talk to from the browser and the device. Every `harness` command is documented in
+[`cli/README.md`](cli/README.md).
 
-## Make your agent work with Harness
+## Integrate your agent
 
-**One question decides everything: does your agent run on the user's computer, or on yours?**
+**There are two ways in: as a CLI, or over your own API.** Which one you want comes down to a single
+question — does your agent run on the user's computer, or on yours?
 
-|  | **Engine** | **Provider** |
+|  | **CLI** | **API** |
 |---|---|---|
 | **Your agent runs** | on the user's own computer | on your servers |
-| **Harness reaches it by** | reading the transcript it already writes to disk | calling your HTTP API over the network |
+| **Harness reaches it by** | reading the transcript your CLI already writes to disk | calling your HTTP API over the network |
 | **You write** | a normalizer, in TypeScript, in this repo | an HTTP endpoint, in any language |
 | **You ship it by** | opening a pull request here | deploying your own service |
 | **The user connects it by** | installing your CLI | pasting a URL and a credential |
-| **Today** | Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin, Muse Code | your platform |
-| **Start here** | [`cli/src/engines/README.md`](cli/src/engines/README.md) | [`provider/README.md`](provider/README.md) |
+| **Working today** | Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin, Muse Code | your platform |
+| **Start here** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
 
-If the user types your agent's name in a terminal, you want an **engine**. If they log into your
-service, you want a **provider**.
+If the user types your agent's name in a terminal, you want the **CLI** path. If they log into your
+service, you want the **API** path.
+
+> In the code and the spec these are named **`engine`** (CLI) and **`provider`** (API). Those are the
+> folder names in this repo, so you will see both words once you start reading.
 
 ```bash
-# engine — typecheck and replay the recorded-session fixtures
+# CLI path — typecheck and replay the recorded-session fixtures
 cd cli && npm install && npm run typecheck && npm test
 
-# provider — run the reference implementation, then check your endpoint against it
+# API path — run the reference implementation, then check your endpoint against it
 cd provider/reference-provider && npm install && npm run dev
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
