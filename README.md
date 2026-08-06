@@ -1,18 +1,23 @@
 # Autonomous Harness
 
-**[Harness](https://www.autonomous.ai/harness) is a device for working with AI agents.** It sits on
-your desk like any other input device — keyboard in the middle, mouse on the right, Harness on the
-left. Speak one sentence to it and the work goes to the agents already running on your laptop, your
-servers, and in the cloud. The screen shows you what all of them are doing.
+Right now you probably have agents running in two tmux panes, a browser tab, and on a server you keep
+forgetting about. You alt-tab around to find the one that finished. That's the problem.
+
+**[Harness](https://www.autonomous.ai/harness) is an input device for the agents you already run.** It
+goes where a third input device goes — keyboard in the middle, mouse on the right, Harness on the
+left. Say one sentence and the work goes to whichever machine that agent lives on. The screen shows
+all of them at once.
 
 Keyboard = type. Mouse = point. **Harness = delegate.**
+
+Run one agent in one terminal and you don't need this. It starts paying for itself around three.
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
 ## How it works
 
-One device, every machine you own. The agents stay your processes, on your hardware, with your
-credentials.
+Your agents stay your processes, on your hardware, with your credentials. Harness watches them and
+gives you one place to steer from.
 
 ```
           Harness (the device)              web app
@@ -33,13 +38,13 @@ credentials.
 ```
 
 Everything is encrypted on your machine before it reaches us — Ed25519 identities pinned at pairing,
-X25519 per connection, ChaCha20-Poly1305 per frame. The relay routes ciphertext and holds no key
-material. Implementation: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
+X25519 per connection, ChaCha20-Poly1305 per frame. The relay moves ciphertext and holds no key
+material. Read it yourself: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
 
 ## Get started
 
-You need **Node.js 20 or newer** and **tmux**. Create a machine in the web app, copy its token, then
-run this on any computer you want your agents driven from — your laptop, a server, a cloud VM:
+You need **Node.js 20 or newer** and **tmux**. Make a machine in the web app, copy its token, then run
+this on any computer you want your agents driven from — laptop, server, cloud VM:
 
 ```bash
 curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
@@ -47,14 +52,14 @@ harness join          # connect this computer
 harness status        # running? shows the chat link
 ```
 
-Start `claude`, `codex`, `cursor` or any supported agent in a tmux pane and it shows up as an agent
-you can talk to from the browser and the device. Works today with Claude Code, Codex, Cursor,
-OpenCode, Pi, Hermes, Command Code, Devin and Muse Code. Commands: [`cli/README.md`](cli/README.md).
+Start `claude`, `codex`, `cursor` or any supported agent in a tmux pane and it shows up as something
+you can talk to from the browser and from the device. Nine work today: Claude Code, Codex, Cursor,
+OpenCode, Pi, Hermes, Command Code, Devin, Muse Code. Every command: [`cli/README.md`](cli/README.md).
 
-## Integrate your agent
+## Add your agent to Harness
 
-**Two ways in, and one question picks it: is your agent a command someone runs, or a service they
-call?**
+Yours not in that list? Put it there. Two ways in, and one question tells you which: **is your agent a
+command someone runs, or a service they call?**
 
 |  | **CLI** | **API** |
 |---|---|---|
@@ -63,8 +68,8 @@ call?**
 | **You ship it** | as a pull request to this repo | by deploying it yourself |
 | **Start at** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
 
-Run `harness join` on any machine you can reach and its agents appear next to your laptop's. In the
-code these are named `engine` (CLI) and `provider` (API) — the folder names you will see.
+Run `harness join` on any machine you can reach and its agents show up next to your laptop's. In the
+code these are named `engine` (CLI) and `provider` (API) — the folder names you'll see.
 
 ```bash
 # CLI — typecheck and replay the recorded-session fixtures
@@ -74,6 +79,9 @@ cd cli && npm install && npm run typecheck && npm test
 cd provider/reference-provider && npm install && npm run dev
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
+
+Nine engines are in there now. The tenth is a pull request, and both guides are written so you can do
+it without talking to us first. If you get stuck, that's a bug in the guide — tell us.
 
 ## Contributing, security, licence
 
