@@ -66,9 +66,6 @@ cd provider/reference-provider && npm install && npm run dev
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
 
-Both guides are written so you can do it without talking to us first. If you get stuck, that's a bug
-in the guide — tell us.
-
 ## Harness architecture
 
 Your agents stay your processes, on your hardware, with your credentials.
