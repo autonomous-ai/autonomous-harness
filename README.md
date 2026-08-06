@@ -1,12 +1,21 @@
 # Autonomous Harness
 
-Right now you probably have agents running in two tmux panes, a browser tab, and on a server you keep
-forgetting about. You alt-tab around to find the one that finished. That's the problem.
+**The way we use computers changed. The hardware didn't.**
 
-**[Harness](https://www.autonomous.ai/harness) is an input device for the agents you already run.** It
-goes where a third input device goes — keyboard in the middle, mouse on the right, Harness on the
-left. Say one sentence and the work goes to whichever machine that agent lives on. The screen shows
-all of them at once.
+Mouse and keyboard were built on one assumption: your hands are on the work. You type the character.
+You drag the file. You click the button. That assumption held for forty years.
+
+It stopped holding about two years ago. Most of what you ship now, you didn't type — you described
+it, an agent wrote it, and you decided whether it was right. Your input became intent, target and
+judgment. The devices on your desk never moved with it.
+
+So right now you probably have agents running in two tmux panes, a browser tab, and on a server you
+keep forgetting about, and you alt-tab around to find the one that finished. There is no device for
+the way you actually work.
+
+**[Harness](https://www.autonomous.ai/harness) is that device.** It goes where a third input device
+goes — keyboard in the middle, mouse on the right, Harness on the left. Say one sentence and the work
+goes to whichever machine that agent lives on. The screen shows all of them at once.
 
 Keyboard = type. Mouse = point. **Harness = delegate.**
 
