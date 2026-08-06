@@ -1,3 +1,5 @@
+https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
+
 # Autonomous Harness
 
 **The way we use computers changed. The hardware didn't.**
@@ -35,8 +37,6 @@ It drives the agents you already use — and if yours isn't here,
   &nbsp;&nbsp;
   <img src=".github/assets/engines/muse.png"        height="72" alt="Muse Code"    title="Muse Code">
 </p>
-
-https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
 ## How it works
 
