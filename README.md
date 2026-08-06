@@ -15,20 +15,19 @@ agent lives on. The screen shows all of them at once.
 
 It drives the agents you already use. Nine of them today:
 
-<p align="center">
-  <img src=".github/assets/engines/claude.png"      height="34" alt="Claude Code"  title="Claude Code">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/codex.png"       height="34" alt="Codex"        title="Codex">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/cursor.png"      height="34" alt="Cursor"       title="Cursor">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/opencode.png"    height="34" alt="OpenCode"     title="OpenCode">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/pi.png"          height="34" alt="Pi"           title="Pi">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/hermes.png"      height="34" alt="Hermes"       title="Hermes">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/commandcode.png" height="34" alt="Command Code" title="Command Code">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/devin.png"       height="34" alt="Devin"        title="Devin">&nbsp;&nbsp;&nbsp;
-  <img src=".github/assets/engines/muse.png"        height="34" alt="Muse Code"    title="Muse Code">
-</p>
-<p align="center">
-  <sub>Claude Code · Codex · Cursor · OpenCode · Pi · Hermes · Command Code · Devin · Muse Code</sub>
-</p>
+<table width="100%">
+<tr>
+<td align="center" width="11%"><img src=".github/assets/engines/claude.png"      height="56" alt="Claude Code"><br><sub><b>Claude&nbsp;Code</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/codex.png"       height="56" alt="Codex"><br><sub><b>Codex</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/cursor.png"      height="56" alt="Cursor"><br><sub><b>Cursor</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/opencode.png"    height="56" alt="OpenCode"><br><sub><b>OpenCode</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/pi.png"          height="56" alt="Pi"><br><sub><b>Pi</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/hermes.png"      height="56" alt="Hermes"><br><sub><b>Hermes</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/commandcode.png" height="56" alt="Command Code"><br><sub><b>Command&nbsp;Code</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/devin.png"       height="56" alt="Devin"><br><sub><b>Devin</b></sub></td>
+<td align="center" width="11%"><img src=".github/assets/engines/muse.png"        height="56" alt="Muse Code"><br><sub><b>Muse&nbsp;Code</b></sub></td>
+</tr>
+</table>
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
