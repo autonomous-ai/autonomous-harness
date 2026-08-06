@@ -17,6 +17,7 @@
  */
 
 import { execFile, spawn } from 'child_process'
+import { refusalMessage } from './duplicateAgent.js'
 import { randomUUID } from 'crypto'
 import { WebSocket } from 'ws'
 import { env } from '../config/env.js'
@@ -404,6 +405,13 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
     paneNotice(pane, `harness updated to v${daemonVersion} (this agent runs v${VERSION}) · exit and re-run: harness ${engineCommand(engine)}`)
   }
 
+  // A refusal has to be acted on the INSTANT it lands, not after the ack wait: the daemon closes the
+  // socket ~2ms behind the `exit` frame, and the close path ends this process — measured, the launcher
+  // exited 0 in silence with the check below never reached. Nothing has spawned yet at this point, so
+  // saying so and leaving IS the whole handling; once the engine exists, line ~478 takes this over with
+  // the teardown that stops it.
+  link.onExitRequested = (reason: string | undefined): never => fail(refusalMessage(reason))
+
   link.connect()
 
   // ── Let the DAEMON decide the two things that change between builds: which binary an engine maps to,
@@ -416,10 +424,7 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
   // there is no `opened` and `waitForAck` simply times out. Bail HERE, in the gap before the spawn: the
   // engine has not started, so the pane returns to the shell instead of flashing a CLI that something
   // else kills a moment later (which is what an older launcher, acting on this only after spawning, does).
-  if (link.exitRequested !== false) {
-    console.error(`harness: ${link.exitRequested || 'this agent was refused by the machine'}`)
-    process.exit(1)
-  }
+  if (link.exitRequested !== false) fail(refusalMessage(link.exitRequested || undefined))
   const bin = ack?.bin || engineBin(engine)
   if (!ack?.hooksReady && !env.DISABLE_HOOK_INSTALL) {
     // Fallback only. The installers narrate to stdout, which here is the user's pane — a stray

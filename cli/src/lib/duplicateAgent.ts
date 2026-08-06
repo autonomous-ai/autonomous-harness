@@ -30,6 +30,21 @@ export function sameDirSync(a: string, b: string): boolean {
   return real(a) === real(b)
 }
 
+/**
+ * What the person in the pane reads when their launch is turned away.
+ *
+ * The REASON comes from the daemon (it owns the rule); the launcher only adds what to do about it. Three
+ * lines, because a bare refusal reads like a broken CLI: what happened, why it has to be that way, and
+ * the way forward.
+ */
+export function refusalMessage(reason: string | undefined): string[] {
+  return [
+    `harness: ${reason || 'this agent was refused by the machine'}`,
+    '  Two agents in one directory cannot be told apart, so only one can run here.',
+    '  Close the other one, or start this agent in a different directory.',
+  ]
+}
+
 export interface AgentLocation { agentId: string; engine: string; cwd?: string | null }
 
 export interface DuplicateCheck {

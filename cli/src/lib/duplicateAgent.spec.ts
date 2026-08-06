@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, symlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { refuseDuplicateAgent, sameDirSync } from './duplicateAgent.js'
+import { refusalMessage, refuseDuplicateAgent, sameDirSync } from './duplicateAgent.js'
 
 /**
  * The rule exists because muse gives repair nothing to tell two agents in one directory apart, so the
@@ -54,6 +54,21 @@ describe('one agent per directory', () => {
     // A launcher that reports no cwd must never be blocked by a rule about directories.
     expect(refuseDuplicateAgent([agent('agent-1', 'muse')], 'muse', null, all)).toBeNull()
     expect(refuseDuplicateAgent([agent('agent-1', 'muse', null)], 'muse', CWD, all)).toBeNull()
+  })
+
+  it('tells the person in the pane what happened and what to do', () => {
+    // A refusal that prints nothing reads as a broken CLI — which is exactly what shipped first: the
+    // launcher exited 0 in silence, because the daemon closes the socket ~2ms after the `exit` frame and
+    // the close path ended the process before the post-ack check could run.
+    const reason = refuseDuplicateAgent([agent('agent-1', 'muse')], 'muse', CWD, all)
+    const lines = refusalMessage(reason ?? undefined)
+    expect(lines[0]).toContain(CWD)                       // what, and where
+    expect(lines.join('\n')).toMatch(/different directory/) // and the way out
+    expect(lines).toHaveLength(3)
+  })
+
+  it('still says something useful when the daemon sends no reason', () => {
+    expect(refusalMessage(undefined)[0]).toMatch(/refused/)
   })
 
   it('sees through a symlink, so one directory under two names is still one directory', () => {
