@@ -1,6 +1,6 @@
 # Autonomous Harness
 
-The [Autonomous Harness](https://www.autonomous.ai/machine) is a device and a service for running
+The [Autonomous Harness](https://www.autonomous.ai/harness) is a device and a service for running
 coding agents: one sentence, spoken to a disc on your desk, dispatched to the agents already running
 on your laptop, your server, and in the cloud.
 
