@@ -13,8 +13,8 @@ keep forgetting about, and you alt-tab around to find the one that finished.
 mouse on the right, Harness on the left. Say one sentence and the work goes to whichever machine that
 agent lives on. The screen shows all of them at once.
 
-It drives the agents you already use. Nine of them today — and
-[adding the tenth](#add-your-agent-to-harness) is a pull request:
+It drives the agents you already use — and if yours isn't here,
+[you can add it](#add-your-agent-to-harness):
 
 <p align="center">
   <img src=".github/assets/engines/claude.png"      height="56" alt="Claude Code"  title="Claude Code">
@@ -75,8 +75,8 @@ harness join          # connect this computer
 harness status        # running? shows the chat link
 ```
 
-Start `claude`, `codex`, `cursor` or any of the nine in a tmux pane and it shows up as something you
-can talk to from the browser and from the device. Every command: [`cli/README.md`](cli/README.md).
+Start `claude`, `codex`, `cursor` or any supported agent in a tmux pane and it shows up as something
+you can talk to from the browser and from the device. Every command: [`cli/README.md`](cli/README.md).
 
 ## Add your agent to Harness
 
@@ -102,8 +102,8 @@ cd provider/reference-provider && npm install && npm run dev
 npm run conformance -- --url https://your-endpoint --key <credential>
 ```
 
-Nine engines are in there now. The tenth is a pull request, and both guides are written so you can do
-it without talking to us first. If you get stuck, that's a bug in the guide — tell us.
+Both guides are written so you can do it without talking to us first. If you get stuck, that's a bug
+in the guide — tell us.
 
 ## Contributing, security, licence
 

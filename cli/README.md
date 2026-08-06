@@ -2,10 +2,12 @@
 
 **Run the coding-agent CLIs you already use, and drive them from anywhere.**
 
-`harness` watches the agent sessions you start in **tmux** on your own machine — Claude Code, Codex,
-Cursor, OpenCode, Pi, Hermes, Command Code, Devin — and bridges them to a web UI and, optionally, to a
-paired hardware device. The agents keep running as your processes, in your terminal, with your
-credentials; this is a bridge, not a wrapper.
+`harness` watches the agent sessions you start in **tmux** on your own machine and bridges them to a
+web UI and, optionally, to a paired hardware device. The agents keep running as your processes, in
+your terminal, with your credentials; this is a bridge, not a wrapper.
+
+It works with the popular coding agents — [`src/engines/`](src/engines/) is the current list, one
+folder per agent, and yours can join them.
 
 - Every agent you open in a tmux pane shows up as an agent you can talk to from the browser.
 - Turns, tool calls, todo lists and sub-agents stream out as they happen.

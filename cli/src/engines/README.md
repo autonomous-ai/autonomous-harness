@@ -109,9 +109,9 @@ the bare name silently finds nothing.
 
 ## Stage C — read the transcript
 
-**This is the actual work, and the only part that is universal.** Nine engines ship today; Claude
-Code is the default and has no folder here, and every one of the other eight has exactly two files in
-common — nothing else in this directory is shared by all of them:
+**This is the actual work, and the only part that is universal.** Claude Code is the default and has
+no folder here; every other engine has exactly two files in common, and nothing else in this
+directory is shared by all of them:
 
 ```
 engines/<name>/normalizer.ts        transcript line  →  LiveEvent[]
@@ -201,7 +201,7 @@ Open it against `main` with:
   message
 
 That last item is the one we value most. The Muse commit is the model: it records exactly which four
-things analogy would have got wrong, and why. Someone adding the tenth engine will read it.
+things analogy would have got wrong, and why. Whoever adds the next engine will read it.
 
 ## Getting help
 
