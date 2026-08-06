@@ -10,6 +10,15 @@ design, and it is the difference between an engine that works and one that fails
 **Everything about the provider spec** is below, where the most useful contributions are usually not
 code at all.
 
+## Conventions across this repository
+
+- **Specs are numbered.** Every normative statement has a stable id, so a failure can point at a
+  clause rather than a symptom, and a conformance runner can assert one check per id.
+- **Specs are compatibility contracts.** Optional fields may be added; nothing published is renamed,
+  removed, retyped or reinterpreted without a new revision served alongside the old one.
+- **Reference implementations carry no runtime dependencies.** You should be able to read one end to
+  end and know what your own implementation has to do, without installing anything to understand it.
+
 ## Found a gap in the spec?
 
 Say so. The profile is written against one product's needs, and the first partners to implement it
