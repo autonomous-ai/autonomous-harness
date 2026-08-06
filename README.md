@@ -89,27 +89,27 @@ Your agents stay your processes, on your hardware, with your credentials.
 
 ## End-to-end encryption
 
-On the CLI path this is not a setting and cannot be turned off. Everything between your machines and
-the device is ciphertext by the time it reaches us.
+On the CLI path it's always on — there's no switch for it. Everything between your machines and the
+device is ciphertext by the time it reaches us.
 
 - **Ed25519** identity keys, pinned at first pairing and signing every ephemeral after it.
 - A **CPace-style PAKE** over ristretto255 — the six-character pairing code bootstraps a shared
-  secret across the untrusted relay, and an attacker gets **one online guess**. There is no offline
-  attack on the code.
+  secret across the untrusted relay, and an attacker gets **one online guess**. There's no offline
+  attack on it.
 - **X25519** ephemeral Diffie–Hellman per connection, through HKDF to pairwise session keys.
 - A **per-process group key** so one event encrypts once for many readers, carrying its own epoch id.
 - **ChaCha20-Poly1305** on every frame, with the associated data binding the frame's type and
-  session, so a frame cannot be replayed into a context it was not written for.
+  session, so a frame can't be replayed into a context it wasn't written for.
 
-Harness Relay stores and forwards. It holds no key material, so it cannot read a prompt, a diff, a
-result, or the name of what you are working on — not because of a policy, because it has no keys.
+Harness Relay stores and forwards. It holds no key material, so it can't read a prompt, a diff, a
+result, or the name of what you're working on.
 
 The crypto core is a byte-identical twin of the browser's copy, with a drift-guard test that fails if
 the two ever diverge, and committed self-vectors that catch a crypto library changing underneath it.
-It's all in [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
+The code is in [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
 
 ## Contributing, security, licence
 
 - Adding an agent, or a gap in the spec — [CONTRIBUTING.md](CONTRIBUTING.md).
-- Security reports: **not the issue tracker** — [SECURITY.md](SECURITY.md).
+- Security reports go to [SECURITY.md](SECURITY.md) rather than the issue tracker.
 - [Apache-2.0](LICENSE).
