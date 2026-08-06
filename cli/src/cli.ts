@@ -1181,7 +1181,7 @@ async function runForeground(token: string): Promise<void> {
       // `bornOnly`: this agent has never had a session, so only accept one this engine CREATED. Taking a
       // merely-recently-written transcript handed the new agent the previous run's conversation — exit the
       // launcher, start it again in the same pane, and the fresh tab opened full of old messages.
-      const found = await findLiveSession(agent.engine, cwd, startedAtMs, { bornOnly: true })
+      const found = await findLiveSession(agent.engine, cwd, startedAtMs, { bornOnly: true, dataHome: agent.dataHome })
       if (!found || registry.has(found.sessionId) || isRecentlyDeleted(found.sessionId)) continue
       const result = registry.register({
         engine: agent.engine,
@@ -1263,6 +1263,7 @@ async function runForeground(token: string): Promise<void> {
         engine: launcher.engine,
         tmuxPane: launcher.tmuxPane,
         cwd: launcher.cwd ?? null,
+        dataHome: launcher.dataHome ?? null,
       })
       if (opened?.evicted) console.log(`[agent] ${sid(launcher.launcherId)} took pane ${launcher.tmuxPane} from ${sid(opened.evicted)}`)
       if (opened?.isNew) {

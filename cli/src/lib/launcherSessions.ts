@@ -34,6 +34,8 @@ export interface LauncherSession {
   engine: AgentEngine
   tmuxPane: string
   cwd: string | null
+  /** muse only: the data root this launcher's engine actually uses (see LauncherOpenFrame). */
+  dataHome: string | null
   socket: LauncherSocket
   openedAt: number
 }
@@ -43,6 +45,7 @@ export interface LauncherOpenInput {
   engine?: AgentEngine
   tmuxPane?: string
   cwd?: string
+  dataHome?: string
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -71,6 +74,7 @@ class LauncherSessionBook {
       engine: input.engine,
       tmuxPane: pane,
       cwd: input.cwd ?? null,
+      dataHome: typeof input.dataHome === 'string' && input.dataHome ? input.dataHome : null,
       socket,
       openedAt: previous?.openedAt ?? Date.now(),
     }

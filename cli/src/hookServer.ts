@@ -41,7 +41,7 @@ export interface HookServerHandlers {
    * engine's own hook knows that, and resuming an existing session fires no hook — so the caller uses
    * this to go look (see adoptResumedSessions). Without it, a resumed agent stays invisible.
    */
-  onLauncherOpened?: (session: { launcherId: string; engine: RegisteredSession['engine']; tmuxPane: string; cwd?: string | null }) => void
+  onLauncherOpened?: (session: { launcherId: string; engine: RegisteredSession['engine']; tmuxPane: string; cwd?: string | null; dataHome?: string | null }) => void
   /** Turn a launcher away before it spawns anything; the string returned is shown to the person in the
    *  pane. Used for engines that cannot have two agents in one directory (see `refuseDuplicateAgent`). */
   refuseLauncher?: (session: {
@@ -478,6 +478,7 @@ function handleLauncherSocket(ws: WebSocket, handlers: HookServerHandlers, port:
     // reply to spawn the engine.
     handlers.onLauncherOpened?.({
       launcherId: opened.launcherId, engine: opened.engine, tmuxPane: opened.tmuxPane, cwd: opened.cwd ?? null,
+      dataHome: opened.dataHome ?? null,
     })
   })
 

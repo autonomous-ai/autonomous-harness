@@ -213,7 +213,7 @@ export async function findLiveSession(
   engine: AgentEngine,
   cwd: string,
   startedAtMs: number,
-  opts?: { bornOnly?: boolean },
+  opts?: { bornOnly?: boolean; dataHome?: string | null },
 ): Promise<RepairedSession | null> {
   const sinceMs = startedAtMs - START_SLACK_MS
   // The DB engines match on a directory STRING, so ask for both spellings of it (see sameDir).
@@ -241,7 +241,9 @@ export async function findLiveSession(
       // `sessions/YYYY/MM/DD/<session-uuid>/session.jsonl` (4 levels — exactly MAX_DEPTH) and nothing in
       // the path names the project: `workspace_root` in the first record is the only link. Sub-agent
       // files live one level deeper under `subagent/`, and must never be adopted as agents of their own.
-      return fileEngineSession(join(env.MUSE_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
+      // The agent's OWN data root: muse follows XDG_DATA_HOME, so two agents can legitimately keep
+      // their sessions in different trees, and scanning one global root loses whichever is elsewhere.
+      return fileEngineSession(join(opts?.dataHome || env.MUSE_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
         if (path.includes(`${sep}subagent${sep}`)) return null
         const lines = (await readFile(path, 'utf-8').catch(() => '')).split('\n')
         const root = museWorkspaceRoot(lines[0] ?? '')

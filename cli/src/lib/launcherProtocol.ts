@@ -38,6 +38,15 @@ export interface LauncherOpenFrame {
   engine?: AgentEngine
   tmuxPane?: string
   cwd?: string
+  /**
+   * Where this launcher's engine keeps its data, when that is not the daemon's default.
+   *
+   * muse only: it writes sessions under `XDG_DATA_HOME`, so a launcher started with a different one puts
+   * its transcripts somewhere the daemon does not scan — the agent then binds to nothing and web and
+   * device stay empty, with no error anywhere. The launcher is the only party that knows the environment
+   * it was run with, so it says so here. Absent on older launchers, which means "the daemon's default".
+   */
+  dataHome?: string
   /** The launcher's BUILD, for the stale-build notice. Never used for compatibility decisions. */
   version?: string
 }
