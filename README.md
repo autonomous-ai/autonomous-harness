@@ -15,8 +15,7 @@ keep forgetting about, and you alt-tab around to find the one that finished.
 mouse on the right, Harness on the left. Say one sentence and the work goes to whichever machine that
 agent lives on. The screen shows all of them at once.
 
-It drives the agents you already use — and if yours isn't here,
-[you can add it](#add-your-agent-to-harness):
+It drives the agents you already use:
 
 <p align="center">
   <img src=".github/assets/engines/claude.png"      height="72" alt="Claude Code"  title="Claude Code">
@@ -40,8 +39,7 @@ It drives the agents you already use — and if yours isn't here,
 
 ## Add your agent to Harness
 
-Yours not in that row? Put it there. Two ways in, and one question tells you which: **is your agent a
-command someone runs, or a service they call?**
+Two ways to integrate. We support both **CLI** and **API**.
 
 |  | **CLI** | **API** |
 |---|---|---|
@@ -50,7 +48,14 @@ command someone runs, or a service they call?**
 | **You ship it** | as a pull request to this repo | by deploying it yourself |
 | **Start at** | [`cli/src/engines/`](cli/src/engines/README.md) | [`provider/`](provider/README.md) |
 
-In the code these are named `engine` (CLI) and `provider` (API) — the folder names you'll see.
+To get started, run this:
+
+```bash
+curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
+harness join
+```
+
+In the code these are named `engine` (CLI) and `provider` (API) — the folder names you'll see:
 
 ```bash
 # CLI — typecheck and replay the recorded-session fixtures
@@ -64,27 +69,15 @@ npm run conformance -- --url https://your-endpoint --key <credential>
 Both guides are written so you can do it without talking to us first. If you get stuck, that's a bug
 in the guide — tell us.
 
-## Get started
-
-Node.js 20+ and tmux. Make a machine in the web app, copy its token:
-
-```bash
-curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
-harness join
-```
-
-Start `claude`, `codex` or any supported agent in a tmux pane and it shows up in the browser and on
-the device. Every command: [`cli/README.md`](cli/README.md).
-
-## How it works
+## Harness architecture
 
 Your agents stay your processes, on your hardware, with your credentials.
 
 ```
-                        Harness (the device)
+                                ( ◉ )   Harness
                                   │
                         ╔═════════╧═════════╗
-                        ║  Autonomous relay ║  end-to-end encrypted · we hold no keys
+                        ║   Harness Relay   ║   ciphertext only · we hold no keys
                         ╚═════════╤═════════╝
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
@@ -97,9 +90,26 @@ Your agents stay your processes, on your hardware, with your credentials.
           └───────── CLI ─────────┘             └─────── API ───────┘
 ```
 
-Everything is encrypted on your machine before it reaches us — Ed25519 identities pinned at pairing,
-X25519 per connection, ChaCha20-Poly1305 per frame. The relay moves ciphertext and holds no key
-material. Read it yourself: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
+## End-to-end encryption
+
+On the CLI path this is not a setting and cannot be turned off. Everything between your machines and
+the device is ciphertext by the time it reaches us.
+
+- **Ed25519** identity keys, pinned at first pairing and signing every ephemeral after it.
+- A **CPace-style PAKE** over ristretto255 — the six-character pairing code bootstraps a shared
+  secret across the untrusted relay, and an attacker gets **one online guess**. There is no offline
+  attack on the code.
+- **X25519** ephemeral Diffie–Hellman per connection, through HKDF to pairwise session keys.
+- A **per-process group key** so one event encrypts once for many readers, carrying its own epoch id.
+- **ChaCha20-Poly1305** on every frame, with the associated data binding the frame's type and
+  session, so a frame cannot be replayed into a context it was not written for.
+
+Harness Relay stores and forwards. It holds no key material, so it cannot read a prompt, a diff, a
+result, or the name of what you are working on — not because of a policy, because it has no keys.
+
+The crypto core is a byte-identical twin of the browser's copy, with a drift-guard test that fails if
+the two ever diverge, and committed self-vectors that catch a crypto library changing underneath it.
+Read it yourself: [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
 
 ## Contributing, security, licence
 
