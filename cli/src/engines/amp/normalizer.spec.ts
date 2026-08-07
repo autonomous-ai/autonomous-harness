@@ -108,6 +108,16 @@ describe('amp tool names', () => {
     expect(ampToolName('Task')).toBe('Task')
   })
 
+  it("uses Amp's own display table for the tools a medium session does not advertise", () => {
+    // Read out of the binary (`todo_write` → "Update TODOs", `Task` → "Subagent", …), not inferred.
+    expect(ampToolName('run_terminal_command')).toBe('Bash')
+    expect(ampToolName('read_file')).toBe('Read')
+    expect(ampToolName('ripgrep')).toBe('Grep')
+    expect(ampToolName('edit_file')).toBe('Edit')
+    // The device matches this string literally to build its checklist — a near-miss shows no list at all.
+    expect(ampToolName('todo_write')).toBe('TodoWrite')
+  })
+
   it('leaves an unmeasured tool title-cased rather than guessing at it', () => {
     // `oracle` and `finder` are real Amp tools whose behaviour was never observed here. A wrong shared
     // name would draw a confidently wrong card; a title-cased one is merely plain.

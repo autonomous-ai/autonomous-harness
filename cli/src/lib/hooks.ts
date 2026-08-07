@@ -731,12 +731,16 @@ export default function (amp: any) {
 
   amp.on('tool.call', async (event: any, ctx: any) => {
     await register(event.thread.id)
-    await drain(ctx)
+    // CLAIM THE ID FIRST. \`drain\` runs before this card so a message's prose lands ahead of the tool it
+    // called — but by then the tool_use block for THIS tool is already in the thread, so draining without
+    // claiming wrote the card twice (measured: one Task turn produced two identical \`skill\` cards).
     toolCalls.add(String(event.toolUseID))
+    await drain(ctx)
     line({ t: 'tool_call', id: event.toolUseID, tool: event.tool, input: event.input })
   })
 
   amp.on('tool.result', async (event: any, ctx: any) => {
+    // Same rule as tool.call: claim before draining.
     toolResults.add(String(event.toolUseID))
     line({
       t: 'tool_result',

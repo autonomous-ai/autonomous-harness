@@ -55,8 +55,28 @@ const TOOL_NAMES: Record<string, string> = {
   apply_patch: 'Edit',
   web_search: 'WebSearch',
   read_web_page: 'WebFetch',
-  // Amp's sub-agent tool already carries the shared name.
+  // Amp's sub-agent tool already carries the shared name — and its own display map confirms the meaning
+  // ("Task" → "Subagent"). MEASURED end to end: `Task` fires as an ordinary client tool whose RESULT is
+  // the child's answer, so the row opens on tool_start and closes on tool_end. Nothing here needs to emit
+  // `subagent_finished`, and no row is left holding `turn_ended` open the way muse's did.
   Task: 'Task',
+  // The rest come from Amp's OWN display-name table, found in the binary — not from analogy with another
+  // engine. None appeared in the 33 tools a medium-mode session advertises, so they are either legacy or
+  // gated behind a mode or integration this machine has not seen. Mapping them costs nothing and closes
+  // the gap in advance; leaving them out would be the silent-blank-card failure all over again.
+  run_terminal_command: 'Bash',
+  read_file: 'Read',
+  ripgrep: 'Grep',
+  Glob: 'Glob',
+  write_file: 'Write',
+  create_file: 'Write',
+  edit_file: 'Edit',
+  // Amp calls these "Read TODOs"/"Update TODOs". `todo_write` MUST land on exactly `TodoWrite`: the
+  // device builds its checklist by matching that string literally. Amp does not expose the tool today —
+  // asked for a todo list, it wrote a numbered list in PROSE and used no tool at all (measured on a real
+  // pane) — so the checklist stays empty by absence, not by a mis-mapping.
+  todo_write: 'TodoWrite',
+  todo_read: 'TodoRead',
 }
 
 export function ampToolName(name: string): string {
