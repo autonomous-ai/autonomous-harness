@@ -69,7 +69,9 @@ reference-provider/   zero runtime dependencies — readable end to end
 example-provider/     a real agent; runs Claude with permissions skipped ⚠ read its README first
 ```
 
-Both packages are plain TypeScript on Node ≥ 20 with **no runtime dependencies**. That is on purpose:
+Both packages are plain TypeScript with **no runtime dependencies** — Node ≥ 20, or ≥ 20.12 for
+`example-provider`, which reads its `.env` with the platform's own `process.loadEnvFile` rather than
+take a dependency on one. That is on purpose:
 you should be able to read `reference-provider/src/server.ts` and know exactly what your own endpoint
 has to do.
 

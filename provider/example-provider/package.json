@@ -11,6 +11,9 @@
   "homepage": "https://github.com/autonomous-ai/autonomous-harness#readme",
   "bugs": "https://github.com/autonomous-ai/autonomous-harness/issues",
   "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
   "scripts": {
     "dev": "tsx src/server.ts",
     "start": "node dist/server.js",

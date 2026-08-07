@@ -11,7 +11,7 @@
  *     implement as something that never terminates.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -40,6 +40,24 @@ function fakeClaude(name: string, lines: unknown[]): string {
   return path
 }
 
+/**
+ * A `claude` that records the environment it was spawned with, then answers normally.
+ *
+ * Asserting on the config object would only prove we stored the credential; the thing that matters is
+ * that the CHILD received it, because that is the whole mechanism — the CLI reads these variables
+ * itself and we never see the request it makes.
+ */
+function envRecordingClaude(name: string, envDump: string, lines: unknown[]): string {
+  const path = join(ROOT, name)
+  const body = lines.map((l) => `echo '${JSON.stringify(l)}'`).join('\n')
+  writeFileSync(
+    path,
+    `#!/bin/sh\ncat > /dev/null\nprintf '%s\\n%s\\n%s\\n' "$ANTHROPIC_BASE_URL" "$ANTHROPIC_AUTH_TOKEN" "$ANTHROPIC_MODEL" > ${envDump}\n${body}\n`,
+  )
+  chmodSync(path, 0o755)
+  return path
+}
+
 const textLine = (text: string): unknown => ({
   type: 'stream_event',
   session_id: CLAUDE_SESSION,
@@ -51,7 +69,7 @@ const resultLine = (failed = false): unknown => ({
   ...(failed ? { is_error: true, result: 'boom' } : { subtype: 'success', result: 'ok' }),
 })
 
-function config(claudeBin: string): Config {
+function config(claudeBin: string, anthropic?: Config['anthropic']): Config {
   return {
     agents: [
       { id: 'scratch', name: 'Scratch', description: 'test agent', cwd: AGENT_CWD },
@@ -60,6 +78,7 @@ function config(claudeBin: string): Config {
     workspaceRoot: ROOT,
     agentsFile: join(ROOT, 'agents.json'),
     claudeBin,
+    ...(anthropic ? { anthropic } : {}),
     model: 'test-model',
     port: 0,
     stateFile: join(ROOT, `state-${Math.random().toString(36).slice(2)}.json`),
@@ -75,8 +94,9 @@ function config(claudeBin: string): Config {
 async function withServer<T>(
   claudeBin: string,
   fn: (port: number, deps: ReturnType<typeof createProviderServer>['deps']) => Promise<T>,
+  anthropic?: Config['anthropic'],
 ): Promise<T> {
-  const { server, deps } = createProviderServer(config(claudeBin))
+  const { server, deps } = createProviderServer(config(claudeBin, anthropic))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const { port } = server.address() as AddressInfo
   try {
@@ -176,6 +196,39 @@ describe('agents', () => {
       expect(await rpcError(port, 'agent.send', { agentId: 'ghost', turnId: 't', message: { text: 'hi' } }))
         .toBe('not_found')
     })
+  })
+})
+
+describe('the endpoint the CLI runs against', () => {
+  it('hands the configured credentials to the spawned claude', async () => {
+    const envDump = join(ROOT, 'env-dump.txt')
+    const bin = envRecordingClaude('claude-env.sh', envDump, [resultLine()])
+    const anthropic = {
+      baseUrl: 'https://gateway.example.com',
+      authToken: 'sk-from-config',
+      model: 'my-custom-model',
+    }
+    await withServer(bin, async (port) => {
+      await runTurn(port, 'hello')
+    }, anthropic)
+
+    expect(readFileSync(envDump, 'utf8').split('\n').slice(0, 3)).toEqual([
+      'https://gateway.example.com',
+      'sk-from-config',
+      'my-custom-model',
+    ])
+  })
+
+  it('leaves the environment alone when nothing is configured', async () => {
+    // The local-login path. If this ever started injecting an empty ANTHROPIC_BASE_URL, the CLI would
+    // try to reach "" instead of falling back to whatever it is logged into.
+    const envDump = join(ROOT, 'env-dump-bare.txt')
+    const bin = envRecordingClaude('claude-env-bare.sh', envDump, [resultLine()])
+    await withServer(bin, async (port) => {
+      await runTurn(port, 'hello')
+    })
+
+    expect(readFileSync(envDump, 'utf8').split('\n').slice(0, 3)).toEqual(['', '', ''])
   })
 })
 

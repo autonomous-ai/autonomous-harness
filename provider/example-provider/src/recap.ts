@@ -19,6 +19,7 @@
  * A recap is a nicety: it must never be able to fail a turn that already succeeded.
  */
 import { spawn } from 'node:child_process'
+import { anthropicSpawnEnv, type AnthropicEnv } from './config.js'
 
 /** `recapEntry.recap` is capped at 200 by the schema; the device renders it on one line. */
 export const RECAP_MAX_CHARS = 200
@@ -60,6 +61,8 @@ export interface SummariseOptions {
   /** The assistant's output for this turn. */
   turnText: string
   model?: string
+  /** The endpoint and credential to run against. Absent ⇒ the CLI uses its own local login. */
+  anthropic?: AnthropicEnv
   /** Skip the model entirely and go straight to the excerpt. */
   disabled?: boolean
 }
@@ -111,7 +114,9 @@ function oneShot(opts: SummariseOptions): Promise<string> {
       opts.claudeBin,
       // No --resume, no tools, no permissions flag: this reads text and writes text.
       ['--model', opts.model ?? DEFAULT_RECAP_MODEL, '--print'],
-      { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env } },
+      // Same endpoint as the turn it summarises — a recap answered by a different model than the
+      // work would be a confusing thing to debug.
+      { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, ...anthropicSpawnEnv(opts.anthropic) } },
     )
     let out = ''
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('recap timed out')) }, SUMMARY_TIMEOUT_MS)

@@ -11,6 +11,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { anthropicSpawnEnv, type AnthropicEnv } from './config.js'
 import type { StreamLine } from './mapper.js'
 
 export interface TurnOptions {
@@ -21,6 +22,8 @@ export interface TurnOptions {
   /** Present on every turn after the first in a session. */
   resumeSessionId?: string
   model?: string
+  /** The endpoint and credential to run against. Absent ⇒ the CLI uses its own local login. */
+  anthropic?: AnthropicEnv
   signal?: AbortSignal
 }
 
@@ -54,7 +57,9 @@ export function runTurn(opts: TurnOptions, onLine: (line: StreamLine) => void, o
     // leaves those orphaned — the same reason brain uses kill(-pid) in oneshot.ts.
     detached: true,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env },
+    // Credentials LAST, so a configured endpoint wins over whatever the parent shell happens to
+    // export. Absent, this spreads to nothing and the CLI authenticates exactly as it did before.
+    env: { ...process.env, ...anthropicSpawnEnv(opts.anthropic) },
   })
 
   let killed = false

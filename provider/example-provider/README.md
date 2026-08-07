@@ -26,6 +26,7 @@ format.
 ```bash
 npm install
 cp agents.example.json agents.json      # then edit cwd
+cp .env.example .env                    # optional — see "Which LLM answers" below
 mkdir -p /tmp/example-provider-scratch
 npm run dev                             # http://127.0.0.1:4502
 ```
@@ -38,16 +39,45 @@ curl -N localhost:4502 \
                  "message":{"text":"what files are here?"}}}'
 ```
 
+## Which LLM answers
+
+By default the `claude` CLI uses whatever it is logged into locally, so this example runs with no
+credential setup at all — and two machines running the same code can quietly answer with two different
+models.
+
+To pin it to a specific endpoint, put the CLI's own variables in `.env` (gitignored; copy
+`.env.example`). Any Anthropic-compatible endpoint works — a gateway in front of another model, a
+proxy, or the Anthropic API itself:
+
+```sh
+ANTHROPIC_BASE_URL=https://my-gateway.example.com
+ANTHROPIC_AUTH_TOKEN=sk-...           # ANTHROPIC_API_KEY works too
+ANTHROPIC_MODEL=my-custom-model       # must be a model that endpoint serves
+```
+
+**All three or none.** Set none and you get the local login. Set some but not all and the provider
+**refuses to start**, naming what is missing — because a base URL without a model would otherwise send
+the default `claude-sonnet-5` to a gateway that has never heard of it, and you would find out during a
+turn with a user watching rather than at boot.
+
+`ANTHROPIC_MODEL` is also what goes to `--model`, so there is only ever one model name in play. A real
+environment variable beats the file, so a one-off run can override `.env` without editing it.
+
 | Env | Default |
 |---|---|
+| `ANTHROPIC_BASE_URL` | unset — the CLI uses its local login. Set it with a token and a model to pin the endpoint |
+| `ANTHROPIC_AUTH_TOKEN` | unset. `ANTHROPIC_API_KEY` is accepted as an alias |
+| `ANTHROPIC_MODEL` | unset. When set it wins over `CLAUDE_MODEL` and is passed as `--model` |
+| `ANTHROPIC_SMALL_FAST_MODEL` | unset. The CLI's small-model slot; when set it wins over `CLAUDE_RECAP_MODEL` for the recap one-shot |
+| `ENV_FILE` | `./.env` |
 | `AGENTS_FILE` | `./agents.json` |
 | `CLAUDE_PATH` | resolved via `which claude`, then the usual install locations |
-| `CLAUDE_MODEL` | `claude-sonnet-5`. Pinned, not left to the CLI default: a provider owns its model choice, and Autonomous never sends one |
+| `CLAUDE_MODEL` | `claude-sonnet-5`. Pinned, not left to the CLI default: a provider owns its model choice, and Autonomous never sends one. Overridden by `ANTHROPIC_MODEL` |
 | `PORT` | `4502` |
 | `STATE_FILE` | `./sessions.json` |
 | `WORKSPACE_ROOT` | `/tmp/example-provider-scratch` — where `agent.create` puts a new agent's directory |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` |
-| `CLAUDE_RECAP_MODEL` | `claude-haiku-4-5-20251001` — the per-turn recap is a one-line headline, not the work, so it gets a small model |
+| `CLAUDE_RECAP_MODEL` | `claude-haiku-4-5-20251001` — the per-turn recap is a one-line headline, not the work, so it gets a small model. Overridden by `ANTHROPIC_SMALL_FAST_MODEL` |
 | `RECAP_DISABLED` | unset. `1` skips the recap model entirely and excerpts the turn instead |
 
 ## How it works

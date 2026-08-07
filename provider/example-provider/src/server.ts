@@ -173,6 +173,7 @@ async function agentSend(res: ServerResponse, deps: Deps, params: Record<string,
       text,
       resumeSessionId: record.claudeSessionId,
       model: deps.config.model,
+      anthropic: deps.config.anthropic,
       signal: controller.signal,
     },
     (line) => {
@@ -258,6 +259,7 @@ async function recapTurn(
       cwd: agent.cwd,
       turnText,
       model: deps.config.recapModel,
+      anthropic: deps.config.anthropic,
       disabled: deps.config.recapDisabled,
     })
     if (recap) deps.store.setRecap(turnId, recap.recap, recap.body)

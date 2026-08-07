@@ -5,6 +5,10 @@ dist/
 
 # Per-deployment state, never source:
 #   agents.json   names real directories on the machine it runs on
-#   sessions.json maps A2A contextIds to Claude session ids
+#   sessions.json maps agent ids to Claude session ids
+#   .env          HOLDS A CREDENTIAL — the provider's ANTHROPIC_AUTH_TOKEN
 provider/example-provider/agents.json
 provider/example-provider/sessions.json
+.env
+.env.*
+!.env.example
