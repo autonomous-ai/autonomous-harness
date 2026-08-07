@@ -111,6 +111,20 @@ const PERMISSIONS: Readonly<Record<AgentEngine, EnginePermissions>> = {
     add: [{ axis: 'permission', args: ['--yolo'] }],
     owned: { permission: ['--yolo', '--disable-approval', '--disable-sandbox', '--trust-workspace', '--approval-mode'] },
   },
+  // `--dangerously-allow-all` is UNDOCUMENTED — absent from `--help`, found in the binary's strings — and
+  // it is real. Measured all three ways on 0.0.1786064749: an unknown flag is rejected outright
+  // (`error: unknown option`) while this one is accepted; with an `ask shell_command` rule in settings and
+  // no flag the tool is refused mid-turn ("blocked by a permissions rule … rule 0: ask shell_command");
+  // with the flag the same command runs and returns its output.
+  //
+  // That refusal is why the flag matters: Amp does not stall waiting for someone, it tells the model no
+  // and carries on, so an unattended agent produces a turn that quietly did nothing. There is no config
+  // edit here either — the rules live in `amp.permissions` in settings.json, which this launcher leaves
+  // alone. A user who passes the flag themselves keeps their own choice.
+  amp: {
+    add: [{ axis: 'permission', args: ['--dangerously-allow-all'] }],
+    owned: { permission: ['--dangerously-allow-all'] },
+  },
 }
 
 /** Whole-argv-entry match; `--flag=value` is the same choice as `--flag value`. */

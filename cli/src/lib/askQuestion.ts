@@ -24,6 +24,7 @@
 import type { RegisteredSession } from './registry.js'
 import type { AgentEngine } from '../engines/types.js'
 import { parseMuseQuestionPane } from '../engines/muse/askQuestion.js'
+import { ampSelectionKeys, parseAmpQuestionPane } from '../engines/amp/askQuestion.js'
 import { parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
@@ -118,6 +119,8 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   // Muse pairs each option with a description on the same line and floats a live Preview box above the
   // rows — both confuse the shared parser, so it reads its own.
   if (engine === 'muse') return parseMuseQuestionPane(capture)
+  // Amp's is a permission prompt with unnumbered rows — nothing the shared parser can anchor on.
+  if (engine === 'amp') return parseAmpQuestionPane(capture)
   // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
   if (engine === 'opencode') {
@@ -312,6 +315,17 @@ export function parseQuestionPane(capture: string): PaneView {
 
 /** Match an answer to a row. The device stores option labels in an 80-byte buffer, so a long label comes
  *  back truncated — prefix matches count, in both directions. */
+/**
+ * The keystrokes that commit one row.
+ *
+ * Every engine but Amp numbers its options, so the digit both selects and submits in one press. Amp
+ * draws an unnumbered list navigated with the arrow keys, so its rows carry an index and are reached by
+ * walking down to them.
+ */
+function rowKeys(engine: AgentEngine, row: QuestionRow): string[] {
+  return engine === 'amp' ? ampSelectionKeys(row) : [row.number]
+}
+
 export function matchRow(rows: QuestionRow[], answer: string): QuestionRow | null {
   const a = norm(answer)
   if (!a) return null
@@ -445,7 +459,12 @@ export class AskQuestionController {
 
       const row = matchRow(view.rows, picked.value)
       if (row) {
-        await this.deps.sendKey(pane, row.number) // selects AND submits this question
+        // One digit selects AND submits — except on Amp, whose rows are unnumbered and reached by
+        // walking the list, so this is a short sequence rather than a single key.
+        for (const key of rowKeys(engine, row)) {
+          await this.deps.sendKey(pane, key)
+          await wait(TEXT_MS)
+        }
         await wait(STEP_MS)
         continue
       }
@@ -485,7 +504,9 @@ export interface QuestionWatcherDeps {
 }
 
 const POLL_MS = 1500
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse'])
+// Amp is here for its PERMISSION prompt, not a question tool — it has none. That prompt is drawn only in
+// the pane and recorded nowhere, so polling the pane is the only way it is ever seen.
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse', 'amp'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

@@ -915,6 +915,69 @@ export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   })
 }
 
+/**
+ * One-shot recap through `amp -x`.
+ *
+ * The prompt goes as ARGV, so like muse this worker cannot be pre-warmed and stays outside the pool.
+ *
+ * `model` here is an agent MODE, not a model name: Amp exposes no model list and `-m low|medium|high|ultra`
+ * is what chooses one. `low` is both the cheapest and plenty for a one-sentence recap.
+ *
+ * Self-registration is prevented twice over. The adapter's Amp plugin already refuses to do anything
+ * without `MACHINE_ID` and `TMUX_PANE`, and both are scrubbed here; `AMP_DISABLE_PLUGINS` then stops it
+ * loading at all, which also keeps a user's own plugins out of a recap. `-x` archives the thread it
+ * creates once it finishes, so recaps do not accumulate in the user's thread list.
+ */
+export function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('amp one-shot aborted'), { name: 'AbortError' }))
+  const args = ['-x', opts.prompt, '--no-notifications', '-m', opts.model || env.AMP_SUMMARY_MODE]
+  const processEnv: NodeJS.ProcessEnv = { ...process.env, AMP_DISABLE_PLUGINS: '1' }
+  delete processEnv.TMUX
+  delete processEnv.TMUX_PANE
+  delete processEnv.MACHINE_ID
+  const timeoutMs = opts.timeoutMs ?? 60_000
+
+  return new Promise<OneShotResult>((resolve, reject) => {
+    const child = spawn(env.AMP_PATH || 'amp', args, {
+      cwd: opts.cwd, env: processEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      opts.signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
+    const kill = (): void => {
+      if (child.pid == null || child.exitCode != null) return
+      try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* gone */ } }
+    }
+    const onAbort = (): void => {
+      finish(() => reject(Object.assign(new Error('amp one-shot aborted'), { name: 'AbortError' })))
+      kill()
+    }
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error(`amp one-shot timed out after ${timeoutMs}ms`)))
+      kill()
+    }, timeoutMs)
+    opts.signal?.addEventListener('abort', onAbort)
+
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+    child.on('error', (err) => finish(() => reject(err)))
+    child.on('close', (code) => {
+      const text = stdout.trim()
+      finish(() => {
+        if (!text && code !== 0) reject(new Error(`amp one-shot exited ${code}: ${stderr.slice(0, 500)}`))
+        else resolve({ text, sessionId: null })
+      })
+    })
+  })
+}
+
 export function runHermesOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('hermes one-shot aborted'), { name: 'AbortError' }))
   const args = ['chat', '-q', opts.prompt, '-Q', '--source', 'tool', ...(opts.model ? ['-m', opts.model] : [])]

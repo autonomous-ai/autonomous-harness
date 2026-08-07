@@ -113,7 +113,11 @@ export function validTranscriptPath(engine: AgentEngine, filePath: string): bool
   try {
     const actual = realpathSync(filePath)
     const root = realpathSync(
-      engine === 'muse'
+      // Amp's root is OURS, not Amp's: the transcript is written by the adapter's own plugin because Amp
+      // keeps no conversation on disk (see installAmpPlugin).
+      engine === 'amp'
+        ? env.AMP_SESSIONS_DIR
+        : engine === 'muse'
         ? join(env.MUSE_HOME, 'sessions')
         : engine === 'codex'
         ? join(env.CODEX_HOME, 'sessions')
@@ -195,7 +199,7 @@ class Registry {
       }
       let changed = false
       for (const raw of Array.isArray(arr) ? arr : []) {
-        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' ? raw.engine : 'claude'
+        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' ? raw.engine : 'claude'
         const pane = typeof raw?.tmuxPane === 'string' && PANE_RE.test(raw.tmuxPane) ? raw.tmuxPane : ''
         let transcriptPath =
           typeof raw?.transcriptPath === 'string' && raw.transcriptPath
@@ -362,7 +366,7 @@ class Registry {
     const sessionId =
       input.sessionId || (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
     const engine: AgentEngine =
-      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' ? input.engine : 'claude'
+      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' ? input.engine : 'claude'
     const pane = input.tmuxPane
     // The machine id may be omitted only when re-registering a session we already know (the catch hook
     // fires on every prompt and older payloads carried no id) — a NEW session always needs one, because

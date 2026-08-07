@@ -454,6 +454,11 @@ export async function launchEngine(engine: AgentEngine, argv: string[]): Promise
       // script and the binary while the user is mid-session. Pin it: an agent must not change under
       // the person using it.
       ...(engine === 'muse' ? { MUSE_NO_AUTO_UPDATE: '1' } : {}),
+      // Amp's plugin runs under Bun with its own directory as `process.cwd()` — measured: it reported
+      // `<project>/.amp/plugins`, not the project. The transcript's `cwd` is what re-binds a session
+      // after a restart, so a wrong one there means an agent that can never be re-found. The launcher is
+      // standing in the right directory, so it simply says which one.
+      ...(engine === 'amp' ? { HARNESS_AGENT_CWD: process.cwd() } : {}),
     },
   })
 

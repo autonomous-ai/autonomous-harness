@@ -130,6 +130,25 @@ const envSchema = z.object({
   // FIRST record of each file — which is why this engine is discovered by scanning rather than by a hook.
   MUSE_HOME: z.string().default(join(homedir(), '.local', 'share', 'muse')),
   MUSE_CONFIG_DIR: z.string().default(join(homedir(), '.config', 'muse')),
+  // Amp plugin dir the adapter drops its discovery plugin into (honors XDG_CONFIG_HOME). Amp calls these
+  // "system plugins" and loads every `*.ts` there for EVERY thread, which is what makes one install cover
+  // all projects — the project-local `.amp/plugins/` alternative would need one copy per repo.
+  AMP_PLUGIN_DIR: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'amp', 'plugins')),
+  // Where the Amp plugin writes the transcripts this adapter tails.
+  //
+  // Amp is the only supported engine that keeps NO conversation on disk: threads live on the server and
+  // the sole local artefacts are a metadata-only debug log (no message text at all — measured) and
+  // `session.json`. `amp threads export` can fetch the content, but it costs a ~1.5s network round trip
+  // per read and never shows a message before it is complete. So the plugin writes the transcript we tail,
+  // and this directory — ours, not Amp's — is the trusted root for it.
+  AMP_SESSIONS_DIR: z.string().default(join(adapterDataDir, 'amp-sessions')),
+  // Amp's own state dir, read-only for us: `session.json` there maps a tmux pane to the thread started in
+  // it, which is how a re-attaching daemon re-binds a pane without guessing.
+  AMP_STATE_DIR: z
+    .string()
+    .default(join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'amp')),
   // Devin's user-level config, where the adapter merges its hooks under a "hooks" key. Devin reads
   // Claude's hook schema verbatim, so the installed block is shaped exactly like ~/.claude/settings.json.
   DEVIN_CONFIG_PATH: z.string().default(join(homedir(), '.config', 'devin', 'config.json')),
@@ -155,6 +174,8 @@ const envSchema = z.object({
   // Path to the `devin` CLI for Devin recap one-shots (else `devin` is resolved from PATH).
   DEVIN_PATH: z.string().optional(),
   MUSE_PATH: z.string().optional(),
+  // Path to the `amp` CLI for Amp recap one-shots (else `amp` is resolved from PATH).
+  AMP_PATH: z.string().optional(),
   // Model for the device turn-recap one-shot.
   SUMMARY_MODEL: z.string().default('sonnet'),
   // Balanced Codex counterpart used only for recap workers; never inherits the interactive CLI model.
@@ -172,6 +193,9 @@ const envSchema = z.object({
   // Devin recap model. Empty → use the user's own account default (their plan decides what is available).
   DEVIN_SUMMARY_MODEL: z.string().default(''),
   MUSE_SUMMARY_MODEL: z.string().default(''),
+  // Amp recap agent mode. Amp exposes no model list — `-m` picks a MODE (low|medium|high|ultra) and the
+  // mode picks the model. `low` is the cheapest, which is what a one-line recap should cost.
+  AMP_SUMMARY_MODE: z.string().default('low'),
   // Shared recap reasoning level for Claude and Codex. Cursor effort is part of its model identifier.
   SUMMARY_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.

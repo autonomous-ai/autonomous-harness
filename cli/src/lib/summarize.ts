@@ -24,6 +24,7 @@ import {
   runCommandCodeOneShot,
   runDevinOneShot,
   runMuseOneShot,
+  runAmpOneShot,
   setOneShotPoolActiveCounts,
   setOneShotPoolDeviceConnected,
   shutdownOneShotPool,
@@ -53,9 +54,10 @@ configureOneShotPool({
 export function syncSummaryPoolSessions(sessions: Array<{ engine: AgentEngine }>): void {
   const counts = { claude: 0, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0 }
   for (const session of sessions) {
-    // Hermes, Devin and Muse take their recap prompt as argv (`muse exec <prompt>`), so they cannot be
-    // pre-warmed the way a stdin-fed CLI can — no pooled worker for them.
-    if (session.engine === 'hermes' || session.engine === 'devin' || session.engine === 'muse') continue
+    // Hermes, Devin, Muse and Amp take their recap prompt as argv (`muse exec <prompt>`, `amp -x <prompt>`),
+    // so they cannot be pre-warmed the way a stdin-fed CLI can — no pooled worker for them.
+    if (session.engine === 'hermes' || session.engine === 'devin' || session.engine === 'muse'
+      || session.engine === 'amp') continue
     counts[session.engine]++
   }
   setOneShotPoolActiveCounts(counts)
@@ -300,7 +302,10 @@ export async function summarizeTurnText(
                 ? env.DEVIN_SUMMARY_MODEL
                 : engine === 'muse'
                   ? env.MUSE_SUMMARY_MODEL
-                  : env.OPENCODE_SUMMARY_MODEL
+                  // Amp's is an agent MODE (low|medium|high|ultra), not a model name — it exposes no models.
+                  : engine === 'amp'
+                    ? env.AMP_SUMMARY_MODE
+                    : env.OPENCODE_SUMMARY_MODEL
   const effort = engine === 'cursor' ? 'model-defined' : env.SUMMARY_EFFORT
   console.log(`[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`)
   const run = engine === 'claude'
@@ -319,7 +324,9 @@ export async function summarizeTurnText(
                 ? runDevinOneShot
                 : engine === 'muse'
                   ? runMuseOneShot
-                  : runOpencodeOneShot
+                  : engine === 'amp'
+                    ? runAmpOneShot
+                    : runOpencodeOneShot
   let r = await run({ prompt, model, effort: env.SUMMARY_EFFORT, cwd: scratch, signal })
   console.log(`[recap] one-shot returned in ${Date.now() - t0}ms · rawLen=${(r.text || '').length}`)
   await cleanupRecapSession(engine, scratch, r.sessionId)

@@ -204,6 +204,13 @@ export function engineProcessMatchScore(
     if (executable === 'muse' || /^muse-bin-/.test(executable)) return 3
     return /(^|[\/\s])muse(?:-bin-[^\s]+)?(?:[\s]|$)/.test(haystack) ? 1 : 0
   }
+  if (engine === 'amp') {
+    // `~/.local/bin/amp` symlinks to `~/.amp/bin/amp`, a single compiled binary that does NOT re-exec:
+    // measured live, the pane process is `amp` with argv `amp` and no children at all.
+    if (executable === 'amp') return 3
+    if (/\.amp[\/\\]bin[\/\\]amp(?:\s|$)/.test(haystack)) return 3
+    return /(^|[\/\s])amp(?:[\s]|$)/.test(haystack) ? 1 : 0
+  }
   if (executable === 'claude') return 3
   return /(^|[\/\s])claude(?:[\s]|$)/.test(haystack) ? 1 : 0
 }
@@ -259,6 +266,9 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
   // `muse resume <uuid>` names the session; `muse resume --last` does not, so that form falls through
   // to the scan in sessionRepair instead.
   muse: { flags: ['resume', '--session-id'], id: /^[0-9a-f-]{16,}$/i },
+  // `amp threads continue <id>` names the thread; the bare `amp last` does not. Amp's ids are the only
+  // ones here with a fixed prefix (`T-019fda49-…`), so the pattern doubles as proof it IS an amp id.
+  amp: { flags: ['continue', '-c'], id: /^T-[0-9a-f-]{16,}$/i },
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

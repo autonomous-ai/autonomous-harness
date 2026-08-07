@@ -29,6 +29,9 @@ const DEVIN_SUBMIT_VERIFY_MS = 2_500
 // Muse writes the `started` record as soon as it accepts the prompt, so the transcript answers within
 // one poll — same window as the other store-verified engines.
 const MUSE_SUBMIT_VERIFY_MS = 6_000
+// Amp's plugin writes `turn_start` from the agent.start event, which fires the instant the prompt is
+// accepted — no model round trip in between, so the same store-verified window fits.
+const AMP_SUBMIT_VERIFY_MS = 6_000
 const CURSOR_TURN_SETTLE_MS = 750
 const SUBMIT_MAX_RETRIES = 2
 // Non-cursor engines re-observe the pane (instead of erroring) while an accepted-but-not-yet-started
@@ -279,7 +282,9 @@ export class SessionInputController {
                 ? DEVIN_SUBMIT_VERIFY_MS
                 : session.engine === 'muse'
                   ? MUSE_SUBMIT_VERIFY_MS
-                  : SUBMIT_VERIFY_MS)
+                  : session.engine === 'amp'
+                    ? AMP_SUBMIT_VERIFY_MS
+                    : SUBMIT_VERIFY_MS)
   }
 
   private async retrySubmit(sessionId: string, session: RegisteredSession, state: InputState): Promise<void> {
@@ -299,7 +304,8 @@ export class SessionInputController {
         this.deps.onError(sessionId, 'The agent did not accept the message. Please try again.')
         return
       }
-    } else if (session.engine === 'opencode' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse') {
+    } else if (session.engine === 'opencode' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse'
+      || session.engine === 'amp') {
       // OpenCode has no composer glyph, and the submitted text stays visible in the message area, so a
       // pane scrape can't tell "still in the composer" from "already sent". Rely purely on the reader-
       // derived turn_started (a new user row in opencode.db) to clear awaitingFingerprint; if it hasn't

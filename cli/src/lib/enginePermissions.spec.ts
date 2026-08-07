@@ -27,6 +27,10 @@ describe('default permission flags', () => {
       // Muse's `--yolo` also trusts the workspace for the run, so one flag clears approval, sandbox and
       // trust in one go — measured from `muse --help`, 0.1.0-R708.1.
       muse: ['--yolo'],
+      // Amp's flag is UNDOCUMENTED — not in `--help`, found in the binary — and verified three ways on
+      // 0.0.1786064749: an unknown flag is rejected while this one is accepted, an `ask` rule blocks the
+      // tool without it ("blocked by a permissions rule"), and the same command runs with it.
+      amp: ['--dangerously-allow-all'],
     })
   })
 

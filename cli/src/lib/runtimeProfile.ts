@@ -4,6 +4,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { env } from '../config/env.js'
 import { parseMuseSettings } from '../engines/muse/runtimeProfile.js'
+import { parseAmpSession } from '../engines/amp/runtimeProfile.js'
 import type { AgentEngine } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import {
@@ -101,7 +102,7 @@ interface CodexCache {
   models?: CodexCacheModel[]
 }
 
-const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse):([^@]+)@([a-z0-9_-]+)$/i
+const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp):([^@]+)@([a-z0-9_-]+)$/i
 const CODEX_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 const CLAUDE_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 const CURSOR_EFFORTS = new Set(['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -668,6 +669,22 @@ export class RuntimeProfileManager {
       const parsed = parseMuseSettings(await readText(join(env.MUSE_CONFIG_DIR, 'settings.json')))
       if (parsed.model) state.model = parsed.model
       state.effort = parsed.effort ?? 'auto'
+      state.observedAt = Date.now()
+      const after = this.selectedModel(session)
+      this.wake(session.sessionId)
+      if (!silent && this.suppressNotifications === 0 && before !== after && !this.controls.has(session.sessionId)) {
+        this.scheduleChanged(session.sessionId)
+      }
+      return before !== after
+    }
+    if (session.engine === 'amp') {
+      // Amp has no models — only agent MODES — so the mode is reported as the model and there is no
+      // second axis to report. `~/.local/share/amp/session.json` is the only local place it is written.
+      const before = this.selectedModel(session)
+      const state = this.state(session.sessionId)
+      const parsed = parseAmpSession(await readText(join(env.AMP_STATE_DIR, 'session.json')))
+      if (parsed.mode) state.model = parsed.mode
+      state.effort = 'auto'
       state.observedAt = Date.now()
       const after = this.selectedModel(session)
       this.wake(session.sessionId)

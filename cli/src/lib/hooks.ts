@@ -574,6 +574,173 @@ export function installPiExtension(port: number): void {
   }
 }
 
+const AMP_PLUGIN_PATH = join(env.AMP_PLUGIN_DIR, 'launcher-register.ts')
+
+/**
+ * Amp's plugin does more than discovery — it WRITES the transcript, because Amp keeps none.
+ *
+ * Every other engine here leaves a conversation on disk and the adapter tails it. Amp does not: threads
+ * live on its server, and the only local artefacts are `session.json` and a debug log that records
+ * `blockCount`/`frameLength` and no message text whatsoever (measured across two real sessions).
+ * `amp threads export` can fetch the content, but it is a ~1.5s network round trip that never shows a
+ * message before it is complete — useless for a live tail.
+ *
+ * The plugin API is the way in. Five events fire (measured, in the TUI, not read off a doc):
+ * `session.start`, `agent.start`, `tool.call`, `tool.result`, `agent.end`. So this plugin writes the
+ * JSONL the watcher tails, and from there Amp is an ordinary file-backed engine.
+ *
+ * Two details are load-bearing:
+ *
+ *   - **Text comes from `ctx.thread.messages()`, not from the events.** No event carries assistant text.
+ *     But the thread handle reads the client's own local state, and at `tool.call` it ALREADY contains
+ *     the in-flight assistant message (measured) — so snapshotting on each event emits a message's text
+ *     BEFORE the tool it called, which is the order a transcript has to be in. Nothing is fetched.
+ *   - **Blocks are emitted once, keyed `<messageId>#<index>`.** Each snapshot re-reads the same recent
+ *     messages, so without that key every event would re-emit the whole tail of the conversation.
+ *
+ * Being a SYSTEM plugin it loads in every `amp` the user runs, including ones this adapter knows nothing
+ * about. The `TMUX_PANE` + `MACHINE_ID` guard is what keeps it inert there — same rule as pi/opencode.
+ */
+function ampPluginSource(port: number, sessionsDir: string): string {
+  return `// launcher-register — auto-installed by the machine adapter. Registers this Amp thread with the local
+// machine daemon (127.0.0.1:${port}) and writes the transcript the daemon tails, because Amp keeps none
+// on disk. No-op unless started by \`harness amp\` (MACHINE_ID) inside tmux.
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+export const description = 'Mirrors this Amp thread to the machine adapter (web + device)'
+
+const SESSIONS_DIR = ${JSON.stringify(sessionsDir)}
+
+export default function (amp: any) {
+  const pane = process.env.TMUX_PANE
+  // The launcher (\`harness amp\`) mints a UUID per launch and exports it as MACHINE_ID; the daemon binds
+  // a session's lifetime to that launcher and REFUSES a registration without one. An amp started outside
+  // the launcher inherits neither variable, which is exactly when this plugin must do nothing at all.
+  const launcherId = process.env.MACHINE_ID
+  if (!pane || !launcherId) return
+
+  // NOT \`process.cwd()\`: Bun runs a plugin with the PLUGIN's directory as its cwd, so that reports
+  // \`<project>/.amp/plugins\` (measured). \`harness amp\` exports the real one; \`PWD\` from the launching
+  // shell is the fallback for an amp the launcher did not start — which the MACHINE_ID guard above has
+  // already excluded, so it is only ever a belt-and-braces third choice.
+  const workdir = process.env.HARNESS_AGENT_CWD || process.env.PWD || process.cwd()
+
+  const emitted = new Set()
+  let registered = false
+  let file = ''
+
+  const line = (record: any) => {
+    try {
+      mkdirSync(SESSIONS_DIR, { recursive: true })
+      appendFileSync(file, JSON.stringify(record) + '\\n')
+    } catch {}
+  }
+
+  const open = (threadId: string) => {
+    if (file) return
+    file = join(SESSIONS_DIR, threadId + '.jsonl')
+    // \`cwd\` on the first line is what lets the daemon re-find this session by directory after a restart,
+    // the same way it reads claude's and pi's transcripts. It must be a top-level string field.
+    line({ t: 'session', threadId, cwd: workdir, at: Date.now() })
+  }
+
+  const register = async (threadId: string) => {
+    open(threadId)
+    if (registered || !existsSync(file)) return
+    try {
+      const res = await fetch('http://127.0.0.1:${port}/api/hook/session-start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          engine: 'amp',
+          launcherId,
+          sessionId: threadId,
+          transcriptPath: file,
+          cwd: workdir,
+          tmuxPane: pane,
+        }),
+      })
+      if (res.ok) registered = true
+    } catch {}
+  }
+
+  // Emit any assistant text/thinking not written yet. Tool blocks are deliberately skipped: tool.call and
+  // tool.result own those cards, and emitting them here too would double every tool in the transcript.
+  const drain = async (ctx: any) => {
+    let messages: any[] = []
+    try { messages = await ctx.thread.messages({ from: 'end', limit: 20 }) } catch { return }
+    for (const message of messages) {
+      if (!message || message.role !== 'assistant') continue
+      const blocks = Array.isArray(message.content) ? message.content : []
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i]
+        if (!block || (block.type !== 'text' && block.type !== 'thinking')) continue
+        const key = String(message.id) + '#' + i
+        if (emitted.has(key)) continue
+        const text = typeof block.text === 'string' ? block.text : block.thinking
+        if (typeof text !== 'string' || !text) continue
+        emitted.add(key)
+        line({ t: block.type, id: message.id, i, text })
+      }
+    }
+  }
+
+  amp.on('session.start', async (event: any) => { await register(event.thread.id) })
+
+  amp.on('agent.start', async (event: any, ctx: any) => {
+    await register(event.thread.id)
+    line({ t: 'turn_start', id: event.id, message: event.message, at: Date.now() })
+    await drain(ctx)
+  })
+
+  amp.on('tool.call', async (event: any, ctx: any) => {
+    await register(event.thread.id)
+    await drain(ctx)
+    line({ t: 'tool_call', id: event.toolUseID, tool: event.tool, input: event.input })
+  })
+
+  amp.on('tool.result', async (event: any, ctx: any) => {
+    line({
+      t: 'tool_result',
+      id: event.toolUseID,
+      tool: event.tool,
+      status: event.status,
+      output: event.output,
+    })
+    await drain(ctx)
+  })
+
+  amp.on('agent.end', async (event: any, ctx: any) => {
+    await drain(ctx)
+    line({ t: 'turn_end', id: event.id, status: event.status, at: Date.now() })
+  })
+}
+`
+}
+
+/** Idempotently drop the Amp plugin into ~/.config/amp/plugins/. */
+export function installAmpPlugin(port: number): void {
+  const source = ampPluginSource(port, env.AMP_SESSIONS_DIR)
+  try {
+    if (existsSync(AMP_PLUGIN_PATH) && readFileSync(AMP_PLUGIN_PATH, 'utf-8') === source) {
+      console.log('[hooks] Amp plugin already installed')
+      return
+    }
+  } catch { /* unreadable — rewrite it */ }
+  try {
+    mkdirSync(dirname(AMP_PLUGIN_PATH), { recursive: true })
+    mkdirSync(env.AMP_SESSIONS_DIR, { recursive: true })
+    const tmp = `${AMP_PLUGIN_PATH}.${process.pid}.tmp`
+    writeFileSync(tmp, source)
+    renameSync(tmp, AMP_PLUGIN_PATH)
+    console.log(`[hooks] installed Amp plugin → ${AMP_PLUGIN_PATH}`)
+    console.log('[hooks] (takes effect on the next amp session start)')
+  } catch (err) {
+    console.error('[hooks] failed to write Amp plugin:', err)
+  }
+}
+
 /** Idempotently drop the OpenCode discovery plugin into ~/.config/opencode/plugin/. */
 export function installOpencodePlugin(port: number): void {
   const source = opencodePluginSource(port)
@@ -616,5 +783,6 @@ export function installHooksFor(engine: AgentEngine, port: number): void {
     case 'hermes': installHermesHooks(port); break
     case 'commandcode': installCommandCodeHooks(port); break
     case 'devin': installDevinHooks(port); break
+    case 'amp': installAmpPlugin(port); break
   }
 }

@@ -1,0 +1,268 @@
+/**
+ * Amp JSONL → shared event vocabulary.
+ *
+ * The JSONL this reads is not Amp's — Amp keeps NO conversation on disk. Threads live on its server; the
+ * only local artefacts are `session.json` and a debug log that records `blockCount` and `frameLength` and
+ * not one character of message text (measured across two real sessions, 380 and 93k lines). So the
+ * adapter's own plugin (see `installAmpPlugin`) writes the transcript, and this parses it.
+ *
+ * That makes the record vocabulary ours, and small:
+ *
+ *   session     {threadId, cwd}            ← first line; `cwd` is what re-binds the session after a restart
+ *   turn_start  {id, message}              ← the user asked; opens a turn
+ *   text        {id, i, text}              ← assistant prose, one record per block
+ *   thinking    {id, i, text}
+ *   tool_call   {id, tool, input}
+ *   tool_result {id, tool, status, output} ← status is 'done' | 'error' | 'cancelled'
+ *   turn_end    {id, status}               ← closes the turn; a non-'done' status is a failed turn
+ *
+ * Tool calls pair by `id` (Amp's `toolUseID`), which both records carry verbatim.
+ *
+ * Two measured absences shape what this can render, and neither is a bug to be fixed here:
+ *
+ *   - **Amp has no planning/todo tool.** The tool list a real session advertises has 33 entries and none
+ *     of them writes a checklist (the agent says so itself when asked). Nothing maps to `TodoWrite`, so
+ *     the device checklist stays empty for Amp — an absence, not a mis-mapping.
+ *   - **Amp has no ask-the-user tool.** What looks like a question is the permission prompt, drawn in the
+ *     TUI and recorded nowhere at all — not in the thread log, not in the export. It is read off the pane
+ *     instead; see `askQuestion.ts`.
+ */
+
+import type { EngineNormalizer } from '../types.js'
+import type { LastTurnText, LiveEvent, SessionEvent } from '../../lib/normalize.js'
+
+type JsonObject = Record<string, unknown>
+
+const MAX_OUTPUT = 2_000
+const MAX_THINKING = 500
+
+/**
+ * Amp's tool names → the vocabulary the web/device cards already render.
+ *
+ * MEASURED from a real session's `system/init` tool list and from live `tool.call` events — not carried
+ * over from another engine, because Amp's names match no other CLI's. Only tools whose behaviour was
+ * actually observed are mapped; the rest fall through to the title-cased default on purpose. Guessing
+ * that `finder` is a Glob or `oracle` an Agent would put a wrong card on screen and report nothing.
+ */
+const TOOL_NAMES: Record<string, string> = {
+  // The one tool Amp actually reads and writes files with in a normal turn — measured: asked to read a
+  // file, it runs `cat` through this rather than through any read tool.
+  shell_command: 'Bash',
+  // The thread log spells the same tool `async_shell_command` while the wire calls it `shell_command`.
+  // Both are mapped so a rename on either side cannot silently drop the card.
+  async_shell_command: 'Bash',
+  shell_command_status: 'BashOutput',
+  apply_patch: 'Edit',
+  web_search: 'WebSearch',
+  read_web_page: 'WebFetch',
+  // Amp's sub-agent tool already carries the shared name.
+  Task: 'Task',
+}
+
+export function ampToolName(name: string): string {
+  return TOOL_NAMES[name] ?? (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Tool')
+}
+
+function obj(value: unknown): JsonObject | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : null
+}
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+export function clip(value: string, limit: number): string {
+  return value.length > limit ? `${value.slice(0, limit)}…` : value
+}
+
+/** One parsed record, or null for a line that is not one. */
+export function ampRecord(line: string): JsonObject | null {
+  let raw: JsonObject | null
+  try { raw = obj(JSON.parse(line)) } catch { return null }
+  if (!raw || !str(raw.t)) return null
+  return raw
+}
+
+/** `cwd` from the session record — the link between a thread and a directory. */
+export function ampWorkspaceRoot(firstLine: string): string | null {
+  const record = ampRecord(firstLine)
+  if (!record || str(record.t) !== 'session') return null
+  return str(record.cwd) || null
+}
+
+/**
+ * A tool result's output, as text.
+ *
+ * Amp's `output` is not a string. Measured, it is `{content:[{type:'text',text:…}]}` for the tools that
+ * return prose and a bare object (`{output:'hello\n',exitCode:0}`) for shell. Rendering the JSON of the
+ * first shape put a wall of escaped braces on the card where two lines of output belonged.
+ */
+export function ampToolOutput(output: unknown): string {
+  if (typeof output === 'string') return output
+  const body = obj(output)
+  if (!body) return output === undefined || output === null ? '' : JSON.stringify(output)
+  const content = body.content
+  if (Array.isArray(content)) {
+    const text = content
+      .map((entry) => str(obj(entry)?.text))
+      .filter(Boolean)
+      .join('\n')
+    if (text) return text
+  }
+  if (typeof body.output === 'string') return body.output
+  return JSON.stringify(body)
+}
+
+export interface AmpTurnState {
+  open: boolean
+  /** tool id → the name it opened under, so the result reports the same one. */
+  toolNames: Map<string, string>
+  pendingTools: Set<string>
+  thinkingCounter: number
+}
+
+export function newAmpTurnState(): AmpTurnState {
+  return { open: false, toolNames: new Map(), pendingTools: new Set(), thinkingCounter: 0 }
+}
+
+/** One record → events. `mode: 'replay'` emits `user_message` instead of deriving the turn lifecycle. */
+export function ampRecordToEvents(record: JsonObject, state: AmpTurnState, mode: 'live' | 'replay'): LiveEvent[] {
+  const kind = str(record.t)
+  const events: LiveEvent[] = []
+
+  if (kind === 'turn_start') {
+    const prompt = str(record.message).trim()
+    if (mode === 'replay') return prompt ? [{ type: 'user_message', payload: { content: prompt } }] : []
+    // A turn already open means the previous one never closed — close it rather than nest, so the tile
+    // cannot be left spinning by a turn whose end was missed.
+    if (state.open) events.push({ type: 'turn_ended', payload: {} })
+    state.open = true
+    state.pendingTools.clear()
+    events.push({ type: 'turn_started', payload: { userMessage: prompt } })
+    return events
+  }
+
+  // A turn whose `agent.start` never fired still has to render.
+  //
+  // MEASURED: a prompt submitted while Amp is still connecting is QUEUED, and the queued message is
+  // dispatched WITHOUT an `agent.start` event — the captured transcript held `session`, then `thinking`,
+  // `tool_call`, `tool_result`, `text` and a `turn_end` whose message id matched no start at all. Without
+  // this backstop that whole turn is invisible: nothing opens it, and `turn_end` is then dropped below
+  // because no turn is open, so the answer never reaches web or device.
+  //
+  // The prompt text is genuinely unknown here (it is the one thing the event would have carried), so the
+  // turn opens with an empty message rather than a guessed one.
+  if (mode === 'live' && !state.open && (kind === 'thinking' || kind === 'text' || kind === 'tool_call')) {
+    state.open = true
+    events.push({ type: 'turn_started', payload: { userMessage: '' } })
+  }
+
+  if (kind === 'thinking') {
+    const text = str(record.text).trim()
+    if (text) {
+      events.push({
+        type: 'thinking_delta',
+        payload: { content: clip(text, MAX_THINKING), thinkingId: `thinking-amp-${state.thinkingCounter++}` },
+      })
+    }
+    return events
+  }
+
+  if (kind === 'text') {
+    const text = str(record.text)
+    if (text) events.push({ type: 'text_delta', payload: { content: text } })
+    return events
+  }
+
+  if (kind === 'tool_call') {
+    const id = str(record.id)
+    if (!id) return events
+    const tool = ampToolName(str(record.tool))
+    state.toolNames.set(id, tool)
+    state.pendingTools.add(id)
+    events.push({ type: 'tool_start', payload: { id, tool, input: record.input ?? {} } })
+    return events
+  }
+
+  if (kind === 'tool_result') {
+    const id = str(record.id)
+    if (!id) return events
+    const tool = state.toolNames.get(id) ?? ampToolName(str(record.tool))
+    state.toolNames.delete(id)
+    state.pendingTools.delete(id)
+    const output = ampToolOutput(record.output)
+    // Amp reports the outcome as a word, not a flag: 'done' | 'error' | 'cancelled' (measured).
+    const status = str(record.status)
+    const isError = status === 'error' || status === 'cancelled'
+    events.push({
+      type: 'tool_end',
+      payload: { id, tool, output: clip(output, MAX_OUTPUT), isError, summary: isError ? status : '' },
+    })
+    return events
+  }
+
+  if (kind === 'turn_end') {
+    if (mode === 'replay' || !state.open) return []
+    state.open = false
+    state.pendingTools.clear()
+    // 'error' and 'cancelled' are both turns that produced no answer. Marking them aborted clears the
+    // device tile without asking a recap worker to summarise nothing.
+    const failed = str(record.status) !== 'done'
+    events.push({ type: 'turn_ended', payload: failed ? { aborted: true } : {} })
+    return events
+  }
+
+  return []
+}
+
+/** Live tail: one JSONL line → events. */
+export class AmpNormalizer implements EngineNormalizer {
+  private state = newAmpTurnState()
+
+  get turnOpen(): boolean { return this.state.open }
+
+  closeTurn(): void {
+    this.state.open = false
+    this.state.pendingTools.clear()
+  }
+
+  ingest(line: string): LiveEvent[] {
+    const record = ampRecord(line)
+    return record ? ampRecordToEvents(record, this.state, 'live') : []
+  }
+
+  finishReplay(): LiveEvent[] {
+    return []
+  }
+}
+
+/** Full-session replay (`session_get`) — the same render path as the live stream. */
+export function ampMessagesToEvents(lines: string[]): SessionEvent[] {
+  const state = newAmpTurnState()
+  const events: SessionEvent[] = []
+  for (const line of lines) {
+    const record = ampRecord(line)
+    if (record) events.push(...ampRecordToEvents(record, state, 'replay') as SessionEvent[])
+  }
+  events.push({ type: 'done', payload: { result: 'success' } })
+  return events
+}
+
+/** Last user prompt + the assistant text that followed it — the recap's source of truth. */
+export function lastAmpTurnText(lines: string[]): LastTurnText | null {
+  let userMessage = ''
+  let assistantText = ''
+  for (const line of lines) {
+    const record = ampRecord(line)
+    if (!record) continue
+    const kind = str(record.t)
+    if (kind === 'turn_start') {
+      userMessage = str(record.message).trim()
+      assistantText = ''
+    } else if (kind === 'text') {
+      const text = str(record.text).trim()
+      if (text) assistantText += `${assistantText ? '\n\n' : ''}${text}`
+    }
+  }
+  return assistantText ? { userMessage, assistantText } : null
+}

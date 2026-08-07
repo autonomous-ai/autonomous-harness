@@ -1,0 +1,7 @@
+{"t":"session","threadId":"T-019fda6e-7992-73eb-b60a-250f8f80beb6","cwd":"/home/user/demo","at":1786076104492}
+{"t":"turn_start","id":"M-0342oktTFVCgnXAHmOvIRc","message":"cat a.txt","at":1786076104799}
+{"t":"thinking","id":"M-0342olqMGdUlTYC9UaF56j","i":0,"text":"The user wants me to output the contents of a.txt."}
+{"t":"tool_call","id":"TU-0342olrLgE28QhTlBOe0dc","tool":"shell_command","input":{"command":"cat a.txt","workdir":"/home/user/demo"}}
+{"t":"tool_result","id":"TU-0342olrLgE28QhTlBOe0dc","tool":"shell_command","status":"done","output":{"output":"hello\n","exitCode":0}}
+{"t":"text","id":"M-0342olvTZBQxpXnNPl14Pq","i":0,"text":"```\nhello\n```"}
+{"t":"turn_end","id":"M-0342oktTFVCgnXAHmOvIRc","status":"done","at":1786076110762}

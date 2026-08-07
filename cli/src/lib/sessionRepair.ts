@@ -255,6 +255,16 @@ export async function findLiveSession(
         if (!hasRun(lines)) return null
         return { cwd: root, sessionId: basename(dirname(path)) }
       }, opts)
+    case 'amp':
+      // The transcripts scanned here are the adapter's own — Amp keeps no conversation on disk, so its
+      // plugin writes one per thread as `<AMP_SESSIONS_DIR>/<threadId>.jsonl` with `cwd` on the first
+      // line. That makes the ordinary file scan work unchanged, and the file name IS the session id.
+      //
+      // Amp also offers a second, exact answer that this deliberately does not use: `session.json` maps
+      // `tmux:<pane>@<server-pid>,<session>` to the thread started in that pane. It is a better key than a
+      // directory — but `findLiveSession` is asked about a cwd, not a pane, and a repair that silently
+      // needed a different question would be the kind of split path this file exists to avoid.
+      return fileEngineSession(env.AMP_SESSIONS_DIR, cwd, startedAtMs, readTranscriptMeta, opts)
     case 'opencode':
       // time_created is epoch MILLISECONDS here.
       return dbEngineSession(
