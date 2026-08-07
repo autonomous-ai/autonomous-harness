@@ -127,6 +127,30 @@ describe('amp tool names', () => {
   })
 })
 
+describe('amp tool arguments', () => {
+  it('gives WebSearch a `query`, which is the field the cards read', () => {
+    // Amp sends {objective, search_queries}; web renders from `query` (or cursor's `search_term`), so
+    // without this a real search drew as Web Search(""). Adapting belongs in the engine, not the surface.
+    const n = new AmpNormalizer()
+    const events = n.ingest(JSON.stringify({
+      t: 'tool_call', id: 'TU-1', tool: 'web_search',
+      input: { objective: 'Find the current BTC price', search_queries: ['btc price'] },
+    }))
+    // events[0] is the turn the backstop opened — a tool arriving with no turn_start still has to render.
+    expect(events.find((e) => e.type === 'tool_start'))
+      .toMatchObject({ payload: { tool: 'WebSearch', input: { query: 'Find the current BTC price' } } })
+  })
+
+  it('leaves a tool that already speaks the shared shape alone', () => {
+    const n = new AmpNormalizer()
+    const events = n.ingest(JSON.stringify({
+      t: 'tool_call', id: 'TU-2', tool: 'shell_command', input: { command: 'ls', workdir: '/tmp' },
+    }))
+    expect(events.find((e) => e.type === 'tool_start'))
+      .toMatchObject({ payload: { tool: 'Bash', input: { command: 'ls', workdir: '/tmp' } } })
+  })
+})
+
 describe('amp tool output', () => {
   it('unwraps the shapes Amp returns', () => {
     expect(ampToolOutput({ output: 'hello\n', exitCode: 0 })).toBe('hello\n')

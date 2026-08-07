@@ -79,6 +79,30 @@ const TOOL_NAMES: Record<string, string> = {
   todo_read: 'TodoRead',
 }
 
+/**
+ * Amp's tool arguments → the field names the shared cards already read.
+ *
+ * The consumers are not the place to learn an engine's spelling. Web renders `WebSearch` from `query`
+ * (or cursor's `search_term`) and Amp sends neither — it sends `{objective, search_queries}` — so a real
+ * search drew as `Web Search("")`, a card admitting a search happened and refusing to say what for. The
+ * fix belongs HERE, exactly as muse's `TodoWrite` is reshaped so `input.todos[].content` matches: one
+ * engine adapts once, instead of every surface learning every engine.
+ *
+ * The original keys are kept alongside, so the expanded card still shows what Amp was actually given.
+ */
+export function ampToolInput(tool: string, input: unknown): unknown {
+  const args = obj(input)
+  if (!args) return input ?? {}
+  if (tool === 'WebSearch' && !str(args.query)) {
+    const queries = Array.isArray(args.search_queries)
+      ? args.search_queries.filter((q): q is string => typeof q === 'string').join(', ')
+      : ''
+    const query = str(args.objective).trim() || queries
+    if (query) return { ...args, query }
+  }
+  return args
+}
+
 export function ampToolName(name: string): string {
   return TOOL_NAMES[name] ?? (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Tool')
 }
@@ -241,7 +265,7 @@ export function ampRecordToEvents(record: JsonObject, state: AmpTurnState, mode:
     const tool = ampToolName(str(record.tool))
     state.toolNames.set(id, tool)
     state.pendingTools.add(id)
-    events.push({ type: 'tool_start', payload: { id, tool, input: record.input ?? {} } })
+    events.push({ type: 'tool_start', payload: { id, tool, input: ampToolInput(tool, record.input) } })
     return events
   }
 

@@ -19,7 +19,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { env } from '../../config/env.js'
 import type { SessionEvent } from '../../lib/normalize.js'
-import { ampToolName, ampToolOutput, clip } from './normalizer.js'
+import { ampToolInput, ampToolName, ampToolOutput, clip } from './normalizer.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -115,7 +115,7 @@ export function ampThreadToEvents(messages: JsonObject[]): SessionEvent[] {
         if (!id) continue
         const tool = ampToolName(str(block.name))
         toolNames.set(id, tool)
-        events.push({ type: 'tool_start', payload: { id, tool, input: block.input ?? {} } })
+        events.push({ type: 'tool_start', payload: { id, tool, input: ampToolInput(tool, block.input) } })
       } else if (type === 'tool_result') {
         const id = str(block.toolUseID) || str(block.tool_use_id)
         if (!id) continue

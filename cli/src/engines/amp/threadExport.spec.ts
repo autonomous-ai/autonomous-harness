@@ -68,6 +68,27 @@ describe('amp thread export → history', () => {
     expect(events.find((e) => e.type === 'tool_end')).toMatchObject({ payload: { tool: 'Bash' } })
   })
 
+  /**
+   * The consumers already render `WebSearch` from `query`; teaching each of them Amp's spelling would be
+   * the wrong layer. The adapter adapts — same rule muse's `TodoWrite` reshape follows.
+   */
+  it("hands the search card a `query`, because that is what the surfaces read", () => {
+    const start = ampThreadToEvents(messages()).find((e) => e.type === 'tool_start')
+    const input = (start as { payload: { input: Record<string, unknown> } }).payload.input
+    expect(input.query).toBe(input.objective)
+    // The original keys survive, so the expanded card still shows what Amp was actually given.
+    expect(input.objective).toBeTruthy()
+  })
+
+  it('falls back to the queries when there is no objective', () => {
+    const noObjective = [{
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'TU-1', name: 'web_search', input: { search_queries: ['btc price', 'eth price'] } }],
+    }]
+    const start = ampThreadToEvents(noObjective).find((e) => e.type === 'tool_start')
+    expect((start as { payload: { input: Record<string, unknown> } }).payload.input.query).toBe('btc price, eth price')
+  })
+
   it('survives a thread with nothing in it', () => {
     expect(ampThreadToEvents([])).toEqual([{ type: 'done', payload: { result: 'success' } }])
   })
