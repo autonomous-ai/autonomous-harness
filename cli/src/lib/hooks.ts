@@ -630,6 +630,12 @@ export default function (amp: any) {
   const workdir = process.env.HARNESS_AGENT_CWD || process.env.PWD || process.cwd()
 
   const emitted = new Set()
+  // Turn ids already opened/closed. Amp re-dispatches a message it could not deliver, firing agent.start
+  // a SECOND time for the same message id (measured: two identical turn_start records 61s apart, then a
+  // turn_end 'done' and a turn_end 'error' for the one turn). Written straight through, that is two turns
+  // on web and device and two user bubbles in history.
+  const turnsStarted = new Set()
+  const turnsEnded = new Set()
   // Tool ids already written, so a tool seen BOTH as an event and as a message block is written once.
   const toolCalls = new Set()
   const toolResults = new Set()
@@ -734,7 +740,11 @@ export default function (amp: any) {
 
   amp.on('agent.start', async (event: any, ctx: any) => {
     await register(event.thread.id)
-    line({ t: 'turn_start', id: event.id, message: event.message, at: Date.now() })
+    const id = String(event.id)
+    if (!turnsStarted.has(id)) {
+      turnsStarted.add(id)
+      line({ t: 'turn_start', id: event.id, message: event.message, at: Date.now() })
+    }
     await drain(ctx)
   })
 
@@ -766,6 +776,9 @@ export default function (amp: any) {
     // \`message\` is the prompt that STARTED this turn, and agent.end carries it even when
     // agent.start never fired (a prompt queued while Amp was connecting). Recording it here is what
     // lets history still show what was asked — see the replay branch in the normalizer.
+    const id = String(event.id)
+    if (turnsEnded.has(id)) return
+    turnsEnded.add(id)
     line({ t: 'turn_end', id: event.id, status: event.status, message: event.message, at: Date.now() })
   })
 }
