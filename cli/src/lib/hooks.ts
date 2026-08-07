@@ -627,8 +627,12 @@ export default function (amp: any) {
   const workdir = process.env.HARNESS_AGENT_CWD || process.env.PWD || process.cwd()
 
   const emitted = new Set()
+  // Tool ids already written, so a tool seen BOTH as an event and as a message block is written once.
+  const toolCalls = new Set()
+  const toolResults = new Set()
   let registered = false
   let file = ''
+  let seeded = false
 
   const line = (record: any) => {
     try {
@@ -665,28 +669,59 @@ export default function (amp: any) {
     } catch {}
   }
 
-  // Emit any assistant text/thinking not written yet. Tool blocks are deliberately skipped: tool.call and
-  // tool.result own those cards, and emitting them here too would double every tool in the transcript.
-  const drain = async (ctx: any) => {
+  const resultId = (block: any) => String(block.toolUseID || block.tool_use_id || '')
+
+  /**
+   * Write everything in the thread that has not been written yet.
+   *
+   * This reads message BLOCKS rather than events, because the events do not cover the thread:
+   *
+   *   - no event carries assistant text at all, and
+   *   - \`tool.call\`/\`tool.result\` only fire for tools the CLIENT executes. MEASURED: a \`web_search\`
+   *     turn produced no tool event and no tool lease in Amp's own log, yet the message plainly held a
+   *     \`tool_use\` block — Amp runs that tool on its server. Skipping blocks meant a search rendered as
+   *     nothing at all on web and device while the pane showed "Explored 1 search".
+   *
+   * \`seed\` marks what already exists WITHOUT writing it, for a thread that is being resumed: those
+   * messages belong to earlier turns, and replaying them made a fresh turn open with an old answer in it.
+   */
+  const drain = async (ctx: any, seed = false) => {
     let messages: any[] = []
     try { messages = await ctx.thread.messages({ from: 'end', limit: 20 }) } catch { return }
     for (const message of messages) {
-      if (!message || message.role !== 'assistant') continue
       const blocks = Array.isArray(message.content) ? message.content : []
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i]
-        if (!block || (block.type !== 'text' && block.type !== 'thinking')) continue
-        const key = String(message.id) + '#' + i
-        if (emitted.has(key)) continue
-        const text = typeof block.text === 'string' ? block.text : block.thinking
-        if (typeof text !== 'string' || !text) continue
-        emitted.add(key)
-        line({ t: block.type, id: message.id, i, text })
+        if (!block) continue
+        if (block.type === 'text' || block.type === 'thinking') {
+          if (message.role !== 'assistant') continue
+          const key = String(message.id) + '#' + i
+          if (emitted.has(key)) continue
+          const text = typeof block.text === 'string' ? block.text : block.thinking
+          if (typeof text !== 'string' || !text) continue
+          emitted.add(key)
+          if (!seed) line({ t: block.type, id: message.id, i, text })
+        } else if (block.type === 'tool_use') {
+          const id = String(block.id || '')
+          if (!id || toolCalls.has(id)) continue
+          toolCalls.add(id)
+          if (!seed) line({ t: 'tool_call', id, tool: block.name, input: block.input })
+        } else if (block.type === 'tool_result') {
+          const id = resultId(block)
+          if (!id || toolResults.has(id)) continue
+          toolResults.add(id)
+          // A server-run tool puts its payload under \`run\`; a client-run one under \`content\`/\`output\`.
+          if (!seed) line({ t: 'tool_result', id, status: 'done', output: block.run ?? block.content ?? block.output })
+        }
       }
     }
   }
 
-  amp.on('session.start', async (event: any) => { await register(event.thread.id) })
+  amp.on('session.start', async (event: any, ctx: any) => {
+    await register(event.thread.id)
+    // A resumed thread arrives full of earlier turns. Claim them silently, once.
+    if (!seeded) { seeded = true; await drain(ctx, true) }
+  })
 
   amp.on('agent.start', async (event: any, ctx: any) => {
     await register(event.thread.id)
@@ -697,10 +732,12 @@ export default function (amp: any) {
   amp.on('tool.call', async (event: any, ctx: any) => {
     await register(event.thread.id)
     await drain(ctx)
+    toolCalls.add(String(event.toolUseID))
     line({ t: 'tool_call', id: event.toolUseID, tool: event.tool, input: event.input })
   })
 
   amp.on('tool.result', async (event: any, ctx: any) => {
+    toolResults.add(String(event.toolUseID))
     line({
       t: 'tool_result',
       id: event.toolUseID,

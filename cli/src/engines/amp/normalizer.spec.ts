@@ -118,11 +118,32 @@ describe('amp tool names', () => {
 })
 
 describe('amp tool output', () => {
-  it('unwraps both shapes Amp returns', () => {
+  it('unwraps the shapes Amp returns', () => {
     expect(ampToolOutput({ output: 'hello\n', exitCode: 0 })).toBe('hello\n')
     expect(ampToolOutput({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] })).toBe('a\nb')
     expect(ampToolOutput('plain')).toBe('plain')
     expect(ampToolOutput(undefined)).toBe('')
+  })
+
+  /**
+   * A web search arrives in TWO different shapes depending on which path carried it — the `tool.result`
+   * event hands over a JSON *string*, the message block hands over `{result:[…]}` — and both hold whole
+   * scraped pages under `excerpts`. Rendered raw, one search filled the card with site chrome.
+   */
+  it('reduces a web search to its sources, from either shape', () => {
+    const hits = [
+      { title: 'Bitcoin price today', url: 'https://coinmarketcap.com/currencies/bitcoin/', excerpts: ['…pages of scraped text…'] },
+      { title: 'Bitcoin | CoinGecko', url: 'https://www.coingecko.com/en/coins/bitcoin', excerpts: ['…more…'] },
+    ]
+    const expected = 'Bitcoin price today — https://coinmarketcap.com/currencies/bitcoin/\n'
+      + 'Bitcoin | CoinGecko — https://www.coingecko.com/en/coins/bitcoin'
+    expect(ampToolOutput(JSON.stringify(hits))).toBe(expected)          // the event path
+    expect(ampToolOutput({ result: hits, status: 'done' })).toBe(expected) // the message-block path
+  })
+
+  it('leaves a string that merely looks like JSON alone', () => {
+    expect(ampToolOutput('[1,2,3]')).toBe('[1,2,3]')
+    expect(ampToolOutput('{"not":"a search"}')).toBe('{"not":"a search"}')
   })
 })
 

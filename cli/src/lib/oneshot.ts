@@ -935,7 +935,16 @@ export function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   delete processEnv.TMUX
   delete processEnv.TMUX_PANE
   delete processEnv.MACHINE_ID
-  const timeoutMs = opts.timeoutMs ?? 60_000
+  /**
+   * Amp gets 120s where every other engine gets 60.
+   *
+   * Not a guess: a real recap died on `amp one-shot timed out after 60000ms`, and five cold runs of a
+   * prompt as trivial as "reply OK" then measured 8.7s, 10.0s, 23.5s, 25.0s and 26.3s. The spread is
+   * Amp's server connect — `AMP_SKIP_UPDATE_CHECK=1` was tried and changed nothing, so it is not set
+   * here — and a real recap prompt starts from the far end of it. 60s left almost no room for the
+   * model itself.
+   */
+  const timeoutMs = opts.timeoutMs ?? 120_000
 
   return new Promise<OneShotResult>((resolve, reject) => {
     const child = spawn(env.AMP_PATH || 'amp', args, {

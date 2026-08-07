@@ -93,12 +93,42 @@ export function ampWorkspaceRoot(firstLine: string): string | null {
 /**
  * A tool result's output, as text.
  *
- * Amp's `output` is not a string. Measured, it is `{content:[{type:'text',text:…}]}` for the tools that
- * return prose and a bare object (`{output:'hello\n',exitCode:0}`) for shell. Rendering the JSON of the
- * first shape put a wall of escaped braces on the card where two lines of output belonged.
+ * Amp's `output` is never a plain string, and it has THREE shapes, all measured:
+ *
+ *   {content:[{type:'text',text:…}]}          tools that return prose (skill)
+ *   {output:'hello\n',exitCode:0}             shell
+ *   {result:[{url,title,excerpts:[…]}],status} the SERVER-run tools, web_search among them
+ *
+ * The third one matters most on screen: a web search returns whole scraped pages, and rendering its JSON
+ * put thousands of characters of site chrome on a card where a list of sources belonged. It is reduced to
+ * `title — url` lines here, which is what the result actually says.
  */
+/** `[{title,url,excerpts}]` → one `title — url` line each, or '' if that is not what this is. */
+function searchHits(value: unknown): string {
+  if (!Array.isArray(value)) return ''
+  const lines = value
+    .map((entry) => {
+      const hit = obj(entry)
+      if (!hit) return ''
+      const title = str(hit.title).trim()
+      const url = str(hit.url).trim()
+      return title && url ? `${title} — ${url}` : title || url
+    })
+    .filter(Boolean)
+  return lines.length ? lines.join('\n') : ''
+}
+
 export function ampToolOutput(output: unknown): string {
-  if (typeof output === 'string') return output
+  if (typeof output === 'string') {
+    // The same search result reaches us two ways and only one of them is an object: the `tool.result`
+    // EVENT hands over a JSON *string* holding `[{title,url,excerpts}]` (measured), while the message
+    // block hands over `{result:[…]}`. Unparsed, the card showed a wall of scraped page text.
+    try {
+      const hits = searchHits(JSON.parse(output))
+      if (hits) return hits
+    } catch { /* an ordinary string, which is the common case */ }
+    return output
+  }
   const body = obj(output)
   if (!body) return output === undefined || output === null ? '' : JSON.stringify(output)
   const content = body.content
@@ -110,6 +140,8 @@ export function ampToolOutput(output: unknown): string {
     if (text) return text
   }
   if (typeof body.output === 'string') return body.output
+  const hits = searchHits(body.result)
+  if (hits) return hits
   return JSON.stringify(body)
 }
 
