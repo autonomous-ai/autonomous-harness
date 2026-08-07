@@ -204,6 +204,17 @@ export function startHookServer(
           json(200, { ignored: true, reason })
         }
         if (!body.tmuxPane) { ignore('not_in_tmux'); return }
+        // A plugin/extension is loaded ONCE per engine process, so a pane opened before an update keeps
+        // running the old copy — silently, and for hours. Measured on amp: a pane started at 11:49 was
+        // still writing transcripts with no tool calls long after the fix reached disk. The engines that
+        // use shell hooks re-read the file on every call and cannot drift like this; these three can, so
+        // they stamp their build and the mismatch is said out loud instead of being discovered later.
+        const pluginVersion = (body as { pluginVersion?: unknown }).pluginVersion
+        if (typeof pluginVersion === 'string' && pluginVersion && pluginVersion !== VERSION) {
+          console.warn(`[hooks] ${sid(body.sessionId ?? '?')} ${body.engine ?? '?'} plugin is v${pluginVersion}`
+            + ` but this machine is v${VERSION} — that pane loaded an older copy.`)
+          console.warn('[hooks] restart the pane (or reload its plugins) to pick up the current build')
+        }
         // Machine-launched only: a session with no LIVE machine id is not an agent. This is what makes
         // lifetime deterministic — a CLI the user started outside `harness <engine>` is ignored here,
         // exactly like a non-tmux one above.

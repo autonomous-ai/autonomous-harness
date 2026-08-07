@@ -167,6 +167,8 @@ export function ampToolOutput(output: unknown): string {
 
 export interface AmpTurnState {
   open: boolean
+  /** Replay only: a `turn_start` was seen for the turn now being read. */
+  sawStart: boolean
   /** tool id → the name it opened under, so the result reports the same one. */
   toolNames: Map<string, string>
   pendingTools: Set<string>
@@ -174,7 +176,7 @@ export interface AmpTurnState {
 }
 
 export function newAmpTurnState(): AmpTurnState {
-  return { open: false, toolNames: new Map(), pendingTools: new Set(), thinkingCounter: 0 }
+  return { open: false, sawStart: false, toolNames: new Map(), pendingTools: new Set(), thinkingCounter: 0 }
 }
 
 /** One record → events. `mode: 'replay'` emits `user_message` instead of deriving the turn lifecycle. */
@@ -184,7 +186,10 @@ export function ampRecordToEvents(record: JsonObject, state: AmpTurnState, mode:
 
   if (kind === 'turn_start') {
     const prompt = str(record.message).trim()
-    if (mode === 'replay') return prompt ? [{ type: 'user_message', payload: { content: prompt } }] : []
+    if (mode === 'replay') {
+      state.sawStart = true
+      return prompt ? [{ type: 'user_message', payload: { content: prompt } }] : []
+    }
     // A turn already open means the previous one never closed — close it rather than nest, so the tile
     // cannot be left spinning by a turn whose end was missed.
     if (state.open) events.push({ type: 'turn_ended', payload: {} })
@@ -254,7 +259,8 @@ export function ampRecordToEvents(record: JsonObject, state: AmpTurnState, mode:
   }
 
   if (kind === 'turn_end') {
-    if (mode === 'replay' || !state.open) return []
+    if (mode === 'replay') return []
+    if (!state.open) return []
     state.open = false
     state.pendingTools.clear()
     // 'error' and 'cancelled' are both turns that produced no answer. Marking them aborted clears the
@@ -288,14 +294,44 @@ export class AmpNormalizer implements EngineNormalizer {
   }
 }
 
+/**
+ * Where each turn begins, for the turns that never announced themselves.
+ *
+ * A prompt queued while Amp is connecting arrives with no `agent.start`, so its turn has no `turn_start`
+ * record and history opened straight into an answer with nothing showing what was asked. `turn_end`
+ * carries that prompt — but emitting it there would print the question AFTER its answer, so this finds
+ * the first record of each such turn and the caller injects the user message in front of it.
+ */
+function recoveredPrompts(records: JsonObject[]): Map<number, string> {
+  const out = new Map<number, string>()
+  let first = -1        // first record of the turn being scanned
+  let sawStart = false
+  for (let i = 0; i < records.length; i++) {
+    const kind = str(records[i].t)
+    if (kind === 'session') continue
+    if (first < 0) first = i
+    if (kind === 'turn_start') sawStart = true
+    if (kind === 'turn_end') {
+      const prompt = str(records[i].message).trim()
+      if (!sawStart && prompt) out.set(first, prompt)
+      first = -1
+      sawStart = false
+    }
+  }
+  return out
+}
+
 /** Full-session replay (`session_get`) — the same render path as the live stream. */
 export function ampMessagesToEvents(lines: string[]): SessionEvent[] {
   const state = newAmpTurnState()
+  const records = lines.map(ampRecord).filter((r): r is JsonObject => r !== null)
+  const recovered = recoveredPrompts(records)
   const events: SessionEvent[] = []
-  for (const line of lines) {
-    const record = ampRecord(line)
-    if (record) events.push(...ampRecordToEvents(record, state, 'replay') as SessionEvent[])
-  }
+  records.forEach((record, i) => {
+    const prompt = recovered.get(i)
+    if (prompt) events.push({ type: 'user_message', payload: { content: prompt } })
+    events.push(...ampRecordToEvents(record, state, 'replay') as SessionEvent[])
+  })
   events.push({ type: 'done', payload: { result: 'success' } })
   return events
 }

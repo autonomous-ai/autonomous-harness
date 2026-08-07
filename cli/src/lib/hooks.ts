@@ -10,6 +10,7 @@ import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import { env } from '../config/env.js'
+import { VERSION } from '../version.js'
 import type { AgentEngine } from '../engines/types.js'
 
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
@@ -246,6 +247,7 @@ export const MachineRegister = async ({ directory, worktree, project }) => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           engine: "opencode",
+          pluginVersion: ${JSON.stringify(VERSION)},
           launcherId,
           sessionId: sessionID,
           cwd: directory || worktree || (project && project.worktree) || null,
@@ -532,6 +534,7 @@ export default function (pi: ExtensionAPI) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           engine: "pi",
+          pluginVersion: ${JSON.stringify(VERSION)},
           launcherId,
           sessionId,
           transcriptPath: ready ? file : undefined,
@@ -658,6 +661,7 @@ export default function (amp: any) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           engine: 'amp',
+          pluginVersion: ${JSON.stringify(VERSION)},
           launcherId,
           sessionId: threadId,
           transcriptPath: file,
@@ -685,9 +689,15 @@ export default function (amp: any) {
    * \`seed\` marks what already exists WITHOUT writing it, for a thread that is being resumed: those
    * messages belong to earlier turns, and replaying them made a fresh turn open with an old answer in it.
    */
-  const drain = async (ctx: any, seed = false) => {
+  const drain = async (ctx: any) => {
     let messages: any[] = []
     try { messages = await ctx.thread.messages({ from: 'end', limit: 20 }) } catch { return }
+    // The FIRST drain of this plugin instance only claims what it finds; it writes nothing. That covers
+    // both ways a plugin meets a thread that already has messages: a resumed thread, and a plugin reload
+    // (Amp loads a plugin ONCE per process, so reload is how a running pane picks up a new build). Without
+    // it, the next prompt replayed the whole recent history as if it had just happened.
+    const seed = !seeded
+    seeded = true
     for (const message of messages) {
       const blocks = Array.isArray(message.content) ? message.content : []
       for (let i = 0; i < blocks.length; i++) {
@@ -719,8 +729,7 @@ export default function (amp: any) {
 
   amp.on('session.start', async (event: any, ctx: any) => {
     await register(event.thread.id)
-    // A resumed thread arrives full of earlier turns. Claim them silently, once.
-    if (!seeded) { seeded = true; await drain(ctx, true) }
+    await drain(ctx)
   })
 
   amp.on('agent.start', async (event: any, ctx: any) => {
@@ -754,7 +763,10 @@ export default function (amp: any) {
 
   amp.on('agent.end', async (event: any, ctx: any) => {
     await drain(ctx)
-    line({ t: 'turn_end', id: event.id, status: event.status, at: Date.now() })
+    // \`message\` is the prompt that STARTED this turn, and agent.end carries it even when
+    // agent.start never fired (a prompt queued while Amp was connecting). Recording it here is what
+    // lets history still show what was asked — see the replay branch in the normalizer.
+    line({ t: 'turn_end', id: event.id, status: event.status, message: event.message, at: Date.now() })
   })
 }
 `
@@ -776,7 +788,11 @@ export function installAmpPlugin(port: number): void {
     writeFileSync(tmp, source)
     renameSync(tmp, AMP_PLUGIN_PATH)
     console.log(`[hooks] installed Amp plugin → ${AMP_PLUGIN_PATH}`)
-    console.log('[hooks] (takes effect on the next amp session start)')
+    // Amp loads a plugin ONCE per process, so a pane that is already open keeps running the old one —
+    // measured the hard way: an amp started at 11:49 went on writing tool-less transcripts for hours
+    // after the fix landed on disk. Say what to do about it rather than leaving it to be discovered.
+    console.log('[hooks] a NEW amp session picks this up automatically; for one already open, run')
+    console.log("[hooks]   ctrl+o → 'plugins: reload'   (or restart that pane)")
   } catch (err) {
     console.error('[hooks] failed to write Amp plugin:', err)
   }

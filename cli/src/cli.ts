@@ -24,7 +24,7 @@ import { homedir } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installHermesHooks, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installHermesHooks, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { ENGINES, aliasesFor, engineBin, engineCommand, resolveEngine } from './lib/engineBin.js'
 import { refuseDuplicateAgent } from './lib/duplicateAgent.js'
@@ -1498,6 +1498,10 @@ async function runForeground(token: string): Promise<void> {
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
     installPiExtension(hookPort)
+    // Amp belongs here with the other plugin-based engines, and it was missed. It matters most after a
+    // SELF-UPDATE: the daemon restarts, and this is what puts the new plugin on disk immediately rather
+    // than leaving it until someone next runs `harness amp`.
+    installAmpPlugin(hookPort)
     installHermesHooks(hookPort)
     installDevinHooks(hookPort)
     installCommandCodeHooks(hookPort)
