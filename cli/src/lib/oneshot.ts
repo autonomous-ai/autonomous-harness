@@ -928,27 +928,25 @@ export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
  * loading at all, which also keeps a user's own plugins out of a recap. `-x` archives the thread it
  * creates once it finishes, so recaps do not accumulate in the user's thread list.
  */
-export function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult> {
-  if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('amp one-shot aborted'), { name: 'AbortError' }))
-  const args = ['-x', opts.prompt, '--no-notifications', '-m', opts.model || env.AMP_SUMMARY_MODE]
+/**
+ * One attempt at `amp -x`. Resolves with the text, or null when Amp gave up on its own.
+ *
+ * The prompt goes on STDIN, not argv. Measured, and the difference is not subtle: with a real ~1KB
+ * recap prompt as an argument, 1 run in 10 produced output — the other nine died at a flat ~32s on
+ * Amp's own `Error: Network timeout. Check your connection or proxy settings and retry.` The same
+ * prompt through stdin succeeded 2 in 3. (A trivial "reply OK" prompt succeeds either way, which is
+ * exactly why the first round of testing missed this.)
+ */
+function ampOneShotAttempt(opts: OneShotOptions, timeoutMs: number): Promise<OneShotResult | null> {
+  const args = ['-x', '--no-notifications', '-m', opts.model || env.AMP_SUMMARY_MODE]
   const processEnv: NodeJS.ProcessEnv = { ...process.env, AMP_DISABLE_PLUGINS: '1' }
   delete processEnv.TMUX
   delete processEnv.TMUX_PANE
   delete processEnv.MACHINE_ID
-  /**
-   * Amp gets 120s where every other engine gets 60.
-   *
-   * Not a guess: a real recap died on `amp one-shot timed out after 60000ms`, and five cold runs of a
-   * prompt as trivial as "reply OK" then measured 8.7s, 10.0s, 23.5s, 25.0s and 26.3s. The spread is
-   * Amp's server connect — `AMP_SKIP_UPDATE_CHECK=1` was tried and changed nothing, so it is not set
-   * here — and a real recap prompt starts from the far end of it. 60s left almost no room for the
-   * model itself.
-   */
-  const timeoutMs = opts.timeoutMs ?? 120_000
 
-  return new Promise<OneShotResult>((resolve, reject) => {
+  return new Promise<OneShotResult | null>((resolve, reject) => {
     const child = spawn(env.AMP_PATH || 'amp', args, {
-      cwd: opts.cwd, env: processEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: opts.cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
@@ -968,23 +966,41 @@ export function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult> {
       finish(() => reject(Object.assign(new Error('amp one-shot aborted'), { name: 'AbortError' })))
       kill()
     }
-    const timer = setTimeout(() => {
-      finish(() => reject(new Error(`amp one-shot timed out after ${timeoutMs}ms`)))
-      kill()
-    }, timeoutMs)
+    const timer = setTimeout(() => { finish(() => resolve(null)); kill() }, timeoutMs)
     opts.signal?.addEventListener('abort', onAbort)
 
     child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
     child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
     child.on('error', (err) => finish(() => reject(err)))
-    child.on('close', (code) => {
+    child.on('close', () => {
       const text = stdout.trim()
-      finish(() => {
-        if (!text && code !== 0) reject(new Error(`amp one-shot exited ${code}: ${stderr.slice(0, 500)}`))
-        else resolve({ text, sessionId: null })
-      })
+      // Amp exits non-zero even on runs that DID answer (seen repeatedly), so the output is the verdict,
+      // not the exit code. Empty output means this attempt failed, whatever the code says.
+      if (!text && stderr) console.warn(`[amp] one-shot attempt failed: ${stderr.replace(/\s+/g, ' ').slice(0, 120)}`)
+      finish(() => resolve(text ? { text, sessionId: null } : null))
     })
+    try { child.stdin?.end(opts.prompt) } catch { /* the close handler reports it */ }
   })
+}
+
+/**
+ * One-shot recap through `amp -x`, retried.
+ *
+ * Amp is the only engine here that needs retrying, and it asks for it in its own error text. Its client
+ * gives up on the network at a flat ~30s and exits with nothing; the very next run of the identical
+ * prompt often succeeds. Three attempts turn the common transient failure into an answer, and a genuine
+ * outage still ends in the same "no recap" it would have reached anyway.
+ */
+export async function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) throw Object.assign(new Error('amp one-shot aborted'), { name: 'AbortError' })
+  const perAttemptMs = opts.timeoutMs ?? 90_000
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await ampOneShotAttempt(opts, perAttemptMs)
+    if (result) return result
+    if (opts.signal?.aborted) throw Object.assign(new Error('amp one-shot aborted'), { name: 'AbortError' })
+    if (attempt < 3) console.warn(`[amp] one-shot produced nothing — retrying (${attempt + 1}/3)`)
+  }
+  throw new Error('amp one-shot produced no output after 3 attempts')
 }
 
 export function runHermesOneShot(opts: OneShotOptions): Promise<OneShotResult> {

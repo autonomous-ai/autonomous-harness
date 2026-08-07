@@ -194,8 +194,10 @@ const envSchema = z.object({
   DEVIN_SUMMARY_MODEL: z.string().default(''),
   MUSE_SUMMARY_MODEL: z.string().default(''),
   // Amp recap agent mode. Amp exposes no model list — `-m` picks a MODE (low|medium|high|ultra) and the
-  // mode picks the model. `low` is the cheapest, which is what a one-line recap should cost.
-  AMP_SUMMARY_MODE: z.string().default('low'),
+  // mode picks the model. `medium` on the project owner's call: `low` was the cheaper default but is no
+  // more reliable on this path (both modes hit Amp's ~30s network timeout at similar rates, measured),
+  // so the better answer wins over the cheaper one.
+  AMP_SUMMARY_MODE: z.string().default('medium'),
   // Shared recap reasoning level for Claude and Codex. Cursor effort is part of its model identifier.
   SUMMARY_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   // Model for the voice router one-shot classifier (Overview voice → pick the agent). Small/fast by default.
