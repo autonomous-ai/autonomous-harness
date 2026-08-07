@@ -18,8 +18,9 @@ that stream.
 and no interface to implement in one file. The codebase branches on `session.engine` in about twenty
 shared files, and a new engine touches most of them. That is a real cost and we are not going to
 pretend otherwise — but it is a *known* list, not a search, and this page is that list in dependency
-order. The most recent engine, Muse Code, was added in a single commit (`b6c58e6`); read it
-alongside this page and you will see every item below in context.
+order. Two engines were each added in a single commit — Muse Code (`b6c58e6`) and Amp (`f15924f`) —
+and reading either alongside this page shows every item below in context. Read Amp's if your agent
+does not write a transcript at all; see "When your agent writes nothing to disk".
 
 ---
 
@@ -42,9 +43,47 @@ against 4 waits in a single observed session — and an unclosed sub-agent row *
 That pinned the device tile on "Processing" every 5 seconds forever and meant no recap was ever
 produced. No amount of invented fixture data would have surfaced that; one real session did.
 
+The rule also forbids concluding that something is *absent*. Amp's `--help` lists no permission
+bypass, so its table was first written with none — and the binary's strings hold
+`--dangerously-allow-all`, which is real and load-bearing: with a permission rule set to `ask` and no
+flag, Amp does not stop and wait for a human, it refuses the tool mid-turn and carries on, so an
+unattended agent produces a turn that quietly did nothing. Grep the binary before you write "this
+agent has no X".
+
 The same lesson is already written into `CONTRIBUTING.md` for the example provider: two real bugs
 were invisible to hand-written fixtures and obvious the moment a recorded turn was replayed. Record
 first. Everything else follows from the recording.
+
+---
+
+## When your agent writes nothing to disk
+
+This page assumes Harness can read a transcript your agent already writes. Amp is the case where
+that is false: its threads live on its own server, and the only local artefacts are a `session.json`
+and a debug log that records block *counts* and frame *lengths* with no message text at all. Its
+`threads export` command can fetch a conversation, but it is a network round trip of over a second
+and it never shows a message before that message is finished — so it cannot back a live stream.
+
+If that describes your agent, do not write a poller against your own API. Check whether you expose a
+plugin or extension API, and have Harness's plugin **write** the transcript it then tails. Amp does
+exactly this: `installAmpPlugin` in `lib/hooks.ts` drops a plugin that appends JSONL from five
+lifecycle events, and from there Amp is an ordinary file-backed engine on every path in this
+document. The OpenCode plugin and the Pi extension are the same idea used only for discovery.
+
+Three things that pattern gets wrong if nobody warns you, all found by running it:
+
+- **A plugin's working directory is the plugin's own.** Amp's reported `<project>/.amp/plugins`, not
+  the agent's directory. The `cwd` recorded in the transcript is what re-binds a session after a
+  daemon restart, so a wrong one means an agent that can never be found again. The launcher exports
+  the real directory instead (`HARNESS_AGENT_CWD`).
+- **Your events may not carry assistant text.** None of Amp's five do. The text has to be read from
+  the thread handle the plugin already holds — and because that handle already contains the
+  in-flight message when a tool is called, snapshotting there emits a message's prose *before* the
+  tool it called, which is the order a transcript needs. Deduplicate by message id plus block index.
+- **A start event can simply not fire.** A prompt submitted while Amp is still connecting is queued,
+  and the queued message is dispatched with no `agent.start` at all — the recorded transcript went
+  straight to thinking and ended with a turn end whose id matched no start. The normalizer opens a
+  turn on the first content record, or that entire turn is invisible and its end is dropped.
 
 ---
 
@@ -92,9 +131,20 @@ because it is the trap: *"Muse's hooks never fire, so this scan is the ONLY way 
 bound."* Note that being listed in `notify.mjs` does not mean hooks work — Muse is listed there
 purely as a valid engine string.
 
+**If it cannot hook but it can plug in** — a plugin beats a scan, because it runs inside your agent
+and can see both `$TMUX_PANE` and the session id, so it registers instead of being guessed at. The
+OpenCode plugin, the Pi extension and the Amp plugin all do this from `lib/hooks.ts`; none of the
+three needs an entry in `notify.mjs`, which is only for the shell-hook engines.
+
 Scanning also has to solve **which project a session belongs to**, and the answer is usually not in
 the path. For Muse, nothing in `sessions/YYYY/MM/DD/<uuid>/session.jsonl` names the project;
-`workspace_root` in the first record is the only link.
+`workspace_root` in the first record is the only link. Where the plugin writes the transcript itself
+this is free — Amp's plugin puts `cwd` on the first line precisely so the ordinary scan works.
+
+Worth knowing even if you do not need it: some agents already record which terminal opened which
+session. Amp keys `lastThreadByTerminal` in its `session.json` by `tmux:<pane>@<server-pid>,<session>`,
+an exact pane→thread map. Harness does not use it (the repair path is asked about a directory, not a
+pane) but it is the kind of thing to look for before assuming a scan is the only option.
 
 Either way, two more files:
 
@@ -156,7 +206,7 @@ Only needed for the capabilities your agent actually has. Skip what does not app
 |---|---|
 | `lib/launch.ts` | How to start it, and any environment that must be pinned. Muse forks a background self-update on every invocation that can replace the binary mid-session, so `MUSE_NO_AUTO_UPDATE=1` is set — **an agent must not change under the person using it** |
 | `lib/sessionInput.ts` | How text is submitted, and how long to wait before deciding the submit failed. Muse writes its `started` record as soon as it accepts a prompt, so 6 seconds is enough; a slower agent needs a longer window |
-| `lib/enginePermissions.ts` | The flag that turns off approval prompts, plus the finer flags you *own*. Listing owned flags is what lets a user who passes one of them keep their choice instead of getting ours on top |
+| `lib/enginePermissions.ts` | The flag that turns off approval prompts, plus the finer flags you *own*. Listing owned flags is what lets a user who passes one of them keep their choice instead of getting ours on top. Flags are the whole mechanism — Harness will not edit your config file to get past a gate, so if trust lives only in config, that prompt stays with the user. Check the binary for the flag before concluding there isn't one: Amp's is undocumented |
 | `lib/sessionRepair.ts` | Rebinding a pane to its session after a restart |
 | `lib/oneshot.ts` | Running a single prompt outside an interactive session |
 
@@ -167,9 +217,9 @@ than broken — which is the right failure mode, and why they are last.
 
 | File | Gives the user |
 |---|---|
-| `engines/<name>/runtimeProfile.ts` + `lib/runtimeProfile.ts` | The model and effort pickers |
-| `engines/<name>/askQuestion.ts` + `lib/askQuestion.ts` + `lib/__fixtures__/question-<name>.txt` | Your agent's questions as answerable cards on the device and the web, instead of text in the tool feed |
-| `lib/summarize.ts` | The end-of-turn recap. Note the pooling rule: agents that take their recap prompt as argv rather than stdin cannot be pre-warmed, so they opt out of the worker pool |
+| `engines/<name>/runtimeProfile.ts` + `lib/runtimeProfile.ts` | The model and effort pickers. Some agents expose neither: Amp has no model list at all, only four agent *modes*, so the mode is reported as the model and the effort axis stays `auto`. Note the engine name also lives inside `PROFILE_RE` — miss it there and the picker vanishes with no error |
+| `engines/<name>/askQuestion.ts` + `lib/askQuestion.ts` + `lib/__fixtures__/question-<name>.txt` | Your agent's questions as answerable cards on the device and the web, instead of text in the tool feed. It need not be a question *tool*: Amp has none, and the only thing it blocks a person on is its approval prompt — whose rows are unnumbered, so they are walked with `Down` and committed with `Enter` rather than by pressing a digit |
+| `lib/summarize.ts` | The end-of-turn recap. Note the pooling rule: agents that take their recap prompt as argv rather than stdin cannot be pre-warmed, so they opt out of the worker pool. Pick the cheapest setting your agent has for it — this is the one call Harness makes on its own, on every turn |
 | `lib/goalCommand.ts` | `/goal` and `/loop` support |
 | `cli.ts` | Wire the normalizer into the watcher — the last connection that makes it live |
 | `backendSocket.ts` | Your name in the wire-protocol accept-lists |

@@ -27,6 +27,7 @@ a retina display.
 | `pi.png` | An 800×800 PNG rendering of Pi's official compact badge, <https://pi.dev/favicon.svg> | 800 | `b158ff280646a073c163e8cfc71b85cec40b6f89e7a47dd99a5b7838eb86081c` |
 | `codex.png` | The transparent Codex product mark bundled as `codex-app-ga-logo--UgmJjKM.png` in the official `com.openai.codex` macOS app v`26.602.30954` | 104 | `8e82b26c98a10e45798ce48124515720657f7735fb8d0853b3f087eaa8a6b74e` |
 | `muse.png` | The Meta mark from the official lockup SVG at `static.xx.fbcdn.net/rsrc.php/y3/r/y6QsbGgc866.svg` — wordmark paths dropped, glyph rasterised to 104×104, gradient kept | 104 | `d7c4568f992e60f6d42a7a819a5a782d479cbfd9ad2bc11e69c82b35b8a5d8fe` |
+| `amp.png` | Amp's official app icon — the `apple-touch-icon` the site itself declares, <https://ampcode.com/app-icon.png?v=3>, fetched 2026-08-07 | 512 | `e5fc0d1178674b80c0dcbbf9811787b44df91f865fac9cd3ef44bb13ef728018` |
 
 Open items, recorded rather than left implicit:
 
@@ -37,8 +38,14 @@ Open items, recorded rather than left implicit:
   for in-app engine identification on the project owner's decision; a public README is a more visible
   use than an in-app badge, and that decision should be confirmed rather than inherited.
 - **Light and dark themes.** Several marks are opaque tiles (Claude orange, Command Code and Pi
-  black, OpenCode and Hermes white) and a few are transparent glyphs. GitHub renders this README on
-  both grounds; the glyphs are the ones to re-check if a theme change makes one disappear.
+  black, OpenCode and Hermes white, Amp dark green) and a few are transparent glyphs. GitHub renders
+  this README on both grounds; the glyphs are the ones to re-check if a theme change makes one
+  disappear.
+- **`amp.png` is the app icon, not the bare mark.** Amp publishes both: the `apple-touch-icon` used
+  here, and a transparent single-colour glyph at `/amp-mark-color.svg` (all paths `#F34E3F`, so it
+  would read on either ground). The app icon was taken because it is the same class of asset as
+  `claude.png` and `commandcode.png` — the icon the site itself declares — not because the glyph is
+  unusable. Swapping to the glyph is a one-line change if the transparent set is ever preferred.
 
 Copies of the same files live in `autonomous-code` at `apps/web/public/engine-icons/` and
 `apps/orangepi/web/public/assets/engine-icons/`, where a script converts them to the 20×20 LVGL
