@@ -30,6 +30,7 @@ import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
 import { museMessagesToEvents } from './engines/muse/normalizer.js'
 import { ampMessagesToEvents } from './engines/amp/normalizer.js'
+import { ampThreadToEvents, readAmpThread } from './engines/amp/threadExport.js'
 import { piMessagesToEvents, windowPiLines } from './engines/pi/normalizer.js'
 import { commandcodeMessagesToEvents, windowCommandCodeLines } from './engines/commandcode/normalizer.js'
 import { hermesMessagesToEvents, windowHermesMessages } from './engines/hermes/normalizer.js'
@@ -95,6 +96,27 @@ function clipDeviceAgentName(input: string): string {
     out += ch
   }
   return `${out}${DEVICE_ELLIPSIS}`
+}
+
+/**
+ * Amp history comes from AMP's store, not from ours.
+ *
+ * The plugin's JSONL is a record of what the plugin saw; a thread that ran before the integration existed
+ * — or in a pane still holding an older plugin — is simply not in it, and no local file can rebuild those
+ * turns. `amp threads export` returns the thread complete, including the tools Amp runs server-side.
+ *
+ * The local file stays as the FALLBACK, because an export is a network call and a pane with no history at
+ * all is worse than a partial one. Which source answered is logged either way: silently serving the lesser
+ * record is exactly how the missing tool cards went unnoticed for a day.
+ */
+async function ampHistory(sessionId: string, lines: string[]): Promise<SessionEvent[]> {
+  const messages = await readAmpThread(sessionId)
+  if (messages) {
+    console.log(`[history] ${sessionId.slice(0, 12)} amp · ${messages.length} message(s) from amp's own store`)
+    return ampThreadToEvents(messages)
+  }
+  console.warn(`[history] ${sessionId.slice(0, 12)} amp · export unavailable — falling back to the local transcript`)
+  return ampMessagesToEvents(lines)
 }
 
 export function deviceAgentListItem(
@@ -751,7 +773,7 @@ export class BackendSocket {
                 : s.engine === 'muse'
                   ? museMessagesToEvents(lines)
                   : s.engine === 'amp'
-                  ? ampMessagesToEvents(lines)
+                  ? await ampHistory(sessionId, lines)
                   : s.engine === 'pi'
                   ? piMessagesToEvents(lines)
                   : s.engine === 'commandcode'
@@ -779,7 +801,7 @@ export class BackendSocket {
             reply(type, requestId, {
               id: sessionId,
               title: projectDisplayName(s),
-              events: s.engine === 'amp' ? ampMessagesToEvents(lines) : museMessagesToEvents(lines),
+              events: s.engine === 'amp' ? await ampHistory(sessionId, lines) : museMessagesToEvents(lines),
               timestamp,
               engine: s.engine,
               hasMore: false,

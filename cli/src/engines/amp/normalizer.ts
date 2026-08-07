@@ -149,6 +149,10 @@ export function ampToolOutput(output: unknown): string {
     } catch { /* an ordinary string, which is the common case */ }
     return output
   }
+  // A BARE array of hits, which is what the export's `run.result` holds. `obj()` rejects arrays, so
+  // without this the card fell through to JSON.stringify and showed whole scraped pages.
+  const bare = searchHits(output)
+  if (bare) return bare
   const body = obj(output)
   if (!body) return output === undefined || output === null ? '' : JSON.stringify(output)
   const content = body.content

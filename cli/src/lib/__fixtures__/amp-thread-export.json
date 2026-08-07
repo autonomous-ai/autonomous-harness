@@ -1,0 +1,157 @@
+{
+ "messages": [
+  {
+   "meta": {
+    "sentAt": 1786080117426
+   },
+   "role": "user",
+   "readAt": "2026-08-07T05:21:58.004Z",
+   "content": [
+    {
+     "text": "gia BTC di",
+     "type": "text"
+    }
+   ],
+   "messageId": 15,
+   "protocolMessageID": "M-0342qPZDROR7U3qwhUucUC",
+   "protocolMessageVersion": 1
+  },
+  {
+   "role": "assistant",
+   "state": {
+    "type": "complete",
+    "stopReason": "tool_use"
+   },
+   "usage": {
+    "model": "gpt-5.6-sol",
+    "timestamp": "2026-08-07T05:22:30.907Z",
+    "inputTokens": 0,
+    "outputTokens": 99,
+    "maxInputTokens": 272000,
+    "totalInputTokens": 30602,
+    "cacheReadInputTokens": 30359,
+    "cacheCreationInputTokens": 243
+   },
+   "readAt": null,
+   "content": [
+    {
+     "type": "thinking",
+     "provider": "openai",
+     "thinking": "",
+     "finalTime": 1786080148956,
+     "signature": "",
+     "startTime": 1786080148623,
+     "blockState": "complete",
+     "openAIReasoning": {
+      "id": "rs_024c15c4116beb35016a756b94965481918aa16fed80d399c1",
+      "encryptedContent": "gAAAAABqdWuWHT3l85Fn1vQyuu7W1Fal8eZphvwLhP9r_-4ABuxFsVVrApwjkzil0pu0O6aggba5XtX8RSMaujaTcyp2-9QCFCMU70JDY3-VkDzpSe03kbiP9NifX3Uel8FeBX7maHG27B-Eg0yGdqbF-7s86anKvYQR4ONIYYLLRDq9dwD9pgEmYQwX-iBd7dKI-PdKOA3xdMhfEWqLt2G0fm2gU3DKJlysYDtlwU0lpeco3LAlqC3B9xB0ed1IwYDPnoQ1ISEdZsBL30ZqXj281OJmsEJbYVJwqKMkEnHjzigC9cfXXg2DY-OQM6qITjGvJl2Byn00QAwoUe8ZHJWlWVle_r0f2KnR4lDJXHrcVDOC59U2_iSEtiAZxSXjmbKcjsyxz6XvW4AKByHRQVc4KH3ku33yiuE1fjU71D-yHqOX2vNJCjDAiaBMVIWwL93urycj35eYK1G91w7YFzJ1rJaEjfd-iCdXQVXZBsqluAbFtGD8NEVVx9iq_q6j6trIAIm_qnSdhdbJUWX6ZwGbF49NNIvUhO92Nks5vLoXlfSqwR2d1dMDVbdEmwbSkjH9XjebKjm9_joZm47ZB5LJRd90wNyLNTps08WiXJ2koN7N2S4qcWOvn3By3rM67GbaKWXqEjP3KHvY6wxwLslpqloGVoBBf4TuSEaw3VNm2NRk_ytzPl8eRVEXzlATVk3_XkyVU6qXtSGeXYy8-n_2m0WyiXYAM2mp73N028sFtYZNI0PTVr567xo47ixpRth0sk-QQqE1ReXFFWFKYKN46kFUrwZ3LgwBGXBIkGQR-3e0Bi1rvXAswb9OY20yE6ssQEZRfKSVKvNm_-U02odMqAHPDZF0iRwz0MtPWndLyNQCk1gz9g0kdj6xWvwyhFAgAZug4npYVx_SMXpWwcMdMsQRW87oMdQA6WtP6wfDsDBVyYF5ZRyPEzsm6c2Qg5gKlvLUUqih"
+     }
+    },
+    {
+     "id": "TU-0342qQNOiJrXxteXzKf9te",
+     "name": "web_search",
+     "type": "tool_use",
+     "input": {
+      "objective": "T\u00ecm gi\u00e1 Bitcoin (BTC) hi\u1ec7n t\u1ea1i m\u1edbi nh\u1ea5t theo USD, bi\u1ebfn \u0111\u1ed9ng 24 gi\u1edd v\u00e0 bi\u00ean \u0111\u1ed9 gi\u00e1 24 gi\u1edd. \u01afu ti\u00ean CoinGecko ho\u1eb7c Binance v\u00e0 d\u1eef li\u1ec7u c\u1eadp nh\u1eadt theo th\u1eddi gian th\u1ef1c.",
+      "max_results": 3,
+      "search_queries": [
+       "Bitcoin BTC price USD today CoinGecko",
+       "BTC price 24 hour range"
+      ]
+     },
+     "complete": true,
+     "blockState": "complete",
+     "providerToolUseId": "call_EewNEeyLk9UaUO4AdJvd2biI"
+    }
+   ],
+   "messageId": 16,
+   "protocolMessageID": "M-0342qQLNFzsij9BkiWCo7S",
+   "protocolMessageVersion": 1
+  },
+  {
+   "role": "user",
+   "readAt": null,
+   "content": [
+    {
+     "run": {
+      "result": [
+       {
+        "url": "https://www.coingecko.com/en/coins/bitcoin",
+        "title": "Bitcoin Price: BTC/USD Live Price Chart, Market Cap & News Today | CoinGecko",
+        "excerpts": [
+         "\u2026trimmed for the fixture\u2026"
+        ]
+       },
+       {
+        "url": "https://www.coingecko.com/",
+        "title": "Cryptocurrency Prices, Charts, and Crypto Market Cap | CoinGecko",
+        "excerpts": [
+         "\u2026trimmed for the fixture\u2026"
+        ]
+       },
+       {
+        "url": "https://www.coinbase.com/price/bitcoin",
+        "title": "Bitcoin (BTC) Price USD Today, News, Charts, Market Cap",
+        "excerpts": [
+         "\u2026trimmed for the fixture\u2026"
+        ]
+       }
+      ],
+      "status": "done"
+     },
+     "type": "tool_result",
+     "toolUseID": "TU-0342qQNOiJrXxteXzKf9te"
+    }
+   ],
+   "messageId": 17,
+   "protocolMessageID": "M-0342qQSff68P8a9y8WLbvk",
+   "protocolMessageVersion": 0
+  },
+  {
+   "meta": {
+    "openAIResponsePhase": "final_answer"
+   },
+   "role": "assistant",
+   "state": {
+    "type": "complete",
+    "stopReason": "end_turn"
+   },
+   "usage": {
+    "model": "gpt-5.6-sol",
+    "timestamp": "2026-08-07T05:22:38.418Z",
+    "inputTokens": 0,
+    "outputTokens": 263,
+    "maxInputTokens": 272000,
+    "totalInputTokens": 40170,
+    "cacheReadInputTokens": 30599,
+    "cacheCreationInputTokens": 9571
+   },
+   "readAt": "2026-08-07T05:22:38.776Z",
+   "content": [
+    {
+     "type": "thinking",
+     "provider": "openai",
+     "thinking": "**Calculating currency value**\n\nI\u2019m computing VND 64,191.35 multiplied by 26,278. I estimate that 64k times 26,278 is around 1.682 million. For precision, it's actually 64,191.35 times 26,278, which breaks down to 1,681,792,000 for the main part. Then I calculate for the decimals, with 191.35 leading to a total of approximately 1,686,820,295, roughly 1.687 billion. There's a potential trend discrepancy mentioned, indicating a decline of about -0.8.",
+     "finalTime": 1786080157529,
+     "signature": "",
+     "startTime": 1786080153692,
+     "blockState": "complete",
+     "openAIReasoning": {
+      "id": "rs_024c15c4116beb35016a756b99a8f48191ba1aa4288e4d1944",
+      "encryptedContent": "gAAAAABqdWueIqKm6AWbB1ch6C2-HTp5sLmHZ6uV5nbtiJW8J7DORwMf-SXhT7fkD7iW8VZbbSd_TlRiN4uTtVlxVQ6ElQYOxrXFPWj3_BWX3eH9riR89zqJxay7t9pHlrYcRlWgykyjU0OAGz6csMQbZJTAEHEH4aB4sACt-5sPCN26yKSyO3xMCgNO0MHKFYToY4taelZyueE4a1EBNVIeq49tijSWWzY_3qoKU5UEArJB0JNF_OWb0KBn10RGE7_4gKr8bCONW7btOjPZX2ETMu89Ki5xP_lT0_ZAaJo8nohQCeic_txyKOIZ6DIQtoF0BgQ7npVliHRePAx_-vdCPfxEGJoyND-yM0-Ro7Q4xmMy0ZD7_c4fnNtDqVAQrkR8uaDe81IYoQyRwEz6ncEw133WFIJQ_4TN0f-3Mmkuz5lPp34OwX29TASf0k8ga4CEl1ixtyAOb2goAQVraJlPspA45kMlbNfI4l1wzsAJtTZG9FLdpv50mKaSc_G_Z20JQVL7mK1eNt6N0DqT7o9NhHh8W0Wy4PXw7PjGBAYqoGiCnaFAcHbvfVgS93fpysqqXw4OsoEui0yT82YkufdOfsYSe4YPchah_NXnBc4EeIKJ6W0dVYsyl0s063JibBdRMCWWiSCipwJuN2Vpg3S-KP_lgY_rtHJf0_yIudPptvCa8iYxv8JUQzuu9HPdBMgjLUQGnciM9hgCt8hCRgN-6jSjTvpaq1GQW8GF3xp4qPSTpyMF6WTqXb2YWhl4HN4DLNUu6tUOSjGuACciqId9LxxHqRxao9dlA3g55tlhy4HxnjkQbANcCp6A1N1bVlm3fUV7nhQLayhSUHL_SGQO6L3iI0t0a2JZwnA2eOw_keG3qrPghSU7TQsJoWrupxX1pXY5Mo4KaTgnNmPXWiF9ulsv790EIuX7Hvu9tZIPKfZmyM6DOarq711tWQtLNWkQ13ROJmr4-9fWjy-Uy2jJGbtYgOiVMMs7irJ5eD8UBouBZcjUabC-vFbju1h0UgwLa2z1Of9sjwfyJwm1y90a020wYnQVMkBqLpezjTDgfIhS_7dYgIEOpv61d9kLMT98ZbO09HJ_r2tOAIgLN69YzrNJI3LuQpxKqt5v4O_bJ3vlT6hFcXGJkJCsOKItzkRqYdBgIJP7ULRj09Y02iuFOZbJglPS4FUAWsQvdc5D_SFr6ijCK21xPxCirU0rQPWiZd6_LuzYUwhkJsZQfETSbruyoFOAxuqbWsjxQWBtJMttJB_bL11n4GI7P_E1wePto1rcaMrGw22O4pfhx0d524cGnoAncPWH85Kth3F3i2CvzfjZOmfVhxk2UCwRm2UBhUIod-TOfZieIzX-BA9bBq-RA4zK8w=="
+     }
+    },
+    {
+     "text": "BTC hi\u1ec7n kho\u1ea3ng **64.200 USD**, t\u01b0\u01a1ng \u0111\u01b0\u01a1ng kho\u1ea3ng **1,687 t\u1ef7 \u0111\u1ed3ng/BTC**.\n\n- **24 gi\u1edd:** gi\u1ea3m kho\u1ea3ng **0,8%**\n- **Bi\u00ean \u0111\u1ed9 24 gi\u1edd:** **64.114\u201364.916 USD**\n- **7 ng\u00e0y:** g\u1ea7n nh\u01b0 \u0111i ngang\n- **V\u1ed1n h\u00f3a:** kho\u1ea3ng **1.288 t\u1ef7 USD**\n\nNgu\u1ed3n: [CoinGecko](https://www.coingecko.com/en/coins/bitcoin). Gi\u00e1 tr\u00ean t\u1eebng s\u00e0n c\u00f3 th\u1ec3 ch\u00eanh nh\u1eb9.",
+     "type": "text",
+     "finalTime": 1786080158204,
+     "startTime": 1786080157531,
+     "blockState": "complete"
+    }
+   ],
+   "messageId": 18,
+   "protocolMessageID": "M-0342qQT16g45zmcYG88hOk",
+   "protocolMessageVersion": 2
+  }
+ ]
+}
