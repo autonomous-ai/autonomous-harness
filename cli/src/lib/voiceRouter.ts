@@ -1,12 +1,12 @@
 // Voice router (adapter side, for REMOTE machines) — self-contained port of the the hosted runtime's
 // Given a transcribed voice task and this machine's agents (name + a
 // short summary of each agent's recent turn), pick the single best-fit agent. Uses the same key-free CLI
-// one-shot path as the turn summarizer (runClaudeOneShot) with a small/fast model (Haiku by default). Name
+// one-shot path as the turn summarizer, using a small/fast model where the engine exposes one. Name
 // is the strongest signal (users name agents by role/domain); recent activity disambiguates.
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { env } from '../config/env.js'
-import { runRouterOneShot, configureRouterOneShot, setRouterOneShotDeviceConnected, shutdownRouterOneShot } from './oneshot.js'
+import { runGrokOneShot, runRouterOneShot, configureRouterOneShot, setRouterOneShotDeviceConnected, shutdownRouterOneShot } from './oneshot.js'
 
 export interface RouterAgent {
   id: string
@@ -28,9 +28,9 @@ export interface RouteDecision {
 
 const ROUTE_SCRATCH = join(env.ADAPTER_DATA_DIR, 'voice-route-scratch')
 
-/** Engines that can serve the router, best first. Hermes and Devin are absent on purpose: they take the
- *  prompt as argv so they cannot be pre-warmed — the same exclusion the recap pool makes. */
-const ROUTER_ENGINE_PRIORITY = ['claude', 'codex', 'commandcode', 'cursor', 'pi', 'opencode', 'kilo'] as const
+/** Engines that can serve the router, best first. Grok takes the prompt as argv and cannot be warmed, but
+ * its isolated direct one-shot is still bounded enough to route a Grok-only machine. */
+const ROUTER_ENGINE_PRIORITY = ['claude', 'codex', 'commandcode', 'cursor', 'pi', 'opencode', 'kilo', 'grok'] as const
 export type RouterEngine = (typeof ROUTER_ENGINE_PRIORITY)[number]
 
 /**
@@ -78,6 +78,7 @@ function ensureRouteScratch(): string {
 // Point the warm router worker at the chosen engine's small model @ the route scratch. Lazy (not at import)
 // so importing this module for the pure helpers has no filesystem/pool side effects.
 function ensureRouterConfigured(engine: RouterEngine): void {
+  if (engine === 'grok') return
   configureRouterOneShot({ engine, cwd: ensureRouteScratch(), model: routerModelFor(engine), effort: 'low' })
 }
 
@@ -93,6 +94,7 @@ export function setVoiceRouterSessions(sessions: Array<{ engine: string }>): voi
     console.log('[voice-route] no agent this router can run on — voice will route by name matching')
     return
   }
+  if (next === 'grok') setRouterOneShotDeviceConnected(false)
   console.log(`[voice-route] router engine=${next} model=${routerModelFor(next) || '(engine default)'}`)
   ensureRouterConfigured(next)
 }
@@ -102,7 +104,7 @@ export function setVoiceRouterDeviceConnected(connected: boolean): void {
   // Config must be set before the pool spawns a warm worker. With no usable engine there is nothing to
   // warm — the heuristic needs no process.
   if (connected && routerEngine) ensureRouterConfigured(routerEngine)
-  setRouterOneShotDeviceConnected(connected)
+  setRouterOneShotDeviceConnected(connected && routerEngine !== 'grok')
 }
 export function shutdownVoiceRouter(): void {
   shutdownRouterOneShot()
@@ -236,7 +238,10 @@ export async function routeVoiceTask(transcript: string, agents: RouterAgent[], 
   try {
     // Served from the warm router worker (no cold spawn). Cap under the backend's 15s nodeRequest budget so
     // a slow route surfaces before the RPC deadline.
-    const { text } = await runRouterOneShot(engine, { prompt, model, effort: 'low', cwd: ensureRouteScratch(), signal, timeoutMs: 12_000 })
+    const options = { prompt, model, effort: 'low' as const, cwd: ensureRouteScratch(), signal, timeoutMs: 12_000 }
+    const { text } = engine === 'grok'
+      ? await runGrokOneShot(options)
+      : await runRouterOneShot(engine, options)
     return logDecision(engine, agents, parseRouteOutput(text || '', agents))
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err   // caller cancelled — don't paper over it

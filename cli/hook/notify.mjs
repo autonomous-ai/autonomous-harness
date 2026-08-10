@@ -20,6 +20,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   readSync,
   realpathSync,
   renameSync,
@@ -62,7 +63,7 @@ function argValue(name, fallback) {
 function argEngine() {
   const i = process.argv.indexOf('--engine')
   const value = i !== -1 ? process.argv[i + 1] : ''
-  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' ? value : 'claude'
+  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' || value === 'grok' ? value : 'claude'
 }
 
 function paths() {
@@ -70,6 +71,7 @@ function paths() {
   const dataDir = argValue('--data-dir', process.env.ADAPTER_DATA_DIR || join(cliDir, 'data'))
   const claudeProjectsDir = argValue('--claude-projects-dir', process.env.CLAUDE_PROJECTS_DIR || join(homedir(), '.claude', 'projects'))
   const codexHome = argValue('--codex-home', process.env.CODEX_HOME || join(homedir(), '.codex'))
+  const grokHome = argValue('--grok-home', process.env.GROK_HOME || join(homedir(), '.grok'))
   const cursorHome = argValue('--cursor-home', process.env.CURSOR_HOME || join(homedir(), '.cursor'))
   const commandcodeHome = argValue('--commandcode-home', process.env.COMMANDCODE_HOME || join(homedir(), '.commandcode'))
   const devinHome = argValue('--devin-home', process.env.DEVIN_HOME || join(homedir(), '.local', 'share', 'devin', 'cli'))
@@ -79,6 +81,7 @@ function paths() {
     bootFile: join(dataDir, 'registry-boot'),
     claudeProjectsDir,
     codexSessionsDir: join(codexHome, 'sessions'),
+    grokSessionsDir: join(grokHome, 'sessions'),
     cursorProjectsDir: join(cursorHome, 'projects'),
     commandcodeProjectsDir: join(commandcodeHome, 'projects'),
     devinHome,
@@ -90,6 +93,41 @@ function paths() {
 function existsPath(file) {
   if (typeof file !== 'string' || !file) return false
   try { return statSync(file).isFile() } catch { return false }
+}
+
+/** Resolve Grok's authoritative update log. Normal paths use URL-encoded cwd; very long paths use a
+ * hashed directory with a `.cwd` sidecar, so scan only that one level as a bounded fallback. */
+function grokTranscriptPath(p, cwd, sessionId) {
+  if (typeof cwd !== 'string' || !cwd || typeof sessionId !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) return ''
+  const direct = join(p.grokSessionsDir, encodeURIComponent(cwd), sessionId, 'updates.jsonl')
+  if (existsPath(direct)) return direct
+  try {
+    for (const entry of readdirSync(p.grokSessionsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const group = join(p.grokSessionsDir, entry.name)
+      let recorded = ''
+      try { recorded = readFileSync(join(group, '.cwd'), 'utf8').trim() } catch { continue }
+      if (recorded !== cwd) continue
+      const candidate = join(group, sessionId, 'updates.jsonl')
+      if (existsPath(candidate)) return candidate
+    }
+  } catch { /* state root may not exist yet */ }
+  return ''
+}
+
+function grokHookEvent(value) {
+  const key = String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/-/g, '_')
+    .toLowerCase()
+  return ({
+    session_start: 'SessionStart',
+    session_end: 'SessionEnd',
+    user_prompt_submit: 'UserPromptSubmit',
+    stop: 'Stop',
+    stop_failure: 'StopFailure',
+  })[key] || ''
 }
 
 /**
@@ -250,6 +288,7 @@ function validTranscriptPath(engine, filePath, p) {
     const actual = realpathSync(filePath)
     const root = realpathSync(
       engine === 'codex' ? p.codexSessionsDir
+        : engine === 'grok' ? p.grokSessionsDir
         : engine === 'cursor' ? p.cursorProjectsDir
         : engine === 'commandcode' ? p.commandcodeProjectsDir
         : p.claudeProjectsDir,
@@ -413,7 +452,9 @@ async function fallbackRegister(input, engine, tmuxPane, launcherId) {
       launcherId,
       boundAt: Date.now(),
       transcriptPath: transcriptPath || existing?.transcriptPath || null,
-      projectDir: transcriptPath
+      projectDir: engine === 'grok'
+        ? basename(typeof input.cwd === 'string' ? input.cwd : '') || sessionId
+        : transcriptPath
         ? basename(dirname(transcriptPath))
         : basename(typeof input.cwd === 'string' ? input.cwd : '') || sessionId,
       cwd: typeof input.cwd === 'string' ? input.cwd : (existing?.cwd ?? null),
@@ -459,7 +500,7 @@ async function main() {
     return
   }
 
-  const event = input.hook_event_name
+  const event = input.hook_event_name || input.hookEventName
   const tmuxPane = process.env.TMUX_PANE
   if (!tmuxPane) return // tmux-only: ignore every lifecycle event from standalone CLI sessions
   // machine-launched only: `harness <engine>` exports MACHINE_ID into the CLI's env, and that id is what
@@ -475,6 +516,51 @@ async function main() {
   // `--engine devin`; drop the claude-armed duplicate. Cheap and scoped: a real claude session has a UUID
   // session id and no Devin lock file.
   if (engine === 'claude' && isDevinSession(input, paths())) return
+
+  // Grok's hook payload and event records are camelCase, while every Claude-compatible engine above is
+  // snake_case. Its Stop hook is deliberately NOT installed: Grok persists that hook_execution before
+  // the final assistant chunk, so treating Stop as authoritative would close the turn too early. The
+  // transcript's `turn_completed` record closes normal turns; only StopFailure is needed as an error
+  // fallback here.
+  if (engine === 'grok') {
+    const grokEventName = grokHookEvent(event)
+    const sessionId = input.sessionId || input.session_id
+    const cwd = input.cwd || input.workspaceRoot
+    const transcriptPath = grokTranscriptPath(paths(), cwd, sessionId)
+    if (grokEventName === 'SessionEnd') {
+      const ok = await post(port, '/api/hook/session-end', { sessionId, reason: input.reason })
+      if (!ok) await fallbackSessionEnd(sessionId, input.reason, engine, tmuxPane)
+      return
+    }
+    if (grokEventName === 'StopFailure') {
+      await post(port, '/api/hook/turn-stop', { sessionId, transcriptPath, status: 'error' })
+      return
+    }
+    if (grokEventName !== 'SessionStart' && grokEventName !== 'UserPromptSubmit') return
+    const body = {
+      engine,
+      launcherId,
+      hookEvent: grokEventName,
+      sessionId,
+      transcriptPath,
+      cwd,
+      tmuxPane,
+      model: modelName(input.model),
+      cliVersion: input.cliVersion || input.version,
+    }
+    const registered = await post(port, '/api/hook/session-start', body)
+    if (!registered) {
+      await fallbackRegister({
+        ...input,
+        hook_event_name: grokEventName,
+        session_id: sessionId,
+        transcript_path: transcriptPath,
+        cwd,
+        cli_version: input.cliVersion || input.version,
+      }, engine, tmuxPane, launcherId)
+    }
+    return
+  }
 
   if (((engine === 'claude' || engine === 'devin') && event === 'SessionEnd') || (engine === 'cursor' && event === 'sessionEnd')) {
     const ok = await post(port, '/api/hook/session-end', {

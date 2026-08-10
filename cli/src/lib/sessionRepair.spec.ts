@@ -12,6 +12,7 @@ import { join } from 'path'
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  delete process.env.GROK_HOME
   vi.resetModules()
 })
 
@@ -248,5 +249,35 @@ describe('session repair — muse', () => {
     const { findLiveSession } = await loadMuse(home)
 
     await expect(findLiveSession('muse', CWD, STARTED_AT)).resolves.toBeNull()
+  })
+})
+
+describe('session repair — Grok', () => {
+  it('derives cwd and session id from the encoded updates.jsonl layout', async () => {
+    const home = tempRoot()
+    const id = '8184b11d-175e-46cb-9cee-cf41cafe70d2'
+    const file = join(home, 'sessions', encodeURIComponent(CWD), id, 'updates.jsonl')
+    mkdirSync(join(file, '..'), { recursive: true })
+    writeFileSync(file, '{}\n')
+    vi.resetModules()
+    process.env.GROK_HOME = home
+    const { findLiveSession } = await import('./sessionRepair.js')
+
+    await expect(findLiveSession('grok', CWD, STARTED_AT)).resolves.toEqual({ sessionId: id, transcriptPath: file })
+  })
+
+  it('reads the .cwd sidecar used by Grok for a long-path hash directory', async () => {
+    const home = tempRoot()
+    const id = '98ee3dac-175e-46cb-9cee-cf41cafe70d2'
+    const group = join(home, 'sessions', 'cwd-hash-123')
+    const file = join(group, id, 'updates.jsonl')
+    mkdirSync(join(file, '..'), { recursive: true })
+    writeFileSync(join(group, '.cwd'), `${CWD}\n`)
+    writeFileSync(file, '{}\n')
+    vi.resetModules()
+    process.env.GROK_HOME = home
+    const { findLiveSession } = await import('./sessionRepair.js')
+
+    await expect(findLiveSession('grok', CWD, STARTED_AT)).resolves.toEqual({ sessionId: id, transcriptPath: file })
   })
 })

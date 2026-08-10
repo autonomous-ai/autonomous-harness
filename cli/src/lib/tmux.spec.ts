@@ -292,6 +292,13 @@ describe('tmux reaper', () => {
     expect(engineProcessMatchScore({ executable: 'claude', args: 'claude' }, 'muse')).toBe(0)
   })
 
+  it('matches the Grok binary and its installed path', async () => {
+    const { engineProcessMatchScore } = await loadModules()
+    expect(engineProcessMatchScore({ executable: 'grok', args: 'grok --always-approve' }, 'grok')).toBe(3)
+    expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(3)
+    expect(engineProcessMatchScore({ executable: 'claude', args: 'claude' }, 'grok')).toBe(0)
+  })
+
   it('extracts resume session ids per engine, and only when the value looks like an id', async () => {
     const { resumeSessionId } = await loadModules()
 
@@ -312,6 +319,10 @@ describe('tmux reaper', () => {
     expect(resumeSessionId('commandcode', 'cmd -r 1348716c-421f-417f-99ef-cd6096ed248a'))
       .toBe('1348716c-421f-417f-99ef-cd6096ed248a')
     expect(resumeSessionId('commandcode', 'cmd -r Greeting')).toBeNull()
+    expect(resumeSessionId('grok', 'grok --resume 98ee3dac-175e-46cb-9cee-cf41cafe70d2'))
+      .toBe('98ee3dac-175e-46cb-9cee-cf41cafe70d2')
+    expect(resumeSessionId('grok', 'grok -r 98ee3dac-175e-46cb-9cee-cf41cafe70d2'))
+      .toBe('98ee3dac-175e-46cb-9cee-cf41cafe70d2')
 
     // `--continue` carries no id on any engine: nothing to adopt, and nothing to invent.
     expect(resumeSessionId('opencode', 'opencode --continue')).toBeNull()

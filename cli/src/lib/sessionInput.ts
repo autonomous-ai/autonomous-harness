@@ -36,11 +36,22 @@ const MUSE_SUBMIT_VERIFY_MS = 6_000
 // Amp's plugin writes `turn_start` from the agent.start event, which fires the instant the prompt is
 // accepted — no model round trip in between, so the same store-verified window fits.
 const AMP_SUBMIT_VERIFY_MS = 6_000
+// Grok's FIRST prompt creates the session, runs SessionStart + UserPromptSubmit hooks, then writes the
+// user_message_chunk. The isolated real run took ~4.4s from paste to watcher-visible turn start; 2.5s
+// pressed Enter a second time on every fresh agent even though the first submission was accepted.
+const GROK_SUBMIT_VERIFY_MS = 6_000
 const CURSOR_TURN_SETTLE_MS = 750
 const SUBMIT_MAX_RETRIES = 2
 // Non-cursor engines re-observe the pane (instead of erroring) while an accepted-but-not-yet-started
 // prompt is in flight. Bounded so a truly wedged session eventually reverts to the retry/error path.
 const SUBMIT_MAX_OBSERVES = 5
+
+/** Grok does not allocate a session until its first prompt is submitted. Holding that prompt until a
+ * session id exists deadlocks: UserPromptSubmit is the event that supplies the id. Inject it into the
+ * launcher's already-validated pane, then let the hook bind the resulting session. */
+export function acceptsInputBeforeSession(engine: RegisteredSession['engine']): boolean {
+  return engine === 'grok'
+}
 
 interface QueuedInput {
   content: string
@@ -290,6 +301,8 @@ export class SessionInputController {
                     ? AMP_SUBMIT_VERIFY_MS
                     : session.engine === 'kilo'
                       ? KILO_SUBMIT_VERIFY_MS
+                      : session.engine === 'grok'
+                        ? GROK_SUBMIT_VERIFY_MS
                       : SUBMIT_VERIFY_MS)
   }
 
@@ -311,7 +324,7 @@ export class SessionInputController {
         return
       }
     } else if (session.engine === 'opencode' || session.engine === 'kilo' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse'
-      || session.engine === 'amp') {
+      || session.engine === 'amp' || session.engine === 'grok') {
       // OpenCode has no composer glyph, and the submitted text stays visible in the message area, so a
       // pane scrape can't tell "still in the composer" from "already sent". Rely purely on the reader-
       // derived turn_started (a new user row in opencode.db) to clear awaitingFingerprint; if it hasn't

@@ -43,6 +43,7 @@ import {
   parsePiFooterProfile,
   parsePiModelsOutput,
 } from '../engines/pi/runtimeProfile.js'
+import { parseGrokFooterProfile } from '../engines/grok/runtimeProfile.js'
 
 export interface RuntimeProfile {
   id: string
@@ -107,7 +108,7 @@ interface CodexCache {
   models?: CodexCacheModel[]
 }
 
-const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp|kilo):([^@]+)@([a-z0-9_-]+)$/i
+const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp|kilo|grok):([^@]+)@([a-z0-9_-]+)$/i
 const CODEX_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 const CLAUDE_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 const CURSOR_EFFORTS = new Set(['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -642,6 +643,7 @@ export class RuntimeProfileManager {
         void this.ingestConfig(session, silent).catch(() => undefined)
       }
     }
+    else if (session.engine === 'grok') this.ingestGrok(session, raw)
     else this.ingestClaude(session, raw)
     const after = this.selectedModel(session)
     this.wake(session.sessionId)
@@ -853,6 +855,13 @@ export class RuntimeProfileManager {
         state.effort = footer.effort
         state.observedAt = Date.now()
         this.confirmObserved(session.sessionId, footer.model, footer.effort)
+      }
+    } else if (session.engine === 'grok') {
+      const footer = parseGrokFooterProfile(paneText)
+      if (footer) {
+        state.model = footer.model
+        state.effort = footer.effort
+        state.observedAt = Date.now()
       }
     } else {
       const header = /(Fable|Opus|Sonnet|Haiku)\s+(\d+(?:\.\d+)*)(\s+\(1M context\))?\s+with\s+(low|medium|high|xhigh|max|ultracode)\s+effort/gi
@@ -1126,6 +1135,17 @@ export class RuntimeProfileManager {
       state.observedAt = Date.now()
       if (control) control.effortConfirmed = control.target.effort === 'auto' || state.effort === control.target.effort
     }
+  }
+
+  private ingestGrok(session: RegisteredSession, raw: Record<string, unknown>): void {
+    const params = record(raw.params)
+    const update = record(params?.update)
+    const meta = record(update?._meta)
+    const model = text(meta?.modelId)
+    if (!model) return
+    const state = this.state(session.sessionId)
+    state.model = model
+    state.observedAt = Date.now()
   }
 
   private async claudeModels(session: RegisteredSession): Promise<RuntimeModelOption[]> {

@@ -218,6 +218,12 @@ export function engineProcessMatchScore(
     if (/\.amp[\/\\]bin[\/\\]amp(?:\s|$)/.test(haystack)) return 3
     return /(^|[\/\s])amp(?:[\s]|$)/.test(haystack) ? 1 : 0
   }
+  if (engine === 'grok') {
+    // Grok ships as a single binary at ~/.grok/bin/grok and keeps the bare executable name in tmux.
+    if (executable === 'grok') return 3
+    if (/\.grok[\/\\]bin[\/\\]grok(?:\s|$)/.test(haystack)) return 3
+    return /(^|[\/\s])grok(?:[\s]|$)/.test(haystack) ? 1 : 0
+  }
   if (executable === 'claude') return 3
   return /(^|[\/\s])claude(?:[\s]|$)/.test(haystack) ? 1 : 0
 }
@@ -280,6 +286,8 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
   // `amp threads continue <id>` names the thread; the bare `amp last` does not. Amp's ids are the only
   // ones here with a fixed prefix (`T-019fda49-…`), so the pattern doubles as proof it IS an amp id.
   amp: { flags: ['continue', '-c'], id: /^T-[0-9a-f-]{16,}$/i },
+  // Grok 1.0.0 accepts both spellings and persists UUID session ids below ~/.grok/sessions.
+  grok: { flags: ['--resume', '-r'], id: /^[0-9a-f-]{16,}$/i },
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

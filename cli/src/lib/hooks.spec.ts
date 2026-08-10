@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
 let codexHome = ''
 let cursorHome = ''
+let grokHome = ''
 let hermesHome = ''
 let commandcodeHome = ''
 let devinConfigPath = ''
@@ -13,6 +14,7 @@ async function loadHooks() {
   vi.resetModules()
   process.env.CODEX_HOME = codexHome
   process.env.CURSOR_HOME = cursorHome
+  process.env.GROK_HOME = grokHome
   process.env.HERMES_HOME = hermesHome
   process.env.COMMANDCODE_HOME = commandcodeHome
   process.env.DEVIN_CONFIG_PATH = devinConfigPath
@@ -91,6 +93,41 @@ describe('Codex hook installation', () => {
 
     installCursorHooks(19473)
     expect(readFileSync(file, 'utf8')).toBe(first)
+  })
+})
+
+describe('Grok hook installation', () => {
+  beforeEach(() => {
+    grokHome = mkdtempSync(join(tmpdir(), 'adapter-grok-hooks-'))
+  })
+
+  afterEach(() => {
+    rmSync(grokHome, { recursive: true, force: true })
+    delete process.env.GROK_HOME
+  })
+
+  it('installs camelCase lifecycle hooks without the early Stop signal', async () => {
+    const { installGrokHooks } = await loadHooks()
+    installGrokHooks(18473)
+    const file = join(grokHome, 'hooks', 'harness.json')
+    const first = readFileSync(file, 'utf8')
+    const out = JSON.parse(first) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    expect(Object.keys(out.hooks).sort()).toEqual(['SessionEnd', 'SessionStart', 'StopFailure', 'UserPromptSubmit'])
+    expect(out.hooks).not.toHaveProperty('Stop')
+    expect(out.hooks.SessionStart[0].hooks[0].command).toContain('--engine grok')
+    expect(out.hooks.SessionStart[0].hooks[0].command).toContain(`--grok-home '${grokHome}'`)
+
+    installGrokHooks(18473)
+    expect(readFileSync(file, 'utf8')).toBe(first)
+  })
+
+  it('leaves malformed Grok hook JSON untouched', async () => {
+    const file = join(grokHome, 'hooks', 'harness.json')
+    mkdirSync(join(grokHome, 'hooks'), { recursive: true })
+    writeFileSync(file, '{not-json')
+    const { installGrokHooks } = await loadHooks()
+    installGrokHooks(18473)
+    expect(readFileSync(file, 'utf8')).toBe('{not-json')
   })
 })
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem } from './backendSocket.js'
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -334,5 +336,29 @@ describe('device agent list contract', () => {
     expect(deviceAgentListItem({ id: 's1', name: 'A', engine: 'claude', selectedModel: null })).toEqual({
       id: 's1', name: 'A', engine: 'claude', selectedModel: null,
     })
+  })
+
+  it('preserves Grok on the device agent contract', () => {
+    expect(deviceAgentListItem({ id: 'g1', name: 'Grok agent', engine: 'grok' })).toEqual({
+      id: 'g1', name: 'Grok agent', engine: 'grok',
+    })
+  })
+})
+
+describe('Grok session_get history', () => {
+  const fixture = readFileSync(
+    fileURLToPath(new URL('./lib/__fixtures__/grok-session.jsonl', import.meta.url)),
+    'utf8',
+  ).split('\n').filter(Boolean)
+
+  it('replays the real transcript for both legacy and web-paginated requests', () => {
+    const full = grokHistoryPage(fixture, false)
+    const paginated = grokHistoryPage(fixture, true)
+
+    expect(full.events).toEqual(paginated.events)
+    expect(full.events[0]).toMatchObject({ type: 'user_message' })
+    expect(full.events.at(-1)).toEqual({ type: 'done', payload: { result: 'success' } })
+    expect(full).not.toHaveProperty('hasMore')
+    expect(paginated).toMatchObject({ hasMore: false, oldestCursor: null })
   })
 })

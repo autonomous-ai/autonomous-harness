@@ -29,6 +29,7 @@ a retina display.
 | `muse.png` | The Meta mark from the official lockup SVG at `static.xx.fbcdn.net/rsrc.php/y3/r/y6QsbGgc866.svg` — wordmark paths dropped, glyph rasterised to 104×104, gradient kept | 104 | `d7c4568f992e60f6d42a7a819a5a782d479cbfd9ad2bc11e69c82b35b8a5d8fe` |
 | `amp.png` | Amp's official app icon — the `apple-touch-icon` the site itself declares, <https://ampcode.com/app-icon.png?v=3>, fetched 2026-08-07 | 512 | `e5fc0d1178674b80c0dcbbf9811787b44df91f865fac9cd3ef44bb13ef728018` |
 | `kilo.png` | Kilo's official app icon — the 512px `icon` the site itself declares, <https://kilo.ai/favicon/android-chrome-512x512.png?v=2>, fetched 2026-08-10 | 512 | `01d05e48efb03321468e1af0110d05de4550806f653b95adb93ad93a546fee7b` |
+| `grok.png` | SpaceXAI symbol used by the official `xai-org/grok-build` README, <https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png>, fetched 2026-08-10 | 600 | `d2ce9e34b770aeb1e6155646e37573a9eabc380c3fe48e72f7fe19c4b0b59e07` |
 
 Open items, recorded rather than left implicit:
 
@@ -39,7 +40,8 @@ Open items, recorded rather than left implicit:
   for in-app engine identification on the project owner's decision; a public README is a more visible
   use than an in-app badge, and that decision should be confirmed rather than inherited.
 - **Light and dark themes.** Several marks are opaque tiles (Claude orange, Command Code and Pi
-  black, OpenCode and Hermes white, Amp dark green) and a few are transparent glyphs. GitHub renders
+  black, OpenCode and Hermes white, Amp dark green) and a few are transparent glyphs, including Grok's
+  black SpaceXAI symbol. GitHub renders
   this README on both grounds; the glyphs are the ones to re-check if a theme change makes one
   disappear.
 - **`amp.png` is the app icon, not the bare mark.** Amp publishes both: the `apple-touch-icon` used

@@ -103,6 +103,7 @@ const BOOT_FILE = join(env.ADAPTER_DATA_DIR, 'registry-boot')
 const NAME_OVERRIDES = new Map<string, string>()
 
 const PANE_RE = /^%\d+$/
+const GROK_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function isWithin(root: string, file: string): boolean {
   const rel = relative(root, file)
@@ -121,6 +122,8 @@ export function validTranscriptPath(engine: AgentEngine, filePath: string): bool
         ? join(env.MUSE_HOME, 'sessions')
         : engine === 'codex'
         ? join(env.CODEX_HOME, 'sessions')
+        : engine === 'grok'
+        ? join(env.GROK_HOME, 'sessions')
         : engine === 'cursor'
           ? join(env.CURSOR_HOME, 'projects')
           : engine === 'pi'
@@ -199,7 +202,7 @@ class Registry {
       }
       let changed = false
       for (const raw of Array.isArray(arr) ? arr : []) {
-        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' || raw?.engine === 'kilo' ? raw.engine : 'claude'
+        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' || raw?.engine === 'kilo' || raw?.engine === 'grok' ? raw.engine : 'claude'
         const pane = typeof raw?.tmuxPane === 'string' && PANE_RE.test(raw.tmuxPane) ? raw.tmuxPane : ''
         let transcriptPath =
           typeof raw?.transcriptPath === 'string' && raw.transcriptPath
@@ -366,7 +369,7 @@ class Registry {
     const sessionId =
       input.sessionId || (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
     const engine: AgentEngine =
-      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' ? input.engine : 'claude'
+      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' || input.engine === 'grok' ? input.engine : 'claude'
     const pane = input.tmuxPane
     // The machine id may be omitted only when re-registering a session we already know (the catch hook
     // fires on every prompt and older payloads carried no id) — a NEW session always needs one, because
@@ -377,7 +380,8 @@ class Registry {
       || !agentId
       || !pane
       || !PANE_RE.test(pane)
-      || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
+      || (engine === 'grok' && !GROK_SESSION_RE.test(sessionId))
+      || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && engine !== 'grok' && !transcriptPath)
       || (transcriptPath && !validTranscriptPath(engine, transcriptPath))
     ) return null
     if (engine === 'codex' && transcriptPath && readCodexRolloutMeta(transcriptPath)?.isSubagent) return null
@@ -415,7 +419,9 @@ class Registry {
     // offset 0 and chokidar fires when it appears.
     const derived = !transcriptPath && engine === 'commandcode'
       ? commandcodeTranscriptPath(input.cwd ?? existing?.cwd, sessionId)
-      : null
+      : !transcriptPath && engine === 'grok' && (input.cwd ?? existing?.cwd)
+        ? join(env.GROK_HOME, 'sessions', encodeURIComponent((input.cwd ?? existing?.cwd)!), sessionId, 'updates.jsonl')
+        : null
     const effectiveTranscriptPath = transcriptPath ?? existing?.transcriptPath ?? derived ?? null
     const entry: RegisteredSession = {
       agentId,
@@ -424,7 +430,9 @@ class Registry {
       engine,
       launcherId: agentId,
       transcriptPath: effectiveTranscriptPath,
-      projectDir: effectiveTranscriptPath
+      projectDir: engine === 'grok'
+        ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId
+        : effectiveTranscriptPath
         ? basename(dirname(effectiveTranscriptPath))
         : basename(input.cwd ?? existing?.cwd ?? '') || sessionId,
       cwd: input.cwd ?? existing?.cwd ?? null,

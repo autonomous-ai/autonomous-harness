@@ -145,6 +145,16 @@ const PERMISSIONS: Readonly<Record<AgentEngine, EnginePermissions>> = {
     add: [{ axis: 'permission', args: ['--dangerously-allow-all'] }],
     owned: { permission: ['--dangerously-allow-all'] },
   },
+  // `--always-approve` is Grok's documented unattended mode. The other policy switches are owned so
+  // an explicit user choice is never overridden by the launcher default.
+  grok: {
+    add: [{ axis: 'permission', args: ['--always-approve'] }],
+    owned: {
+      permission: [
+        '--always-approve', '--permission-mode', '--allow', '--deny', '--tools', '--disallowed-tools',
+      ],
+    },
+  },
 }
 
 /** Whole-argv-entry match; `--flag=value` is the same choice as `--flag value`. */

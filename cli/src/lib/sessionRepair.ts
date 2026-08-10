@@ -265,6 +265,18 @@ export async function findLiveSession(
       // directory — but `findLiveSession` is asked about a cwd, not a pane, and a repair that silently
       // needed a different question would be the kind of split path this file exists to avoid.
       return fileEngineSession(env.AMP_SESSIONS_DIR, cwd, startedAtMs, readTranscriptMeta, opts)
+    case 'grok':
+      // `updates.jsonl` lives under `<encoded-cwd>/<uuid>/`; long cwd values use a hashed group with a
+      // `.cwd` sidecar. The file itself is ACP updates and carries no cwd, so derive it from that group.
+      return fileEngineSession(join(env.GROK_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
+        if (basename(path) !== 'updates.jsonl') return null
+        const sessionDir = dirname(path)
+        const group = dirname(sessionDir)
+        let root = ''
+        try { root = decodeURIComponent(basename(group)) } catch { /* hashed layout below */ }
+        if (!root.startsWith('/')) root = (await readFile(join(group, '.cwd'), 'utf8').catch(() => '')).trim()
+        return root ? { cwd: root, sessionId: basename(sessionDir) } : null
+      }, opts)
     case 'opencode':
       // time_created is epoch MILLISECONDS here.
       return dbEngineSession(

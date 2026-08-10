@@ -15,6 +15,7 @@ import type { AgentEngine } from '../engines/types.js'
 
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
 const CODEX_HOOKS_PATH = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json')
+const GROK_HOOKS_PATH = join(env.GROK_HOME, 'hooks', 'harness.json')
 const CURSOR_HOOKS_PATH = join(process.env.CURSOR_HOME || join(homedir(), '.cursor'), 'hooks.json')
 
 // notify.mjs location depends on the layout (import.meta.url is the REAL executing file at runtime):
@@ -49,7 +50,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin'): string {
+function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok'): string {
   return [
     'node',
     shellQuote(HOOK_SCRIPT),
@@ -57,6 +58,7 @@ function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' 
     '--data-dir', shellQuote(env.ADAPTER_DATA_DIR),
     '--claude-projects-dir', shellQuote(env.CLAUDE_PROJECTS_DIR),
     '--codex-home', shellQuote(env.CODEX_HOME),
+    '--grok-home', shellQuote(env.GROK_HOME),
     '--cursor-home', shellQuote(env.CURSOR_HOME),
     '--commandcode-home', shellQuote(env.COMMANDCODE_HOME),
     '--devin-home', shellQuote(env.DEVIN_HOME),
@@ -170,6 +172,47 @@ export function installCodexHooks(port: number): void {
     console.log('[hooks] Codex requires reviewing these user hooks with /hooks before normal use')
   } catch (err) {
     console.error('[hooks] failed to write Codex hooks.json:', err)
+  }
+}
+
+/** Merge the adapter's Grok lifecycle hooks into a dedicated global hook file. Grok loads every JSON
+ * file in ~/.grok/hooks, so using our own file avoids touching the user's other hook packages. Normal
+ * Stop is intentionally omitted because its record precedes Grok's final assistant chunk on disk. */
+export function installGrokHooks(port: number): void {
+  let settings: Settings = {}
+  if (existsSync(GROK_HOOKS_PATH)) {
+    try {
+      settings = JSON.parse(readFileSync(GROK_HOOKS_PATH, 'utf-8')) as Settings
+    } catch {
+      console.error(`[hooks] Grok hooks file is invalid JSON; leaving it unchanged: ${GROK_HOOKS_PATH}`)
+      console.error('[hooks] fix the file, then restart harness join')
+      return
+    }
+  }
+  if (!settings.hooks || typeof settings.hooks !== 'object') settings.hooks = {}
+
+  const cmd = command(port, 'grok')
+  const required = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'StopFailure'] as const
+  let changed = false
+  for (const event of required) {
+    const blocks = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : []
+    const foreign = blocks.filter((b) => !isOurs(b))
+    const ours = blocks.filter(isOurs)
+    const canonical: HookBlock = { hooks: [{ type: 'command', command: cmd, timeout: 5 }] }
+    if (ours.length !== 1 || ours[0]?.hooks?.[0]?.command !== cmd) changed = true
+    settings.hooks[event] = [...foreign, canonical]
+  }
+
+  if (!changed) {
+    console.log('[hooks] Grok lifecycle/StopFailure hooks already installed')
+    return
+  }
+  try {
+    writeJsonAtomic(GROK_HOOKS_PATH, settings)
+    console.log(`[hooks] installed Grok lifecycle/StopFailure hooks → ${GROK_HOOKS_PATH}`)
+    console.log('[hooks] (takes effect on the next Grok session start)')
+  } catch (err) {
+    console.error('[hooks] failed to write Grok hook file:', err)
   }
 }
 
@@ -882,5 +925,6 @@ export function installHooksFor(engine: AgentEngine, port: number): void {
     case 'commandcode': installCommandCodeHooks(port); break
     case 'devin': installDevinHooks(port); break
     case 'amp': installAmpPlugin(port); break
+    case 'grok': installGrokHooks(port); break
   }
 }

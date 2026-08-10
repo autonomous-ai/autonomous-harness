@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   runClaude: vi.fn(),
   runCodex: vi.fn(),
   runCursor: vi.fn(),
+  runGrok: vi.fn(),
   cleanupCursor: vi.fn(),
   setCounts: vi.fn(),
 }))
@@ -16,6 +17,7 @@ vi.mock('../config/env.js', () => ({
     SUMMARY_MODEL: 'sonnet',
     CODEX_SUMMARY_MODEL: 'gpt-5.5',
     CURSOR_SUMMARY_MODEL: 'auto',
+    GROK_SUMMARY_MODEL: 'grok-4.5',
     SUMMARY_EFFORT: 'low',
   },
 }))
@@ -26,6 +28,7 @@ vi.mock('./oneshot.js', () => ({
   runClaudeOneShot: mocks.runClaude,
   runCodexOneShot: mocks.runCodex,
   runCursorOneShot: mocks.runCursor,
+  runGrokOneShot: mocks.runGrok,
   setOneShotPoolActiveCounts: mocks.setCounts,
   setOneShotPoolDeviceConnected: vi.fn(),
   shutdownOneShotPool: vi.fn(),
@@ -37,6 +40,7 @@ beforeEach(() => {
   mocks.runClaude.mockReset()
   mocks.runCodex.mockReset()
   mocks.runCursor.mockReset()
+  mocks.runGrok.mockReset()
   mocks.cleanupCursor.mockReset()
   mocks.cleanupCursor.mockResolvedValue(undefined)
   mocks.setCounts.mockReset()
@@ -85,6 +89,28 @@ describe('Cursor recap', () => {
     ])
 
     expect(mocks.setCounts).toHaveBeenCalledWith({ claude: 1, codex: 1, cursor: 2, opencode: 1, kilo: 1, pi: 1, commandcode: 1 })
+  })
+})
+
+describe('Grok recap', () => {
+  it('uses an isolated direct Grok one-shot with the configured model', async () => {
+    mocks.runGrok.mockResolvedValue({
+      text: 'Grok recap works.\n\nThe Grok turn now produces a persisted device recap.',
+      sessionId: 'grok-recap-session',
+    })
+
+    await expect(summarizeTurnText(
+      'Implemented Grok recap support.',
+      undefined,
+      'Does Grok recap work?',
+      'grok',
+    )).resolves.toBe('Grok recap works.\n\nThe Grok turn now produces a persisted device recap.')
+
+    expect(mocks.runGrok).toHaveBeenCalledOnce()
+    expect(mocks.runGrok.mock.calls[0][0]).toMatchObject({ model: 'grok-4.5', effort: 'low' })
+    expect(mocks.runClaude).not.toHaveBeenCalled()
+    expect(mocks.runCodex).not.toHaveBeenCalled()
+    expect(mocks.runCursor).not.toHaveBeenCalled()
   })
 })
 

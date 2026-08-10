@@ -12,7 +12,7 @@ import type { AgentEngine } from '../engines/types.js'
 
 /** Every engine the adapter can drive — also the set of `harness <engine>` launch subcommands. */
 export const ENGINES: readonly AgentEngine[] = [
-  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo',
+  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
 ] as const
 
 /**
@@ -86,5 +86,6 @@ export function engineBin(engine: AgentEngine): string {
     case 'muse': return env.MUSE_PATH || 'muse'
     case 'amp': return env.AMP_PATH || 'amp'
     case 'kilo': return env.KILO_PATH || 'kilo'
+    case 'grok': return env.GROK_PATH || 'grok'
   }
 }

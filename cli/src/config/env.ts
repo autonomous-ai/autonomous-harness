@@ -100,6 +100,8 @@ const envSchema = z.object({
   CLAUDE_PROJECTS_DIR: z.string().default(join(homedir(), '.claude', 'projects')),
   // Codex state root. Only hook-registered rollout files beneath <CODEX_HOME>/sessions are exposed.
   CODEX_HOME: z.string().default(join(homedir(), '.codex')),
+  // Grok state root. Conversation records live below <GROK_HOME>/sessions/<encoded-cwd>/<uuid>/updates.jsonl.
+  GROK_HOME: z.string().default(join(homedir(), '.grok')),
   // Cursor state root. Interactive transcripts live below <CURSOR_HOME>/projects and local
   // subagent linkage metadata lives below <CURSOR_HOME>/chats.
   CURSOR_HOME: z.string().default(join(homedir(), '.cursor')),
@@ -166,8 +168,7 @@ const envSchema = z.object({
   DEVIN_CONFIG_PATH: z.string().default(join(homedir(), '.config', 'devin', 'config.json')),
   // Where the tmux-session registry + connect token are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
-  // Set to 'true' to skip auto-installing the SessionStart/SessionEnd hooks into
-  // ~/.claude/settings.json on startup.
+  // Set to 'true' to skip auto-installing lifecycle hooks for every supported engine.
   DISABLE_HOOK_INSTALL: z.string().default('false').transform((v) => v === 'true'),
   // How often (ms) the reaper checks tmux panes and drops dead sessions.
   TMUX_REAP_INTERVAL_MS: z.string().default('5000').transform(Number),
@@ -191,6 +192,8 @@ const envSchema = z.object({
   // Path to the `kilo` CLI for Kilo recap one-shots (else `kilo` is resolved from PATH). `@kilocode/cli`
   // also installs it as `kilocode`; both are the same file.
   KILO_PATH: z.string().optional(),
+  // Path to the xAI Grok CLI for interactive sessions and recap one-shots.
+  GROK_PATH: z.string().optional(),
   // Model for the device turn-recap one-shot.
   SUMMARY_MODEL: z.string().default('sonnet'),
   // Balanced Codex counterpart used only for recap workers; never inherits the interactive CLI model.
@@ -201,6 +204,8 @@ const envSchema = z.object({
   OPENCODE_SUMMARY_MODEL: z.string().default(''),
   // Kilo recap model (`provider/model` as `kilo models` prints it). Empty → the user's kilo default.
   KILO_SUMMARY_MODEL: z.string().default(''),
+  // Grok recap model. Empty → use the user's Grok CLI default model.
+  GROK_SUMMARY_MODEL: z.string().default(''),
   // Pi recap model (`provider/model` or a model pattern). Empty → use the user's pi config default.
   PI_SUMMARY_MODEL: z.string().default(''),
   // Hermes recap model. Empty → use the user's ~/.hermes/config.yaml default (keeps their provider).

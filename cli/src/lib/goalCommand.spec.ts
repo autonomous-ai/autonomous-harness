@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { adaptGoalCommand, adaptSlashCommand, engineSupportsGoal, engineSupportsLoop } from './goalCommand.js'
 
-const ALL_ENGINES = ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse'] as const
-const NON_LOOP = ['codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse'] as const
+const ALL_ENGINES = ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok'] as const
+const NON_LOOP = ['codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok'] as const
 
 describe('adaptGoalCommand', () => {
   it('keeps /goal verbatim for engines with a native /goal (claude, codex)', () => {
@@ -13,8 +13,8 @@ describe('adaptGoalCommand', () => {
     }
   })
 
-  it('drops the leading slash for engines without /goal (cursor, opencode, pi)', () => {
-    for (const engine of ['cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin'] as const) {
+  it('drops the leading slash for engines without a verified native /goal', () => {
+    for (const engine of ALL_ENGINES.filter((candidate) => candidate !== 'claude' && candidate !== 'codex')) {
       expect(engineSupportsGoal(engine)).toBe(false)
       expect(adaptGoalCommand('/goal fix the bug', engine)).toBe('goal fix the bug')
       expect(adaptGoalCommand('/goal', engine)).toBe('goal')
@@ -23,7 +23,7 @@ describe('adaptGoalCommand', () => {
   })
 
   it('leaves non-/goal content untouched for every engine', () => {
-    for (const engine of ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin'] as const) {
+    for (const engine of ALL_ENGINES) {
       expect(adaptGoalCommand('just a normal message', engine)).toBe('just a normal message')
       expect(adaptGoalCommand('/model gpt-5', engine)).toBe('/model gpt-5')
       expect(adaptGoalCommand('/goalkeeper stats', engine)).toBe('/goalkeeper stats') // /goal must be a whole token

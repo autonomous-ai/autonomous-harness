@@ -26,6 +26,7 @@ import {
   runDevinOneShot,
   runMuseOneShot,
   runAmpOneShot,
+  runGrokOneShot,
   setOneShotPoolActiveCounts,
   setOneShotPoolDeviceConnected,
   shutdownOneShotPool,
@@ -59,7 +60,7 @@ export function syncSummaryPoolSessions(sessions: Array<{ engine: AgentEngine }>
     // Hermes, Devin, Muse and Amp take their recap prompt as argv (`muse exec <prompt>`, `amp -x <prompt>`),
     // so they cannot be pre-warmed the way a stdin-fed CLI can — no pooled worker for them.
     if (session.engine === 'hermes' || session.engine === 'devin' || session.engine === 'muse'
-      || session.engine === 'amp') continue
+      || session.engine === 'amp' || session.engine === 'grok') continue
     counts[session.engine]++
   }
   setOneShotPoolActiveCounts(counts)
@@ -309,6 +310,8 @@ export async function summarizeTurnText(
                     ? env.AMP_SUMMARY_MODE
                     : engine === 'kilo'
                       ? env.KILO_SUMMARY_MODEL
+                      : engine === 'grok'
+                        ? env.GROK_SUMMARY_MODEL
                       : env.OPENCODE_SUMMARY_MODEL
   const effort = engine === 'cursor' ? 'model-defined' : env.SUMMARY_EFFORT
   console.log(`[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`)
@@ -332,6 +335,8 @@ export async function summarizeTurnText(
                     ? runAmpOneShot
                     : engine === 'kilo'
                       ? runKiloOneShot
+                      : engine === 'grok'
+                        ? runGrokOneShot
                       : runOpencodeOneShot
   let r = await run({ prompt, model, effort: env.SUMMARY_EFFORT, cwd: scratch, signal })
   console.log(`[recap] one-shot returned in ${Date.now() - t0}ms · rawLen=${(r.text || '').length}`)

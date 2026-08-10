@@ -383,6 +383,46 @@ describe('a Command Code session without a transcript path', () => {
   })
 })
 
+/** Grok's SessionStart hook can run while its updates file is still empty or absent. Register the
+ * deterministic ordinary layout immediately so the first remote prompt is not held waiting for a
+ * UserPromptSubmit hook that only that same prompt can trigger. */
+describe('a Grok session before updates.jsonl exists', () => {
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), 'adapter-registry-grok-'))
+    process.env.GROK_HOME = dataDir
+  })
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true })
+    delete process.env.ADAPTER_DATA_DIR
+    delete process.env.CLAUDE_PROJECTS_DIR
+    delete process.env.CODEX_HOME
+    delete process.env.CURSOR_HOME
+    delete process.env.GROK_HOME
+  })
+
+  it('derives the URL-encoded cwd path at SessionStart', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const registered = registry.register({
+      launcherId: 'h1',
+      engine: 'grok',
+      sessionId: '8184b11d-175e-46cb-9cee-cf41cafe70d2',
+      tmuxPane: '%9',
+      cwd: '/workspace/project with spaces',
+      hookEvent: 'SessionStart',
+    })
+
+    expect(registered?.entry.transcriptPath).toBe(join(
+      dataDir,
+      'sessions',
+      encodeURIComponent('/workspace/project with spaces'),
+      '8184b11d-175e-46cb-9cee-cf41cafe70d2',
+      'updates.jsonl',
+    ))
+  })
+})
+
 describe('agent identity: the launcher owns the agent, the session is bound to it', () => {
   beforeEach(() => {
     vi.useFakeTimers()

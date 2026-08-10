@@ -21,12 +21,13 @@ interface RunHookOpts {
   /** The launcher id `harness <engine>` exports. Defaults to a live-looking one; pass null to simulate a
    *  CLI the user started by hand (no machine → the hook must ignore the event entirely). */
   launcherId?: string | null
-  engine?: 'claude' | 'codex' | 'cursor' | 'devin' | 'commandcode'
+  engine?: 'claude' | 'codex' | 'cursor' | 'devin' | 'commandcode' | 'grok'
   env?: Record<string, string>
   dataDir?: string
   claudeProjectsDir?: string
   codexHome?: string
   cursorHome?: string
+  grokHome?: string
   devinHome?: string
   input?: Record<string, unknown>
 }
@@ -45,6 +46,7 @@ function runHook(opts: RunHookOpts): Promise<string> {
     if (opts.claudeProjectsDir) args.push('--claude-projects-dir', opts.claudeProjectsDir)
     if (opts.codexHome) args.push('--codex-home', opts.codexHome)
     if (opts.cursorHome) args.push('--cursor-home', opts.cursorHome)
+    if (opts.grokHome) args.push('--grok-home', opts.grokHome)
     if (opts.devinHome) args.push('--devin-home', opts.devinHome)
     const child = spawn(process.execPath, args, {
       env,
@@ -469,6 +471,61 @@ describe('hook notify tmux scope', () => {
     expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toMatchObject([
       { sessionId: 'fresh', tmuxPane: '%12' },
     ])
+  })
+})
+
+describe('hook notify Grok lifecycle', () => {
+  it('resolves updates.jsonl, registers lifecycle events, and uses only StopFailure as a close fallback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-grok-'))
+    tmpDirs.push(dir)
+    const grokHome = join(dir, 'grok')
+    const cwd = '/tmp/grok workspace'
+    const sessionId = '8184b11d-175e-46cb-9cee-cf41cafe70d2'
+    const transcript = join(grokHome, 'sessions', encodeURIComponent(cwd), sessionId, 'updates.jsonl')
+    mkdirSync(join(transcript, '..'), { recursive: true })
+    writeFileSync(transcript, '{}\n')
+    const { port, requests } = await collect()
+
+    await runHook({
+      port, tmuxPane: '%44', engine: 'grok', grokHome,
+      input: { hookEventName: 'session_start', sessionId, cwd, model: 'grok-4.5', cliVersion: '1.0.0' },
+    })
+    expect(requests).toEqual([{
+      url: '/api/hook/session-start',
+      body: expect.objectContaining({
+        engine: 'grok', hookEvent: 'SessionStart', sessionId, transcriptPath: transcript,
+        cwd, tmuxPane: '%44', model: 'grok-4.5', cliVersion: '1.0.0',
+      }),
+    }])
+
+    requests.splice(0)
+    await runHook({ port, tmuxPane: '%44', engine: 'grok', grokHome, input: { hookEventName: 'stop', sessionId, cwd } })
+    expect(requests).toEqual([])
+    await runHook({ port, tmuxPane: '%44', engine: 'grok', grokHome, input: { hookEventName: 'stop_failure', sessionId, cwd } })
+    expect(requests).toEqual([{
+      url: '/api/hook/turn-stop',
+      body: { sessionId, transcriptPath: transcript, status: 'error' },
+    }])
+  })
+
+  it('writes an offline fallback registry entry under the trusted Grok root', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-grok-offline-'))
+    tmpDirs.push(dir)
+    const grokHome = join(dir, 'grok')
+    const dataDir = join(dir, 'data')
+    const cwd = '/tmp/grok-offline'
+    const sessionId = '98ee3dac-175e-46cb-9cee-cf41cafe70d2'
+    const transcript = join(grokHome, 'sessions', encodeURIComponent(cwd), sessionId, 'updates.jsonl')
+    mkdirSync(join(transcript, '..'), { recursive: true })
+    writeFileSync(transcript, '{}\n')
+
+    await runHook({
+      port: 9, tmuxPane: '%45', engine: 'grok', grokHome, dataDir,
+      input: { hookEventName: 'session_start', sessionId, cwd },
+    })
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))).toMatchObject([{
+      sessionId, engine: 'grok', transcriptPath: transcript, projectDir: 'grok-offline', cwd, tmuxPane: '%45',
+    }])
   })
 })
 

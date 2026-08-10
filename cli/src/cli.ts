@@ -24,7 +24,7 @@ import { homedir } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { ENGINES, aliasesFor, engineBin, engineCommand, resolveEngine } from './lib/engineBin.js'
 import { refuseDuplicateAgent } from './lib/duplicateAgent.js'
@@ -77,6 +77,8 @@ import { KiloReader, readKiloMessages } from './engines/kilo/reader.js'
 import { lastKiloTurnText } from './engines/kilo/normalizer.js'
 import { MuseNormalizer, lastMuseTurnText, museMessagesToEvents } from './engines/muse/normalizer.js'
 import { AmpNormalizer, lastAmpTurnText, ampMessagesToEvents } from './engines/amp/normalizer.js'
+import { GrokNormalizer, lastGrokTurnText } from './engines/grok/normalizer.js'
+import { findGrokTranscript } from './engines/grok/session.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
 import { HermesReader, readHermesMessages } from './engines/hermes/reader.js'
 import { DevinReader, readDevinMessages } from './engines/devin/reader.js'
@@ -88,7 +90,7 @@ import {
   commandCodeRunErrorSummary,
   lastCommandCodeTurnText,
 } from './engines/commandcode/normalizer.js'
-import { SessionInputController } from './lib/sessionInput.js'
+import { acceptsInputBeforeSession, SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager } from './lib/runtimeProfile.js'
 import { RuntimeProfileController } from './lib/runtimeProfileController.js'
@@ -593,6 +595,7 @@ async function runForeground(token: string): Promise<void> {
   const piNormalizers = new Map<string, PiNormalizer>()
   const museNormalizers = new Map<string, MuseNormalizer>()
   const ampNormalizers = new Map<string, AmpNormalizer>()
+  const grokNormalizers = new Map<string, GrokNormalizer>()
   const hermesReaders = new Map<string, HermesReader>()
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
@@ -683,6 +686,7 @@ async function runForeground(token: string): Promise<void> {
       || piNormalizers.has(session.sessionId)
       || museNormalizers.has(session.sessionId)
       || ampNormalizers.has(session.sessionId)
+      || grokNormalizers.has(session.sessionId)
       || hermesReaders.has(session.sessionId)
       || devinReaders.has(session.sessionId)
       || commandcodeNormalizers.has(session.sessionId)
@@ -759,6 +763,13 @@ async function runForeground(token: string): Promise<void> {
       for (const line of lines) historyEvents.push(...normalizer.ingest(line))
       historyTurnOpen = normalizer.turnOpen
       ampNormalizers.set(session.sessionId, normalizer)
+    } else if (session.engine === 'grok') {
+      const normalizer = new GrokNormalizer()
+      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
+      historyTurnOpen = normalizer.turnOpen
+      grokNormalizers.set(session.sessionId, normalizer)
+      const capture = await captureTmuxPane(session.tmuxPane, 60)
+      if (capture) runtimeProfiles.ingestPane(session, capture, true)
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
@@ -905,6 +916,7 @@ async function runForeground(token: string): Promise<void> {
       if (s.engine === 'cursor') return lastCursorTurnText(lines)
       if (s.engine === 'muse') return lastMuseTurnText(lines)
       if (s.engine === 'amp') return lastAmpTurnText(lines)
+      if (s.engine === 'grok') return lastGrokTurnText(lines)
       if (s.engine === 'pi') return lastPiTurnText(lines)
       if (s.engine === 'commandcode') return lastCommandCodeTurnText(lines)
       return lastTurnTextFromRawLines(lines)
@@ -987,6 +999,7 @@ async function runForeground(token: string): Promise<void> {
         ?? piNormalizers.get(sessionId)?.turnOpen
         ?? museNormalizers.get(sessionId)?.turnOpen
         ?? ampNormalizers.get(sessionId)?.turnOpen
+        ?? grokNormalizers.get(sessionId)?.turnOpen
         ?? hermesReaders.get(sessionId)?.turnOpen
         ?? devinReaders.get(sessionId)?.turnOpen
         ?? commandcodeNormalizers.get(sessionId)?.turnOpen
@@ -1096,6 +1109,7 @@ async function runForeground(token: string): Promise<void> {
     piNormalizers.delete(sessionId)
     museNormalizers.delete(sessionId)
     ampNormalizers.delete(sessionId)
+    grokNormalizers.delete(sessionId)
     hermesReaders.get(sessionId)?.stop()
     hermesReaders.delete(sessionId)
     devinReaders.get(sessionId)?.stop()
@@ -1147,8 +1161,10 @@ async function runForeground(token: string): Promise<void> {
         // other engines here are read from their own stores by session id.
         const transcriptPath = candidate.engine === 'cursor'
           ? await findCursorTranscript(env.CURSOR_HOME, candidate.sessionId) ?? undefined
-          : undefined
-        if (candidate.engine === 'cursor' && !transcriptPath) continue
+          : candidate.engine === 'grok'
+            ? await findGrokTranscript(env.GROK_HOME, candidate.cwd, candidate.sessionId) ?? undefined
+            : undefined
+        if ((candidate.engine === 'cursor' || candidate.engine === 'grok') && !transcriptPath) continue
         const result = registry.register({
           engine: candidate.engine,
           sessionId: candidate.sessionId,
@@ -1449,6 +1465,19 @@ async function runForeground(token: string): Promise<void> {
         })
         return
       }
+      if (session.engine === 'grok') {
+        void (async () => {
+          await watcher.pollSession(sessionId)
+          const normalizer = grokNormalizers.get(sessionId)
+          if (status === 'error') {
+            announceTurnAborted(sessionId, 'grok', 'Grok ended the turn with an error')
+            emitSessionEvents(sessionId, normalizer?.abortTurn() ?? [])
+          }
+        })().catch((err) => {
+          console.error('[hooks] grok StopFailure hook failed:', err instanceof Error ? err.message : err)
+        })
+        return
+      }
       if (session.engine !== 'claude') return
       void (async () => {
         await watcher.pollSession(sessionId)
@@ -1506,7 +1535,7 @@ async function runForeground(token: string): Promise<void> {
       deviceE2eeConnected: backend.deviceE2eeConnected(),
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       fingerprint: backend.e2eeFingerprint(),
-      config: { watching: 'tmux Claude + Codex + Cursor + OpenCode + Pi + Hermes + Command Code + Devin sessions', dataDir: tildify(env.ADAPTER_DATA_DIR), port: daemonPort() },
+      config: { watching: 'tmux sessions across all supported engines (including Grok)', dataDir: tildify(env.ADAPTER_DATA_DIR), port: daemonPort() },
       sessions: registry.list().map((s) => ({ id: s.agentId, sessionId: s.sessionId, name: projectDisplayName(s), engine: s.engine, cwd: tildify(s.cwd ?? ''), tmuxPane: s.tmuxPane, updatedAt: s.updatedAt })),
       pairs: backend.listPairs(),
       pending: backend.pendingPair(),
@@ -1531,6 +1560,7 @@ async function runForeground(token: string): Promise<void> {
     installHermesHooks(hookPort)
     installDevinHooks(hookPort)
     installCommandCodeHooks(hookPort)
+    installGrokHooks(hookPort)
   }
   backend.setDashboardPort(hookPort) // surfaced to the web (e2e_status) so it can link here to approve
   console.log(`[cli] local dashboard → http://127.0.0.1:${hookPort}`)
@@ -1569,6 +1599,10 @@ async function runForeground(token: string): Promise<void> {
       } else if (session.engine === 'amp') {
         let normalizer = ampNormalizers.get(evt.sessionId)
         if (!normalizer) { normalizer = new AmpNormalizer(); ampNormalizers.set(evt.sessionId, normalizer) }
+        events = normalizer.ingest(evt.text)
+      } else if (session.engine === 'grok') {
+        let normalizer = grokNormalizers.get(evt.sessionId)
+        if (!normalizer) { normalizer = new GrokNormalizer(); grokNormalizers.set(evt.sessionId, normalizer) }
         events = normalizer.ingest(evt.text)
       } else if (session.engine === 'pi') {
         let normalizer = piNormalizers.get(evt.sessionId)
@@ -1613,6 +1647,7 @@ async function runForeground(token: string): Promise<void> {
           ?? piNormalizers.get(session.sessionId)?.turnOpen
           ?? museNormalizers.get(session.sessionId)?.turnOpen
           ?? ampNormalizers.get(session.sessionId)?.turnOpen
+          ?? grokNormalizers.get(session.sessionId)?.turnOpen
           ?? hermesReaders.get(session.sessionId)?.turnOpen
           ?? devinReaders.get(session.sessionId)?.turnOpen
           ?? commandcodeNormalizers.get(session.sessionId)?.turnOpen
@@ -1682,7 +1717,7 @@ async function runForeground(token: string): Promise<void> {
   //
   // Read just the footer, and only while such a session exists. NOT silent: a real change has to push to
   // the device, which is the whole point.
-  const PANE_POLLED_ENGINES = new Set(['devin', 'cursor'])
+  const PANE_POLLED_ENGINES = new Set(['devin', 'cursor', 'grok'])
   const PANE_POLL_MS = 15_000
   setInterval(() => {
     for (const session of registry.list()) {
@@ -1728,6 +1763,7 @@ async function runForeground(token: string): Promise<void> {
     piNormalizers.get(sessionId)?.closeTurn()
     museNormalizers.get(sessionId)?.closeTurn()
     ampNormalizers.get(sessionId)?.closeTurn()
+    grokNormalizers.get(sessionId)?.closeTurn()
     hermesReaders.get(sessionId)?.closeTurn()
     devinReaders.get(sessionId)?.closeTurn()
     commandcodeNormalizers.get(sessionId)?.closeTurn()
@@ -1786,7 +1822,7 @@ async function runForeground(token: string): Promise<void> {
       console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine} · "${preview(content, 40)}" → "${preview(adapted, 40)}"`)
     }
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · len=${adapted.length} · "${preview(adapted)}"`)
-    if (record && !record.sessionId) {
+    if (record && !record.sessionId && !acceptsInputBeforeSession(record.engine)) {
       const held = pendingBeforeBind.get(record.agentId) ?? []
       held.push(adapted)
       pendingBeforeBind.set(record.agentId, held)
@@ -1813,7 +1849,7 @@ async function runForeground(token: string): Promise<void> {
 
 
   backend.connect()
-  console.log(`[cli] dialing ${env.BACKEND_WS_URL}/api/adapter-ws · watching registered Claude + Codex + Cursor tmux sessions`)
+  console.log(`[cli] dialing ${env.BACKEND_WS_URL}/api/adapter-ws · watching registered sessions for ${ENGINES.length} engines`)
 
   // ── self-update: poll GCS for a newer bundle → verify+swap → restart IMMEDIATELY (supervised rollback) ──
   //

@@ -1,0 +1,17 @@
+  /workspace [Click here to Upgrade]                                  13K / 500K
+
+     > Before answering, ask which color I should report.
+
+     * Ask Which color should I report?
+
+    * Waiting on answers for Which color should I report?             4.2s
+
+  |  Which color should I report?
+  |
+  |  1 (o) Red   Report the color Red
+  |  2 (o) Blue  Report the color Blue
+  |  z (o) Type your answer here
+  |
+  |  up/down navigate - y copy                         Enter:submit
+
+  Tab:next answer  |  Esc:scrollback  |  Shift+x:dismiss

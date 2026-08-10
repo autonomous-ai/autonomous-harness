@@ -126,6 +126,33 @@ Three things that pattern gets wrong if nobody warns you, all found by running i
 
 ---
 
+## When hooks and transcript events disagree about ordering
+
+Grok Build supplies both global hooks and an ACP-style `updates.jsonl`, but they do different jobs.
+Use the hook to discover and register the session; use the transcript as the authoritative turn stream.
+The real Grok recording exposed five details that are easy to get wrong by copying Claude's hook path:
+
+- Grok hook payload fields use camelCase (`hookEventName`, `sessionId`, `workspaceRoot`), while the event
+  values themselves are lowercase snake case (`session_start`, `user_prompt_submit`, `stop_failure`). The
+  shared notifier originally expected Claude's fields and canonical event values; normalise both axes.
+- A normal `Stop` hook was persisted before the final `agent_message_chunk` and `turn_completed` records.
+  Closing on that hook drops the actual answer, so Grok closes a normal turn only on `turn_completed`;
+  `StopFailure` remains a hook backstop for failed turns.
+- `spawn_subagent` is reported as a `Task`, and that tool result means only that the background task was
+  accepted. Its row stays open until the separate `subagent_finished` update arrives.
+- The planning tool is `todo_write`, not another engine's similarly named tool. It maps to `TodoWrite`
+  so `input.todos[].content` reaches the device checklist.
+- Session directories usually encode the cwd as one URL component. Long paths live under a hash instead,
+  with the original cwd in `.cwd`; discovery and restart repair must handle both layouts.
+- Grok creates no session when the TUI merely opens. The first prompt creates it and fires the hooks, so
+  a remote first prompt must be injected into the launcher's pane before a session id exists. Holding it
+  until registration deadlocks on the very `UserPromptSubmit` event that registration needs.
+
+The recorded envelope is `{timestamp, method, params:{sessionId, update, _meta}}`. Keep its fixture as a
+real recording: a hand-written sequence would not reveal the Stop-before-final-message ordering above.
+
+---
+
 ## Before you open a PR
 
 Open an issue first with:

@@ -27,6 +27,7 @@ import { parseMuseQuestionPane } from '../engines/muse/askQuestion.js'
 import { ampSelectionKeys, parseAmpQuestionPane } from '../engines/amp/askQuestion.js'
 import { kiloSelectionKeys, parseKiloQuestionPane } from '../engines/kilo/askQuestion.js'
 import { parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
+import { parseGrokQuestionPane } from '../engines/grok/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
 export interface ShapedQuestion {
@@ -125,6 +126,7 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   // Kilo's is the same kind of prompt but laid out HORIZONTALLY, sharing its line with the key hints —
   // it is a fork of opencode that did not keep opencode's dialog.
   if (engine === 'kilo') return parseKiloQuestionPane(capture)
+  if (engine === 'grok') return parseGrokQuestionPane(capture)
   // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
   if (engine === 'opencode') {
@@ -513,7 +515,7 @@ export interface QuestionWatcherDeps {
 const POLL_MS = 1500
 // Amp is here for its PERMISSION prompt, not a question tool — it has none. That prompt is drawn only in
 // the pane and recorded nowhere, so polling the pane is the only way it is ever seen.
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo'])
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

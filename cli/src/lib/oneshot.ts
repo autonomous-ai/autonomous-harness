@@ -1,8 +1,8 @@
-/** Disposable, pre-spawned Claude/Codex/Cursor processes used by the device turn recap. */
+/** Disposable one-shot processes used by device recaps and voice routing. */
 
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { readFile, readdir, rm, unlink } from 'fs/promises'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { chmod, copyFile, mkdtemp, readFile, readdir, rm, unlink } from 'fs/promises'
 import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { homedir, tmpdir, userInfo } from 'os'
@@ -995,6 +995,98 @@ export function runCursorOneShot(opts: OneShotOptions): Promise<OneShotResult> {
     return runDirect('cursor', opts)
   }
   return pool.run('cursor', opts)
+}
+
+/** The measured Grok 1.0.0 headless invocation. A fresh GROK_HOME contains every persisted session. */
+export function grokOneShotSpawn(
+  opts: Pick<OneShotOptions, 'prompt' | 'model' | 'effort' | 'cwd'>,
+  scratchHome: string,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  const args = [
+    '--cwd', opts.cwd,
+    '--always-approve', '--no-memory', '--no-plan', '--max-turns', '1',
+    '--output-format', 'json',
+    ...(opts.model ? ['--model', opts.model] : []),
+    ...(opts.effort ? ['--reasoning-effort', opts.effort] : []),
+    '-p', opts.prompt,
+  ]
+  const childEnv: NodeJS.ProcessEnv = { ...parentEnv, GROK_HOME: scratchHome }
+  delete childEnv.TMUX
+  delete childEnv.TMUX_PANE
+  delete childEnv.MACHINE_ID
+  return { args, env: childEnv }
+}
+
+function grokOutputText(stdout: string): string {
+  const candidates = [stdout.trim(), ...stdout.trim().split('\n').reverse()]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      const parsed = JSON.parse(candidate) as { text?: unknown; result?: unknown }
+      if (typeof parsed.text === 'string') return parsed.text.trim()
+      if (typeof parsed.result === 'string') return parsed.result.trim()
+    } catch { /* try the next complete JSON value */ }
+  }
+  return ''
+}
+
+/** Grok takes its print prompt on argv, so it cannot be pre-warmed. Its real CLI always persists a
+ * session; isolating GROK_HOME and deleting it afterwards is the no-pollution equivalent. */
+export async function runGrokOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) throw Object.assign(new Error('grok one-shot aborted'), { name: 'AbortError' })
+  mkdirSync(opts.cwd, { recursive: true })
+  const scratchHome = await mkdtemp(join(opts.cwd, '.grok-recap-'))
+  try {
+    // Copy auth/config into the short-lived home. A symlink would keep session writes isolated but still
+    // let a token refresh or config migration mutate the user's real files through the link.
+    for (const name of ['auth.json', 'config.toml']) {
+      const source = join(env.GROK_HOME, name)
+      if (!existsSync(source)) continue
+      const target = join(scratchHome, name)
+      await copyFile(source, target)
+      await chmod(target, 0o600)
+    }
+    const { args, env: processEnv } = grokOneShotSpawn(opts, scratchHome)
+    const timeoutMs = opts.timeoutMs ?? 60_000
+    return await new Promise<OneShotResult>((resolve, reject) => {
+      const child = spawn(env.GROK_PATH || 'grok', args, {
+        cwd: opts.cwd, env: processEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      let settled = false
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        fn()
+      }
+      const kill = (): void => killGroup(child)
+      const onAbort = (): void => {
+        finish(() => reject(Object.assign(new Error('grok one-shot aborted'), { name: 'AbortError' })))
+        kill()
+      }
+      const timer = setTimeout(() => {
+        finish(() => reject(new Error(`grok one-shot timed out after ${timeoutMs}ms`)))
+        kill()
+      }, timeoutMs)
+      opts.signal?.addEventListener('abort', onAbort)
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+      child.on('error', (err) => finish(() => reject(err)))
+      child.on('close', (code) => {
+        const text = grokOutputText(stdout)
+        finish(() => {
+          if (!text) reject(new Error(`grok one-shot exited ${code}: ${stderr.slice(0, 500)}`))
+          else resolve({ text, sessionId: null })
+        })
+      })
+    })
+  } finally {
+    await rm(scratchHome, { recursive: true, force: true }).catch(() => {})
+  }
 }
 
 function hermesBin(): string {

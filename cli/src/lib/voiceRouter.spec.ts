@@ -5,9 +5,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // consumed by routeVoiceTask's await — this avoids tinyspy's async settled-result tracking leaving an
 // unhandled rejection once a resolved test has run on the same spy. The vi.fn is kept only for call counts.
 const runRouterOneShot = vi.fn()
+const runGrokOneShot = vi.fn()
 let routerImpl: (o: unknown) => Promise<{ text: string; sessionId: null }> = async () => ({ text: '', sessionId: null })
 vi.mock('./oneshot.js', () => ({
   runRouterOneShot: (...args: unknown[]) => { runRouterOneShot(...args); return routerImpl(args[0]) },
+  runGrokOneShot: (...args: unknown[]) => { runGrokOneShot(...args); return routerImpl(args[0]) },
   configureRouterOneShot: vi.fn(),
   setRouterOneShotDeviceConnected: vi.fn(),
   shutdownRouterOneShot: vi.fn(),
@@ -97,7 +99,7 @@ describe('buildRouterPrompt', () => {
 })
 
 describe('routeVoiceTask', () => {
-  beforeEach(() => { runRouterOneShot.mockReset(); routerImpl = async () => ({ text: '', sessionId: null }) })
+  beforeEach(() => { runRouterOneShot.mockReset(); runGrokOneShot.mockReset(); routerImpl = async () => ({ text: '', sessionId: null }) })
 
   it('returns needNewAgent for an empty machine WITHOUT calling the LLM', async () => {
     const d = await routeVoiceTask('anything', [])
@@ -180,10 +182,14 @@ describe('chooseRouterEngine', () => {
     expect(chooseRouterEngine([{ engine: 'hermes' }, { engine: 'devin' }])).toBeNull()
     expect(chooseRouterEngine([])).toBeNull()
   })
+
+  it('uses Grok when it is the only routable CLI', () => {
+    expect(chooseRouterEngine([{ engine: 'grok' }, { engine: 'hermes' }])).toBe('grok')
+  })
 })
 
 describe('routeVoiceTask engine selection', () => {
-  beforeEach(() => { runRouterOneShot.mockReset(); routerImpl = async () => ({ text: '', sessionId: null }) })
+  beforeEach(() => { runRouterOneShot.mockReset(); runGrokOneShot.mockReset(); routerImpl = async () => ({ text: '', sessionId: null }) })
 
   it('classifies with the engine the agents run on', async () => {
     routerImpl = async () => ({ text: '{"agentId":"2","confidence":0.9,"reason":"auth"}', sessionId: null })
@@ -210,6 +216,17 @@ describe('routeVoiceTask engine selection', () => {
       { id: '2', name: 'B', engine: 'codex' },
     ])
     expect((runRouterOneShot.mock.calls[0][1] as { model?: string }).model).toBe('')
+  })
+
+  it('routes a Grok-only machine through the isolated direct one-shot', async () => {
+    routerImpl = async () => ({ text: '{"agentId":"2","confidence":0.9,"reason":"auth"}', sessionId: null })
+    const agents: RouterAgent[] = [
+      { id: '1', name: 'Frontend', engine: 'grok' },
+      { id: '2', name: 'Auth', engine: 'grok' },
+    ]
+    await expect(routeVoiceTask('login broken', agents)).resolves.toMatchObject({ agentId: '2' })
+    expect(runGrokOneShot).toHaveBeenCalledOnce()
+    expect(runRouterOneShot).not.toHaveBeenCalled()
   })
 
   it('keeps Claude on its own small model', () => {

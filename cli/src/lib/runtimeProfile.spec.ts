@@ -18,7 +18,7 @@ afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
-function session(engine: 'claude' | 'codex' | 'cursor'): RegisteredSession {
+function session(engine: RegisteredSession['engine']): RegisteredSession {
   return {
     sessionId: 'session:1', engine, launcherId: 'h1', agentId: 'h1', boundAt: 0, transcriptPath: '/tmp/session.jsonl', projectDir: 'tmp', cwd: '/tmp',
     tmuxPane: '%1', source: null, title: null, model: null,
@@ -50,7 +50,7 @@ describe('RuntimeProfileManager', () => {
     // Every engine that can produce options must also parse them back. Widening the picker to a new
     // engine and forgetting this line is silent: the id round-trips through web and device fine, then
     // setProfile rejects it as INVALID_RUNTIME_PROFILE the moment someone picks a row.
-    for (const engine of ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse']) {
+    for (const engine of ['claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok']) {
       expect(parseRuntimeProfile(`runtime-v1:s1:${engine}:some-model@high`)).toMatchObject({ engine })
     }
     expect(parseRuntimeProfile('runtime-v1:cursor-1:cursor:gpt-5.6-sol@none')).toMatchObject({
@@ -92,7 +92,7 @@ describe('RuntimeProfileManager', () => {
     // View-only engines still SHOW what they run (the ingest paths do that); they just have nothing to
     // pick and nothing to drive. Both gates are asserted: an empty catalogue, and a refusal to control.
     const manager = new RuntimeProfileManager()
-    for (const engine of ['cursor', 'commandcode', 'devin', 'pi', 'opencode', 'hermes'] as const) {
+    for (const engine of ['cursor', 'commandcode', 'devin', 'pi', 'opencode', 'hermes', 'grok'] as const) {
       const value = { ...session('cursor'), engine }
       expect(supportsNativeRuntimeControl(value)).toBe(false)
       await expect(manager.modelsForSession(value)).resolves.toEqual([])
@@ -123,6 +123,23 @@ describe('RuntimeProfileManager', () => {
       engine: 'cursor',
       model: 'gpt-5.6-sol',
       effort: 'auto',
+    })
+  })
+
+  it('observes Grok model metadata and its live footer effort', () => {
+    const manager = new RuntimeProfileManager()
+    const value = session('grok')
+    manager.hydrate(value, [])
+
+    manager.ingest(value, JSON.stringify({
+      params: { update: { _meta: { modelId: 'grok-4.5' } } },
+    }))
+    manager.ingestPane(value, 'Grok 4.5 (medium) · always-approve')
+
+    expect(parseRuntimeProfile(manager.selectedModel(value))).toMatchObject({
+      engine: 'grok',
+      model: 'grok-4.5',
+      effort: 'medium',
     })
   })
 

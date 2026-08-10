@@ -37,6 +37,8 @@ describe('default permission flags', () => {
       // the root command rejects both. Adding either would stop the agent starting at all. The recap
       // one-shot DOES pass `--auto`, because it invokes the `run` subcommand — see lib/oneshot.ts.
       kilo: [],
+      // Documented by Grok 1.0.0 and reflected in the live TUI footer as `always-approve`.
+      grok: ['--always-approve'],
     })
   })
 
@@ -47,6 +49,7 @@ describe('default permission flags', () => {
     expect(permissionArgsFor('claude', ['--permission-mode', 'plan'])).toEqual([])
     expect(permissionArgsFor('devin', ['--permission-mode', 'accept-edits'])).toEqual([])
     expect(permissionArgsFor('hermes', ['--safe-mode'])).toEqual([])
+    expect(permissionArgsFor('grok', ['--permission-mode', 'auto'])).toEqual([])
     // `--flag=value` is the same choice as `--flag value`.
     expect(permissionArgsFor('claude', ['--permission-mode=plan'])).toEqual([])
   })
