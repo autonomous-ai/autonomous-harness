@@ -64,7 +64,7 @@ After joining, start each agent yourself in tmux with its normal vendor command.
 process; it does not launch the CLI or choose its permission/trust flags:
 
 ```bash
-tmux new -s work
+tmux new
 claude                    # or: codex, agent, opencode, pi, hermes, cmd, devin, muse, amp, kilo, grok
 ```
 
