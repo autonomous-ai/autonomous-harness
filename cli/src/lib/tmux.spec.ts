@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import { engineProcessMatchScore, parseProcessRow, resumeSessionId } from './tmux.js'
+
+const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwnershipSnapshot => ({
+  cursorFileKeys: new Set(cursor),
+  grokFileKeys: new Set(grok),
+  conflictingFileKeys: new Set(cursor.filter((key) => grok.includes(key))),
+  agentCandidates: [],
+  cursorAgentCandidates: [],
+  grokCandidates: [],
+})
 
 describe('tmux process primitives', () => {
   it('parses a process whose comm field contains spaces', () => {
@@ -13,10 +23,25 @@ describe('tmux process primitives', () => {
   })
 
   it('recognises stable installed binary forms', () => {
-    // Exact canonical/configured commands outrank vendor package-layout heuristics.
-    expect(engineProcessMatchScore({ executable: 'devin', args: 'devin' }, 'devin')).toBe(4)
+    expect(engineProcessMatchScore({ executable: 'devin', args: 'devin' }, 'devin')).toBe(3)
     expect(engineProcessMatchScore({ executable: 'muse-bin-0.1.0-R708.1', args: 'muse-bin-0.1.0-R708.1' }, 'muse')).toBe(3)
-    expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(4)
+    expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(3)
+  })
+
+  it('assigns the colliding agent basename only from executable ownership', () => {
+    const cursor = ownership(['cursor-file'], ['grok-file'])
+    const grok = ownership(['cursor-file'], ['grok-file'])
+    const cursorRow = { executable: 'agent', args: 'agent', imageFileKey: 'cursor-file' }
+    const grokRow = { executable: 'agent', args: 'agent', imageFileKey: 'grok-file' }
+
+    expect(engineProcessMatchScore(cursorRow, 'cursor', cursor)).toBe(4)
+    expect(engineProcessMatchScore(cursorRow, 'grok', cursor)).toBe(0)
+    expect(engineProcessMatchScore(grokRow, 'grok', grok)).toBe(4)
+    expect(engineProcessMatchScore(grokRow, 'cursor', grok)).toBe(0)
+    expect(engineProcessMatchScore({ executable: 'agent', args: 'agent' }, 'cursor', cursor)).toBe(0)
+    const conflict = ownership(['same-file'], ['same-file'])
+    expect(engineProcessMatchScore({ executable: 'agent', args: 'agent', imageFileKey: 'same-file' }, 'cursor', conflict)).toBe(0)
+    expect(engineProcessMatchScore({ executable: 'agent', args: 'agent', imageFileKey: 'same-file' }, 'grok', conflict)).toBe(0)
   })
 
   it('extracts only explicit resume ids', () => {

@@ -8,6 +8,7 @@ import { randomUUID } from 'crypto'
 import { homedir, tmpdir, userInfo } from 'os'
 import { env } from '../config/env.js'
 import { findCursorTranscript } from '../engines/cursor/discovery.js'
+import { cursorRuntimeBin } from './engineBin.js'
 import {
   DisposableOneShotPool,
   type ActiveEngineCounts,
@@ -55,7 +56,9 @@ export function trustDevinWorkspace(dir: string, onError?: (message: string) => 
 }
 
 function cursorBin(): string {
-  return env.CURSOR_PATH || 'agent'
+  const bin = cursorRuntimeBin()
+  if (bin) return bin
+  throw new Error('Cursor CLI command is ambiguous or unavailable; install cursor-agent or set CURSOR_PATH to its absolute path')
 }
 
 function buildEnv(): NodeJS.ProcessEnv {

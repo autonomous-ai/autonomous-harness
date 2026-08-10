@@ -7,10 +7,22 @@
  */
 
 import { execFile } from 'node:child_process'
-import { ENGINES } from './engineBin.js'
+import {
+  agentAliasOwner,
+  agentCommandOwnershipSnapshot,
+  ENGINES,
+  type AgentCommandOwnershipSnapshot,
+} from './engineBin.js'
 import type { AgentEngine } from '../engines/types.js'
 import type { ProcessIdentity, RegisteredSession } from './registry.js'
-import { engineProcessMatchScore, parseProcessRow, resumeSessionId, type ProcessRow } from './tmux.js'
+import {
+  ambiguousAgentProcess,
+  engineProcessMatchScore,
+  enrichProcessRows,
+  parseProcessRow,
+  resumeSessionId,
+  type ProcessRow,
+} from './tmux.js'
 
 export interface TmuxPaneSnapshot {
   tmuxPane: string
@@ -37,7 +49,7 @@ export interface TmuxAgentDiscoveryDeps {
   onDiscovered: (agent: DiscoveredTmuxAgent) => void | Promise<void>
   onObserved: (agent: DiscoveredTmuxAgent, current: RegisteredSession) => void | Promise<void>
   onRemoved: (agent: RegisteredSession, reason: string) => void | Promise<void>
-  probe?: (daemonPid: number) => Promise<TmuxAgentProbe>
+  probe?: (daemonPid: number, hints?: ReadonlyMap<string, AgentEngine>) => Promise<TmuxAgentProbe>
   daemonPid?: number
 }
 
@@ -97,26 +109,40 @@ function paneOwner(
   pane: TmuxPaneSnapshot,
   rows: readonly ProcessRow[],
   excluded: ReadonlySet<number>,
+  ownership: AgentCommandOwnershipSnapshot,
+  hintedEngine?: AgentEngine,
 ): { agent: DiscoveredTmuxAgent | null; ambiguous: boolean } {
   const byPid = new Map(rows.map((row) => [row.pid, row]))
   const children = childrenByParent(rows)
   const queue: Array<{ pid: number; depth: number }> = [{ pid: pane.rootPid, depth: 0 }]
   const matches: Array<{ row: ProcessRow; engine: AgentEngine; depth: number; score: number }> = []
+  let unresolvedAliasDepth = Number.POSITIVE_INFINITY
 
   while (queue.length) {
     const current = queue.shift()!
     const row = byPid.get(current.pid)
     if (row && !excluded.has(row.pid)) {
       for (const engine of ENGINES) {
-        const score = engineProcessMatchScore(row, engine)
+        const score = engineProcessMatchScore(row, engine, ownership)
         if (score > 0) matches.push({ row, engine, depth: current.depth, score })
+      }
+      if (ambiguousAgentProcess(row, ownership)) {
+        // A vendor hook is pane-scoped evidence from the running CLI. It may resolve an otherwise bare
+        // `agent`, but can never override strong file/package evidence for the other vendor.
+        const aliasOwner = agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership)
+        if (aliasOwner === 'unknown' && (hintedEngine === 'cursor' || hintedEngine === 'grok')) {
+          matches.push({ row, engine: hintedEngine, depth: current.depth, score: 1 })
+        } else {
+          unresolvedAliasDepth = Math.min(unresolvedAliasDepth, current.depth)
+        }
       }
     }
     for (const child of children.get(current.pid) ?? []) queue.push({ pid: child.pid, depth: current.depth + 1 })
   }
 
-  if (!matches.length) return { agent: null, ambiguous: false }
+  if (!matches.length) return { agent: null, ambiguous: Number.isFinite(unresolvedAliasDepth) }
   const shallowest = Math.min(...matches.map((match) => match.depth))
+  if (unresolvedAliasDepth <= shallowest) return { agent: null, ambiguous: true }
   const atDepth = matches.filter((match) => match.depth === shallowest)
   const strongest = Math.max(...atDepth.map((match) => match.score))
   const finalists = atDepth.filter((match) => match.score === strongest)
@@ -142,12 +168,14 @@ export function discoverTmuxAgentsFromSnapshot(
   panes: readonly TmuxPaneSnapshot[],
   rows: readonly ProcessRow[],
   daemonPid: number,
+  ownership = agentCommandOwnershipSnapshot(),
+  hints: ReadonlyMap<string, AgentEngine> = new Map(),
 ): Extract<TmuxAgentProbe, { ok: true }> {
   const excluded = daemonDescendants(rows, daemonPid)
   const agents: DiscoveredTmuxAgent[] = []
   const ambiguousPanes = new Set<string>()
   for (const pane of panes) {
-    const owner = paneOwner(pane, rows, excluded)
+    const owner = paneOwner(pane, rows, excluded, ownership, hints.get(pane.tmuxPane))
     if (owner.ambiguous) ambiguousPanes.add(pane.tmuxPane)
     else if (owner.agent) agents.push(owner.agent)
   }
@@ -155,15 +183,25 @@ export function discoverTmuxAgentsFromSnapshot(
 }
 
 /** One tmux call plus one ps call for a complete reconciliation pass. */
-export async function probeTmuxAgents(daemonPid = process.pid): Promise<TmuxAgentProbe> {
+export async function probeTmuxAgents(
+  daemonPid = process.pid,
+  hints: ReadonlyMap<string, AgentEngine> = new Map(),
+): Promise<TmuxAgentProbe> {
   const [tmux, ps] = await Promise.all([
     execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_path}'], 2_000),
     execText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3_000),
   ])
   if (!tmux.ok) return { ok: false, error: `tmux list-panes failed: ${tmux.error}` }
   if (!ps.ok) return { ok: false, error: `process table failed: ${ps.error}` }
-  const rows = ps.stdout.split('\n').map(parseProcessRow).filter((row): row is ProcessRow => row !== null)
-  return discoverTmuxAgentsFromSnapshot(parsePanes(tmux.stdout), rows, daemonPid)
+  const parsed = ps.stdout.split('\n').map(parseProcessRow).filter((row): row is ProcessRow => row !== null)
+  const rows = await enrichProcessRows(parsed)
+  return discoverTmuxAgentsFromSnapshot(
+    parsePanes(tmux.stdout),
+    rows,
+    daemonPid,
+    agentCommandOwnershipSnapshot(),
+    hints,
+  )
 }
 
 export function sameRuntime(
@@ -193,6 +231,8 @@ export class TmuxAgentReconciler {
   private pending = false
   private inFlight: Promise<void> | null = null
   private timer: NodeJS.Timeout | null = null
+  private readonly hints = new Map<string, AgentEngine>()
+  private readonly warnedAmbiguousPanes = new Set<string>()
 
   constructor(private readonly deps: TmuxAgentDiscoveryDeps) {}
 
@@ -218,6 +258,12 @@ export class TmuxAgentReconciler {
     return this.inFlight
   }
 
+  /** A validated vendor hook may resolve the otherwise colliding bare `agent` command in one pane. */
+  triggerHint(tmuxPane: string, engine: AgentEngine): Promise<void> {
+    this.hints.set(tmuxPane, engine)
+    return this.trigger()
+  }
+
   private async drain(): Promise<void> {
     while (this.pending) {
       this.pending = false
@@ -226,10 +272,20 @@ export class TmuxAgentReconciler {
   }
 
   private async reconcileOnce(): Promise<void> {
-    const probe = await (this.deps.probe ?? probeTmuxAgents)(this.deps.daemonPid ?? process.pid)
+    const hints = new Map(this.hints)
+    const probe = await (this.deps.probe ?? probeTmuxAgents)(this.deps.daemonPid ?? process.pid, hints)
     if (!probe.ok) {
       console.warn(`[discovery] ${probe.error}; keeping ${this.deps.current().length} agent(s)`)
       return
+    }
+    for (const pane of hints.keys()) this.hints.delete(pane)
+    for (const pane of probe.ambiguousPanes) {
+      if (this.warnedAmbiguousPanes.has(pane)) continue
+      this.warnedAmbiguousPanes.add(pane)
+      console.warn(`[discovery] ${pane} has an unresolved agent command; set CURSOR_PATH or GROK_PATH to an absolute vendor CLI path`)
+    }
+    for (const pane of [...this.warnedAmbiguousPanes]) {
+      if (!probe.ambiguousPanes.has(pane)) this.warnedAmbiguousPanes.delete(pane)
     }
 
     const observedKeys = new Set(probe.agents.map(runtimeKey))

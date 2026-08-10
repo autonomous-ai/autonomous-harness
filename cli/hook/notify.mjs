@@ -18,7 +18,9 @@ import http from 'node:http'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
+  accessSync,
   closeSync,
+  constants,
   mkdirSync,
   openSync,
   readFileSync,
@@ -30,7 +32,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, join, relative } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { homedir, uptime } from 'node:os'
 
 const BOOT_TOLERANCE_SEC = 120
@@ -83,6 +85,7 @@ function paths() {
     bootFile: join(dataDir, 'registry-boot'),
     claudeProjectsDir,
     codexSessionsDir: join(codexHome, 'sessions'),
+    grokHome,
     grokSessionsDir: join(grokHome, 'sessions'),
     cursorProjectsDir: join(cursorHome, 'projects'),
     hermesDb: join(hermesHome, 'state.db'),
@@ -243,18 +246,76 @@ const ENGINE_PATH_ENV = {
   commandcode: 'COMMANDCODE_PATH', devin: 'DEVIN_PATH', muse: 'MUSE_PATH', grok: 'GROK_PATH',
 }
 
-function processMatchScore(row, engine) {
+function executableIdentity(path) {
+  try {
+    const realPath = realpathSync(path)
+    const stat = statSync(realPath)
+    return stat.isFile() ? { realPath, fileKey: `${String(stat.dev)}:${String(stat.ino)}` } : null
+  } catch {
+    return null
+  }
+}
+
+function commandIdentity(command) {
+  if (!command) return null
+  if (isAbsolute(command) || command.includes('/') || command.includes('\\')) {
+    try { accessSync(command, constants.X_OK) } catch { return null }
+    return executableIdentity(command)
+  }
+  for (const dir of String(process.env.PATH || '').split(delimiter).filter(Boolean)) {
+    const path = join(dir, command)
+    try { accessSync(path, constants.X_OK) } catch { continue }
+    const identity = executableIdentity(path)
+    if (identity) return identity
+  }
+  return null
+}
+
+function hookCommandOwnership(p) {
+  const agent = commandIdentity('agent')
+  const cursor = commandIdentity(process.env.CURSOR_PATH || 'cursor-agent')
+  const grok = commandIdentity(process.env.GROK_PATH || 'grok') || commandIdentity(join(p.grokHome, 'bin', 'grok'))
+  const cursorKeys = new Set(cursor ? [cursor.fileKey] : [])
+  const grokKeys = new Set(grok ? [grok.fileKey] : [])
+  if (agent && /\/cursor-agent\/versions\/[^/]+\/cursor-agent$/.test(agent.realPath.split(sep).join('/'))) {
+    cursorKeys.add(agent.fileKey)
+  }
+  return { agentFileKey: agent?.fileKey, cursorKeys, grokKeys }
+}
+
+function hookFileOwner(fileKey, ownership) {
+  if (!fileKey) return 'unknown'
+  const isCursor = ownership.cursorKeys.has(fileKey)
+  const isGrok = ownership.grokKeys.has(fileKey)
+  if (isCursor && isGrok) return 'conflict'
+  if (isCursor) return 'cursor'
+  if (isGrok) return 'grok'
+  return 'unknown'
+}
+
+function processMatchScore(row, engine, ownership, allowAgentHint = false) {
   const executable = basename(row.executable).toLowerCase()
   const entrypoint = processEntrypoint(row.args).toLowerCase()
   const entrybase = basename(entrypoint).toLowerCase()
-  const configured = String(process.env[ENGINE_PATH_ENV[engine]] || ENGINE_COMMANDS[engine] || '').toLowerCase()
+  const explicit = process.env[ENGINE_PATH_ENV[engine]]
+  const configured = String(explicit || ENGINE_COMMANDS[engine] || '').toLowerCase()
   const configuredBase = basename(configured).toLowerCase()
-  if (configuredBase && (executable === configuredBase || entrybase === configuredBase
-    || row.executable.toLowerCase() === configured || entrypoint === configured)) return 4
+  if (configuredBase && configuredBase !== 'agent' && (row.executable.toLowerCase() === configured
+    || entrypoint === configured || executable === configuredBase || entrybase === configuredBase)) return 4
   if (engine === 'codex') return /@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/.test(entrypoint) ? 2 : 0
   if (engine === 'cursor') {
     if (executable === 'cursor-agent' || entrybase === 'cursor-agent') return 3
-    return /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/.test(entrypoint) ? 2 : 0
+    if (argvTokens(row.args).slice(0, 8).some((token) =>
+      /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/i.test(token))) return 3
+    if (executable === 'agent' || entrybase === 'agent') {
+      const aliasOwner = hookFileOwner(row.imageFileKey, ownership) !== 'unknown'
+        ? hookFileOwner(row.imageFileKey, ownership)
+        : hookFileOwner(ownership.agentFileKey, ownership)
+      if (aliasOwner === 'cursor') return 4
+      if (aliasOwner === 'grok' || aliasOwner === 'conflict') return 0
+      return allowAgentHint ? 1 : 0
+    }
+    return 0
   }
   if (engine === 'commandcode') {
     if (/^\s*⌘(?:\s|$)/.test(row.executable) || /^\s*⌘(?:\s|$)/.test(row.args)
@@ -266,7 +327,18 @@ function processMatchScore(row, engine) {
   if (engine === 'hermes') return /hermes-agent[\/\\]hermes$/.test(entrypoint)
     || /^(?:hermes|hermes_cli)(?:\.|$)/.test(entrypoint) ? 2 : 0
   if (engine === 'muse') return /^muse-bin-/.test(executable) || /^muse-bin-/.test(entrybase) ? 3 : 0
-  if (engine === 'grok') return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
+  if (engine === 'grok') {
+    if (executable === 'grok' || entrybase === 'grok') return 3
+    if (executable === 'agent' || entrybase === 'agent') {
+      const aliasOwner = hookFileOwner(row.imageFileKey, ownership) !== 'unknown'
+        ? hookFileOwner(row.imageFileKey, ownership)
+        : hookFileOwner(ownership.agentFileKey, ownership)
+      if (aliasOwner === 'grok') return 4
+      if (aliasOwner === 'cursor' || aliasOwner === 'conflict') return 0
+      return allowAgentHint ? 1 : 0
+    }
+    return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
+  }
   return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
 }
 
@@ -288,12 +360,48 @@ async function processRows() {
   return rows
 }
 
+function aliasRows(rows) {
+  return rows.filter((row) => basename(row.executable).toLowerCase() === 'agent'
+    || basename(processEntrypoint(row.args)).toLowerCase() === 'agent')
+}
+
+async function enrichProcessImages(rows) {
+  const candidates = aliasRows(rows)
+  if (!candidates.length) return rows
+  const images = new Map()
+  if (process.platform === 'linux') {
+    for (const row of candidates) {
+      const identity = executableIdentity(`/proc/${row.pid}/exe`)
+      if (identity) images.set(row.pid, identity.fileKey)
+    }
+  } else if (process.platform === 'darwin') {
+    const stdout = await execFileText('lsof', ['-a', '-p', candidates.map((row) => row.pid).join(','), '-d', 'txt', '-Fn'], 1500)
+    let pid = null
+    let textFile = false
+    for (const line of String(stdout || '').split('\n')) {
+      if (/^p\d+$/.test(line)) {
+        pid = Number(line.slice(1))
+        textFile = false
+      } else if (line === 'ftxt') {
+        textFile = true
+      } else if (textFile && pid && line.startsWith('n') && !images.has(pid)) {
+        const identity = executableIdentity(line.slice(1).replace(/ \(deleted\)$/, ''))
+        if (identity) images.set(pid, identity.fileKey)
+        textFile = false
+      }
+    }
+  }
+  return rows.map((row) => images.has(row.pid) ? { ...row, imageFileKey: images.get(row.pid) } : row)
+}
+
 async function paneEngineProcess(pane, engine) {
   const rootPid = await panePid(pane)
   if (rootPid === undefined) return { state: 'unknown' }
   if (!rootPid) return { state: 'gone' }
-  const rows = await processRows()
-  if (!rows) return { state: 'unknown' }
+  const rawRows = await processRows()
+  if (!rawRows) return { state: 'unknown' }
+  const rows = await enrichProcessImages(rawRows)
+  const ownership = hookCommandOwnership(paths())
   const children = new Map()
   const byPid = new Map(rows.map((row) => [row.pid, row]))
   for (const row of rows) {
@@ -306,7 +414,7 @@ async function paneEngineProcess(pane, engine) {
   while (queue.length > 0) {
     const current = queue.shift()
     const row = byPid.get(current.pid)
-    const score = row ? processMatchScore(row, engine) : 0
+    const score = row ? processMatchScore(row, engine, ownership, true) : 0
     if (row && score > 0 && (!best || current.depth < best.depth || (current.depth === best.depth && score > best.score))) {
       best = { row, depth: current.depth, score }
     }

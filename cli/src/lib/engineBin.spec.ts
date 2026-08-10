@@ -1,5 +1,22 @@
-import { describe, expect, it } from 'vitest'
-import { ENGINE_CLI_COMMANDS, ENGINES } from './engineBin.js'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  agentAliasOwner,
+  agentCommandOwnershipSnapshot,
+  cursorRuntimeBin,
+  ENGINE_CLI_COMMANDS,
+  ENGINES,
+} from './engineBin.js'
+
+const originalPath = process.env.PATH
+const tempDirs: string[] = []
+
+afterEach(() => {
+  process.env.PATH = originalPath
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
 
 describe('canonical engine CLI commands', () => {
   it('keeps the user-facing 12-engine command contract exact and ordered', () => {
@@ -17,5 +34,35 @@ describe('canonical engine CLI commands', () => {
       ['kilo', 'kilo'],
       ['grok', 'grok'],
     ])
+  })
+
+  it('adapts agent ownership and Cursor recap command to PATH order without install-path assumptions', () => {
+    const root = mkdtempSync(join(tmpdir(), 'engine-bin-ownership-'))
+    tempDirs.push(root)
+    const cursorBin = join(root, 'custom-cursor-prefix', 'bin')
+    const grokBin = join(root, 'custom-grok-prefix', 'bin')
+    const cursorTarget = join(root, 'share', 'cursor-agent', 'versions', '2099.01.01', 'cursor-agent')
+    const grokTarget = join(root, 'downloads', 'renamed-grok-image')
+    mkdirSync(cursorBin, { recursive: true })
+    mkdirSync(grokBin, { recursive: true })
+    mkdirSync(join(cursorTarget, '..'), { recursive: true })
+    mkdirSync(join(grokTarget, '..'), { recursive: true })
+    writeFileSync(cursorTarget, '#!/bin/sh\n', { mode: 0o755 })
+    writeFileSync(grokTarget, 'grok', { mode: 0o755 })
+    symlinkSync(cursorTarget, join(cursorBin, 'agent'))
+    symlinkSync(cursorTarget, join(cursorBin, 'cursor-agent'))
+    symlinkSync(grokTarget, join(grokBin, 'agent'))
+    symlinkSync(grokTarget, join(grokBin, 'grok'))
+
+    process.env.PATH = [grokBin, cursorBin].join(delimiter)
+    let snapshot = agentCommandOwnershipSnapshot()
+    expect(agentAliasOwner([snapshot.agentCandidates[0]?.fileKey], snapshot)).toBe('grok')
+    expect(agentAliasOwner([snapshot.agentCandidates[1]?.fileKey], snapshot)).toBe('cursor')
+    expect(cursorRuntimeBin(snapshot)).toBe('cursor-agent')
+
+    process.env.PATH = [cursorBin, grokBin].join(delimiter)
+    snapshot = agentCommandOwnershipSnapshot()
+    expect(agentAliasOwner([snapshot.agentCandidates[0]?.fileKey], snapshot)).toBe('cursor')
+    expect(cursorRuntimeBin(snapshot)).toBe('agent')
   })
 })

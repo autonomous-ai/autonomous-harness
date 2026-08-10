@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { createServer } from 'http'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
@@ -54,6 +54,17 @@ function runHook(opts: RunHookOpts): Promise<string> {
       const processArgs = opts.processArgs ?? executable
       writeFileSync(join(binDir, 'tmux'), '#!/bin/sh\necho 7000\n', { mode: 0o755 })
       writeFileSync(join(binDir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '7000 1 zsh Mon Aug 10 10:00:00 2026 -zsh' '7001 7000 ${executable} Mon Aug 10 10:00:01 2026 ${processArgs}'\n`, { mode: 0o755 })
+      if (opts.processEngine === 'cursor') {
+        const target = join(binDir, 'cursor-agent-target')
+        writeFileSync(target, '#!/bin/sh\n', { mode: 0o755 })
+        symlinkSync(target, join(binDir, 'agent'))
+        symlinkSync(target, join(binDir, 'cursor-agent'))
+      } else if (opts.processEngine === 'grok') {
+        const target = join(binDir, 'grok-target')
+        writeFileSync(target, '#!/bin/sh\n', { mode: 0o755 })
+        symlinkSync(target, join(binDir, 'agent'))
+        symlinkSync(target, join(binDir, 'grok'))
+      }
       if (opts.hermesSource !== undefined) {
         const rows = opts.hermesSource === null ? '[]' : JSON.stringify([{ source: opts.hermesSource }])
         writeFileSync(join(binDir, 'sqlite3'), `#!/bin/sh\nprintf '%s\\n' '${rows}'\n`, { mode: 0o755 })
@@ -608,12 +619,21 @@ describe('hook notify Grok lifecycle', () => {
     writeFileSync(transcript, '{}\n')
 
     await runHook({
-      port: 9, tmuxPane: '%45', engine: 'grok', processEngine: 'grok', grokHome, dataDir,
+      port: 9, tmuxPane: '%45', engine: 'grok', processEngine: 'grok',
+      processExecutable: 'agent', processArgs: 'agent', grokHome, dataDir,
       input: { hookEventName: 'session_start', sessionId, cwd },
     })
     expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))).toMatchObject([{
       sessionId, engine: 'grok', transcriptPath: transcript, projectDir: 'grok-offline', cwd, tmuxPane: '%45',
     }])
+
+    const rejectedDataDir = join(dir, 'cursor-owned-agent-data')
+    await runHook({
+      port: 9, tmuxPane: '%46', engine: 'grok', processEngine: 'cursor',
+      processExecutable: 'agent', processArgs: 'agent', grokHome, dataDir: rejectedDataDir,
+      input: { hookEventName: 'session_start', sessionId, cwd },
+    })
+    expect(() => readFileSync(join(rejectedDataDir, 'registry.json'), 'utf8')).toThrow()
   })
 })
 

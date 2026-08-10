@@ -174,7 +174,7 @@ const envSchema = z.object({
   TMUX_REAP_INTERVAL_MS: z.string().default('5000').transform(Number),
   // Path to the `claude` CLI for the device turn-recap one-shot (else resolved from PATH).
   CLAUDE_PATH: z.string().optional(),
-  // Path to the Cursor Agent CLI for Cursor recap one-shots (else `agent` is resolved from PATH).
+  // Path to the Cursor Agent CLI for recap one-shots (else a verified `agent`/`cursor-agent` is used).
   CURSOR_PATH: z.string().optional(),
   // Path to the `opencode` CLI for OpenCode recap one-shots (else `opencode` is resolved from PATH).
   OPENCODE_PATH: z.string().optional(),

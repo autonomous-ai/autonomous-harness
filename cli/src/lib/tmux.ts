@@ -1,9 +1,17 @@
 /** tmux process matching, runtime validation, pane capture, and input injection. */
 
 import { execFile, spawn } from 'child_process'
+import { readlink } from 'node:fs/promises'
+import { platform } from 'node:os'
 import { basename } from 'path'
 import { registry, type ProcessIdentity, type RegisteredSession } from './registry.js'
-import { engineBin } from './engineBin.js'
+import {
+  agentAliasOwner,
+  agentCommandOwnershipSnapshot,
+  enginePathOverride,
+  executableFileIdentity,
+  type AgentCommandOwnershipSnapshot,
+} from './engineBin.js'
 
 function cleanPaneTitle(title: string): string | null {
   const cleaned = title
@@ -34,6 +42,10 @@ export function listPaneTitles(): Promise<Map<string, string>> {
 export interface ProcessRow extends ProcessIdentity {
   parentPid: number
   args: string
+  /** Ephemeral evidence only; never persisted or sent to another machine. */
+  imagePath?: string
+  imageFileKey?: string
+  entrypointFileKey?: string
 }
 
 function argvTokens(args: string): string[] {
@@ -79,6 +91,18 @@ function processEntrypoint(args: string): string {
   return tokens[index] ?? ''
 }
 
+function hasCursorPackageEntrypoint(args: string): boolean {
+  // Cursor's launcher uses `exec -a "$0" node .../index.js`, so argv[0] may stay `agent` instead of
+  // `node`. Restrict this scan to the executable prefix: prompt text can appear later and is not proof.
+  return argvTokens(args).slice(0, 8).some((token) =>
+    /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/i.test(token))
+}
+
+function agentAliasCandidate(row: Pick<ProcessRow, 'executable' | 'args'>): boolean {
+  if (basename(row.executable).toLowerCase() === 'agent') return true
+  return argvTokens(row.args).slice(0, 8).some((token) => basename(token).toLowerCase() === 'agent')
+}
+
 
 /**
  * One `ps -axo pid=,ppid=,comm=,lstart=,args=` line → a row.
@@ -107,8 +131,8 @@ export function parseProcessRow(line: string): ProcessRow | null {
 }
 
 /** The process table, or null when `ps` itself failed — "we could not look" is not "nothing is there". */
-function processRows(): Promise<ProcessRow[] | null> {
-  return new Promise((resolve) => {
+async function processRows(): Promise<ProcessRow[] | null> {
+  const rows = await new Promise<ProcessRow[] | null>((resolve) => {
     execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000 }, (err, stdout) => {
       if (err) { resolve(null); return }
       const rows: ProcessRow[] = []
@@ -118,6 +142,69 @@ function processRows(): Promise<ProcessRow[] | null> {
       }
       resolve(rows)
     })
+  })
+  return rows ? enrichProcessRows(rows) : null
+}
+
+function execText(command: string, args: string[], timeout: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(command, args, { timeout }, (err, stdout) => resolve(err ? null : stdout))
+  })
+}
+
+/** macOS has no /proc; one lsof call resolves every collision candidate's executable image. */
+async function darwinProcessImages(pids: readonly number[]): Promise<Map<number, string>> {
+  if (!pids.length) return new Map()
+  const stdout = await execText('lsof', ['-a', '-p', pids.join(','), '-d', 'txt', '-Fn'], 3000)
+  const images = new Map<number, string>()
+  if (stdout === null) return images
+  let pid: number | null = null
+  let textFile = false
+  for (const line of stdout.split('\n')) {
+    if (/^p\d+$/.test(line)) {
+      pid = Number(line.slice(1))
+      textFile = false
+    } else if (line === 'ftxt') {
+      textFile = true
+    } else if (textFile && pid && line.startsWith('n') && !images.has(pid)) {
+      images.set(pid, line.slice(1))
+      textFile = false
+    }
+  }
+  return images
+}
+
+/**
+ * Attach file identity only to rows that mention the colliding `agent` alias. The normal discovery pass
+ * remains one tmux read plus one ps read; Linux uses /proc and macOS adds at most one batched lsof call.
+ */
+export async function enrichProcessRows(rows: ProcessRow[]): Promise<ProcessRow[]> {
+  const candidates = rows.filter(agentAliasCandidate)
+  if (!candidates.length) return rows
+  const imagePaths = new Map<number, string>()
+  if (platform() === 'linux') {
+    await Promise.all(candidates.map(async (row) => {
+      const path = await readlink(`/proc/${row.pid}/exe`).catch(() => null)
+      if (path) imagePaths.set(row.pid, path)
+    }))
+  } else if (platform() === 'darwin') {
+    for (const [pid, path] of await darwinProcessImages(candidates.map((row) => row.pid))) imagePaths.set(pid, path)
+  }
+
+  return rows.map((row) => {
+    if (!agentAliasCandidate(row)) return row
+    const imagePath = imagePaths.get(row.pid)
+    const image = imagePath ? executableFileIdentity(imagePath.replace(/ \(deleted\)$/, '')) : null
+    const entrypoint = processEntrypoint(row.args)
+    const entrypointIdentity = entrypoint.includes('/') || entrypoint.includes('\\')
+      ? executableFileIdentity(entrypoint)
+      : null
+    return {
+      ...row,
+      ...(imagePath && { imagePath }),
+      ...(image && { imageFileKey: image.fileKey }),
+      ...(entrypointIdentity && { entrypointFileKey: entrypointIdentity.fileKey }),
+    }
   })
 }
 
@@ -132,18 +219,19 @@ function panePid(pane: string): Promise<number | null> {
 }
 
 export function engineProcessMatchScore(
-  row: Pick<ProcessRow, 'executable' | 'args'>,
+  row: Pick<ProcessRow, 'executable' | 'args' | 'imageFileKey' | 'entrypointFileKey'>,
   engine: RegisteredSession['engine'],
+  ownership = agentCommandOwnershipSnapshot(),
 ): number {
   const executable = basename(row.executable).toLowerCase()
   const entrypoint = processEntrypoint(row.args).toLowerCase()
   const entrybase = basename(entrypoint).toLowerCase()
-  // A user may point an engine at a symlink/custom install through `<ENGINE>_PATH`. Treat that configured
-  // executable exactly like the vendor command without baking its machine-specific directory into rules.
-  const configured = engineBin(engine).toLowerCase()
-  const configuredBase = basename(configured).toLowerCase()
-  if (configuredBase && (executable === configuredBase || entrybase === configuredBase
-    || row.executable.toLowerCase() === configured || entrypoint === configured)) return 4
+  // Only an explicit override is ownership evidence. A default command label is not: both Cursor and
+  // Grok ship `agent`, which is exactly the collision this matcher must resolve rather than assume away.
+  const configured = enginePathOverride(engine)?.toLowerCase()
+  const configuredBase = basename(configured ?? '').toLowerCase()
+  if (configured && configuredBase !== 'agent' && (row.executable.toLowerCase() === configured
+    || entrypoint === configured || executable === configuredBase || entrybase === configuredBase)) return 4
   if (engine === 'codex') {
     if (executable === 'codex' || entrybase === 'codex') return 3
     // npm/pnpm/bun global installs may leave node as `comm`; match the package entrypoint without
@@ -151,8 +239,9 @@ export function engineProcessMatchScore(
     return /@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'cursor') {
-    if (executable === 'agent' || executable === 'cursor-agent' || entrybase === 'agent' || entrybase === 'cursor-agent') return 3
-    return /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/.test(entrypoint) ? 2 : 0
+    if (executable === 'cursor-agent' || entrybase === 'cursor-agent') return 3
+    if (hasCursorPackageEntrypoint(row.args)) return 3
+    return agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership) === 'cursor' ? 4 : 0
   }
   if (engine === 'opencode') {
     if (executable === 'opencode' || executable === 'opencode.exe' || entrybase === 'opencode' || entrybase === 'opencode.exe') return 3
@@ -207,12 +296,27 @@ export function engineProcessMatchScore(
     return /\.amp[\/\\]bin[\/\\]amp$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'grok') {
-    // Grok ships as a single binary at ~/.grok/bin/grok and keeps the bare executable name in tmux.
+    // Grok's compiled image may retain `agent`, `grok`, or its downloaded target name. File identity
+    // against the installed `grok` command is stable across all three and across arbitrary prefixes.
     if (executable === 'grok' || entrybase === 'grok') return 3
+    if (agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership) === 'grok') return 4
     return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
   }
   if (executable === 'claude' || entrybase === 'claude') return 3
   return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
+}
+
+/** An unresolved top-level `agent` is a barrier: a nested sub-agent must not steal its tmux pane. */
+export function ambiguousAgentProcess(
+  row: Pick<ProcessRow, 'executable' | 'args' | 'imageFileKey' | 'entrypointFileKey'>,
+  ownership = agentCommandOwnershipSnapshot(),
+): boolean {
+  if (!agentAliasCandidate(row) || hasCursorPackageEntrypoint(row.args)) return false
+  const executable = basename(row.executable).toLowerCase()
+  const entrybase = basename(processEntrypoint(row.args)).toLowerCase()
+  if (executable === 'cursor-agent' || entrybase === 'cursor-agent' || executable === 'grok' || entrybase === 'grok') return false
+  const owner = agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership)
+  return owner === 'unknown' || owner === 'conflict'
 }
 
 function selectEngineProcess(
@@ -220,6 +324,7 @@ function selectEngineProcess(
   rootPid: number,
   engine: RegisteredSession['engine'],
 ): ProcessRow | null {
+  const ownership = agentCommandOwnershipSnapshot()
   const byPid = new Map(rows.map((row) => [row.pid, row]))
   const children = new Map<number, ProcessRow[]>()
   for (const row of rows) {
@@ -232,7 +337,7 @@ function selectEngineProcess(
   while (queue.length > 0) {
     const current = queue.shift()!
     const row = byPid.get(current.pid)
-    const score = row ? engineProcessMatchScore(row, engine) : 0
+    const score = row ? engineProcessMatchScore(row, engine, ownership) : 0
     if (row && score > 0 && (!best || current.depth < best.depth || (current.depth === best.depth && score > best.score))) {
       best = { row, depth: current.depth, score }
     }

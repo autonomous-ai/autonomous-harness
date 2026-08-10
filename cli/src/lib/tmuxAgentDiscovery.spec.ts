@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentEngine } from '../engines/types.js'
+import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import type { ProcessRow } from './tmux.js'
 import type { RegisteredSession } from './registry.js'
 import {
@@ -15,12 +16,20 @@ const pane = { tmuxPane: '%1', rootPid: 1, cwd: '/work/demo' }
 const row = (pid: number, parentPid: number, executable: string, args = executable): ProcessRow => ({
   pid, parentPid, executable, args, startMarker: START,
 })
+const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwnershipSnapshot => ({
+  cursorFileKeys: new Set(cursor),
+  grokFileKeys: new Set(grok),
+  conflictingFileKeys: new Set(cursor.filter((key) => grok.includes(key))),
+  agentCandidates: [],
+  cursorAgentCandidates: [],
+  grokCandidates: [],
+})
 
 describe('tmux process agent snapshot discovery', () => {
   const fixtures: Array<[AgentEngine, string, string]> = [
     ['claude', 'claude', 'claude'],
     ['codex', 'codex', 'codex'],
-    ['cursor', 'agent', 'agent'],
+    ['cursor', 'cursor-agent', 'cursor-agent'],
     ['opencode', 'opencode', 'opencode'],
     ['pi', 'pi', 'pi'],
     ['hermes', 'python', '/opt/hermes-agent/hermes'],
@@ -36,6 +45,68 @@ describe('tmux process agent snapshot discovery', () => {
     const result = discoverTmuxAgentsFromSnapshot([pane], [row(1, 0, 'zsh'), row(2, 1, executable, args)], 900)
     expect(result.agents).toHaveLength(1)
     expect(result.agents[0]).toMatchObject({ engine, tmuxPane: '%1', cwd: '/work/demo' })
+  })
+
+  it('classifies each vendor agent alias from the executable file identity', () => {
+    const commands = ownership(['cursor-file'], ['grok-file'])
+    const cursorRow = { ...row(2, 1, 'agent'), imageFileKey: 'cursor-file' }
+    const grokRow = { ...row(2, 1, 'agent'), imageFileKey: 'grok-file' }
+
+    expect(discoverTmuxAgentsFromSnapshot([pane], [row(1, 0, 'zsh'), cursorRow], 900, commands)
+      .agents[0]?.engine).toBe('cursor')
+    expect(discoverTmuxAgentsFromSnapshot([pane], [row(1, 0, 'zsh'), grokRow], 900, commands)
+      .agents[0]?.engine).toBe('grok')
+  })
+
+  it('does not guess an unresolved agent alias and lets a pane-scoped vendor hook resolve it', () => {
+    const commands = ownership(['cursor-file'], ['grok-file'])
+    const rows = [row(1, 0, 'zsh'), row(2, 1, 'agent')]
+    const unresolved = discoverTmuxAgentsFromSnapshot([pane], rows, 900, commands)
+    expect(unresolved.agents).toEqual([])
+    expect(unresolved.ambiguousPanes.has('%1')).toBe(true)
+
+    const hinted = discoverTmuxAgentsFromSnapshot(
+      [pane], rows, 900, commands, new Map([['%1', 'grok']]),
+    )
+    expect(hinted.agents[0]?.engine).toBe('grok')
+
+    const conflict = ownership(['same-file'], ['same-file'])
+    const conflicted = discoverTmuxAgentsFromSnapshot(
+      [pane], [row(1, 0, 'zsh'), { ...row(2, 1, 'agent'), imageFileKey: 'same-file' }],
+      900, conflict, new Map([['%1', 'grok']]),
+    )
+    expect(conflicted.agents).toEqual([])
+    expect(conflicted.ambiguousPanes.has('%1')).toBe(true)
+  })
+
+  it('does not let a nested sub-agent steal a pane from an unresolved top-level agent alias', () => {
+    const result = discoverTmuxAgentsFromSnapshot(
+      [pane],
+      [row(1, 0, 'zsh'), row(2, 1, 'agent'), row(3, 2, 'codex')],
+      900,
+      ownership(),
+    )
+    expect(result.agents).toEqual([])
+    expect(result.ambiguousPanes.has('%1')).toBe(true)
+  })
+
+  it('keeps a file-identified Grok parent while agent-named sub-agent PIDs churn', () => {
+    const commands = ownership(['cursor-file'], ['grok-file'])
+    const first = discoverTmuxAgentsFromSnapshot(
+      [pane],
+      [row(1, 0, 'zsh'), { ...row(2, 1, 'agent'), imageFileKey: 'grok-file' }, row(3, 2, 'cursor-agent')],
+      900,
+      commands,
+    )
+    const second = discoverTmuxAgentsFromSnapshot(
+      [pane],
+      [row(1, 0, 'zsh'), { ...row(2, 1, 'agent'), imageFileKey: 'grok-file' }, row(30, 2, 'cursor-agent')],
+      900,
+      commands,
+    )
+    expect(first.agents[0]?.engine).toBe('grok')
+    expect(first.agents[0]?.processIdentity.pid).toBe(2)
+    expect(runtimeKey(first.agents[0])).toBe(runtimeKey(second.agents[0]))
   })
 
   const wrappers: Array<[AgentEngine, string, string]> = [

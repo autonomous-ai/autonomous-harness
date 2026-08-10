@@ -1,11 +1,17 @@
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { AgentEngine } from '../engines/types.js'
-import { ENGINE_CLI_COMMANDS, ENGINES } from './engineBin.js'
+import {
+  agentAliasOwner,
+  agentCommandOwnershipSnapshot,
+  ENGINE_CLI_COMMANDS,
+  ENGINES,
+  executableFileIdentity,
+} from './engineBin.js'
 import { probeTmuxAgents } from './tmuxAgentDiscovery.js'
 
 const exec = promisify(execFile)
@@ -13,6 +19,20 @@ const realDescribe = process.env.RUN_REAL_TMUX_DISCOVERY === '1' ? describe : de
 const createdSessions = new Set<string>()
 
 const engines: Array<[AgentEngine, string]> = ENGINES.map((engine) => [engine, ENGINE_CLI_COMMANDS[engine]])
+const ownership = agentCommandOwnershipSnapshot()
+const installedAgentAliases: Array<[AgentEngine, string]> = []
+const seenAgentAliases = new Set<string>()
+for (const [engine, candidates] of [
+  ['cursor', ownership.cursorAgentCandidates],
+  ['grok', ownership.grokCandidates],
+] as const) {
+  for (const candidate of candidates) {
+    const alias = executableFileIdentity(join(dirname(candidate.path), 'agent'))
+    if (!alias || seenAgentAliases.has(alias.realPath) || agentAliasOwner([alias.fileKey], ownership) !== engine) continue
+    seenAgentAliases.add(alias.realPath)
+    installedAgentAliases.push([engine, alias.path])
+  }
+}
 
 async function tmux(args: string[]): Promise<string> {
   return (await exec('tmux', args, { timeout: 5_000 })).stdout.trim()
@@ -82,6 +102,30 @@ realDescribe.sequential('real installed CLI process discovery', () => {
       }, 5_000)
       expect(absent, `${bin} remained discoverable after its exact saved PID was terminated`).toBe(true)
       await expect(tmux(['display-message', '-p', '-t', pane, '#{pane_id}'])).resolves.toBe(pane)
+    } finally {
+      await exec('tmux', ['kill-session', '-t', session], { timeout: 5_000 }).catch(() => {})
+      createdSessions.delete(session)
+      await rm(dir, { recursive: true, force: true })
+    }
+  }, 35_000)
+
+  it.each(installedAgentAliases)('classifies installed %s alias named agent from its executable identity', async (engine, path) => {
+    const dir = await mkdtemp(join(tmpdir(), `harness-real-agent-alias-${engine}-`))
+    const session = `harness-real-${process.pid}-${engine}-agent-alias`
+    createdSessions.add(session)
+    try {
+      await tmux(['new-session', '-d', '-s', session, '-c', dir])
+      const pane = await tmux(['list-panes', '-t', session, '-F', '#{pane_id}'])
+      await tmux(['send-keys', '-t', pane, '-l', '--', path])
+      await tmux(['send-keys', '-t', pane, 'C-m'])
+      const discovered = await eventually(async () => {
+        const result = await probeTmuxAgents()
+        if (!result.ok) throw new Error(result.error)
+        const inPane = result.agents.filter((candidate) => candidate.tmuxPane === pane)
+        return inPane.length === 1 && inPane[0].engine === engine ? inPane[0] : null
+      })
+      const capture = await tmux(['capture-pane', '-p', '-t', pane]).catch(() => '')
+      expect(discovered, `${path} was not classified as ${engine} in ${pane}\n${capture}`).not.toBeNull()
     } finally {
       await exec('tmux', ['kill-session', '-t', session], { timeout: 5_000 }).catch(() => {})
       createdSessions.delete(session)

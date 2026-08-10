@@ -1158,7 +1158,7 @@ async function runForeground(token: string): Promise<void> {
 
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
     resolveHookAgent: async ({ engine, tmuxPane }) => {
-      await agentReconciler.trigger()
+      await agentReconciler.triggerHint(tmuxPane, engine)
       return registry.byPaneEngine(tmuxPane, engine) ?? null
     },
     onRegistered: handleRegistered,
