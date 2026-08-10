@@ -28,7 +28,7 @@ a retina display.
 | `codex.png` | The transparent Codex product mark bundled as `codex-app-ga-logo--UgmJjKM.png` in the official `com.openai.codex` macOS app v`26.602.30954` | 104 | `8e82b26c98a10e45798ce48124515720657f7735fb8d0853b3f087eaa8a6b74e` |
 | `muse.png` | The Meta mark from the official lockup SVG at `static.xx.fbcdn.net/rsrc.php/y3/r/y6QsbGgc866.svg` — wordmark paths dropped, glyph rasterised to 104×104, gradient kept | 104 | `d7c4568f992e60f6d42a7a819a5a782d479cbfd9ad2bc11e69c82b35b8a5d8fe` |
 | `amp.png` | Amp's official app icon — the `apple-touch-icon` the site itself declares, <https://ampcode.com/app-icon.png?v=3>, fetched 2026-08-07 | 512 | `e5fc0d1178674b80c0dcbbf9811787b44df91f865fac9cd3ef44bb13ef728018` |
-| `kilo.png` | Kilo's official app icon — the 512px `icon` the site itself declares, <https://kilo.ai/favicon/android-chrome-512x512.png?v=2>, fetched 2026-08-10 | 512 | `01d05e48efb03321468e1af0110d05de4550806f653b95adb93ad93a546fee7b` |
+| `kilo.png` | Kilo's official mark SVG, <https://kilo.ai/favicon/favicon.svg?v=2>, rendered to a 512px PNG — see the note below | 512 | `03a348a04c622938a278d803cbb6333819de855d2b3127de8e412fd261db3701` |
 | `grok.png` | SpaceXAI symbol used by the official `xai-org/grok-build` README, <https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png>, fetched 2026-08-10 | 600 | `d2ce9e34b770aeb1e6155646e37573a9eabc380c3fe48e72f7fe19c4b0b59e07` |
 
 Open items, recorded rather than left implicit:
@@ -49,6 +49,15 @@ Open items, recorded rather than left implicit:
   would read on either ground). The app icon was taken because it is the same class of asset as
   `claude.png` and `commandcode.png` — the icon the site itself declares — not because the glyph is
   unusable. Swapping to the glyph is a one-line change if the transparent set is ever preferred.
+
+- **`kilo.png` comes from the SVG, not from the PNG the site declares.** Every official Kilo raster
+  (`apple-touch-icon`, `android-chrome-192`, `android-chrome-512`) is a near-black glyph on a
+  transparent background — measured 41% fully transparent, dominant opaque colour `(35,31,32)` — which
+  is close to invisible on a dark ground and is not the yellow tile Kilo's artwork actually describes.
+  The SVG holds the whole design: `<rect fill="oklch(95% 0.15 108)"/>` behind `<g fill="#000000">`.
+  One token is rewritten before rasterising — `oklch(95% 0.15 108)` → `#f8f676` — because librsvg 2.60
+  does not implement `oklch()` and renders the tile black without it. That is a notation change, not a
+  recolour: the colour is inside sRGB (no channel clamped), so the hex is exactly the declared colour.
 
 Copies of the same files live in `autonomous-code` at `apps/web/public/engine-icons/` and
 `apps/orangepi/web/public/assets/engine-icons/`, where a script converts them to the 20×20 LVGL
