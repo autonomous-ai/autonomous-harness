@@ -1,36 +1,16 @@
-/**
- * The backstop for deleting an agent: make sure the engine actually stopped.
- *
- * Deleting asks the launcher to shut its child down over the machine socket. That is the good path — the
- * launcher owns its child and can end it cleanly, leaving the tmux pane alive. But it cannot be relied
- * on alone: OTA ships one bundle while a launcher already running keeps its old build for hours, and an
- * old launcher does not know the `exit` frame — it ignores it in silence, exactly as designed.
- *
- * So this does not GUESS whether the request was understood, it MEASURES: wait past the launcher's own
- * shutdown budget, look at the pane again, and only then signal the engine directly. Killing the engine
- * makes even an ancient launcher exit, because its child-exit handler ends the process.
- *
- * What it deliberately does NOT do is kill the tmux pane. That is the whole point of the change: the
- * agent belongs to machine, the window belongs to the user. The trade is real and accepted — a pane kill
- * used to hang up the entire foreground process group, so anything the agent had spawned (a dev server, an
- * MCP subprocess) died with it, and now it does not.
- */
+/** Stop the exact discovered engine process while leaving the user's tmux pane and shell alive. */
 
 import type { RegisteredSession } from './registry.js'
+import type { RuntimeCheck } from './tmux.js'
 
-/**
- * Must exceed the launcher's own SIGTERM→SIGKILL budget (`LAUNCHER_EXIT_GRACE_MS` in launch.ts), so a
- * launcher that DID understand the request always finishes first and this never fires. The two constants
- * are coupled; changing one without the other either kills a graceful shutdown mid-way (too short) or
- * leaves a deleted agent running (too long).
- */
-export const FALLBACK_CHECK_MS = 4_500
+/** Delete has already removed the UI entry; signal the saved process immediately. */
+export const TERMINATE_CHECK_MS = 0
 /** After SIGTERM. Matches the daemon's own stop sequence rather than inventing a tighter one. */
 export const FALLBACK_KILL_GRACE_MS = 3_000
 const POLL_MS = 250
 
 export type TerminateOutcome =
-  /** It left on its own — the launcher did its job, or the user closed it. */
+  /** It left before or during signalling. */
   | 'gone'
   /** SIGTERM was enough. */
   | 'terminated'
@@ -42,8 +22,8 @@ export type TerminateOutcome =
   | 'failed'
 
 export interface TerminateDeps {
-  /** `validateSessionRuntime`: the pane still holds THIS session's engine (pid + start time match). */
-  isAlive: (session: RegisteredSession) => Promise<boolean>
+  /** Three-valued exact identity check. Probe failure is not evidence that the process is gone. */
+  checkRuntime: (session: RegisteredSession) => Promise<RuntimeCheck>
   /** `process.kill`. Throws on EPERM/ESRCH like the real one. */
   kill: (pid: number, signal: NodeJS.Signals) => void
   sleep: (ms: number) => Promise<void>
@@ -51,7 +31,7 @@ export interface TerminateDeps {
 }
 
 /**
- * Wait out the launcher, then stop the engine if it is still there. Never throws.
+ * Validate the saved PID/start marker, then stop the engine if it is still there. Never throws.
  *
  * Failures are logged loudly on purpose: by the time this runs the UI already says the agent is gone, so
  * a silently-swallowed EPERM would leave a running engine that nothing on screen accounts for.
@@ -59,14 +39,23 @@ export interface TerminateDeps {
 export async function terminateDeletedAgent(
   session: RegisteredSession,
   deps: TerminateDeps,
-  checkAfterMs = FALLBACK_CHECK_MS,
+  checkAfterMs = TERMINATE_CHECK_MS,
   killGraceMs = FALLBACK_KILL_GRACE_MS,
 ): Promise<TerminateOutcome> {
   await deps.sleep(checkAfterMs)
 
-  // isAlive compares pid AND start time, so a pane that now runs something else reads as not-alive here —
-  // which is why the pid below can never land on a recycled pid.
-  if (!await deps.isAlive(session).catch(() => false)) return 'gone'
+  const check = async (): Promise<RuntimeCheck> => {
+    try { return await deps.checkRuntime(session) }
+    catch (err) { return { state: 'unknown', reason: err instanceof Error ? err.message : String(err) } }
+  }
+  // PID + start marker validation is what prevents a recycled PID from receiving our signal. Unknown
+  // means we cannot prove the target and must leave the runtime suppressed rather than call it gone.
+  const initial = await check()
+  if (initial.state === 'gone') return 'gone'
+  if (initial.state === 'unknown') {
+    deps.log(`[delete] could not validate ${session.engine} runtime: ${initial.reason}`)
+    return 'failed'
+  }
 
   const pid = session.processIdentity?.pid
   if (!pid) return 'not-ours'
@@ -84,17 +73,17 @@ export async function terminateDeletedAgent(
   }
 
   deps.log(`[delete] ${session.engine} did not exit on request — SIGTERM pid ${pid}`)
-  if (!signal('SIGTERM')) return await deps.isAlive(session).catch(() => false) ? 'failed' : 'gone'
+  if (!signal('SIGTERM')) return (await check()).state === 'gone' ? 'gone' : 'failed'
 
   for (let waited = 0; waited < killGraceMs; waited += POLL_MS) {
     await deps.sleep(POLL_MS)
-    if (!await deps.isAlive(session).catch(() => false)) return 'terminated'
+    if ((await check()).state === 'gone') return 'terminated'
   }
 
   deps.log(`[delete] ${session.engine} ignored SIGTERM — SIGKILL pid ${pid}`)
-  if (!signal('SIGKILL')) return await deps.isAlive(session).catch(() => false) ? 'failed' : 'gone'
+  if (!signal('SIGKILL')) return (await check()).state === 'gone' ? 'gone' : 'failed'
   await deps.sleep(POLL_MS)
-  if (await deps.isAlive(session).catch(() => false)) {
+  if ((await check()).state !== 'gone') {
     deps.log(`[delete] ${session.engine} pid ${pid} is STILL running after SIGKILL`)
     return 'failed'
   }

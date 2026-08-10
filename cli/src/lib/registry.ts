@@ -1,8 +1,8 @@
 /**
- * Registry of AGENTS — one per `harness <engine>` launch.
+ * Registry of process-owned AGENTS — one per supported top-level engine process in a tmux pane.
  *
- * An agent is created the moment its launcher opens (its uuid IS the agent id) and lives exactly as long
- * as that launcher, which is why "N panes running the CLI = N agents" holds at every instant. The ENGINE
+ * An agent is created the moment process discovery observes it and lives exactly as long as that process.
+ * The ENGINE
  * session is a mapping bound to the agent afterwards, and rebound whenever the engine rotates it
  * (`/clear`, `/new`) — the agent, its tab, its name and its place in the list do not move.
  *
@@ -14,6 +14,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, renameSync, realpathSync, statSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { join, basename, dirname, relative } from 'path'
 import { uptime } from 'os'
 import { env } from '../config/env.js'
@@ -41,9 +42,8 @@ export interface RegisteredSession {
   /**
    * THE AGENT. Public identity: this is what web tabs, device tiles and every inbound frame address.
    *
-   * It is the launcher's own uuid — minted in `launch.ts` before the engine even starts and sent in the
-   * `open` frame — so an agent exists from the moment the user runs `harness <engine>`, and keeps the same
-   * identity while the engine underneath rotates its session (`/clear`, `/new`). Immutable.
+   * It is minted when a top-level engine process is first discovered. The persisted process identity lets
+   * the same UUID survive daemon restarts while the engine underneath rotates sessions (`/clear`, `/new`).
    */
   agentId: string
   /**
@@ -54,9 +54,8 @@ export interface RegisteredSession {
   /** When the CURRENT sessionId was bound (vs `registeredAt`, which is when the agent appeared). */
   boundAt: number | null
   engine: AgentEngine
-  /** Same value as `agentId`. Kept on disk for one release so a rollback to a pre-agentId build still
-   *  loads these records (that build drops any entry without it — see load()). */
-  launcherId: string
+  /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
+  launcherId?: string
   transcriptPath: string | null
   projectDir: string
   cwd: string | null
@@ -74,8 +73,7 @@ export interface RegisteredSession {
 
 export interface RegisterInput {
   engine?: AgentEngine
-  /** Set by `hook/notify.mjs` from the `MACHINE_ID` the launcher exported. Required — the hook server
-   *  rejects a payload whose id is not a live machine session. */
+  /** Accepted from old hook/plugin payloads for wire compatibility, but deliberately ignored. */
   launcherId?: string
   sessionId?: string
   transcriptPath?: string
@@ -183,9 +181,19 @@ class Registry {
     }
   }
 
-  /** Load persisted entries, dropping any whose transcript file is gone — and, if the computer has
-   *  REBOOTED since this snapshot was written, dropping ALL of them (their tmux panes died with the old
-   *  tmux server; keeping them would show ghost agents that the reaper can't reap once pane ids collide). */
+  private releaseBinding(entry: RegisteredSession): void {
+    if (entry.sessionId && this.sessionIndex.get(entry.sessionId) === entry.agentId) {
+      this.sessionIndex.delete(entry.sessionId)
+    }
+    entry.sessionId = ''
+    entry.boundAt = null
+    entry.transcriptPath = null
+    entry.source = null
+    entry.lastTranscriptAt = Date.now()
+  }
+
+  /** Load persisted process agents. Invalid session bindings are released without dropping their agent;
+   *  a reboot still drops all cached pane identities because no process can survive it. */
   load(): void {
     this.agents.clear()
     this.sessionIndex.clear()
@@ -208,6 +216,7 @@ class Registry {
           typeof raw?.transcriptPath === 'string' && raw.transcriptPath
             ? raw.transcriptPath
             : null
+        let bound = typeof raw?.sessionId === 'string' && raw.sessionId !== ''
         let repairedCodexTranscript = false
         if (engine === 'codex' && transcriptPath) {
           const meta = readCodexRolloutMeta(transcriptPath)
@@ -217,41 +226,41 @@ class Registry {
               : null
             if (!repaired || !validTranscriptPath('codex', repaired) || readCodexRolloutMeta(repaired)?.isSubagent) {
               changed = true
-              continue
+              bound = false
+              transcriptPath = null
+            } else {
+              console.log(`[registry] repaired Codex parent ${raw.sessionId.slice(0, 8)} transcript after child hook overwrite`)
+              transcriptPath = repaired
+              repairedCodexTranscript = true
+              changed = true
             }
-            console.log(`[registry] repaired Codex parent ${raw.sessionId.slice(0, 8)} transcript after child hook overwrite`)
-            transcriptPath = repaired
-            repairedCodexTranscript = true
-            changed = true
           }
         }
-        // An UNBOUND agent (launcher open, engine hasn't reported a session yet) is a valid record: it has
-        // no transcript to validate, and dropping it here would make a restart lose an agent the user can
-        // see in their pane. Only a BOUND record has to prove its transcript still exists.
-        const bound = typeof raw?.sessionId === 'string' && raw.sessionId !== ''
+        // A process agent remains valid without a session. A missing/invalid transcript releases only the
+        // binding so the discovery/store repair path can bind it again if appropriate.
         if (!bound) transcriptPath = null
-        if (
-          !pane
-          || (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
-          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath))
-        ) {
+        if (!pane) {
           changed = true
           continue
         }
-        // Pre-machine-ID snapshots describe sessions nobody owns any more: their lifetime used to hang
-        // off argv heuristics, and there is no launcher process to re-validate them against. Drop them
-        // rather than resurrect an agent that can never be reaped correctly.
-        if (typeof raw?.launcherId !== 'string' || !raw.launcherId) { changed = true; continue }
-        // A snapshot written before agents had their own id still carries `launcherId` — which IS the
-        // agent id. So there is no migration file and no version gate: read one, fall back to the other.
-        const agentId = typeof raw.agentId === 'string' && raw.agentId ? raw.agentId : raw.launcherId
+        if (
+          (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
+          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath))
+        ) {
+          bound = false
+          transcriptPath = null
+          changed = true
+        }
+        // Old launcher-owned records used launcherId as the public id. Preserve it while process discovery
+        // validates/adopts the live runtime, then save the record without the legacy ownership field.
+        const legacyLauncherId = typeof raw?.launcherId === 'string' ? raw.launcherId : ''
+        const agentId = typeof raw.agentId === 'string' && raw.agentId ? raw.agentId : legacyLauncherId
+        if (!agentId) { changed = true; continue }
         if (agentId !== raw.agentId) changed = true
         const now = Date.now()
         const s: RegisteredSession = {
-          ...raw,
           agentId,
-          launcherId: agentId,
-          boundAt: typeof raw.boundAt === 'number' ? raw.boundAt : (raw.registeredAt ?? now),
+          boundAt: bound ? (typeof raw.boundAt === 'number' ? raw.boundAt : (raw.registeredAt ?? now)) : null,
           engine,
           transcriptPath,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
@@ -262,8 +271,13 @@ class Registry {
               ? basename(dirname(transcriptPath))
               : (bound ? raw.sessionId : agentId),
           tmuxPane: pane,
+          cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
+          source: bound && typeof raw.source === 'string' ? raw.source : null,
           cliVersion: typeof raw.cliVersion === 'string' ? raw.cliVersion : null,
+          model: modelString(raw.model),
           processIdentity: validProcessIdentity(raw.processIdentity) ? raw.processIdentity : null,
+          registeredAt: typeof raw.registeredAt === 'number' ? raw.registeredAt : now,
+          updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
           lastHookAt: typeof raw.lastHookAt === 'number' ? raw.lastHookAt : (raw.updatedAt ?? now),
           lastTranscriptAt: typeof raw.lastTranscriptAt === 'number' ? raw.lastTranscriptAt : (raw.updatedAt ?? now),
         }
@@ -274,8 +288,9 @@ class Registry {
           || raw.title !== s.title
           || raw.lastHookAt == null
           || raw.lastTranscriptAt == null
+          || legacyLauncherId !== ''
         ) changed = true
-        // Two records claiming one agent id cannot both be right (the id is per launcher run); keep the
+        // Two records claiming one agent id cannot both be right; keep the
         // one that registered last, exactly as a re-register would.
         const clash = this.agents.get(s.agentId)
         if (clash && clash.registeredAt > s.registeredAt) { changed = true; continue }
@@ -299,29 +314,34 @@ class Registry {
     }
   }
 
-  /**
-   * Create the agent for a launcher that just opened, BEFORE any engine session exists.
-   *
-   * This is what makes `harness <engine>` show up the moment it is typed: the launcher's uuid is the
-   * agent, so the agent is real from that instant and the engine session is bound to it later (bindSession
-   * / register). Idempotent — a launcher reconnecting after a daemon restart re-opens the same id and must
-   * not lose the session it had already bound.
-   *
-   * An agent whose `sessionId` is empty is UNBOUND: known, addressable, not yet mapped to a transcript.
-   */
-  openAgent(input: { agentId: string; engine: AgentEngine; tmuxPane: string; cwd?: string | null }):
+  /** Create/adopt a process agent before any engine session exists. */
+  openProcessAgent(input: {
+    agentId?: string
+    engine: AgentEngine
+    tmuxPane: string
+    cwd?: string | null
+    processIdentity: ProcessIdentity
+  }):
     { entry: RegisteredSession; isNew: boolean; evicted: string | null } | null {
-    const { agentId, engine, tmuxPane } = input
-    if (!agentId || !tmuxPane || !PANE_RE.test(tmuxPane)) return null
-    const existing = this.agents.get(agentId)
+    const { engine, tmuxPane, processIdentity } = input
+    if (!tmuxPane || !PANE_RE.test(tmuxPane) || !validProcessIdentity(processIdentity)) return null
+    const existing = [...this.agents.values()].find((agent) =>
+      agent.tmuxPane === tmuxPane
+      && agent.engine === engine
+      && (!agent.processIdentity || (
+        agent.processIdentity.pid === processIdentity.pid
+        && agent.processIdentity.startMarker === processIdentity.startMarker
+      )))
     if (existing) {
       existing.tmuxPane = tmuxPane
       existing.cwd = input.cwd ?? existing.cwd
+      existing.processIdentity = processIdentity
       existing.updatedAt = Date.now()
       this.save()
       return { entry: existing, isNew: false, evicted: null }
     }
-    // Whoever else holds this pane is gone — a launcher only opens a pane it is running in.
+
+    const agentId = input.agentId || randomUUID()
     let evicted: string | null = null
     for (const other of this.agents.values()) {
       if (other.tmuxPane === tmuxPane) { this.drop(other); evicted = other.sessionId || other.agentId; break }
@@ -332,7 +352,6 @@ class Registry {
       sessionId: '',
       boundAt: null,
       engine,
-      launcherId: agentId,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -341,7 +360,7 @@ class Registry {
       title: null,
       model: null,
       cliVersion: null,
-      processIdentity: null,
+      processIdentity,
       registeredAt: now,
       updatedAt: now,
       lastHookAt: now,
@@ -352,7 +371,7 @@ class Registry {
     return { entry, isNew: true, evicted }
   }
 
-  /** Agents this launcher opened that have no engine session bound yet. */
+  /** Discovered process agents that have no engine session bound yet. */
   unbound(): RegisteredSession[] {
     return this.list().filter((s) => !s.sessionId)
   }
@@ -371,10 +390,10 @@ class Registry {
     const engine: AgentEngine =
       input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' || input.engine === 'grok' ? input.engine : 'claude'
     const pane = input.tmuxPane
-    // The machine id may be omitted only when re-registering a session we already know (the catch hook
-    // fires on every prompt and older payloads carried no id) — a NEW session always needs one, because
-    // the id is what binds the session's lifetime to a live launcher.
-    const agentId = input.launcherId || this.bySession(sessionId)?.agentId || ''
+    // Hooks carry process metadata, not ownership. The already-discovered pane+engine process chooses the
+    // agent; an optional legacy launcherId is intentionally ignored.
+    const processAgent = pane ? this.byPaneEngine(pane, engine) : undefined
+    const agentId = processAgent?.agentId ?? ''
     if (
       !sessionId
       || !agentId
@@ -391,23 +410,16 @@ class Registry {
     // `isNew` still means "this SESSION id was not bound here before" — a rotation counts as new, which is
     // what makes the caller announce the newly bound session. The agent itself may be long-lived.
     const isNew = !existing || existing.sessionId !== sessionId
-    // A rotation: the same agent (same launcher, same pane) swapping the engine session underneath it.
+    // A rotation: the same process agent and pane swapping the engine session underneath it.
     const rebound = existing && existing.sessionId && existing.sessionId !== sessionId ? existing.sessionId : null
 
-    let evicted: string | null = rebound
-    if (!existing && pane) {
-      // A new agent claiming a pane: whoever else holds it is gone (its launcher died without saying so).
-      for (const other of this.agents.values()) {
-        if (other.agentId !== agentId && other.tmuxPane === pane) { this.drop(other); evicted = other.sessionId; break }
-      }
-    }
+    const evicted: string | null = rebound
     // The same engine session cannot belong to two agents — `claude --resume X` in a second pane. The
-    // newest bind wins; the loser is dropped rather than left pointing at a session it no longer owns.
+    // newest bind wins; the old process agent remains visible but becomes unbound.
     const stolenFrom = this.bySession(sessionId)
     if (stolenFrom && stolenFrom.agentId !== agentId) {
       console.log(`[registry] session ${sessionId.slice(0, 8)} moved from agent ${stolenFrom.agentId.slice(0, 8)} to ${agentId.slice(0, 8)}`)
-      this.drop(stolenFrom)
-      evicted = evicted ?? stolenFrom.sessionId
+      this.releaseBinding(stolenFrom)
     }
 
     // Command Code announces SessionStart BEFORE writing its transcript, and validTranscriptPath stats the
@@ -428,7 +440,6 @@ class Registry {
       sessionId,
       boundAt: isNew ? now : existing?.boundAt ?? now,
       engine,
-      launcherId: agentId,
       transcriptPath: effectiveTranscriptPath,
       projectDir: engine === 'grok'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId
@@ -441,9 +452,7 @@ class Registry {
       title: titleDisplayName(input.title ?? existing?.title ?? null),
       model: modelString(input.model) ?? existing?.model ?? null,
       cliVersion: input.cliVersion ?? existing?.cliVersion ?? null,
-      processIdentity: validProcessIdentity(input.processIdentity)
-        ? input.processIdentity
-        : (/^(?:SessionStart|sessionStart)$/.test(input.hookEvent ?? '') ? null : existing?.processIdentity ?? null),
+      processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
       updatedAt: now,
       lastHookAt: now,
@@ -459,6 +468,16 @@ class Registry {
     const entry = this.bySession(sessionId)
     if (!entry) return false
     this.drop(entry)
+    this.save()
+    return true
+  }
+
+  /** Release only the mutable session binding; the process-backed agent remains addressable. */
+  unbindSession(sessionId: string): boolean {
+    const entry = this.bySession(sessionId)
+    if (!entry) return false
+    this.releaseBinding(entry)
+    entry.updatedAt = Date.now()
     this.save()
     return true
   }
@@ -483,6 +502,10 @@ class Registry {
   bySession(sessionId: string): RegisteredSession | undefined {
     const agentId = this.sessionIndex.get(sessionId)
     return agentId ? this.agents.get(agentId) : undefined
+  }
+
+  byPaneEngine(tmuxPane: string, engine: AgentEngine): RegisteredSession | undefined {
+    return [...this.agents.values()].find((entry) => entry.tmuxPane === tmuxPane && entry.engine === engine)
   }
 
   /** The one lookup for anything that arrives from outside: web and device address an agent by `agentId`
@@ -533,7 +556,7 @@ class Registry {
    * Carry a user-chosen name from one session id to another.
    *
    * For a session ROTATION: `/clear` in claude (and `/new` in opencode) ends one session id and starts
-   * another in the same pane, under the same launcher. That is the same agent to the person watching it,
+   * another under the same live process in the same pane. That is the same agent to the person watching it,
    * so the name they gave it has to come along — otherwise clearing the context silently renames their
    * agent back to a default.
    */

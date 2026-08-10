@@ -1,39 +1,9 @@
-/**
- * tmux integration: pane liveness (reaper) + typing messages into a pane.
- *
- * The reaper handles hard-killed panes: a killed pane (or a dead tmux server) terminates claude
- * before SessionEnd can fire, which would leave the session registered forever. It periodically
- * checks which panes still exist and drops any registered session whose pane is gone (debounced
- * by 2 consecutive misses).
- */
+/** tmux process matching, runtime validation, pane capture, and input injection. */
 
 import { execFile, spawn } from 'child_process'
 import { basename } from 'path'
 import { registry, type ProcessIdentity, type RegisteredSession } from './registry.js'
-import { launcherSessions } from './launcherSessions.js'
-
-const MISS_LIMIT = 2
-
-type PaneListResult =
-  | { ok: true; panes: Set<string> }
-  | { ok: false; error: string }
-
-/** Live tmux pane ids (e.g. "%0","%3"). Empty set if tmux is unreachable. */
-export function listLivePanes(): Promise<PaneListResult> {
-  return new Promise((resolve) => {
-    execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id}'], { timeout: 2000 }, (err, stdout) => {
-      if (err) {
-        resolve({ ok: false, error: err.message })
-        return
-      }
-      const panes = stdout
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean)
-      resolve({ ok: true, panes: new Set(panes) })
-    })
-  })
-}
+import { engineBin } from './engineBin.js'
 
 function cleanPaneTitle(title: string): string | null {
   const cleaned = title
@@ -61,24 +31,54 @@ export function listPaneTitles(): Promise<Map<string, string>> {
   })
 }
 
-interface ProcessRow extends ProcessIdentity {
+export interface ProcessRow extends ProcessIdentity {
   parentPid: number
   args: string
 }
 
-interface TmuxPaneProcess {
-  tmuxPane: string
-  rootPid: number
-  cwd: string
+function argvTokens(args: string): string[] {
+  return (args.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((token) => {
+    const quoted = (token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))
+    return quoted ? token.slice(1, -1) : token
+  })
 }
 
-export interface TmuxResume {
-  engine: RegisteredSession['engine']
-  sessionId: string
-  tmuxPane: string
-  cwd: string
-  processIdentity: ProcessIdentity
+/**
+ * Return only the executable/script portion of argv, never prompt text or later CLI arguments.
+ *
+ * Looking for an engine word anywhere in `ps args` is unsafe: `python worker.py "compare codex and
+ * claude"` is not two coding agents. Package-manager installs commonly leave `node`, `bun`, Python, or a
+ * shell in `comm`, so for those interpreters the first non-option token is the real entrypoint. Absolute
+ * prefixes are deliberately retained only for suffix/package-layout checks and are never hard-coded.
+ */
+function processEntrypoint(args: string): string {
+  const tokens = argvTokens(args)
+  if (!tokens.length) return ''
+  let index = 0
+  let command = basename(tokens[index]).toLowerCase()
+  if (command === 'env') {
+    index++
+    while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index++
+    command = basename(tokens[index] ?? '').toLowerCase()
+  }
+  if (!/^(?:node|nodejs|bun|deno|python(?:\d+(?:\.\d+)*)?|bash|zsh|sh)$/.test(command)) return tokens[index] ?? ''
+
+  index++
+  const optionsWithValue = new Set(['-r', '--require', '--loader', '--import', '--conditions', '--inspect-port'])
+  const inlineCodeOptions = new Set(['-c', '--command', '-e', '--eval', '--print'])
+  while (index < tokens.length) {
+    const token = tokens[index]
+    if (token === '--') { index++; break }
+    if (token === '-m' && index + 1 < tokens.length) return tokens[index + 1]
+    // Inline shell/Node/Python source is not an executable entrypoint. Its text can legitimately mention
+    // an engine command; the real child process, if one is launched, will be discovered from its own row.
+    if (inlineCodeOptions.has(token)) return ''
+    if (!token.startsWith('-')) break
+    index += optionsWithValue.has(token) && index + 1 < tokens.length ? 2 : 1
+  }
+  return tokens[index] ?? ''
 }
+
 
 /**
  * One `ps -axo pid=,ppid=,comm=,lstart=,args=` line → a row.
@@ -121,26 +121,6 @@ function processRows(): Promise<ProcessRow[] | null> {
   })
 }
 
-function tmuxPaneProcesses(): Promise<TmuxPaneProcess[]> {
-  return new Promise((resolve) => {
-    execFile(
-      'tmux',
-      ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_path}'],
-      { timeout: 2000 },
-      (err, stdout) => {
-        if (err) { resolve([]); return }
-        const panes: TmuxPaneProcess[] = []
-        for (const line of stdout.split('\n')) {
-          const [tmuxPane, pidText, ...cwdParts] = line.split('\t')
-          const rootPid = Number(pidText)
-          if (!/^%\d+$/.test(tmuxPane) || !Number.isSafeInteger(rootPid) || rootPid <= 0) continue
-          panes.push({ tmuxPane, rootPid, cwd: cwdParts.join('\t') })
-        }
-        resolve(panes)
-      },
-    )
-  })
-}
 
 function panePid(pane: string): Promise<number | null> {
   return new Promise((resolve) => {
@@ -155,77 +135,84 @@ export function engineProcessMatchScore(
   row: Pick<ProcessRow, 'executable' | 'args'>,
   engine: RegisteredSession['engine'],
 ): number {
-  const haystack = `${row.executable} ${row.args}`.toLowerCase()
   const executable = basename(row.executable).toLowerCase()
+  const entrypoint = processEntrypoint(row.args).toLowerCase()
+  const entrybase = basename(entrypoint).toLowerCase()
+  // A user may point an engine at a symlink/custom install through `<ENGINE>_PATH`. Treat that configured
+  // executable exactly like the vendor command without baking its machine-specific directory into rules.
+  const configured = engineBin(engine).toLowerCase()
+  const configuredBase = basename(configured).toLowerCase()
+  if (configuredBase && (executable === configuredBase || entrybase === configuredBase
+    || row.executable.toLowerCase() === configured || entrypoint === configured)) return 4
   if (engine === 'codex') {
-    if (executable === 'codex') return 3
-    return /(^|[\/\s])codex(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'codex' || entrybase === 'codex') return 3
+    // npm/pnpm/bun global installs may leave node as `comm`; match the package entrypoint without
+    // caring which prefix or package manager store contains it.
+    return /@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'cursor') {
-    if (executable === 'agent' || executable === 'cursor-agent') return 3
-    return /cursor-agent[\/\\]versions[\/\\][^/\\\s]+[\/\\]index\.js(?:\s|$)/.test(haystack) ? 1 : 0
+    if (executable === 'agent' || executable === 'cursor-agent' || entrybase === 'agent' || entrybase === 'cursor-agent') return 3
+    return /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'opencode') {
-    if (executable === 'opencode') return 3
-    return /(^|[\/\s])opencode(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'opencode' || executable === 'opencode.exe' || entrybase === 'opencode' || entrybase === 'opencode.exe') return 3
+    return /opencode-ai[\/\\]bin[\/\\]opencode(?:\.exe)?$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'kilo') {
     // `@kilocode/cli` installs the same file under both names, and kilo's own installer puts a second
-    // copy at ~/.kilo/bin/kilo — so match either spelling as the executable, and fall back to the argv
-    // scan for the wrapper form. `kilocode` is listed first so the weak regex below cannot claim it.
-    if (executable === 'kilo' || executable === 'kilocode') return 3
-    return /(^|[\/\s])kilocode?(?:[\s]|$)/.test(haystack) ? 1 : 0
+    // copy at ~/.kilo/bin/kilo. The npm install measured on 2026-08-10 is a shallow
+    // `node /usr/local/bin/kilo` wrapper with a `.kilo` child, so recognize both public command names
+    // in argv while depth selection keeps the wrapper as the process-agent identity.
+    if (executable === 'kilo' || executable === 'kilocode' || executable === '.kilo'
+      || entrybase === 'kilo' || entrybase === 'kilocode' || entrybase === '.kilo') return 3
+    return /@kilocode[\/\\]cli[\/\\]bin[\/\\](?:\.kilo|kilo|kilocode)$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'commandcode') {
     // The TUI overwrites its own argv within the first second — `ps` shows `⌘ Command Code · <dir>` and
     // then `⌘ <session title>`, with no trace of the node entrypoint. So the ⌘ (U+2318) prefix is the
     // only marker present for a pane's whole life; without it a live session fails validateSessionRuntime
     // and the reaper evicts it. The entrypoint rules below still cover a non-renaming/wrapped launch.
-    if (/^\s*⌘(?:\s|$)/.test(haystack)) return 3
-    if (/command-code[\/\\]dist[\/\\]index\.mjs(?:\s|$)/.test(haystack)) return 3
-    if (executable === 'commandcode' || executable === 'command-code') return 3
-    return /(^|[\/\s])commandcode(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (/^\s*⌘(?:\s|$)/.test(row.executable) || /^\s*⌘(?:\s|$)/.test(row.args)) return 3
+    if (executable === 'cmd' || executable === 'commandcode' || executable === 'command-code'
+      || entrybase === 'cmd' || entrybase === 'commandcode' || entrybase === 'command-code') return 3
+    return /command-code[\/\\]dist[\/\\]index\.mjs$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'devin') {
     // `~/.local/bin/devin` is a symlink into `…/devin/cli/_versions/<ver>/bin/devin`, but the pane process
     // keeps the bare `devin` argv (verified live: `ps -o command=` prints exactly `devin`), so the
     // basename is the primary signal and the versioned path only covers a direct/wrapped launch.
-    if (executable === 'devin') return 3
-    if (/devin[\/\\]cli[\/\\]_versions[\/\\][^/\\\s]+[\/\\]bin[\/\\]devin(?:\s|$)/.test(haystack)) return 3
-    return /(^|[\/\s])devin(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'devin' || entrybase === 'devin') return 3
+    return /devin[\/\\]cli[\/\\]_versions[\/\\][^/\\]+[\/\\]bin[\/\\]devin$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'hermes') {
     // The launcher shim `exec`s away, so the pane process is `…/venv/bin/python …/hermes-agent/hermes`.
-    if (/hermes-agent[\/\\]hermes(?:\s|$)/.test(haystack)) return 3
-    if (executable === 'hermes') return 3
-    return /(^|[\/\s])hermes(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'hermes' || entrybase === 'hermes') return 3
+    return /hermes-agent[\/\\]hermes$/.test(entrypoint) || /^(?:hermes|hermes_cli)(?:\.|$)/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'pi') {
     // Pi sets process.title = 'pi'; when the platform ignores that it stays `node …/pi-coding-agent/dist/cli.js`.
-    if (executable === 'pi') return 3
-    return /pi-coding-agent[\/\\]dist[\/\\]cli\.js(?:\s|$)|(^|[\/\s])pi(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'pi' || entrybase === 'pi') return 3
+    return /pi-coding-agent[\/\\]dist[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'muse') {
     // `~/.local/bin/muse` is a bash launcher that `exec`s the real binary, so the pane process is
     // `muse-bin-<version>` — the bare name only appears before the exec.
-    if (executable === 'muse' || /^muse-bin-/.test(executable)) return 3
-    return /(^|[\/\s])muse(?:-bin-[^\s]+)?(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'muse' || /^muse-bin-/.test(executable) || entrybase === 'muse' || /^muse-bin-/.test(entrybase)) return 3
+    return 0
   }
   if (engine === 'amp') {
     // `~/.local/bin/amp` symlinks to `~/.amp/bin/amp`, a single compiled binary that does NOT re-exec:
     // measured live, the pane process is `amp` with argv `amp` and no children at all.
-    if (executable === 'amp') return 3
-    if (/\.amp[\/\\]bin[\/\\]amp(?:\s|$)/.test(haystack)) return 3
-    return /(^|[\/\s])amp(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'amp' || entrybase === 'amp') return 3
+    return /\.amp[\/\\]bin[\/\\]amp$/.test(entrypoint) ? 2 : 0
   }
   if (engine === 'grok') {
     // Grok ships as a single binary at ~/.grok/bin/grok and keeps the bare executable name in tmux.
-    if (executable === 'grok') return 3
-    if (/\.grok[\/\\]bin[\/\\]grok(?:\s|$)/.test(haystack)) return 3
-    return /(^|[\/\s])grok(?:[\s]|$)/.test(haystack) ? 1 : 0
+    if (executable === 'grok' || entrybase === 'grok') return 3
+    return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
   }
-  if (executable === 'claude') return 3
-  return /(^|[\/\s])claude(?:[\s]|$)/.test(haystack) ? 1 : 0
+  if (executable === 'claude' || entrybase === 'claude') return 3
+  return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
 }
 
 function selectEngineProcess(
@@ -246,7 +233,7 @@ function selectEngineProcess(
     const current = queue.shift()!
     const row = byPid.get(current.pid)
     const score = row ? engineProcessMatchScore(row, engine) : 0
-    if (row && score > 0 && (!best || score > best.score || (score === best.score && current.depth < best.depth))) {
+    if (row && score > 0 && (!best || current.depth < best.depth || (current.depth === best.depth && score > best.score))) {
       best = { row, depth: current.depth, score }
     }
     for (const child of children.get(current.pid) ?? []) queue.push({ pid: child.pid, depth: current.depth + 1 })
@@ -300,43 +287,6 @@ export function resumeSessionId(engine: RegisteredSession['engine'], args: strin
     if (value && spec.id.test(value)) return value
   }
   return null
-}
-
-/**
- * Every tmux pane whose engine was launched against an EXISTING session, from the stable CLI process.
- * Ambiguous duplicate resumes are ignored rather than assigning one remote tab to an arbitrary pane.
- *
- * Only the pane and its argv are read here; whether such a session may be adopted is the caller's call
- * (it needs a live launcher on that pane — see cli.ts).
- */
-export async function discoverTmuxResumes(): Promise<TmuxResume[]> {
-  const [panes, probed] = await Promise.all([tmuxPaneProcesses(), processRows()])
-  const rows = probed ?? []
-  const candidates = new Map<string, TmuxResume[]>()
-  for (const pane of panes) {
-    for (const engine of Object.keys(RESUME_ARGS) as Array<RegisteredSession['engine']>) {
-      const process = selectEngineProcess(rows, pane.rootPid, engine)
-      if (!process) continue
-      const sessionId = resumeSessionId(engine, process.args)
-      if (!sessionId) continue
-      const candidate: TmuxResume = {
-        engine,
-        sessionId,
-        tmuxPane: pane.tmuxPane,
-        cwd: pane.cwd,
-        processIdentity: {
-          pid: process.pid,
-          executable: process.executable,
-          startMarker: process.startMarker,
-        },
-      }
-      const matches = candidates.get(sessionId) ?? []
-      matches.push(candidate)
-      candidates.set(sessionId, matches)
-      break // one engine per pane: the first match owns it
-    }
-  }
-  return [...candidates.values()].filter((matches) => matches.length === 1).map(([match]) => match)
 }
 
 /**
@@ -398,12 +348,12 @@ export async function validateSessionRuntime(session: RegisteredSession): Promis
  * had quit the CLI or the adapter had simply lost sight of it, and telling those apart after the fact
  * means reconstructing a process table that no longer exists.
  */
-type RuntimeCheck =
+export type RuntimeCheck =
   | { state: 'alive' }
   | { state: 'gone'; reason: string }
   | { state: 'unknown'; reason: string }
 
-async function checkSessionRuntime(session: RegisteredSession): Promise<RuntimeCheck> {
+export async function checkSessionRuntime(session: RegisteredSession): Promise<RuntimeCheck> {
   const found = await lookupPaneEngineProcess(session.tmuxPane, session.engine)
   if (!found.ok) return { state: found.unknown ? 'unknown' : 'gone', reason: found.reason }
   const live = found.identity
@@ -535,87 +485,4 @@ export function captureTmuxPane(pane: string, historyLines = 100): Promise<strin
       resolve(stdout)
     })
   })
-}
-
-/**
- * Nothing here kills a pane, on purpose.
- *
- * Deleting an agent used to run `tmux kill-pane` — which also closed the window, and the session when it
- * was the last pane. That destroys the user's workspace to end OUR process. Deletion now asks the
- * launcher to stop its engine and exit (see `deleteAgentFallback.ts`), leaving the pane and its shell.
- *
- * Known limit: a pane whose ROOT process is the launcher itself (`tmux new-session 'harness claude'`,
- * with no shell in between) still disappears when the launcher exits. Nothing at this layer can change
- * that — it follows from how the pane was created.
- */
-
-export function startTmuxReaper(
-  intervalMs: number,
-  onRemoved: (sessionId: string) => void,
-): NodeJS.Timeout {
-  const misses = new Map<string, number>()
-
-  // A tick shells out to tmux + `ps` per session. `setInterval` does not wait for the previous one, so a
-  // slow tick used to overlap the next — piling on more `ps` calls exactly when the computer is already too
-  // busy to answer them, which is how two probes time out back to back and a live pane looks dead.
-  let ticking = false
-
-  const tick = async (): Promise<void> => {
-    if (ticking) return
-    const sessions = registry.list()
-    if (sessions.length === 0) {
-      misses.clear()
-      return
-    }
-    ticking = true
-    try {
-      await sweep(sessions)
-    } finally {
-      ticking = false
-    }
-  }
-
-  const sweep = async (sessions: RegisteredSession[]): Promise<void> => {
-    const live = await listLivePanes()
-    if (!live.ok) {
-      misses.clear()
-      console.warn(`[reaper] tmux list-panes failed; keeping ${sessions.length} registered session(s): ${live.error}`)
-      return
-    }
-
-    for (const s of sessions) {
-      // The launcher's socket outranks every probe below. An agent exists exactly as long as its wrapper
-      // is connected (launcherSessions.ts), and that is a fact the daemon HOLDS — while `tmux` and `ps` are
-      // subprocesses that can time out, and whose answer already cost a live Command Code pane once (it
-      // renames its own argv mid-life). If the wrapper is still there, so is the agent; nothing to check.
-      if (launcherSessions.has(s.launcherId)) {
-        misses.delete(s.sessionId)
-        continue
-      }
-      const check: RuntimeCheck = live.panes.has(s.tmuxPane)
-        ? await checkSessionRuntime(s)
-        : { state: 'gone', reason: `pane ${s.tmuxPane} is gone` }
-      if (check.state === 'alive') {
-        misses.delete(s.sessionId)
-        continue
-      }
-      // Inconclusive: hold the session and the miss count where they are. Same rule as the list-panes
-      // failure above — the adapter only evicts on evidence that the process is gone, never on a probe
-      // it could not complete.
-      if (check.state === 'unknown') {
-        console.warn(`[reaper] keeping ${s.engine} session ${s.sessionId} · ${check.reason}`)
-        continue
-      }
-      const n = (misses.get(s.sessionId) ?? 0) + 1
-      if (n >= MISS_LIMIT) {
-        misses.delete(s.sessionId)
-        console.log(`[reaper] removing ${s.engine} session ${s.sessionId} · ${check.reason}`)
-        onRemoved(s.sessionId)
-      } else {
-        misses.set(s.sessionId, n)
-      }
-    }
-  }
-
-  return setInterval(() => void tick(), intervalMs)
 }

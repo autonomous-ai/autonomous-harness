@@ -2,9 +2,8 @@
  * On-disk daemon state that BOTH the daemon (`cli.ts`) and short-lived CLI commands need to read —
  * the pid file, the saved credential, and the fixed loopback control port.
  *
- * Kept in its own module so `launch.ts` (the `harness <engine>` wrapper) can check "is the daemon
- * joined and running?" without importing `cli.ts`, which would be circular (cli.ts dispatches into
- * launch.ts).
+ * Kept in its own module so management commands can inspect daemon state without importing `cli.ts`,
+ * which would execute the command dispatcher.
  */
 
 import { existsSync, readFileSync } from 'fs'

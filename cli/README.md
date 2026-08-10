@@ -23,8 +23,8 @@ token into the installer:
 curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
 ```
 
-(The installer is a first-party hosted script; it downloads the published bundle and writes a
-`~/.local/bin/harness` launcher.)
+(The installer is a first-party hosted script; it downloads the published bundle and writes the
+`~/.local/bin/harness` command.)
 
 ```bash
 harness join <token>  # connect this computer to an existing machine
@@ -57,8 +57,19 @@ produces the single-file release artifact.
 **Install your build as `harness` (no release):** `bash scripts/install-cli.sh` bundles this
 working tree into `~/.harness/cli` — the same layout the public installer produces — and restarts the
 daemon on it, so `harness` on this computer means your code without publishing a version. Self-update is
-turned **off** in the launcher it writes (otherwise the published release overwrites your build within
+turned **off** in the command shim it writes (otherwise the published release overwrites your build within
 the minute). See [`RELEASE.md`](RELEASE.md#local-install-no-upload).
+
+After joining, start each agent yourself in tmux with its normal vendor command. Harness observes the
+process; it does not launch the CLI or choose its permission/trust flags:
+
+```bash
+tmux new -s work
+claude                    # or: codex, agent, opencode, pi, hermes, cmd, devin, muse, amp, kilo, grok
+```
+
+Each supported top-level CLI process in a pane appears automatically. Exiting the CLI removes only the
+agent; the tmux pane and its shell remain yours.
 
 ## How it works
 
@@ -69,28 +80,25 @@ claude in tmux pane %3 ──writes──▶ ~/.claude/projects/**.jsonl
    adapter CLI ◀────── down:{agentId} ── backend /api/adapter-ws ── up:{agentId} ──▶ web chat
 ```
 
-- **The adapter emulates a node** for its agentId on the backend hub: it answers the hosted runtime RPCs
-  (`projects_list` = the registered tmux sessions, `sessions_list`, `session_get` = full JSONL
+- **The adapter emulates a node** on the backend hub: it answers the hosted runtime RPCs
+  (`agents_list` = discovered tmux processes, `sessions_list`, `session_get` = full JSONL
   replay, `project_files`/`project_read_file` = the session's cwd file tree + file view,
   `models_list`, `claude_login_status`) and consumes web chat frames.
 - **Files panel** (`project_files`/`project_read_file`): rooted at the tmux session's working dir,
   it lists the tree (ignoring `node_modules`/`.git`/`dist`/… like the hosted runtime) and views a file only
   if it's **≤ 5 MB and text** (binary → rejected). The same guard was added to the hosted runtime so
   both behave identically.
-- **Hooks** (auto-installed into `~/.claude/settings.json`, tmux-only via `$TMUX_PANE`):
-  `SessionStart` registers, `SessionEnd` unregisters, and **`UserPromptSubmit`** is a *catch* hook
-  that re-registers on every prompt so a session whose SessionStart was missed still appears. A
-  **pane reaper** drops sessions whose pane was hard-killed.
-- **Live session sync** to web + device: on register → `agent_synced` (web tab) + `agent_renamed`
-  (device tile add); on removal → `agent_deleted` (both). One session **per tmux pane**.
-- **SessionEnd removes the session** — the list reflects *running* claude sessions. Exiting claude
-  (Ctrl+D / Ctrl+C×2) ends the session and drops it from the list **even though the tmux pane is
-  still alive** (the user is back at the shell; claude isn't running). A later `claude --resume`
-  fires SessionStart and **adds it back**. The one exception is `/clear`, which rotates in place: a
-  fresh SessionStart for the same pane follows immediately and replaces the old session via
-  pane-dedup, so it's kept to avoid a flicker.
-- **Reaper backstop:** when SessionEnd never fires (hard kill, pane closed) the tmux reaper polls
-  `tmux list-panes` and drops sessions whose pane is gone.
+- **Process discovery is lifetime authority.** On startup and every five seconds the daemon reads all
+  tmux panes once and the process table once. A supported top-level engine creates an agent immediately,
+  before an engine session exists. A changed process in the same pane replaces it immediately; an absent
+  process is removed after two successful scans. Probe failures do not remove anything.
+- **Hooks bind mutable engine sessions** to the process agent (tmux-only via `$TMUX_PANE`). They do not
+  require `MACHINE_ID`. `SessionStart` and catch hooks attach transcript/store metadata; `SessionEnd` only
+  requests an immediate process reconciliation. `/clear`, `/new`, and resume move or rotate the binding
+  without changing the live process agent's UUID.
+- **Live agent sync** to web + device: discovery emits `agent_synced` immediately, even with no session;
+  binding later emits session sync, and confirmed process exit emits one `agent_deleted`. A sessionless
+  agent returns an empty `sessions_list`, accepts input by `agentId`, and binds after the first turn.
 - **Mirror-all**: every JSONL line streams up — prompts typed directly in the terminal render in
   the web identically to web-sent ones (`turn_started`/`turn_ended` are derived from the file).
 - **Compaction (`/compact` or auto-compact):** claude does an **in-file** compact — the JSONL keeps
@@ -113,7 +121,7 @@ claude in tmux pane %3 ──writes──▶ ~/.claude/projects/**.jsonl
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | where Claude writes session JSONL |
 | `ADAPTER_DATA_DIR` | `~/.harness/cli/data` | registry + token persistence |
 | `DISABLE_HOOK_INSTALL` | `false` | skip auto-installing the claude hooks |
-| `TMUX_REAP_INTERVAL_MS` | `5000` | how often the reaper drops dead-pane sessions |
+| `TMUX_REAP_INTERVAL_MS` | `5000` | process discovery interval (removal requires two confirmed misses) |
 | `ADAPTER_UPDATE_URL` | `…/adapter/metadata.json` | GCS release manifest the daemon polls for a newer build |
 | `ADAPTER_UPDATE_KEY` | `cli` | manifest key for this CLI |
 | `ADAPTER_UPDATE_CHECK_MS` | `60000` | how often (ms) to poll for a newer build (check also runs on start) |
@@ -125,7 +133,7 @@ claude in tmux pane %3 ──writes──▶ ~/.claude/projects/**.jsonl
 A paired device mirrors the same agent. The adapter emits a curated **commander stream** from the
 same watched JSONL (via `sendCommander`, `commanderEligible`): `commander_event` cards —
 `processing` (busy), `tool` (name + arg + color), `todos` checklist, `summary`, `done` (clear busy).
-It answers the device's `projects_list` (tiles) and `project_recent` (last summary) RPCs; voice
+It answers the device's `agents_list` (tiles) and `agent_recent` (last summary) RPCs; voice
 turns arrive as an injected `message` → `sendToTmux`. A device that joins **mid-turn** converges via
 a client-count signal (`__clients`) — the adapter re-emits the open turn's live state on join (no
 periodic heartbeat).

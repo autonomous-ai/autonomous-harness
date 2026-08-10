@@ -9,8 +9,8 @@
  *   harness join <token>    connect this computer to an existing remote machine. Later `harness join`
  *                           reconnects with the saved credential. `adapter unjoin` leaves + clears it.
  *
- * What runs: the Claude hooks installer (SessionStart/SessionEnd → localhost hook server →
- * session registry), the JSONL watcher (chokidar + byte-offset tail), the tmux pane reaper,
+ * What runs: engine hooks/plugins (session metadata → localhost hook server → process registry),
+ * transcript/store readers, tmux process discovery,
  * and the backend socket (events up / chat + RPCs down).
  */
 
@@ -26,24 +26,20 @@ import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
-import { ENGINES, aliasesFor, engineBin, engineCommand, resolveEngine } from './lib/engineBin.js'
-import { refuseDuplicateAgent } from './lib/duplicateAgent.js'
-import { launcherSessions } from './lib/launcherSessions.js'
+import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
-import { launchEngine } from './lib/launch.js'
 import {
-  startTmuxReaper,
   sendToTmux,
   sendKeyToTmux,
   sendLiteralToTmux,
   validateSessionRuntime,
+  checkSessionRuntime,
   captureTmuxPane,
-  discoverTmuxResumes,
-  resolvePaneEngineProcess,
   listPaneTitles,
 } from './lib/tmux.js'
+import { TmuxAgentReconciler, type DiscoveredTmuxAgent } from './lib/tmuxAgentDiscovery.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
@@ -90,7 +86,7 @@ import {
   commandCodeRunErrorSummary,
   lastCommandCodeTurnText,
 } from './engines/commandcode/normalizer.js'
-import { acceptsInputBeforeSession, SessionInputController } from './lib/sessionInput.js'
+import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager } from './lib/runtimeProfile.js'
 import { RuntimeProfileController } from './lib/runtimeProfileController.js'
@@ -106,10 +102,6 @@ import {
 // only if the turn is still open after this grace + a re-poll do we force-close (by then the assistant
 // text is on disk, so the natural close usually wins and the recap isn't empty).
 const STOP_HOOK_GRACE_MS = 1_500
-
-// After a daemon restart every launcher socket is gone; surviving launchers reconnect in ~1s. Sessions
-// loaded from disk get this long to be re-claimed before they are dropped as orphans.
-const MACHINE_RECONNECT_GRACE_MS = 15_000
 
 // Daemon stdout/stderr. Capped at LOG_MAX_BYTES — see prepareLogFile/trimLogFile in lib/log.ts.
 const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'machine.log')
@@ -133,36 +125,21 @@ const DEVIN_DB = join(env.DEVIN_HOME, 'sessions.db')
 // declaring an error. A healthy backend connects in well under this; a timeout ⇒ unreachable.
 const CONNECT_WAIT_MS = 10_000
 
-/** How long after a launcher's `open` its engine process needs to exist — see `onLauncherOpened`. */
-const ENGINE_SPAWN_GRACE_MS = 2_500
-/** Between repair attempts for the same launcher. Scanning an engine's store on every 5s tick, for a
- *  launcher whose session cannot be resolved at all, is pure noise. */
+/** Between session-binding attempts for a process whose engine store is not resolvable yet. */
 const REPAIR_RETRY_MS = 60_000
-/** …but a NEW agent is a different case: it is waiting for something that is about to happen. Muse makes
+/** A NEW process is waiting for a session that is about to appear. Muse makes
  *  this concrete — its session is only claimable once the user has typed, because a file with no turn in
  *  it cannot be told apart from the ones muse opens for itself. Backing off a full minute there costs the
  *  FIRST message: the pane answers while web and device show nothing. So keep sweeping for a while first,
- *  then settle into the slow rhythm for launchers that will never resolve. */
+ *  then settle into the slow rhythm for processes that will never resolve. */
 const REPAIR_EAGER_ATTEMPTS = 24   // ≈2 min at the 5s sweep
 
 function usage(): never {
   console.log(`harness v${VERSION} — connect this computer to your machine
 
-Agents — run one INSIDE tmux, after "harness join" (every argument after the engine name is
-passed through to that CLI untouched, e.g. harness claude --resume <id> --model opus):
-${ENGINES.map((e) => { const a = aliasesFor(e); return `  harness ${engineCommand(e).padEnd(12)} runs \`${engineBin(e)}\`${a.length ? ` (also: ${a.map((x) => `harness ${x}`).join(', ')})` : ''}` }).join('\n')}
-
-  These agents are driven from the web and the device, where nobody can answer a prompt — so each one
-  starts with ITS OWN permission checks bypassed (claude gets --dangerously-skip-permissions, codex
-  --yolo, devin --permission-mode dangerous, …). Name any permission or trust flag of that CLI
-  yourself and harness adds none: 'harness codex --sandbox read-only' stays sandboxed.
-  Two CLIs keep directory trust in their config rather than a flag — codex and devin ask "do you trust
-  this directory?" the first time you run one in a new directory. Answer it in the pane; harness will
-  not edit your config to skip it.
-  Kilo is the exception with no bypass at all: it offers one on 'kilo run', but its interactive TUI —
-  the thing harness starts — rejects the flag, so a kilo agent still stops at its own permission prompt.
-  You can answer that prompt remotely from the web or the device; it arrives as a question, not as a
-  tool card.
+Agents — after "harness join", run the vendor CLI directly inside tmux. Harness discovers supported
+top-level processes automatically; it does not launch them or change their permission flags:
+${ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')}
 
 Machine:
   harness join <token>         connect this computer to an existing machine using the token from its machine page
@@ -432,7 +409,7 @@ async function statBirthMs(path: string): Promise<number> {
   return Number.isFinite(birth) ? birth : 0
 }
 
-/** The daemon body: the actual long-running adapter (hooks + watcher + reaper + backend socket). */
+/** The daemon body: hooks + watcher + process discovery + backend socket. */
 async function runForeground(token: string): Promise<void> {
   installTimestampedConsole() // daemon-only: every machine.log line gets a wall-clock timestamp
   const startedAt = Date.now()
@@ -455,30 +432,9 @@ async function runForeground(token: string): Promise<void> {
   })
 
   registry.load()
-  // Sessions on disk have no launcher socket yet. A daemon restart (self-update swaps the daemon out
-  // from under running agents) tears down every socket, and each surviving launcher reconnects within
-  // ~1s — so give them a grace window before deciding they are gone. Anything still unclaimed after it
-  // belongs to a launcher that really died (or a machine that rebooted).
-  setTimeout(() => {
-    for (const session of registry.list()) {
-      if (launcherSessions.has(session.agentId)) continue
-      console.log(`[machine] ${sid(session.agentId)} never reconnected — dropping ${sid(session.sessionId || session.agentId)}`)
-      if (session.sessionId) forgetSession(session.sessionId, { force: true })
-      else registry.removeAgent(session.agentId)
-    }
-  }, MACHINE_RECONNECT_GRACE_MS).unref?.()
-  // Nothing is probed here, on purpose.
-  //
-  // This used to verify every persisted session against `tmux` + `ps` and delete the ones that did not
-  // answer — at the one moment when that evidence is worth least. No launcher has reconnected yet (the
-  // hook server is not even listening), and a daemon in the middle of booting is exactly when those
-  // probes time out: pools warming, dozens of `ps` calls, 3s timeouts. `validateSessionRuntime` collapses
-  // "gone" and "the probe failed" into one `false`, so a slow machine deleted live agents from disk, and
-  // their launchers then reconnected to a daemon that had forgotten them. That is the "stop, start again,
-  // my agents are missing" report — 0 sessions registered on a boot whose registry held them.
-  //
-  // The authority is the launcher socket, and the grace above asks it. Anything really dead is dropped
-  // 15s later by that pass, or by the reaper afterwards; nothing is dropped on a guess.
+  // Persisted records are not trusted blindly. The process reconciler below adopts a matching live
+  // runtime, replaces it immediately when PID/start-marker changed, and requires two successful misses
+  // before removing it. Probe errors leave the registry untouched.
   // Recap pool AND voice router share one sync: both need to know which engines the machine actually
   // runs, and a router warmed for an engine no agent uses is exactly the bug this rides along to fix.
   const syncRecapPool = (): void => {
@@ -505,57 +461,13 @@ async function runForeground(token: string): Promise<void> {
     backendRef?.send({ type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } })
     if (opts.device !== false) backendRef?.sendCommander({ type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } })
   }
-  // New sessions, runtime-profile changes, reconnects and periodic reconciliation refresh both web
-  // projects and device tiles from the same authoritative selectedModel snapshot.
-  /**
-   * `device: false` announces to the WEB only.
-   *
-   * The device rebuilds its entire tile list when it sees an agent id it does not know
-   * (`ui_request_agent_reload` → `agents_list` → re-anchor), which yanks the user off whatever tile they
-   * were on — observed as the screen jumping to Settings when a new `harness <engine>` opened a pane. An
-   * agent with no session bound yet has nothing to show there anyway, so the device hears about it once,
-   * when it binds — exactly one reload per agent, as before. The web upserts by id and does not move.
-   */
+  // New process observations, session bindings, runtime-profile changes, reconnects and periodic
+  // reconciliation refresh web and device from the same authoritative snapshot. Device agent_synced is
+  // idempotent and can upsert a sessionless tile, so re-announcing at bind is both safe and necessary.
   const announceSession = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
     syncSession(s, opts)
     announceRename(s, opts)
-    if (opts.device !== false) announcedToDevice.add(s.agentId)
   }
-
-  /**
-   * Announce an agent to the device EXACTLY ONCE, and early.
-   *
-   * The device has no "agent created" frame: any id it does not recognise makes it drop the frame and pull
-   * the whole list again (`commander_client.c:656`, deliberate — inventing tiles from frames is what made
-   * the list drift). So every new agent costs one full reload, and where that reload lands matters:
-   *  - twice per launch (open AND bind) yanked the view mid-use — the second one arrived while the user was
-   *    already on the new tile;
-   *  - only at bind meant the first message's cards were emitted before the device knew the agent, and were
-   *    dropped — the user saw nothing for their first prompt.
-   * Once, at open, is what the device did historically: the reload happens while the pane is still empty,
-   * and by the time anyone types, the agent is known.
-   */
-  const announceToDeviceOnce = (s: RegisteredSession): void => {
-    if (announcedToDevice.has(s.agentId)) {
-      announceSession(s, { device: false })     // web still upserts; the device already knows this id
-      announceRename(s)                          // …and a known id can be renamed without a reload
-      return
-    }
-    announceSession(s)
-  }
-  /** Agent ids the device has been told about — see announceToDeviceOnce. */
-  const announcedToDevice = new Set<string>()
-
-  /**
-   * Messages sent to an agent whose engine has not opened a session yet, held until it does.
-   *
-   * An agent exists from the moment its launcher does, so the user can address it while the engine is
-   * still starting — or still sitting on a startup gate (claude's bypass-permissions warning, devin's
-   * trust prompt). Typing into that is worse than useless: the text answers the PROMPT, no turn ever
-   * starts, and neither the web nor the device has anything to show. Hold it, and submit once the session
-   * binds — the agent's queue already belongs to the pane, not the session.
-   */
-  const pendingBeforeBind = new Map<string, string[]>()
 
   const syncPaneTitles = async (): Promise<void> => {
     const titles = await listPaneTitles()
@@ -1067,34 +979,14 @@ async function runForeground(token: string): Promise<void> {
     cursorTaskHooks.enqueue(sessionId, { toolUseId, input: toolInput }, normalizer)
   }
 
-  /**
-   * Drop a session everywhere: registry, web tab, device tile, recap/turn state.
-   *
-   * **A live launcher vetoes this.** The rule the whole design rests on is that an agent exists exactly as
-   * long as its launcher's socket is open (see launcherSessions.ts) — so anything that concludes a session
-   * is dead from weaker evidence (a `ps` probe that timed out, a SessionEnd hook, a stale pane id) must
-   * lose to that socket. Before this guard the reaper could evict an agent whose launcher was demonstrably
-   * connected, and nothing would ever bring it back.
-   *
-   * `force` is for the cases that outrank the socket: the launcher itself closed, the user deleted the
-   * agent, or the session is being REPLACED by a newer one from the same launcher (a `/clear` rotation).
-   */
+  /** Release a mutable session binding, or remove the process-owned agent everywhere. */
   const forgetSession = (id: string, opts: { force?: boolean; keepAgent?: boolean } = {}): void => {
-    // Addressable by either id: callers hold an engine session id (hooks, reaper) or an agent id (the
-    // launcher closing, a delete from the web).
     const doomed = registry.resolve(id)
     const sessionId = doomed?.sessionId || id
-    if (!opts.force && doomed && launcherSessions.has(doomed.launcherId)) {
-      console.log(`[agent] ${sid(doomed.agentId)} kept — its launcher is still connected`)
-      return
-    }
-    // `keepAgent`: a ROTATION releases the session's parse/watch state but the AGENT stays — it is the
-    // launcher, still running in the same pane. Removing it here is what used to close the user's tab and
-    // reopen it at the end of the strip on every `/clear`.
     console.log(opts.keepAgent
       ? `[agent] ${sid(doomed?.agentId ?? sessionId)} released session ${sid(sessionId)}`
       : `[agent] ${sid(doomed?.agentId ?? sessionId)} forgotten`)
-    if (opts.keepAgent) registry.remove(sessionId)
+    if (opts.keepAgent) registry.unbindSession(sessionId)
     else if (doomed) registry.removeAgent(doomed.agentId)
     else registry.remove(sessionId)
     syncRecapPool()
@@ -1123,267 +1015,153 @@ async function runForeground(token: string): Promise<void> {
     stopHeartbeat(sessionId)
     input.forget(doomed?.agentId ?? sessionId)
     mirror.forget(sessionId) // aborts any in-flight recap + clears busy; KEEPS the persisted summary
-    if (doomed) pendingBeforeBind.delete(doomed.agentId)
     if (opts.keepAgent) return
-    if (doomed) announcedToDevice.delete(doomed.agentId)
     backend.send({ type: 'agent_deleted', payload: { agentId: doomed?.agentId ?? sessionId } }) // web tab
     backend.sendCommander({ type: 'agent_deleted', payload: { agentId: doomed?.agentId ?? sessionId } })
   }
 
-  /**
-   * Adopt agents that were RESUMED into a pane — the one launch that announces nothing.
-   *
-   * An engine's SessionStart hook fires for a NEW session. Resume an old one and no hook comes, so the
-   * session exists in the pane, the user sees it working, and the daemon lists nothing. Verified on
-   * 2026-08-03 with seven agent panes and five tiles: a cursor, an opencode and a hermes pane, each
-   * resumed hours earlier, were invisible until this ran.
-   *
-   * The live launcher is what makes adoption safe. It supplies the launcherId — mandatory since a
-   * session's lifetime is bound to a launcher socket (registry.register returns null without one, which
-   * is exactly why the cursor-only version of this loop had silently registered nothing since) — and its
-   * presence is the proof that the pane belongs to machine at all, rather than a bare CLI someone ran.
-   */
-  let tmuxResumeDiscoveryInFlight: Promise<void> | null = null
-  /** The whole bind pass: tmux-resume discovery first (it names the session outright), then the
-   *  process-and-store probe for whatever is still unbound. */
-  const reconcileBindings = (): Promise<void> => adoptResumedSessions()
-
-  const adoptResumedSessions = (): Promise<void> => {
-    if (tmuxResumeDiscoveryInFlight) return tmuxResumeDiscoveryInFlight
-    tmuxResumeDiscoveryInFlight = (async () => {
-      for (const candidate of await discoverTmuxResumes()) {
-        if (registry.has(candidate.sessionId)) continue
-        // Just deleted: the engine is still winding down, and adopting it here would put the tile back.
-        if (isRecentlyDeleted(candidate.sessionId)) continue
-        const launcher = launcherSessions.byPane(candidate.tmuxPane)
-        if (!launcher || launcher.engine !== candidate.engine) continue
-        // Cursor is tailed from a transcript file, so an entry without one would attach to nothing. The
-        // other engines here are read from their own stores by session id.
-        const transcriptPath = candidate.engine === 'cursor'
-          ? await findCursorTranscript(env.CURSOR_HOME, candidate.sessionId) ?? undefined
-          : candidate.engine === 'grok'
-            ? await findGrokTranscript(env.GROK_HOME, candidate.cwd, candidate.sessionId) ?? undefined
-            : undefined
-        if ((candidate.engine === 'cursor' || candidate.engine === 'grok') && !transcriptPath) continue
-        const result = registry.register({
-          engine: candidate.engine,
-          sessionId: candidate.sessionId,
-          launcherId: launcher.launcherId,
-          transcriptPath,
-          cwd: candidate.cwd,
-          source: 'tmux-resume',
-          tmuxPane: candidate.tmuxPane,
-          processIdentity: candidate.processIdentity,
-          hookEvent: 'TmuxResumeDiscovery',
-        })
-        if (!result || !result.isNew) continue
-        if (result.evicted) forgetSession(result.evicted, { force: true })
-        if (!await attachSession(result.entry)) {
-          registry.remove(result.entry.sessionId)
-          continue
-        }
-        syncRecapPool()
-        announceToDeviceOnce(result.entry)
-        console.log(
-          `[resume-discovery] adopted ${candidate.engine} session ${sid(result.entry.sessionId)} on ${result.entry.tmuxPane}`,
-        )
-      }
-      await repairOrphanLaunchers()
-    })().finally(() => { tmuxResumeDiscoveryInFlight = null })
-    return tmuxResumeDiscoveryInFlight
+  type RegisteredMeta = {
+    isNew: boolean
+    evicted: string | null
+    rebound: string | null
+    hookEvent?: string
   }
 
-  /**
-   * A launcher is connected but the daemon holds no agent for it — put the mapping back.
-   *
-   * This is the other half of "an agent exists while its launcher's socket is open". The launcher upholds
-   * its side (same machine id, reconnects forever), but its frame carries no SESSION id — only the
-   * engine's hook ever supplied that, and it fires once. So any daemon that lost the mapping kept a
-   * connected launcher with nothing behind it, invisible until the user typed. Seen on 2026-08-03: three
-   * launchers reconnected with their original ids and not one came back.
-   *
-   * `findLiveSession` asks the engine's own store and refuses to guess between two candidates, so the
-   * worst case is staying invisible one more turn — never binding an agent to someone else's transcript.
-   */
+  const handleRegistered = async (entry: RegisteredSession, meta: RegisteredMeta): Promise<void> => {
+    if (meta.rebound) {
+      registry.inheritName(meta.rebound, entry.sessionId)
+      mirror.inheritSummary(meta.rebound, entry.sessionId)
+      forgetSession(meta.rebound, { force: true, keepAgent: true })
+      backend.send({ type: 'session_reset', payload: { staleSessionId: meta.rebound } })
+      console.log(`[agent] ${sid(entry.agentId)} rebound ${sid(meta.rebound)} → ${sid(entry.sessionId)}`)
+    } else if (meta.evicted) {
+      forgetSession(meta.evicted, { force: true })
+    }
+    const reset = meta.isNew || (entry.engine !== 'cursor' && meta.hookEvent === 'SessionStart')
+    const bornAfterAgent = meta.isNew && !meta.rebound && entry.boundAt !== null
+      && entry.boundAt - entry.registeredAt > 0
+      && !!entry.transcriptPath
+      && await statBirthMs(entry.transcriptPath) >= entry.registeredAt
+    const attached = await attachSession(entry, reset, entry.engine === 'cursor', bornAfterAgent)
+    if (!attached) {
+      registry.unbindSession(entry.sessionId)
+      announceSession(entry)
+      return
+    }
+    syncRecapPool()
+    if (!meta.isNew) return
+    registry.inheritName(entry.agentId, entry.sessionId)
+    announceSession(entry)
+    backend.send({
+      type: 'session_synced',
+      payload: {
+        sessionId: entry.sessionId,
+        agentId: entry.agentId,
+        title: projectDisplayName(entry),
+        createdAt: new Date(entry.boundAt ?? Date.now()).toISOString(),
+      },
+    })
+  }
+
   const lastRepairAttempt = new Map<string, number>()
-  /** Attempts so far per agent — the first few run on every sweep, see REPAIR_EAGER_ATTEMPTS. */
   const repairAttempts = new Map<string, number>()
-  /**
-   * Bind the agents that have no engine session yet.
-   *
-   * Driven by the AGENTS rather than by the launchers: an agent exists from the moment its launcher
-   * opened, so "who still needs a session?" is a property of the registry, not something to re-derive
-   * from sockets each tick. Resuming an engine reports no new session id, so without this pass a resumed
-   * agent would sit unbound forever.
-   */
-  const repairOrphanLaunchers = async (): Promise<void> => {
-    for (const agent of registry.unbound()) {
-      const launcher = launcherSessions.get(agent.agentId)
-      if (!launcher) continue
-      // An engine we cannot resolve (or one still starting) would otherwise be re-scanned every tick.
-      const attemptedAt = lastRepairAttempt.get(agent.agentId) ?? 0
+  const bindObservedAgent = async (observed: DiscoveredTmuxAgent): Promise<void> => {
+    const agent = registry.byPaneEngine(observed.tmuxPane, observed.engine)
+    if (!agent || agent.sessionId) return
+
+    let sessionId = observed.resumeSessionId
+    let transcriptPath: string | undefined
+    let source = 'tmux-resume'
+    if (sessionId) {
+      if (isRecentlyDeleted(sessionId)) return
+      const owner = registry.bySession(sessionId)
+      if (owner && owner.agentId !== agent.agentId) {
+        const observedStarted = Date.parse(observed.processIdentity.startMarker)
+        const ownerStarted = Date.parse(owner.processIdentity?.startMarker ?? '')
+        if (Number.isFinite(ownerStarted) && (!Number.isFinite(observedStarted) || observedStarted <= ownerStarted)) return
+      }
+      transcriptPath = observed.engine === 'cursor'
+        ? await findCursorTranscript(env.CURSOR_HOME, sessionId) ?? undefined
+        : observed.engine === 'grok'
+          ? await findGrokTranscript(env.GROK_HOME, observed.cwd, sessionId) ?? undefined
+          : undefined
+      if ((observed.engine === 'cursor' || observed.engine === 'grok') && !transcriptPath) return
+    } else {
       const attempts = repairAttempts.get(agent.agentId) ?? 0
-      if (attempts >= REPAIR_EAGER_ATTEMPTS && Date.now() - attemptedAt < REPAIR_RETRY_MS) continue
+      const lastAttempt = lastRepairAttempt.get(agent.agentId) ?? 0
+      if (attempts >= REPAIR_EAGER_ATTEMPTS && Date.now() - lastAttempt < REPAIR_RETRY_MS) return
       lastRepairAttempt.set(agent.agentId, Date.now())
       repairAttempts.set(agent.agentId, attempts + 1)
-      const cwd = agent.cwd ?? launcher.cwd
-      if (!cwd) continue
-      const identity = await resolvePaneEngineProcess(agent.tmuxPane, agent.engine)
-      if (!identity) continue
-      const startedAtMs = Date.parse(identity.startMarker)
-      if (!Number.isFinite(startedAtMs)) continue
-      // `bornOnly`: this agent has never had a session, so only accept one this engine CREATED. Taking a
-      // merely-recently-written transcript handed the new agent the previous run's conversation — exit the
-      // launcher, start it again in the same pane, and the fresh tab opened full of old messages.
-      const found = await findLiveSession(agent.engine, cwd, startedAtMs, { bornOnly: true })
-      if (!found || registry.has(found.sessionId) || isRecentlyDeleted(found.sessionId)) continue
-      const result = registry.register({
-        engine: agent.engine,
-        sessionId: found.sessionId,
-        launcherId: agent.agentId,
-        transcriptPath: found.transcriptPath,
-        cwd,
-        source: 'launcher-repair',
-        tmuxPane: agent.tmuxPane,
-        processIdentity: identity,
-        hookEvent: 'LauncherRepair',
-      })
-      if (!result || !result.isNew) continue
-      if (result.evicted) forgetSession(result.evicted, { force: true })
-      if (!await attachSession(result.entry)) {
-        registry.remove(result.entry.sessionId)
-        continue
-      }
-      lastRepairAttempt.delete(agent.agentId)
-      syncRecapPool()
-      announceSession(result.entry)
-      console.log(
-        `[repair] ${sid(agent.agentId)} had no session — bound ${agent.engine} session `
-        + `${sid(result.entry.sessionId)} on ${result.entry.tmuxPane}`,
-      )
+      const startedAtMs = Date.parse(observed.processIdentity.startMarker)
+      if (!Number.isFinite(startedAtMs)) return
+      const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, { bornOnly: true })
+      if (!found || registry.has(found.sessionId) || isRecentlyDeleted(found.sessionId)) return
+      sessionId = found.sessionId
+      transcriptPath = found.transcriptPath
+      source = 'process-repair'
     }
+
+    const previousOwner = registry.bySession(sessionId)
+    const result = registry.register({
+      engine: observed.engine,
+      sessionId,
+      transcriptPath,
+      cwd: observed.cwd,
+      source,
+      tmuxPane: observed.tmuxPane,
+      processIdentity: observed.processIdentity,
+      hookEvent: source === 'tmux-resume' ? 'TmuxResumeDiscovery' : 'ProcessRepair',
+    })
+    if (!result || !result.isNew) return
+    if (previousOwner && previousOwner.agentId !== result.entry.agentId) {
+      input.forget(previousOwner.agentId)
+      announceSession(previousOwner)
+    }
+    lastRepairAttempt.delete(agent.agentId)
+    repairAttempts.delete(agent.agentId)
+    await handleRegistered(result.entry, result)
+    console.log(`[discovery] bound ${observed.engine} session ${sid(result.entry.sessionId)} on ${observed.tmuxPane}`)
   }
 
-  // SessionEnd = the claude session is over → remove it from the list, EVEN if the tmux pane is still
-  // alive (the user exited claude with Ctrl+D / Ctrl+C×2 and is back at the shell — claude isn't
-  // running there anymore). A later `claude --resume` fires SessionStart and adds it back.
-  // The one exception is `/clear`, which rotates in place: a fresh SessionStart for the SAME pane
-  // follows immediately and replaces this session via pane-dedup, so we keep it to avoid a flicker.
-  const onSessionEnd = (sessionId: string, reason: string | undefined): void => {
-    // SessionEnd hooks are computer-global. Never let a standalone/non-tmux Claude session (or a stale
-    // callback for an already-evicted id) manufacture a device `done` card through forgetSession().
-    if (reason === 'clear' || !registry.has(sessionId)) return
-    void (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-      const session = registry.resolve(sessionId)
-      if (!session) return
-      if (await validateSessionRuntime(session)) return
-      forgetSession(sessionId)
-    })().catch((err) => console.error('[hooks] SessionEnd runtime check failed:', err instanceof Error ? err.message : err))
-  }
-
-  // Hook callbacks → registry → announce live to web + device (tab/tile add), drop on end.
-  const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
-    // The `harness <engine>` wrapper exited — authoritative end, so its tile drops now instead of when
-    // the reaper next notices the launcher is gone.
-    onLauncherClosed: (launcherId) => {
-      // The launcher IS the agent, bound or not — one call, and an agent that never got as far as
-      // reporting a session still goes away with the pane it was running in.
-      forgetSession(launcherId, { force: true })
-    },
-    // …and the reverse. A launcher opening is the only signal that a RESUMED agent exists, since its
-    // engine fires no SessionStart. Closing dropped the session immediately; re-creating it used to wait
-    // for the periodic scan, or — before adoption existed at all — never happened.
-    //
-    // Delayed on purpose: the launcher is still waiting on the ack we just sent before it spawns the
-    // engine, so right now the pane holds only the launcher process. Adopting at this instant would
-    // record the LAUNCHER's pid as the session's process identity, and the reaper compares pid + start
-    // time — the moment the engine appeared it would read as "process changed under pane" and evict a
-    // live session. The periodic scan remains the backstop if this one is early anyway.
-    // Turned away at the door, before hooks are installed or an engine is spawned — see the module for
-    // why muse alone cannot host two agents in one directory.
-    // Two filters, both learned the hard way: the registry is PERSISTED, so after a daemon restart it is
-    // full of agents that may no longer exist, and a launcher reconnecting arrives under the agent id it
-    // already owns. Without either guard the rule refused the very launchers it was meant to protect —
-    // measured: a restart killed both live muse panes, because each was turned away by its own saved entry.
-    refuseLauncher: ({ engine, cwd, launcherId, isLive }) =>
-      refuseDuplicateAgent(registry.list(), engine, cwd, { selfId: launcherId, isLive }),
-    onLauncherOpened: (launcher) => {
-      // The agent IS the launcher: it exists from the moment `harness <engine>` runs, before the engine
-      // has picked a session. Binding that session comes later (onRegistered / the reconcile sweep) —
-      // which is also what makes a RESUMED session work, since resuming reports no new session id.
-      const opened = registry.openAgent({
-        agentId: launcher.launcherId,
-        engine: launcher.engine,
-        tmuxPane: launcher.tmuxPane,
-        cwd: launcher.cwd ?? null,
+  const agentReconciler = new TmuxAgentReconciler({
+    current: () => registry.list(),
+    onDiscovered: async (observed) => {
+      const opened = registry.openProcessAgent({
+        engine: observed.engine,
+        tmuxPane: observed.tmuxPane,
+        cwd: observed.cwd,
+        processIdentity: observed.processIdentity,
       })
-      if (opened?.evicted) console.log(`[agent] ${sid(launcher.launcherId)} took pane ${launcher.tmuxPane} from ${sid(opened.evicted)}`)
-      if (opened?.isNew) {
-        console.log(`[agent] ${sid(launcher.launcherId)} opened · engine=${launcher.engine} · pane=${launcher.tmuxPane}`)
+      if (!opened) return
+      if (opened.evicted) console.log(`[discovery] ${observed.tmuxPane} replaced ${sid(opened.evicted)}`)
+      if (opened.isNew) {
+        console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · pane=${observed.tmuxPane}`)
         announceSession(opened.entry)
       }
-      const timer = setTimeout(() => {
-        void reconcileBindings().catch((err) => {
-          console.error('[resume-discovery] bind on launcher open failed:', err instanceof Error ? err.message : err)
-        })
-      }, ENGINE_SPAWN_GRACE_MS)
-      timer.unref?.()
+      await bindObservedAgent(observed)
     },
-    onRegistered: async (entry, meta) => {
-      // A ROTATION, not a replacement: `/clear` (claude) and `/new` (opencode) end one session id and
-      // start another in the same pane under the same launcher. That is ONE agent whose session changed —
-      // so the agent, its tab, its place in the list and its name all stay, and only the mapping moves.
-      if (meta.rebound) {
-        registry.inheritName(meta.rebound, entry.sessionId)
-        mirror.inheritSummary(meta.rebound, entry.sessionId)
-        forgetSession(meta.rebound, { force: true, keepAgent: true })   // release the old session's state
-        // The web keys its whole turn lifecycle on `dbSessionId === currentSessionId`, so a pointer at the
-        // dead session would swallow every event of the new one. Drop it first, then hand over the new id.
-        backend.send({ type: 'session_reset', payload: { staleSessionId: meta.rebound } })
-        console.log(`[agent] ${sid(entry.agentId)} rebound ${sid(meta.rebound)} → ${sid(entry.sessionId)}`)
-      } else if (meta.evicted) {
-        // A different agent held this pane and is gone.
-        forgetSession(meta.evicted, { force: true })
-      }
-      const reset = meta.isNew || (entry.engine !== 'cursor' && meta.hookEvent === 'SessionStart')
-      // Was this session BORN under an agent that was already open? Then whatever is on disk is this
-      // turn — the user's first message, typed in the terminal, which is what created the session — and
-      // the stream has to start at byte 0 to carry it. A resume (transcript older than the agent) keeps
-      // tailing from the end; its history is `session_get`'s job.
-      const bornAfterAgent = meta.isNew && !meta.rebound && entry.boundAt !== null
-        && entry.boundAt - entry.registeredAt > 0
-        && !!entry.transcriptPath
-        && await statBirthMs(entry.transcriptPath) >= entry.registeredAt
-      void attachSession(entry, reset, entry.engine === 'cursor', bornAfterAgent).then((attached) => {
-        if (!attached) return
-        syncRecapPool()
-        if (!meta.isNew) return
-        // A name the user set BEFORE this agent had a session was stored under the agent id — which is
-        // minted fresh on every launch. Move it onto the session id, where names live: that is what makes
-        // it come back on a `--resume`, and what stops it dying with the launcher.
-        registry.inheritName(entry.agentId, entry.sessionId)
-        announceToDeviceOnce(entry) // upsert the agent; skip re-announce on catch-hook re-register
-        // EVERY bind announces its session — the first one as much as a rotation. An agent that opened
-        // without one answers `sessions_list` with nothing, so the web holds no `currentSessionId` and
-        // silently drops the whole first turn; this is what hands it the id its events will carry.
-        backend.send({
-          type: 'session_synced',
-          payload: {
-            sessionId: entry.sessionId,
-            agentId: entry.agentId,
-            title: projectDisplayName(entry),
-            createdAt: new Date(entry.boundAt ?? Date.now()).toISOString(),
-          },
-        })
-        const held = pendingBeforeBind.get(entry.agentId)
-        if (held?.length) {
-          pendingBeforeBind.delete(entry.agentId)
-          console.log(`[msg] ${sid(entry.agentId)} flushing ${held.length} message(s) held before bind`)
-          for (const text of held) input.submit(entry.agentId, text)
-        }
-      })
+    onObserved: async (observed, current) => {
+      registry.updateProcessIdentity(current.agentId, observed.processIdentity)
+      await bindObservedAgent(observed)
     },
+    onRemoved: (agent, reason) => {
+      console.log(`[discovery] ${sid(agent.agentId)} removed · ${reason}`)
+      forgetSession(agent.agentId, { force: true })
+    },
+  })
+
+  // SessionEnd describes the mutable engine session, never process lifetime. Reconcile now; discovery
+  // decides whether the agent still exists from tmux + ps.
+  const onSessionEnd = (_sessionId: string, _reason: string | undefined): void => {
+    void agentReconciler.trigger()
+  }
+
+  const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
+    resolveHookAgent: async ({ engine, tmuxPane }) => {
+      await agentReconciler.trigger()
+      return registry.byPaneEngine(tmuxPane, engine) ?? null
+    },
+    onRegistered: handleRegistered,
     onSessionEnd,
     // Command Code's PreToolUse — the one live "a turn is running" signal this engine has. Without it the
     // adapter only learned of a turn from Stop, and emitted turn_started+turn_ended in the same
@@ -1553,9 +1331,8 @@ async function runForeground(token: string): Promise<void> {
     installOpencodePlugin(hookPort)
     installKiloPlugin(hookPort)
     installPiExtension(hookPort)
-    // Amp belongs here with the other plugin-based engines, and it was missed. It matters most after a
-    // SELF-UPDATE: the daemon restarts, and this is what puts the new plugin on disk immediately rather
-    // than leaving it until someone next runs `harness amp`.
+    // A self-update refreshes plugin files here; running engine processes pick them up according to each
+    // vendor's own plugin reload lifecycle.
     installAmpPlugin(hookPort)
     installHermesHooks(hookPort)
     installDevinHooks(hookPort)
@@ -1630,8 +1407,8 @@ async function runForeground(token: string): Promise<void> {
     }
   })
   for (const session of registry.list()) {
-    // An UNBOUND agent has no transcript to attach to yet — its launcher is alive (or the 15s sweep above
-    // will drop it) and the reconcile pass binds it as soon as the engine reports a session. Attaching an
+    // An UNBOUND process agent has no transcript to attach to yet. Discovery keeps it visible and the
+    // hook/store repair path binds it as soon as the engine reports a session. Attaching an
     // empty session id here would tear down an agent the user can see running in their pane, which is
     // exactly what a self-update restart must never do.
     if (!session.sessionId) continue
@@ -1657,12 +1434,7 @@ async function runForeground(token: string): Promise<void> {
   }
   watcher.start()
   await cursorDiscovery.start()
-  await reconcileBindings()
-  const tmuxResumeDiscoveryTimer = setInterval(() => {
-    void reconcileBindings().catch((err) => {
-      console.error('[resume-discovery] tmux resume scan failed:', err instanceof Error ? err.message : err)
-    })
-  }, env.TMUX_REAP_INTERVAL_MS)
+  agentReconciler.start(env.TMUX_REAP_INTERVAL_MS)
   for (const task of await loadCursorPendingTasks(env.ADAPTER_DATA_DIR)) {
     onCursorTaskStart(task.sessionId, task.toolUseId, task.input)
   }
@@ -1778,9 +1550,8 @@ async function runForeground(token: string): Promise<void> {
    * Web or device deleted an agent (`agent_delete`): end the AGENT, not the user's window.
    *
    * This used to `tmux kill-pane`, which took the pane down — and with it the window, and the session if
-   * that pane was the last one. The pane is the user's; only the launcher and its engine belong to us. So
-   * the launcher is asked to shut its child down, and the daemon verifies afterwards (some launchers in
-   * the wild are too old to know the frame — see terminateDeletedAgent).
+   * that pane was the last one. The pane is the user's; only the exact discovered engine process is
+   * signalled. Its PID and start marker are re-validated before SIGTERM/SIGKILL.
    *
    * `registry.remove` + `mirror.forget` keep the recap AND the agent-name override for a later resume.
    */
@@ -1789,23 +1560,23 @@ async function runForeground(token: string): Promise<void> {
     // The engine outlives this call by a second or two now, and its catch hook fires on every turn
     // boundary. Without the tombstone that hook re-registers the session and the tile comes straight back.
     markDeleted(sessionId)
-    const launcher = s ? launcherSessions.get(s.launcherId) : undefined
-    if (launcher) {
-      try { launcher.socket.send(JSON.stringify({ t: 'exit', reason: 'deleted' })) } catch { /* the fallback covers it */ }
+    if (s?.processIdentity) {
+      agentReconciler.suppress({ engine: s.engine, tmuxPane: s.tmuxPane, processIdentity: s.processIdentity })
     }
     forgetSession(sessionId, { force: true })
     if (!s) return
     void terminateDeletedAgent(s, {
-      isAlive: validateSessionRuntime,
+      checkRuntime: checkSessionRuntime,
       kill: (pid, signal) => process.kill(pid, signal),
       sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.() }),
       log: (message) => console.log(message),
-    }).then((outcome) => {
+    }, 0).then((outcome) => {
       console.log(`[delete] ${sid(sessionId)} ${s.engine} · ${outcome}`)
       // Provably gone ⇒ nothing left that could re-register, so stop blocking the id early.
       if (outcome !== 'failed') clearDeleted(sessionId)
+      void agentReconciler.trigger()
     }).catch((err) => {
-      console.error('[delete] fallback failed:', err instanceof Error ? err.message : err)
+      console.error('[delete] process termination failed:', err instanceof Error ? err.message : err)
     })
   }
 
@@ -1822,18 +1593,8 @@ async function runForeground(token: string): Promise<void> {
       console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine} · "${preview(content, 40)}" → "${preview(adapted, 40)}"`)
     }
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · len=${adapted.length} · "${preview(adapted)}"`)
-    if (record && !record.sessionId && !acceptsInputBeforeSession(record.engine)) {
-      const held = pendingBeforeBind.get(record.agentId) ?? []
-      held.push(adapted)
-      pendingBeforeBind.set(record.agentId, held)
-      console.log(`[msg] ${sid(record.agentId)} held · agent not started yet (${held.length} queued)`)
-      return
-    }
     input.submit(record?.agentId ?? sessionId, adapted)
   }
-
-  // Hard-killed panes (SessionEnd never fired) → reaper drops them.
-  const reaper = startTmuxReaper(env.TMUX_REAP_INTERVAL_MS, forgetSession)
 
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone
@@ -1842,11 +1603,6 @@ async function runForeground(token: string): Promise<void> {
     if (trimLogFile(LOG_FILE)) console.log(`[log] ${tildify(LOG_FILE)} hit its size cap — dropped the oldest half`)
   }, LOG_CHECK_INTERVAL_MS)
   logTrimTimer.unref?.() // never hold the event loop open for log upkeep
-
-  // No machine reaper: the launcher's WebSocket is the liveness signal, so a dead launcher (clean exit,
-  // SIGKILL, or a closed terminal window) is noticed the instant its socket closes — see
-  // hookServer.ts `attachLauncherWs` → onLauncherClosed below.
-
 
   backend.connect()
   console.log(`[cli] dialing ${env.BACKEND_WS_URL}/api/adapter-ws · watching registered sessions for ${ENGINES.length} engines`)
@@ -1870,23 +1626,12 @@ async function runForeground(token: string): Promise<void> {
   const restartForUpdate = async (newVersion: string): Promise<void> => {
     if (restarting) return
     restarting = true
-    // FIRST, before any teardown: tell every pane why its agent is about to be cut off. The restart no
-    // longer waits for idle, so a turn may be streaming right now and the person watching it deserves a
-    // reason. Bounded and non-throwing (see notifyAll), so it can neither stall nor abort the restart —
-    // and deliberately not placed further down, where a later reordering of teardown could silently drop it.
-    await launcherSessions.notifyAll({
-      t: 'notice',
-      level: 'warn',
-      durationMs: 8_000,
-      text: `harness is updating (${VERSION} → ${newVersion}) — restarting now, this agent reconnects on its own`,
-    })
     console.log(`[update] applying ${VERSION} → ${newVersion} — restarting daemon`)
     registry.flush()
     updater?.stop()
-    clearInterval(reaper)
+    agentReconciler.stop()
     clearInterval(logTrimTimer)
     clearInterval(runtimeReconcileTimer)
-    clearInterval(tmuxResumeDiscoveryTimer)
     clearInterval(paneTitleSyncTimer)
     questionWatcher.stopAll()
     for (const t of heartbeats.values()) clearInterval(t)
@@ -1899,13 +1644,8 @@ async function runForeground(token: string): Promise<void> {
     await watcher.stop()
     // Fully release the FIXED hook port BEFORE the child binds (no fallback → EADDRINUSE otherwise).
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
-    // Release the FIXED port so the child can bind, but do NOT wait for the callback and do NOT tear the
-    // launcher sockets down. Two reasons, both learned the hard way:
-    //   - close() only calls back once EVERY connection has ended, and a launcher's upgraded WebSocket
-    //     never ends on its own. Awaiting it wedged the restart forever with the port already shut.
-    //   - terminating those sockets instead reads to the daemon as "the launcher is gone", which forgets
-    //     every session and persists an EMPTY registry, so the new daemon comes up owning nothing.
-    // close() releases the listening handle synchronously; the sockets die with the process moments later.
+    // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
+    // registry and are revalidated by the new daemon's first discovery passes.
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
@@ -1983,10 +1723,9 @@ async function runForeground(token: string): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`\n[cli] ${signal} — shutting down`)
     updater?.stop()
-    clearInterval(reaper)
+    agentReconciler.stop()
     clearInterval(logTrimTimer)
     clearInterval(runtimeReconcileTimer)
-    clearInterval(tmuxResumeDiscoveryTimer)
     clearInterval(paneTitleSyncTimer)
     questionWatcher.stopAll()
     for (const t of heartbeats.values()) clearInterval(t)
@@ -2152,7 +1891,7 @@ async function waitForReady(sinceOffset: number, timeoutMs = 8000): Promise<Read
   return { state: 'unreachable', detail: lastTransient ?? `no connection within ${timeoutMs / 1000}s` }
 }
 
-// ── launcher / stop / status ───────────────────────────────────────────────────────────────────
+// ── daemon start / stop / status ───────────────────────────────────────────────────────────────
 
 /** Daemonize (or run inline) + print the info block. Returns 'deauth' when the saved credential was
  *  rejected (401/403) so the caller (`joinCommand`) can ask for a fresh token; otherwise it exits. */
@@ -2515,16 +2254,6 @@ switch (cmd) {
     updateCommand().catch(onError)
     break
   default:
-    // `harness <engine> [args…]` — wrap an agent CLI in this tmux pane. Everything after the engine
-    // name is forwarded VERBATIM, so we read raw argv here instead of the `flags`/`args` split above:
-    // that split strips every `-`-prefixed token anywhere in argv and would eat the engine's own
-    // `--resume` / `--model`.
-    // Accept the engine's own id OR any name its CLI actually installs (`harness cmd` = Command Code).
-    const engine = resolveEngine(cmd)
-    if (engine) {
-      launchEngine(engine, process.argv.slice(3)).catch(onError)
-      break
-    }
     console.error(`Unknown command: ${cmd}`)
     usage()
 }

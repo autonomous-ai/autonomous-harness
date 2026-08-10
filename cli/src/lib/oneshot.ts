@@ -32,7 +32,7 @@ function claudeBin(): string {
  * to answer and no session that survives it — hence this narrow exception to "harness edits no config":
  * ONE path is appended, the one being created here. The config-wide `respect_workspace_trust: false`
  * would switch the check off for the user's real projects too; every other entry, and the setting
- * itself, is left alone. `harness devin` does NOT use this — an interactive pane can ask.
+ * itself, is left alone. The interactive vendor CLI does NOT use this — its pane can ask.
  */
 export function trustDevinWorkspace(dir: string, onError?: (message: string) => void): void {
   const file = join(env.DEVIN_HOME, 'trusted_workspaces.json')
@@ -640,13 +640,13 @@ class KiloWorker extends ProcessWorker {
     // prompt later. `--pure` skips external plugins (so the discovery plugin never self-registers this
     // ephemeral recap session). `--format json` streams one JSON envelope per line.
     //
-    // `--auto` is REQUIRED here and is not the same question as the launcher's permission table. Measured:
+    // `--auto` is REQUIRED for this disposable worker only. Measured:
     // without it a recap run whose model reaches for any tool dies outright — kilo auto-rejects the
     // permission and ends the run (`run ended with an auto-rejected permission; pass --auto for
     // autonomous use`), emitting an `error` envelope and NO text. A summariser has no user to ask, and a
     // recap that returns nothing is the failure this flag prevents. Note the asymmetry that makes this
     // easy to get wrong: `--auto` is a valid flag of the `run` SUBCOMMAND, while the bare TUI rejects it
-    // — see `enginePermissions.ts`, where kilo therefore adds nothing.
+    // — the interactive TUI remains entirely under the user's own permission configuration.
     mkdirSync(KILO_RECAP_DATA_DIR, { recursive: true })
     // `--dir` pins the workspace explicitly. Do NOT rely on the spawn `cwd` alone: kilo resolves its
     // project from `$PWD`, and `spawn({cwd})` does not rewrite that variable — the child inherits the

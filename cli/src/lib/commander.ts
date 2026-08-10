@@ -614,15 +614,11 @@ export class CommanderMirror {
     this.emit(sessionId, { kind: 'done', text: 'done' })
   }
 
-  /** Session gone (SessionEnd / reaper / clear): abort any in-flight recap + drop the EPHEMERAL live
-   *  state, and clear the device tile — but KEEP the persisted summary. summaries.json is add/update-only
-   *  (never deleted here), so when the SAME sessionId comes back (`claude --resume`, or the tmux pane
-   *  reopening) its last recap is reused via recent()/project_recent instead of being lost. */
   /**
-   * Move the stored recap to a new session id, for a rotation (`/clear`) inside the same live launcher.
+   * Move the stored recap to a new session id, for a rotation (`/clear`) inside the same live process agent.
    *
    * The device tile shows the last recap; without this, clearing the context blanks the tile even though
-   * the agent, its pane and its launcher never went anywhere.
+   * the agent, its pane and its engine process never went anywhere.
    */
   inheritSummary(fromSessionId: string, toSessionId: string): void {
     const summary = this.summaries.get(fromSessionId)
@@ -631,6 +627,10 @@ export class CommanderMirror {
     this.save()
   }
 
+  /** Session metadata was unbound or its process agent was removed: abort any in-flight recap and drop
+   * the EPHEMERAL live state, but KEEP the persisted summary. A later resume of the same engine session
+   * can reuse it via recent()/project_recent instead of losing the last device recap. SessionEnd alone
+   * does not call this; process discovery owns lifetime. */
   forget(sessionId: string): void {
     const st = this.states.get(sessionId)
     st?.abort?.abort()

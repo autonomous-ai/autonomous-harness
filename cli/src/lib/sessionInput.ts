@@ -46,13 +46,6 @@ const SUBMIT_MAX_RETRIES = 2
 // prompt is in flight. Bounded so a truly wedged session eventually reverts to the retry/error path.
 const SUBMIT_MAX_OBSERVES = 5
 
-/** Grok does not allocate a session until its first prompt is submitted. Holding that prompt until a
- * session id exists deadlocks: UserPromptSubmit is the event that supplies the id. Inject it into the
- * launcher's already-validated pane, then let the hook bind the resulting session. */
-export function acceptsInputBeforeSession(engine: RegisteredSession['engine']): boolean {
-  return engine === 'grok'
-}
-
 interface QueuedInput {
   content: string
   bytes: number

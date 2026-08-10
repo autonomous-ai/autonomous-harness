@@ -4,7 +4,7 @@
  * Deleting an agent used to kill its tmux pane, which killed the engine almost instantly; nothing could
  * announce itself afterwards. Now the engine is asked to exit and keeps running for a second or two, and
  * in that window its hooks still fire. The catch hook (`UserPromptSubmit`) POSTs on every turn boundary
- * and is gated only on the LAUNCHER being alive — which it is — so without this the tile the user just
+ * while the exact engine process is still alive — so without this the tile the user just
  * deleted comes straight back, and the resumed-session adoption loop would re-adopt it for good measure.
  *
  * Deliberately time-based and tiny: this is a race window, not a state machine. The entry is dropped as

@@ -1,24 +1,17 @@
 /**
- * Find the session a live launcher is running, when the daemon has lost track of it.
+ * Find the session a live discovered engine process is running, when no hook has bound one yet.
  *
- * The rule the design rests on is that an agent exists as long as its launcher's socket is open. The
- * launcher upholds its half — it reconnects forever, with the same machine id. But the frame it sends
- * carries no SESSION id, because the launcher genuinely does not know one: the engine picks it, and the
- * only path that ever told the daemon was the engine's own hook, which fires once and never again. So a
- * daemon that lost the mapping (a cleared registry, a crash, a `harness reset`) kept a connected launcher
- * with no agent behind it — invisible until the user happened to type. Observed on 2026-08-03: three
- * launchers reconnected with their original ids and none of the three came back.
- *
- * This is the missing half. Ask the ENGINE's own store which session belongs to that pane's directory,
- * started after the engine did.
+ * Process discovery can see an engine immediately, including after a daemon restart, but a session id is
+ * owned by the engine and may not be present in argv. Ask the engine's own store which session belongs to
+ * that pane's directory and process start time.
  *
  * Two rules keep it honest:
  *   - **Started after the engine process did.** A session older than the process cannot be the one it is
  *     running now. (Resumed agents name their id on the command line and are adopted from argv instead —
- *     see discoverTmuxResumes.)
+ *     see tmuxAgentDiscovery.)
  *   - **Unique or nothing.** Two candidate sessions in one directory means two agents there, and guessing
  *     would hand one agent's transcript to the other's tile. Ambiguity returns null; the agent stays
- *     invisible until its next turn, which is recoverable — mis-binding is not.
+ *     unbound until its next turn, which is recoverable — mis-binding is not.
  */
 
 import { execFile } from 'child_process'
@@ -105,7 +98,7 @@ function idFromFile(path: string): string {
 /**
  * Compare two directories as the filesystem sees them, not as strings.
  *
- * On macOS `/tmp` is a symlink to `/private/tmp`, so a launcher reporting one and an engine recording the
+ * On macOS `/tmp` is a symlink to `/private/tmp`, so discovery reporting one and an engine recording the
  * other describe the SAME directory and would never match textually — measured: a repair that resolved
  * correctly for `/private/tmp/synctest` returned null for `/tmp/synctest`.
  */
@@ -169,8 +162,8 @@ async function fileEngineSession(
   if (born.length === 1) return born[0]
   if (born.length > 1) return null
   // `bornOnly`: the caller is binding an agent that has NEVER had a session. Accepting the `wrote` tier
-  // there hands it whatever session was last touched in this directory — measured: exit the launcher,
-  // run `harness claude` again in the same pane, and the new agent adopted the PREVIOUS conversation,
+  // there hands it whatever session was last touched in this directory — measured: exit the engine,
+  // run `claude` again in the same pane, and the new agent adopted the PREVIOUS conversation,
   // so the web opened a fresh tab already full of old messages. A resume the user asked for by name is
   // matched from argv by the discovery path instead, which needs no guessing.
   if (opts?.bornOnly) return null
@@ -203,7 +196,7 @@ function quote(value: string): string {
 }
 
 /**
- * The session a launcher's engine is running in `cwd`, or null when it cannot be said for certain.
+ * The session a discovered engine process is running in `cwd`, or null when it cannot be said for certain.
  *
  * `startedAtMs` is when the engine process started (`ps` lstart). Cursor is absent on purpose: its
  * transcripts are located by id rather than listed by directory, and its resumes already have a

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Claude Code / Codex / Cursor session hook for machine-adapter.
+ * Pane-scoped session hook shared by the supported hook-capable engines.
  *
  * Self-contained — node built-ins only, no dependency on the adapter's
  * node_modules (it runs inside the user's `claude` process).
  *
  * SessionStart: registers { tmuxPane, sessionId, transcriptPath, cwd } with the
  *   adapter — but only when running inside tmux ($TMUX_PANE set).
- * SessionEnd:   tells the adapter to drop the session (panel disappears).
+ * SessionEnd:   asks the adapter to reconcile the pane; process discovery remains
+ *   the authority for whether the agent exists.
  *
  * Always exits 0 quickly and swallows every error, so it can never block or
  * delay claude's session start/teardown.
@@ -15,6 +16,7 @@
 
 import http from 'node:http'
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import {
   closeSync,
   mkdirSync,
@@ -35,7 +37,6 @@ const BOOT_TOLERANCE_SEC = 120
 const LOCK_STALE_MS = 5000
 const LOCK_RETRIES = 20
 const LOCK_RETRY_MS = 25
-const SESSION_END_VERIFY_DELAY_MS = 2000
 const CURSOR_TASK_MAX_AGE_MS = 10 * 60_000
 const CURSOR_TASK_MAX_ENTRIES = 64
 const CURSOR_TASK_MAX_INPUT_BYTES = 128 * 1024
@@ -73,6 +74,7 @@ function paths() {
   const codexHome = argValue('--codex-home', process.env.CODEX_HOME || join(homedir(), '.codex'))
   const grokHome = argValue('--grok-home', process.env.GROK_HOME || join(homedir(), '.grok'))
   const cursorHome = argValue('--cursor-home', process.env.CURSOR_HOME || join(homedir(), '.cursor'))
+  const hermesHome = argValue('--hermes-home', process.env.HERMES_HOME || join(homedir(), '.hermes'))
   const commandcodeHome = argValue('--commandcode-home', process.env.COMMANDCODE_HOME || join(homedir(), '.commandcode'))
   const devinHome = argValue('--devin-home', process.env.DEVIN_HOME || join(homedir(), '.local', 'share', 'devin', 'cli'))
   return {
@@ -83,6 +85,7 @@ function paths() {
     codexSessionsDir: join(codexHome, 'sessions'),
     grokSessionsDir: join(grokHome, 'sessions'),
     cursorProjectsDir: join(cursorHome, 'projects'),
+    hermesDb: join(hermesHome, 'state.db'),
     commandcodeProjectsDir: join(commandcodeHome, 'projects'),
     devinHome,
     devinLocksDir: join(devinHome, 'session_locks'),
@@ -199,16 +202,72 @@ async function panePid(pane) {
   return Number.isSafeInteger(pid) && pid > 0 ? pid : null
 }
 
-function processMatchesEngine(row, engine) {
-  const haystack = `${row.executable} ${row.args}`.toLowerCase()
-  if (engine === 'codex') return /(^|[\/\s])codex(?:[\s]|$)/.test(haystack)
-  if (engine === 'cursor') {
-    const executable = basename(row.executable).toLowerCase()
-    return executable === 'agent'
-      || executable === 'cursor-agent'
-      || /cursor-agent[\/\\]versions[\/\\][^/\\\s]+[\/\\]index\.js(?:\s|$)/.test(haystack)
+function argvTokens(args) {
+  return (String(args || '').match(/"[^"]*"|'[^']*'|\S+/g) || []).map((token) => {
+    const quoted = (token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))
+    return quoted ? token.slice(1, -1) : token
+  })
+}
+
+function processEntrypoint(args) {
+  const tokens = argvTokens(args)
+  if (!tokens.length) return ''
+  let index = 0
+  let command = basename(tokens[index]).toLowerCase()
+  if (command === 'env') {
+    index++
+    while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index++
+    command = basename(tokens[index] || '').toLowerCase()
   }
-  return /(^|[\/\s])claude(?:[\s]|$)/.test(haystack)
+  if (!/^(?:node|nodejs|bun|deno|python(?:\d+(?:\.\d+)*)?|bash|zsh|sh)$/.test(command)) return tokens[index] || ''
+  index++
+  const optionsWithValue = new Set(['-r', '--require', '--loader', '--import', '--conditions', '--inspect-port'])
+  const inlineCodeOptions = new Set(['-c', '--command', '-e', '--eval', '--print'])
+  while (index < tokens.length) {
+    const token = tokens[index]
+    if (token === '--') { index++; break }
+    if (token === '-m' && index + 1 < tokens.length) return tokens[index + 1]
+    if (inlineCodeOptions.has(token)) return ''
+    if (!token.startsWith('-')) break
+    index += optionsWithValue.has(token) && index + 1 < tokens.length ? 2 : 1
+  }
+  return tokens[index] || ''
+}
+
+const ENGINE_COMMANDS = {
+  claude: 'claude', codex: 'codex', cursor: 'agent', hermes: 'hermes', commandcode: 'cmd',
+  devin: 'devin', muse: 'muse', grok: 'grok',
+}
+const ENGINE_PATH_ENV = {
+  claude: 'CLAUDE_PATH', codex: 'CODEX_PATH', cursor: 'CURSOR_PATH', hermes: 'HERMES_PATH',
+  commandcode: 'COMMANDCODE_PATH', devin: 'DEVIN_PATH', muse: 'MUSE_PATH', grok: 'GROK_PATH',
+}
+
+function processMatchScore(row, engine) {
+  const executable = basename(row.executable).toLowerCase()
+  const entrypoint = processEntrypoint(row.args).toLowerCase()
+  const entrybase = basename(entrypoint).toLowerCase()
+  const configured = String(process.env[ENGINE_PATH_ENV[engine]] || ENGINE_COMMANDS[engine] || '').toLowerCase()
+  const configuredBase = basename(configured).toLowerCase()
+  if (configuredBase && (executable === configuredBase || entrybase === configuredBase
+    || row.executable.toLowerCase() === configured || entrypoint === configured)) return 4
+  if (engine === 'codex') return /@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/.test(entrypoint) ? 2 : 0
+  if (engine === 'cursor') {
+    if (executable === 'cursor-agent' || entrybase === 'cursor-agent') return 3
+    return /cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/.test(entrypoint) ? 2 : 0
+  }
+  if (engine === 'commandcode') {
+    if (/^\s*⌘(?:\s|$)/.test(row.executable) || /^\s*⌘(?:\s|$)/.test(row.args)
+      || executable === 'commandcode' || executable === 'command-code'
+      || entrybase === 'commandcode' || entrybase === 'command-code') return 3
+    return /command-code[\/\\]dist[\/\\]index\.mjs$/.test(entrypoint) ? 2 : 0
+  }
+  if (engine === 'devin') return /devin[\/\\]cli[\/\\]_versions[\/\\][^/\\]+[\/\\]bin[\/\\]devin$/.test(entrypoint) ? 2 : 0
+  if (engine === 'hermes') return /hermes-agent[\/\\]hermes$/.test(entrypoint)
+    || /^(?:hermes|hermes_cli)(?:\.|$)/.test(entrypoint) ? 2 : 0
+  if (engine === 'muse') return /^muse-bin-/.test(executable) || /^muse-bin-/.test(entrybase) ? 3 : 0
+  if (engine === 'grok') return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
+  return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
 }
 
 async function processRows() {
@@ -216,7 +275,7 @@ async function processRows() {
   if (stdout === null) return null
   const rows = []
   for (const line of stdout.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s*(.*)$/.exec(line)
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s+(\S+\s+\S+\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s*(.*)$/.exec(line)
     if (!match) continue
     rows.push({
       pid: Number(match[1]),
@@ -229,26 +288,62 @@ async function processRows() {
   return rows
 }
 
-async function paneEngineProcessState(pane, engine) {
+async function paneEngineProcess(pane, engine) {
   const rootPid = await panePid(pane)
-  if (rootPid === undefined) return 'unknown'
-  if (!rootPid) return 'gone'
+  if (rootPid === undefined) return { state: 'unknown' }
+  if (!rootPid) return { state: 'gone' }
   const rows = await processRows()
-  if (!rows) return 'unknown'
+  if (!rows) return { state: 'unknown' }
   const children = new Map()
+  const byPid = new Map(rows.map((row) => [row.pid, row]))
   for (const row of rows) {
     const list = children.get(row.parentPid) || []
     list.push(row)
     children.set(row.parentPid, list)
   }
-  const queue = [rootPid]
+  const queue = [{ pid: rootPid, depth: 0 }]
+  let best = null
   while (queue.length > 0) {
-    const pid = queue.shift()
-    const row = rows.find((candidate) => candidate.pid === pid)
-    if (row && processMatchesEngine(row, engine)) return 'alive'
-    for (const child of children.get(pid) || []) queue.push(child.pid)
+    const current = queue.shift()
+    const row = byPid.get(current.pid)
+    const score = row ? processMatchScore(row, engine) : 0
+    if (row && score > 0 && (!best || current.depth < best.depth || (current.depth === best.depth && score > best.score))) {
+      best = { row, depth: current.depth, score }
+    }
+    for (const child of children.get(current.pid) || []) queue.push({ pid: child.pid, depth: current.depth + 1 })
   }
-  return 'gone'
+  return best ? {
+    state: 'alive',
+    identity: { pid: best.row.pid, executable: best.row.executable, startMarker: best.row.startMarker },
+  } : { state: 'gone' }
+}
+
+/**
+ * Hermes delegation children execute the same pane-scoped hook as the visible CLI session. During
+ * daemon downtime the regular hook server cannot apply its source guard, so consult Hermes' own store
+ * before writing the offline registry. Unknown is deliberately fail-closed: the startup reconciler can
+ * still create the process-owned agent and session repair can bind it once the daemon returns, whereas
+ * accepting an unknown row can replace the parent's session with a child.
+ */
+async function hermesTopLevelSession(dbPath, sessionId) {
+  if (!/^[0-9]{8}_[0-9]{6}_[0-9a-fA-F]{4,16}$/.test(String(sessionId || ''))) return false
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(75)
+    const raw = await execFileText('sqlite3', [
+      '-json', '-cmd', '.timeout 500', '-cmd', 'PRAGMA query_only=1', `file:${dbPath}?mode=ro`,
+      `SELECT source FROM sessions WHERE id = '${sessionId}';`,
+    ], 1000)
+    if (raw === null) return false
+    try {
+      const rows = JSON.parse(raw.trim() || '[]')
+      if (!Array.isArray(rows) || rows.length === 0) continue
+      const source = typeof rows[0]?.source === 'string' ? rows[0].source : ''
+      return source === '' || source === 'cli'
+    } catch {
+      return false
+    }
+  }
+  return false
 }
 
 function bootTimeSec() {
@@ -421,7 +516,7 @@ async function clearCursorTasks(sessionId) {
   })
 }
 
-async function fallbackRegister(input, engine, tmuxPane, launcherId) {
+async function fallbackRegister(input, engine, tmuxPane) {
   const p = paths()
   const transcriptPath = typeof input.transcript_path === 'string' ? input.transcript_path : ''
   const rawSessionId = input.session_id || input.conversation_id
@@ -429,27 +524,31 @@ async function fallbackRegister(input, engine, tmuxPane, launcherId) {
     ? rawSessionId
     : (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
   if (!sessionId || !/^%\d+$/.test(tmuxPane)) return
-  if (engine !== 'cursor' && !transcriptPath) return
+  const transcriptOptional = ['cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode', 'devin', 'grok'].includes(engine)
+  if (!transcriptOptional && !transcriptPath) return
   if (transcriptPath && !validTranscriptPath(engine, transcriptPath, p)) return
+  const process = await paneEngineProcess(tmuxPane, engine)
+  if (process.state !== 'alive' || !process.identity) return
+  if (engine === 'hermes' && !await hermesTopLevelSession(p.hermesDb, sessionId)) return
 
   await withRegistryLock(p.registryFile, () => {
     let sessions = rebootedSinceSnapshot(p.bootFile) ? [] : readRegistry(p.registryFile)
     writeBoot(p.bootFile)
     const now = Date.now()
-    const existingIndex = sessions.findIndex((s) => s && s.sessionId === sessionId)
+    const sameRuntime = (s) => s && s.tmuxPane === tmuxPane && s.engine === engine
+      && (!s.processIdentity || (s.processIdentity.pid === process.identity.pid && s.processIdentity.startMarker === process.identity.startMarker))
+    const existingIndex = sessions.findIndex(sameRuntime)
     const existing = existingIndex >= 0 ? sessions[existingIndex] : null
-    if (existingIndex < 0) {
-      sessions = sessions.filter((s) => !s || s.tmuxPane !== tmuxPane)
-    }
+    // A resumed session moves to this process agent; the previous process remains visible but unbound.
+    sessions = sessions.map((s) => s && s.sessionId === sessionId && !sameRuntime(s)
+      ? { ...s, sessionId: '', boundAt: null, transcriptPath: null, source: null, updatedAt: now }
+      : s)
+    if (existingIndex < 0) sessions = sessions.filter((s) => !s || s.tmuxPane !== tmuxPane)
+    const agentId = typeof existing?.agentId === 'string' && existing.agentId ? existing.agentId : randomUUID()
     const entry = {
+      agentId,
       sessionId,
       engine,
-      // Mirrors RegisteredSession.agentId/launcherId — the launcher uuid IS the agent id, and an
-      // offline-written record must carry it, or the daemon prunes it on the next load as an unowned
-      // (pre-machine-ID) leftover. Both names are written: the daemon reads `agentId` and falls back to
-      // `launcherId`, and an older daemon (mid-rollout) reads only `launcherId`.
-      agentId: launcherId,
-      launcherId,
       boundAt: Date.now(),
       transcriptPath: transcriptPath || existing?.transcriptPath || null,
       projectDir: engine === 'grok'
@@ -463,7 +562,7 @@ async function fallbackRegister(input, engine, tmuxPane, launcherId) {
       title: typeof input.session_title === 'string' ? input.session_title : (existing?.title ?? null),
       model: typeof input.model === 'string' ? input.model : (existing?.model ?? null),
       cliVersion: typeof (input.cli_version || input.version) === 'string' ? (input.cli_version || input.version) : (existing?.cliVersion ?? null),
-      processIdentity: /^(?:SessionStart|sessionStart)$/.test(input.hook_event_name) ? null : (existing?.processIdentity ?? null),
+      processIdentity: process.identity,
       registeredAt: typeof existing?.registeredAt === 'number' ? existing.registeredAt : now,
       updatedAt: now,
       lastHookAt: now,
@@ -476,17 +575,9 @@ async function fallbackRegister(input, engine, tmuxPane, launcherId) {
 }
 
 async function fallbackSessionEnd(sessionId, reason, engine, tmuxPane) {
-  if (!sessionId || reason === 'clear') return
-  await sleep(SESSION_END_VERIFY_DELAY_MS)
-  const state = await paneEngineProcessState(tmuxPane, engine)
-  if (state !== 'gone') return
-  const p = paths()
-  await withRegistryLock(p.registryFile, () => {
-    let sessions = rebootedSinceSnapshot(p.bootFile) ? [] : readRegistry(p.registryFile)
-    writeBoot(p.bootFile)
-    const next = sessions.filter((s) => !s || s.sessionId !== sessionId)
-    if (next.length !== sessions.length) writeRegistry(p.registryFile, next)
-  })
+  // SessionEnd is not process-lifetime authority. If the daemon is down, its startup scan will reconcile
+  // the actual tmux process; deleting the offline record here would hide a still-running CLI.
+  void sessionId; void reason; void engine; void tmuxPane
 }
 
 async function main() {
@@ -503,11 +594,6 @@ async function main() {
   const event = input.hook_event_name || input.hookEventName
   const tmuxPane = process.env.TMUX_PANE
   if (!tmuxPane) return // tmux-only: ignore every lifecycle event from standalone CLI sessions
-  // machine-launched only: `harness <engine>` exports MACHINE_ID into the CLI's env, and that id is what
-  // binds this session's lifetime to a live launcher. A CLI the user started by hand has no id, so it is
-  // not an agent — drop its events here, exactly like a non-tmux one above.
-  const launcherId = process.env.MACHINE_ID
-  if (!launcherId) return
   if (engine === 'cursor' && input.is_background_agent === true) return
   if (engine === 'codex' && isCodexSubagent(input, paths())) return
   // Devin's documented user-level hook locations include ~/.claude.json and ~/.claude/settings.json, so a
@@ -539,7 +625,6 @@ async function main() {
     if (grokEventName !== 'SessionStart' && grokEventName !== 'UserPromptSubmit') return
     const body = {
       engine,
-      launcherId,
       hookEvent: grokEventName,
       sessionId,
       transcriptPath,
@@ -557,7 +642,7 @@ async function main() {
         transcript_path: transcriptPath,
         cwd,
         cli_version: input.cliVersion || input.version,
-      }, engine, tmuxPane, launcherId)
+      }, engine, tmuxPane)
     }
     return
   }
@@ -607,7 +692,7 @@ async function main() {
       cliVersion: input.cursor_version || input.version,
     }
     const registered = await post(port, '/api/hook/session-start', body)
-    if (!registered) await fallbackRegister(input, engine, tmuxPane, launcherId)
+    if (!registered) await fallbackRegister(input, engine, tmuxPane)
     const stopped = await post(port, '/api/hook/turn-stop', {
       sessionId,
       status: input.status,
@@ -641,7 +726,7 @@ async function main() {
         model: modelName(input.model),
         cliVersion: input.cli_version || input.version,
       })
-      if (!registered) await fallbackRegister(input, engine, tmuxPane, launcherId)
+      if (!registered) await fallbackRegister(input, engine, tmuxPane)
     }
     await post(port, '/api/hook/turn-stop', {
       sessionId: input.session_id,
@@ -667,7 +752,6 @@ async function main() {
       : input.transcript_path
   const body = {
     engine,
-    launcherId,
     hookEvent: event,
     sessionId: input.session_id || input.conversation_id,
     transcriptPath,
@@ -680,7 +764,7 @@ async function main() {
     cliVersion: input.cli_version || input.cursor_version || input.version,
   }
   const ok = await post(port, '/api/hook/session-start', body)
-  if (!ok) await fallbackRegister(input, engine, tmuxPane, launcherId)
+  if (!ok) await fallbackRegister(input, engine, tmuxPane)
 }
 
 main()

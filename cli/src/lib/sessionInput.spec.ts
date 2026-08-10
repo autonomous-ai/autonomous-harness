@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { acceptsInputBeforeSession, SessionInputController } from './sessionInput.js'
+import { SessionInputController } from './sessionInput.js'
 import type { RegisteredSession } from './registry.js'
 
 function session(engine: 'claude' | 'codex' | 'cursor' | 'commandcode' = 'codex'): RegisteredSession {
@@ -320,13 +320,5 @@ describe('SessionInputController', () => {
     release?.()
     await vi.waitFor(() => expect(injected).toEqual(['wait behind control']))
     controller.forget('s1')
-  })
-})
-
-describe('pre-session input', () => {
-  it('lets Grok receive the prompt that creates its session', () => {
-    expect(acceptsInputBeforeSession('grok')).toBe(true)
-    expect(acceptsInputBeforeSession('claude')).toBe(false)
-    expect(acceptsInputBeforeSession('muse')).toBe(false)
   })
 })

@@ -8,22 +8,14 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { WebSocketServer, type WebSocket } from 'ws'
 import { readCodexRolloutMeta } from './engines/codex/rollout.js'
 import { hermesSessionSource } from './engines/hermes/reader.js'
-import { launcherSessions, MACHINE_WS_PATH, type LauncherOpenInput } from './lib/launcherSessions.js'
 import { isRecentlyDeleted } from './lib/deletedSessions.js'
 import { registry, type RegisterInput, type RegisteredSession } from './lib/registry.js'
 import { LOCAL_WEB_HTML } from './webui.js'
 import { sid } from './lib/log.js'
 import { VERSION } from './version.js'
 import { env } from './config/env.js'
-import { engineBin } from './lib/engineBin.js'
-import { installHooksFor } from './lib/hooks.js'
-import {
-  SUPPORTED_PROTOCOLS, frameProtocol, isSupportedProtocol,
-  type LauncherOpenFrame,
-} from './lib/launcherProtocol.js'
 
 export interface PairOutcome {
   status: number
@@ -32,26 +24,13 @@ export interface PairOutcome {
 
 export interface HookServerHandlers {
   onRegistered: (entry: RegisteredSession, meta: { isNew: boolean; evicted: string | null; rebound: string | null; hookEvent?: string }) => void
-  /** SessionEnd — the caller decides whether to forget (a `/clear` rotation keeps the pane's tile). */
+  /** SessionEnd — a reconciliation hint only; it is never process-lifetime authority. */
   onSessionEnd: (sessionId: string, reason: string | undefined) => void
-  /** A `harness <engine>` wrapper exited — drop every session bound to that machine id. */
-  onLauncherClosed?: (launcherId: string) => void
-  /**
-   * A `harness <engine>` wrapper started. The frame cannot say WHICH session is in that pane — only the
-   * engine's own hook knows that, and resuming an existing session fires no hook — so the caller uses
-   * this to go look (see adoptResumedSessions). Without it, a resumed agent stays invisible.
-   */
-  onLauncherOpened?: (session: { launcherId: string; engine: RegisteredSession['engine']; tmuxPane: string; cwd?: string | null }) => void
-  /** Turn a launcher away before it spawns anything; the string returned is shown to the person in the
-   *  pane. Used for engines that cannot have two agents in one directory (see `refuseDuplicateAgent`). */
-  refuseLauncher?: (session: {
+  /** Ensure a matching process-owned agent exists before a hook binds its mutable engine session. */
+  resolveHookAgent?: (session: {
     engine: RegisteredSession['engine']
-    cwd?: string | null
-    /** This launcher's own agent id — it RECONNECTS under the same one, so it must never block itself. */
-    launcherId: string
-    /** Whether an agent id still has a launcher on the socket; a persisted entry alone proves nothing. */
-    isLive: (agentId: string) => boolean
-  }) => string | null
+    tmuxPane: string
+  }) => Promise<RegisteredSession | null>
   /** A turn is now running (Command Code's PreToolUse — its only live turn-open signal). Idempotent:
    *  it fires once per tool call, and every call after the first in a turn must be a no-op. */
   onTurnStart?: (body: { sessionId: string }) => void
@@ -115,7 +94,8 @@ const TRANSCRIPT_WAIT_TRIES = 20
 async function awaitTranscript(body: RegisterInput, handlers: HookServerHandlers): Promise<void> {
   for (let i = 0; i < TRANSCRIPT_WAIT_TRIES; i++) {
     await new Promise((resolve) => { const t = setTimeout(resolve, TRANSCRIPT_WAIT_MS); t.unref?.() })
-    if (!launcherSessions.has(body.launcherId)) return           // the launcher left while we waited
+    const engine = body.engine ?? 'claude'
+    if (!body.tmuxPane || !registry.byPaneEngine(body.tmuxPane, engine)) return
     if (isRecentlyDeleted(body.sessionId)) return
     if (!body.transcriptPath || !existsSync(body.transcriptPath)) continue
     const result = registry.register(body)
@@ -137,7 +117,7 @@ async function awaitHermesKind(body: RegisterInput, handlers: HookServerHandlers
   const dbPath = join(env.HERMES_HOME, 'state.db')
   for (let i = 0; i < HERMES_KIND_TRIES; i++) {
     if (i > 0) await new Promise((resolve) => { const t = setTimeout(resolve, HERMES_KIND_WAIT_MS); t.unref?.() })
-    if (!launcherSessions.has(body.launcherId)) return
+    if (!body.tmuxPane || !registry.byPaneEngine(body.tmuxPane, 'hermes')) return
     if (isRecentlyDeleted(body.sessionId)) return
     const source = await hermesSessionSource(dbPath, body.sessionId ?? '')
     if (source === null) continue
@@ -170,10 +150,8 @@ export function startHookServer(
       // same trust level as the CLI, which is acceptable on loopback.
       const localOk = req.headers['x-adapter-local'] === '1'
 
-      // `protocols` is what a launcher gates on — two different BUILDS interoperate fine as long as they
-      // share a protocol version, so `version` here is informational only (the stale-build notice).
       if (req.method === 'GET' && url === '/api/health') {
-        json(200, { ok: true, version: VERSION, protocols: SUPPORTED_PROTOCOLS }); return
+        json(200, { ok: true, version: VERSION }); return
       }
 
       // Local dashboard (self-contained page) + its read-only status/logs.
@@ -215,12 +193,15 @@ export function startHookServer(
             + ` but this machine is v${VERSION} — that pane loaded an older copy.`)
           console.warn('[hooks] restart the pane (or reload its plugins) to pick up the current build')
         }
-        // Machine-launched only: a session with no LIVE machine id is not an agent. This is what makes
-        // lifetime deterministic — a CLI the user started outside `harness <engine>` is ignored here,
-        // exactly like a non-tmux one above.
-        if (!launcherSessions.has(body.launcherId)) { ignore('no_machine_id'); return }
+        const engine = body.engine ?? 'claude'
+        const processAgent = handlers.resolveHookAgent
+          ? await handlers.resolveHookAgent({ engine, tmuxPane: body.tmuxPane })
+          : registry.byPaneEngine(body.tmuxPane, engine) ?? null
+        if (!processAgent || processAgent.engine !== engine) { ignore('no_matching_engine_process'); return }
+        // The process scanner is authoritative. Never accept a hook's legacy launcher id or a stale PID.
+        body.processIdentity = processAgent.processIdentity ?? undefined
         // Deleting an agent no longer kills its pane, so the engine lives on for a moment and its catch
-        // hook still fires — and this endpoint only checks that the LAUNCHER is alive, which it is. Without
+        // hook still fires — and the exact process may remain alive during SIGTERM grace. Without
         // this the tile the user just deleted re-registers itself and comes back.
         if (isRecentlyDeleted(body.sessionId)) { ignore('deleted'); return }
         if (body.engine === 'codex' && body.transcriptPath && readCodexRolloutMeta(body.transcriptPath)?.isSubagent) {
@@ -249,7 +230,7 @@ export function startHookServer(
           return
         }
         if (!result) {
-          console.warn(`[hooks] ${sid(body.sessionId ?? '?')} REJECTED · engine=${body.engine} pane=${body.tmuxPane} machine=${sid(body.launcherId ?? '?')}`)
+          console.warn(`[hooks] ${sid(body.sessionId ?? '?')} REJECTED · engine=${body.engine} pane=${body.tmuxPane}`)
           json(400, { error: 'invalid session registration' })
           return
         }
@@ -358,8 +339,6 @@ export function startHookServer(
     })()
   })
 
-  attachLauncherWs(server, handlers, port)
-
   return new Promise((resolve, reject) => {
     server.once('error', (err: NodeJS.ErrnoException) => {
       // FIXED port — no OS-assigned fallback. A free-port fallback made the daemon land on an
@@ -379,127 +358,4 @@ export function startHookServer(
       resolve({ server, port: actual })
     })
   })
-}
-
-// ── machine launcher socket ────────────────────────────────────────────────────────────────────────
-/** How often the daemon pings an idle launcher socket. */
-const PING_MS = 10_000
-/**
- * Missed pongs tolerated before a socket is considered dead.
- *
- * NOT 1. The sibling web/device hubs shipped a "one missed pong ⇒ terminate" rule and it killed sockets
- * that were perfectly alive (a single slow tick under load was enough); sessions died in the 40-60s band
- * for no reason. Three misses (~30s) is slow enough to ride out a stall and still far faster than the
- * `ps` polling this replaced.
- */
-const MAX_MISSED_PONGS = 3
-
-/**
- * Attach the launcher WebSocket to the existing hook server (same fixed loopback port — no new port, no
- * firewall change). The socket carries only session lifetime: `{t:'open'}` on connect, and the CLOSE
- * event is the end-of-session signal. Terminal I/O is not streamed; the adapter still drives the pane
- * through tmux.
- */
-function attachLauncherWs(server: http.Server, handlers: HookServerHandlers, port: number): void {
-  const wss = new WebSocketServer({ noServer: true })
-
-  server.on('upgrade', (req, socket, head) => {
-    const path = (req.url ?? '').split('?')[0]
-    // A browser page CAN open a WebSocket to loopback, and unlike fetch() it cannot be stopped by a
-    // custom-header check — but it always sends `Origin`. Our CLI never does. Rejecting any upgrade that
-    // carries one is the WS-side equivalent of the `x-adapter-local` gate on the mutating HTTP routes.
-    if (path !== MACHINE_WS_PATH || req.headers.origin) {
-      socket.destroy()
-      return
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => handleLauncherSocket(ws, handlers, port))
-  })
-
-}
-
-function handleLauncherSocket(ws: WebSocket, handlers: HookServerHandlers, port: number): void {
-  let missed = 0
-  const ping = setInterval(() => {
-    if (missed >= MAX_MISSED_PONGS) {
-      console.log('[machine] launcher socket unresponsive — terminating')
-      try { ws.terminate() } catch { /* already gone */ }
-      return
-    }
-    missed++
-    try { ws.ping() } catch { /* already gone */ }
-  }, PING_MS)
-  ping.unref?.()
-  ws.on('pong', () => { missed = 0 })
-
-  const send = (frame: unknown): void => { try { ws.send(JSON.stringify(frame)) } catch { /* gone */ } }
-
-  ws.on('message', (raw) => {
-    let msg: LauncherOpenFrame
-    try { msg = JSON.parse(raw.toString()) as LauncherOpenFrame } catch { return }
-    if (msg.t !== 'open') return
-
-    // Protocol first: a launcher we cannot understand must be told so explicitly, because everything
-    // below (and the whole session) would otherwise fail silently while its socket stayed happily open.
-    const v = frameProtocol(msg)
-    if (!isSupportedProtocol(v)) {
-      console.warn(`[machine] launcher speaks protocol v${v}; this daemon serves ${SUPPORTED_PROTOCOLS.join(',')}`)
-      send({ t: 'error', reason: 'unsupported_protocol', supported: SUPPORTED_PROTOCOLS })
-      try { ws.close() } catch { /* ignore */ }
-      return
-    }
-
-    const opened = launcherSessions.open(msg as LauncherOpenInput, ws)
-    if (!opened) {
-      console.warn('[machine] rejected launcher socket: invalid open payload')
-      send({ t: 'error', reason: 'invalid_open' })
-      try { ws.close() } catch { /* ignore */ }
-      return
-    }
-    console.log(`[machine] open ${sid(opened.launcherId)} · engine=${opened.engine} · pane=${opened.tmuxPane}`
-      + ` · protocol=v${v}${msg.version && msg.version !== VERSION ? ` · launcher build v${msg.version}` : ''}`)
-
-    // Decided HERE, not in the launcher: both change between builds (hook definitions grow with every
-    // engine; the binary for an engine can be renamed — `commandcode` → `cmd` already happened). A
-    // long-lived launcher from an older build would otherwise install stale hooks and spawn a stale
-    // binary name, so the daemon — always the newest build — owns both.
-    // Before anything is installed or spawned: some engines cannot have two agents in one directory,
-    // because nothing in what they write says which of the two a session belongs to. `exit` — not
-    // `error` — is what carries this: a launcher that predates this rule ignores an unknown `error`
-    // reason and runs on regardless, while `exit` has always meant "stop this agent", so the rule holds
-    // on old builds too. A new launcher acts on it before it spawns the engine at all.
-    const refusal = handlers.refuseLauncher?.({
-      engine: opened.engine,
-      cwd: opened.cwd ?? null,
-      launcherId: opened.launcherId,
-      isLive: (agentId) => launcherSessions.has(agentId),
-    })
-    if (refusal) {
-      console.warn(`[machine] refused ${sid(opened.launcherId)} · engine=${opened.engine} · ${refusal}`)
-      send({ t: 'exit', reason: refusal })
-      try { ws.close() } catch { /* ignore */ }
-      return
-    }
-
-    let hooksReady = false
-    if (!env.DISABLE_HOOK_INSTALL) {
-      try { installHooksFor(opened.engine, port); hooksReady = true } catch { /* launcher falls back */ }
-    }
-    send({ t: 'opened', v, version: VERSION, bin: engineBin(opened.engine), hooksReady })
-    // After the ack: adopting a resumed session reads tmux + ps, and the launcher is waiting on this
-    // reply to spawn the engine.
-    handlers.onLauncherOpened?.({
-      launcherId: opened.launcherId, engine: opened.engine, tmuxPane: opened.tmuxPane, cwd: opened.cwd ?? null,
-    })
-  })
-
-  const end = (): void => {
-    clearInterval(ping)
-    // Only evict if THIS socket still owns the id — a reconnect may already have replaced it.
-    const launcherId = launcherSessions.closeBySocket(ws)
-    if (!launcherId) return
-    console.log(`[machine] close ${sid(launcherId)} — launcher socket gone`)
-    handlers.onLauncherClosed?.(launcherId)
-  }
-  ws.on('close', end)
-  ws.on('error', end)
 }

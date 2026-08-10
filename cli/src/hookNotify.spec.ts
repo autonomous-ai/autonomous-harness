@@ -18,15 +18,22 @@ afterEach(async () => {
 interface RunHookOpts {
   port: number
   tmuxPane?: string
-  /** The launcher id `harness <engine>` exports. Defaults to a live-looking one; pass null to simulate a
-   *  CLI the user started by hand (no machine → the hook must ignore the event entirely). */
+  /** Legacy environment noise: process-owned hooks must behave the same with or without it. */
   launcherId?: string | null
-  engine?: 'claude' | 'codex' | 'cursor' | 'devin' | 'commandcode' | 'grok'
+  /** Install deterministic tmux/ps fixtures so an offline fallback can prove process ownership. */
+  processEngine?: 'claude' | 'codex' | 'cursor' | 'hermes' | 'devin' | 'commandcode' | 'grok'
+  /** Override the fixture's ps `comm` and full argv to exercise install-root-independent matching. */
+  processExecutable?: string
+  processArgs?: string
+  engine?: 'claude' | 'codex' | 'cursor' | 'hermes' | 'devin' | 'commandcode' | 'grok'
   env?: Record<string, string>
   dataDir?: string
   claudeProjectsDir?: string
   codexHome?: string
   cursorHome?: string
+  hermesHome?: string
+  /** Fake Hermes SQLite source; null means the session row has not appeared. */
+  hermesSource?: 'cli' | 'subagent' | null
   grokHome?: string
   devinHome?: string
   input?: Record<string, unknown>
@@ -40,12 +47,26 @@ function runHook(opts: RunHookOpts): Promise<string> {
     if (opts.tmuxPane) env.TMUX_PANE = opts.tmuxPane
     delete env.MACHINE_ID
     if (opts.launcherId !== null) env.MACHINE_ID = opts.launcherId ?? '11111111-2222-4333-8444-555555555555'
+    if (opts.processEngine) {
+      const binDir = mkdtempSync(join(tmpdir(), 'adapter-hook-bin-'))
+      tmpDirs.push(binDir)
+      const executable = opts.processExecutable ?? (opts.processEngine === 'cursor' ? 'agent' : opts.processEngine)
+      const processArgs = opts.processArgs ?? executable
+      writeFileSync(join(binDir, 'tmux'), '#!/bin/sh\necho 7000\n', { mode: 0o755 })
+      writeFileSync(join(binDir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '7000 1 zsh Mon Aug 10 10:00:00 2026 -zsh' '7001 7000 ${executable} Mon Aug 10 10:00:01 2026 ${processArgs}'\n`, { mode: 0o755 })
+      if (opts.hermesSource !== undefined) {
+        const rows = opts.hermesSource === null ? '[]' : JSON.stringify([{ source: opts.hermesSource }])
+        writeFileSync(join(binDir, 'sqlite3'), `#!/bin/sh\nprintf '%s\\n' '${rows}'\n`, { mode: 0o755 })
+      }
+      env.PATH = `${binDir}:${env.PATH ?? ''}`
+    }
     const args = [HOOK, '--port', String(opts.port)]
     if (opts.engine && opts.engine !== 'claude') args.push('--engine', opts.engine)
     if (opts.dataDir) args.push('--data-dir', opts.dataDir)
     if (opts.claudeProjectsDir) args.push('--claude-projects-dir', opts.claudeProjectsDir)
     if (opts.codexHome) args.push('--codex-home', opts.codexHome)
     if (opts.cursorHome) args.push('--cursor-home', opts.cursorHome)
+    if (opts.hermesHome) args.push('--hermes-home', opts.hermesHome)
     if (opts.grokHome) args.push('--grok-home', opts.grokHome)
     if (opts.devinHome) args.push('--devin-home', opts.devinHome)
     const child = spawn(process.execPath, args, {
@@ -219,7 +240,7 @@ describe('hook notify tmux scope', () => {
     expect(() => readFileSync(join(dataDir, 'registry.json'), 'utf8')).toThrow()
   })
 
-  it('ignores every event when the CLI was not started by `harness <engine>` (no MACHINE_ID)', async () => {
+  it('forwards tmux events regardless of legacy MACHINE_ID', async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
     const server = createServer((req, res) => {
       let raw = ''
@@ -234,14 +255,12 @@ describe('hook notify tmux scope', () => {
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('test server did not bind a TCP port')
 
-    // In tmux, but launched by hand: the session has no owning machine, so it is not an agent.
     await runHook({ port: address.port, tmuxPane: '%42', launcherId: null })
-    expect(requests).toEqual([])
-
-    // Same event, launched through the machine → forwarded, carrying the launcher id.
-    await runHook({ port: address.port, tmuxPane: '%42' })
     expect(requests).toHaveLength(1)
-    expect(requests[0].url).toBe('/api/hook/session-end')
+
+    await runHook({ port: address.port, tmuxPane: '%42' })
+    expect(requests).toHaveLength(2)
+    expect(requests.map((request) => request.url)).toEqual(['/api/hook/session-end', '/api/hook/session-end'])
   })
 
   it('drops standalone SessionEnd but forwards tmux SessionEnd', async () => {
@@ -281,6 +300,7 @@ describe('hook notify tmux scope', () => {
     await runHook({
       port: 9,
       tmuxPane: '%7',
+      processEngine: 'claude',
       dataDir,
       claudeProjectsDir,
       input: {
@@ -321,6 +341,9 @@ describe('hook notify tmux scope', () => {
       port: 9,
       tmuxPane: '%8',
       engine: 'codex',
+      processEngine: 'codex',
+      processExecutable: 'node',
+      processArgs: 'node /nix/store/codex-cli/lib/node_modules/@openai/codex/bin/codex.js',
       dataDir,
       codexHome,
       input: {
@@ -333,6 +356,70 @@ describe('hook notify tmux scope', () => {
 
     const registry = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))
     expect(registry).toMatchObject([{ sessionId: 'codex-session', engine: 'codex', tmuxPane: '%8' }])
+  })
+
+  it('does not treat engine names in unrelated process arguments as an offline agent', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-process-false-positive-'))
+    tmpDirs.push(dir)
+    const claudeProjectsDir = join(dir, 'claude-projects')
+    const dataDir = join(dir, 'data')
+    const transcriptPath = join(claudeProjectsDir, 'demo', 'session-false.jsonl')
+    mkdirSync(join(transcriptPath, '..'), { recursive: true })
+    writeFileSync(transcriptPath, '{}\n')
+
+    await runHook({
+      port: 9,
+      tmuxPane: '%81',
+      processEngine: 'claude',
+      processExecutable: 'python3',
+      processArgs: 'python3 /work/runner.py compare claude codex agent hermes',
+      dataDir,
+      claudeProjectsDir,
+      input: {
+        hook_event_name: 'SessionStart',
+        session_id: 'session-false',
+        transcript_path: transcriptPath,
+      },
+    })
+
+    expect(() => readFileSync(join(dataDir, 'registry.json'), 'utf8')).toThrow()
+  })
+
+  it('offline Hermes fallback binds only source=cli and rejects delegation children or unknown rows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-hermes-source-'))
+    tmpDirs.push(dir)
+    const hermesHome = join(dir, 'hermes')
+    const cliData = join(dir, 'cli-data')
+    const common = {
+      port: 9,
+      tmuxPane: '%82',
+      engine: 'hermes' as const,
+      processEngine: 'hermes' as const,
+      processExecutable: 'python3',
+      processArgs: 'python3 /opt/venvs/hermes/lib/python3.12/site-packages/hermes-agent/hermes',
+      hermesHome,
+    }
+
+    await runHook({
+      ...common,
+      dataDir: cliData,
+      hermesSource: 'cli',
+      input: { hook_event_name: 'on_session_start', session_id: '20260810_120000_a1b2c3' },
+    })
+    expect(JSON.parse(readFileSync(join(cliData, 'registry.json'), 'utf8'))).toMatchObject([{
+      sessionId: '20260810_120000_a1b2c3', engine: 'hermes', tmuxPane: '%82',
+    }])
+
+    for (const [name, source] of [['child', 'subagent'], ['unknown', null]] as const) {
+      const dataDir = join(dir, `${name}-data`)
+      await runHook({
+        ...common,
+        dataDir,
+        hermesSource: source,
+        input: { hook_event_name: 'on_session_start', session_id: `20260810_12000${name === 'child' ? '1' : '2'}_a1b2c3` },
+      })
+      expect(() => readFileSync(join(dataDir, 'registry.json'), 'utf8')).toThrow()
+    }
   })
 
   it('does not fallback when the adapter accepts the hook event', async () => {
@@ -399,7 +486,7 @@ describe('hook notify tmux scope', () => {
     expect(() => readFileSync(join(dataDir, 'registry.json'), 'utf-8')).toThrow()
   })
 
-  it('removes fallback registry entries on offline SessionEnd except clear', async () => {
+  it('leaves offline registry ownership unchanged on SessionEnd', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-end-'))
     tmpDirs.push(dir)
     const dataDir = join(dir, 'data')
@@ -412,7 +499,7 @@ describe('hook notify tmux scope', () => {
       dataDir,
       input: { hook_event_name: 'SessionEnd', session_id: 'ended', reason: 'logout' },
     })
-    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toEqual([{ sessionId: 'keep' }])
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toEqual([{ sessionId: 'keep' }, { sessionId: 'ended' }])
 
     await runHook({
       port: 9,
@@ -420,7 +507,7 @@ describe('hook notify tmux scope', () => {
       dataDir,
       input: { hook_event_name: 'SessionEnd', session_id: 'keep', reason: 'clear' },
     })
-    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toEqual([{ sessionId: 'keep' }])
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toEqual([{ sessionId: 'keep' }, { sessionId: 'ended' }])
   })
 
   it('keeps fallback registry entries when SessionEnd cannot prove the tmux app exited', async () => {
@@ -459,6 +546,7 @@ describe('hook notify tmux scope', () => {
     await runHook({
       port: 9,
       tmuxPane: '%12',
+      processEngine: 'claude',
       dataDir,
       claudeProjectsDir,
       input: {
@@ -520,7 +608,7 @@ describe('hook notify Grok lifecycle', () => {
     writeFileSync(transcript, '{}\n')
 
     await runHook({
-      port: 9, tmuxPane: '%45', engine: 'grok', grokHome, dataDir,
+      port: 9, tmuxPane: '%45', engine: 'grok', processEngine: 'grok', grokHome, dataDir,
       input: { hookEventName: 'session_start', sessionId, cwd },
     })
     expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))).toMatchObject([{

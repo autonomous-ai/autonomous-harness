@@ -58,7 +58,3 @@ Open items, recorded rather than left implicit:
   One token is rewritten before rasterising — `oklch(95% 0.15 108)` → `#f8f676` — because librsvg 2.60
   does not implement `oklch()` and renders the tile black without it. That is a notation change, not a
   recolour: the colour is inside sRGB (no channel clamped), so the hex is exactly the declared colour.
-
-Copies of the same files live in `autonomous-code` at `apps/web/public/engine-icons/` and
-`apps/orangepi/web/public/assets/engine-icons/`, where a script converts them to the 20×20 LVGL
-ARGB8888 maps the device uses. Change them together.

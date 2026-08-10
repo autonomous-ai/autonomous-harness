@@ -11,7 +11,6 @@ import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import { env } from '../config/env.js'
 import { VERSION } from '../version.js'
-import type { AgentEngine } from '../engines/types.js'
 
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
 const CODEX_HOOKS_PATH = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json')
@@ -27,9 +26,9 @@ const HOOK_SCRIPT =
   [join(cliDir, 'notify.mjs'), join(cliDir, '..', '..', 'hook', 'notify.mjs')].find(existsSync) ??
   join(cliDir, '..', '..', 'hook', 'notify.mjs')
 
-// SessionStart/End drive register/remove. UserPromptSubmit is the CATCH hook: it re-registers on
-// every prompt so a session whose SessionStart we missed (adapter started late, or hook installed
-// after the session began) still appears on its first prompt. notify.mjs treats it like SessionStart.
+// SessionStart/UserPromptSubmit bind mutable engine-session metadata to the process agent. SessionEnd
+// only asks discovery to reconcile: the process, not the hook, owns the tile lifetime. UserPromptSubmit
+// is the CATCH hook, so a SessionStart missed because the adapter started late is repaired on first input.
 // Stop/StopFailure are the authoritative turn-close signals (Stop = normal finish incl. max_tokens/
 // refusal; StopFailure = turn ended on an API error, where Stop does NOT fire) — they close a turn even
 // when the JSONL-derived turn_ended is missed. Neither supports a matcher (silently ignored).
@@ -60,6 +59,7 @@ function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' 
     '--codex-home', shellQuote(env.CODEX_HOME),
     '--grok-home', shellQuote(env.GROK_HOME),
     '--cursor-home', shellQuote(env.CURSOR_HOME),
+    '--hermes-home', shellQuote(env.HERMES_HOME),
     '--commandcode-home', shellQuote(env.COMMANDCODE_HOME),
     '--devin-home', shellQuote(env.DEVIN_HOME),
     ...(engine !== 'claude' ? ['--engine', engine] : []),
@@ -282,18 +282,13 @@ const KILO_PLUGIN_PATH = join(env.KILO_PLUGIN_DIR, 'launcher-register.js')
  */
 function forkPluginSource(engine: 'opencode' | 'kilo', port: number): string {
   const product = engine === 'kilo' ? 'Kilo' : 'OpenCode'
-  return `// launcher-register — auto-installed by the machine adapter. Registers this ${product} session with the
+  return `// session-register — auto-installed by the machine adapter. Binds this ${product} session to the
 // local machine daemon (127.0.0.1:${port}) so it can be mirrored to web/device. No-op if machine isn't running.
 export const MachineRegister = async ({ directory, worktree, project }) => {
   const seen = new Set()
   const post = async (sessionID) => {
     const pane = process.env.TMUX_PANE
-    // The launcher (\`harness ${engine}\`) mints a UUID per launch and exports it as MACHINE_ID; the daemon
-    // binds a session's lifetime to that launcher and REFUSES a registration without one. This plugin runs
-    // inside the engine, so it inherits the variable — and an engine started outside the launcher has none,
-    // which is exactly when it should not register. Same rule notify.mjs applies for every other engine.
-    const launcherId = process.env.MACHINE_ID
-    if (!pane || !launcherId || !sessionID || seen.has(sessionID)) return
+    if (!pane || !sessionID || seen.has(sessionID)) return
     seen.add(sessionID)
     try {
       await fetch("http://127.0.0.1:${port}/api/hook/session-start", {
@@ -302,7 +297,6 @@ export const MachineRegister = async ({ directory, worktree, project }) => {
         body: JSON.stringify({
           engine: "${engine}",
           pluginVersion: ${JSON.stringify(VERSION)},
-          launcherId,
           sessionId: sessionID,
           cwd: directory || worktree || (project && project.worktree) || null,
           tmuxPane: pane,
@@ -556,7 +550,7 @@ const PI_EXTENSION_PATH = join(env.PI_HOME, 'agent', 'extensions', 'launcher-reg
  * `getSessionFile()` points at a real file. The recap worker runs with `--no-extensions`, so it never
  * registers itself. Global extensions load before the project-trust prompt, so this always fires. */
 function piExtensionSource(port: number): string {
-  return `// launcher-register — auto-installed by the machine adapter. Registers this Pi session with the local
+  return `// session-register — auto-installed by the machine adapter. Binds this Pi session to the local
 // machine daemon (127.0.0.1:${port}) so it can be mirrored to web/device. No-op if machine isn't running.
 import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -568,12 +562,6 @@ export default function (pi: ExtensionAPI) {
   const register = async (ctx: any) => {
     const pane = process.env.TMUX_PANE;
     if (!pane) return; // tmux-only, like every other engine
-    // The launcher (\`harness pi\`) exports MACHINE_ID per launch, and the daemon refuses a registration
-    // without it — the id is what binds the session's lifetime to a live launcher. This extension runs
-    // inside pi, so it inherits the variable; started outside the launcher there is none, and registering
-    // is exactly the wrong thing to do. Same rule notify.mjs applies for every other engine.
-    const launcherId = process.env.MACHINE_ID;
-    if (!launcherId) return;
     // Pi knows the session file path immediately but only WRITES it once the first assistant message
     // lands. Sending a path that isn't on disk yet is rejected by the daemon (it validates the file),
     // so announce without one first and attach the real path on a later turn.
@@ -589,7 +577,6 @@ export default function (pi: ExtensionAPI) {
         body: JSON.stringify({
           engine: "pi",
           pluginVersion: ${JSON.stringify(VERSION)},
-          launcherId,
           sessionId,
           transcriptPath: ready ? file : undefined,
           cwd: ctx?.cwd ?? undefined,
@@ -656,12 +643,13 @@ const AMP_PLUGIN_PATH = join(env.AMP_PLUGIN_DIR, 'launcher-register.ts')
  *     messages, so without that key every event would re-emit the whole tail of the conversation.
  *
  * Being a SYSTEM plugin it loads in every `amp` the user runs, including ones this adapter knows nothing
- * about. The `TMUX_PANE` + `MACHINE_ID` guard is what keeps it inert there — same rule as pi/opencode.
+ * about. The `TMUX_PANE` guard keeps standalone sessions inert; the daemon additionally proves that the
+ * pane contains the matching top-level Amp process before accepting a binding.
  */
 function ampPluginSource(port: number, sessionsDir: string): string {
-  return `// launcher-register — auto-installed by the machine adapter. Registers this Amp thread with the local
+  return `// session-register — auto-installed by the machine adapter. Binds this Amp thread to the local
 // machine daemon (127.0.0.1:${port}) and writes the transcript the daemon tails, because Amp keeps none
-// on disk. No-op unless started by \`harness amp\` (MACHINE_ID) inside tmux.
+// on disk. No-op outside tmux.
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -671,17 +659,11 @@ const SESSIONS_DIR = ${JSON.stringify(sessionsDir)}
 
 export default function (amp: any) {
   const pane = process.env.TMUX_PANE
-  // The launcher (\`harness amp\`) mints a UUID per launch and exports it as MACHINE_ID; the daemon binds
-  // a session's lifetime to that launcher and REFUSES a registration without one. An amp started outside
-  // the launcher inherits neither variable, which is exactly when this plugin must do nothing at all.
-  const launcherId = process.env.MACHINE_ID
-  if (!pane || !launcherId) return
+  if (!pane) return
 
   // NOT \`process.cwd()\`: Bun runs a plugin with the PLUGIN's directory as its cwd, so that reports
-  // \`<project>/.amp/plugins\` (measured). \`harness amp\` exports the real one; \`PWD\` from the launching
-  // shell is the fallback for an amp the launcher did not start — which the MACHINE_ID guard above has
-  // already excluded, so it is only ever a belt-and-braces third choice.
-  const workdir = process.env.HARNESS_AGENT_CWD || process.env.PWD || process.cwd()
+  // \`<project>/.amp/plugins\` (measured). \`PWD\` is inherited from the shell that launched plain Amp.
+  const workdir = process.env.PWD || process.cwd()
 
   const emitted = new Set()
   // Turn ids already opened/closed. Amp re-dispatches a message it could not deliver, firing agent.start
@@ -722,7 +704,6 @@ export default function (amp: any) {
         body: JSON.stringify({
           engine: 'amp',
           pluginVersion: ${JSON.stringify(VERSION)},
-          launcherId,
           sessionId: threadId,
           transcriptPath: file,
           cwd: workdir,
@@ -899,32 +880,5 @@ function installForkPlugin(engine: 'opencode' | 'kilo', path: string, product: s
     console.log(`[hooks] (takes effect on the next ${engine} session start)`)
   } catch (err) {
     console.error(`[hooks] failed to write ${product} plugin:`, err)
-  }
-}
-
-/**
- * Install/refresh the hook (or plugin/extension) for ONE engine.
- *
- * Used by the `harness <engine>` launcher, which calls this immediately BEFORE spawning the CLI. Every
- * installer above ends with "(takes effect on the next session start)" — running it here means the
- * session we are about to start IS that next one, closing the gap where a freshly-installed machine
- * missed the very first session because its hooks landed too late.
- *
- * Installers are idempotent (they collapse any block whose command contains `notify.mjs` into one
- * canonical entry and leave foreign blocks alone), so calling this on every launch is cheap and safe.
- */
-export function installHooksFor(engine: AgentEngine, port: number): void {
-  switch (engine) {
-    case 'claude': installSessionHooks(port); break
-    case 'codex': installCodexHooks(port); break
-    case 'cursor': installCursorHooks(port); break
-    case 'opencode': installOpencodePlugin(port); break
-    case 'kilo': installKiloPlugin(port); break
-    case 'pi': installPiExtension(port); break
-    case 'hermes': installHermesHooks(port); break
-    case 'commandcode': installCommandCodeHooks(port); break
-    case 'devin': installDevinHooks(port); break
-    case 'amp': installAmpPlugin(port); break
-    case 'grok': installGrokHooks(port); break
   }
 }

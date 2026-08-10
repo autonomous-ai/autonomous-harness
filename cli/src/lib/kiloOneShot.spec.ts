@@ -46,8 +46,7 @@ describe('kilo recap worker containment', () => {
   /**
    * `--auto` is required: without it a recap whose model reaches for any tool dies on kilo's own
    * auto-rejection ("run ended with an auto-rejected permission") and returns no text at all. It is valid
-   * on the `run` SUBCOMMAND only — the interactive TUI rejects it, which is why `enginePermissions` adds
-   * nothing for kilo.
+   * on the `run` SUBCOMMAND only — Harness never applies it to the user's interactive TUI process.
    */
   it('runs autonomously and asks for machine-readable output', () => {
     const { args } = kiloOneShotSpawn(undefined, {}, SCRATCH)

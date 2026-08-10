@@ -43,12 +43,11 @@ against 4 waits in a single observed session — and an unclosed sub-agent row *
 That pinned the device tile on "Processing" every 5 seconds forever and meant no recap was ever
 produced. No amount of invented fixture data would have surfaced that; one real session did.
 
-The rule also forbids concluding that something is *absent*. Amp's `--help` lists no permission
-bypass, so its table was first written with none — and the binary's strings hold
-`--dangerously-allow-all`, which is real and load-bearing: with a permission rule set to `ask` and no
-flag, Amp does not stop and wait for a human, it refuses the tool mid-turn and carries on, so an
-unattended agent produces a turn that quietly did nothing. Grep the binary before you write "this
-agent has no X".
+The rule also forbids concluding that something is *absent*. Amp's `--help` once appeared to show no
+permission bypass, while the binary strings exposed one. Harness no longer launches interactive agent
+processes or supplies permission flags, so the user's normal CLI configuration owns that behavior; the
+recording still matters because refused tools change the transcript and turn boundary. Grep the binary
+before you write "this agent has no X".
 
 The same lesson is already written into `CONTRIBUTING.md` for the example provider: two real bugs
 were invisible to hand-written fixtures and obvious the moment a recorded turn was replayed. Record
@@ -75,11 +74,9 @@ fails silently if inherited unchanged:
 - **The pane footer.** Opencode's resolver anchors on its `Build`/`Plan` agent names. Kilo's agent is
   `code`, so the inherited function matched nothing and returned null forever: a blank model chip, no
   error anywhere. It had to be rewritten, not renamed.
-- **The permission flag.** Opencode takes `--auto`. Kilo documents `--auto` on its `run` subcommand
-  but its TUI *rejects* it — so inheriting the flag would not have loosened permissions, it would have
-  stopped the agent from starting. Note that a non-TTY check cannot tell you this: with stdin closed,
-  a real flag and an invented one both print the same usage block. Test permission flags on a real TTY
-  inside tmux, with a control run.
+- **The permission behavior.** Kilo's interactive TUI and its non-interactive `run` subcommand do not
+  accept the same flags. Harness never adds a flag to the user's TUI process, but its private recap
+  worker uses `run`; keep those two paths separate and measure each on the real binary.
 - **The ask-the-user dialog.** Opencode draws Claude's numbered dialog inside a box. Kilo draws an
   unnumbered row of options laid out *horizontally*, sharing its line with the key hints, and walked
   with `Right` rather than `Down`. Same product lineage, completely different parser.
@@ -113,8 +110,8 @@ Three things that pattern gets wrong if nobody warns you, all found by running i
 
 - **A plugin's working directory is the plugin's own.** Amp's reported `<project>/.amp/plugins`, not
   the agent's directory. The `cwd` recorded in the transcript is what re-binds a session after a
-  daemon restart, so a wrong one means an agent that can never be found again. The launcher exports
-  the real directory instead (`HARNESS_AGENT_CWD`).
+  daemon restart, so a wrong one means an agent that can never be found again. Read the real directory
+  from the plugin's host context or the discovered pane metadata.
 - **Your events may not carry assistant text.** None of Amp's five do. The text has to be read from
   the thread handle the plugin already holds — and because that handle already contains the
   in-flight message when a tool is called, snapshotting there emits a message's prose *before* the
@@ -145,7 +142,7 @@ The real Grok recording exposed five details that are easy to get wrong by copyi
 - Session directories usually encode the cwd as one URL component. Long paths live under a hash instead,
   with the original cwd in `.cwd`; discovery and restart repair must handle both layouts.
 - Grok creates no session when the TUI merely opens. The first prompt creates it and fires the hooks, so
-  a remote first prompt must be injected into the launcher's pane before a session id exists. Holding it
+  a remote first prompt must be injected into the discovered process pane before a session id exists. Holding it
   until registration deadlocks on the very `UserPromptSubmit` event that registration needs.
 
 The recorded envelope is `{timestamp, method, params:{sessionId, update, _meta}}`. Keep its fixture as a
@@ -177,7 +174,7 @@ Mechanical. Three files, no judgment required.
 | File | What to add |
 |---|---|
 | `engines/types.ts` | Your name in the `AgentEngine` union. This is the source of truth; TypeScript will now tell you most of the remaining work |
-| `lib/engineBin.ts` | The binary name, the `<ENGINE>_PATH` env override, and what to print as `harness <cmd>`. Add aliases if your CLI has more than one spelling — a user reaching for the name they know should not get "unknown command" |
+| `lib/engineBin.ts` | The canonical vendor command, the `<ENGINE>_PATH` env override, and the ordered discovery list. Harness observes this command in tmux; it never dispatches `harness <engine>` |
 | `config/env.ts` | `<ENGINE>_HOME` and `<ENGINE>_CONFIG_DIR` defaults, so a user with a non-standard install can point Harness at it |
 
 After Stage A, run `npm run typecheck`. The errors it prints are a good first map of Stages B–E.
@@ -219,7 +216,7 @@ Either way, two more files:
 | `lib/registry.ts` | Where your transcripts live, and your name in the two `engine === …` accept-lists so the wire protocol will carry it |
 | `lib/tmux.ts` | How to recognise your process in a pane, and your resume flags so a session id can be recovered from the command line |
 
-`lib/tmux.ts` deserves care. If your launcher `exec`s a differently-named real binary, the pane
+`lib/tmux.ts` deserves care. If the vendor command `exec`s a differently-named real binary, the pane
 process is not the name the user typed — Muse's pane shows `muse-bin-<version>`, and matching only
 the bare name silently finds nothing.
 
@@ -270,9 +267,7 @@ Only needed for the capabilities your agent actually has. Skip what does not app
 
 | File | What to add |
 |---|---|
-| `lib/launch.ts` | How to start it, and any environment that must be pinned. Muse forks a background self-update on every invocation that can replace the binary mid-session, so `MUSE_NO_AUTO_UPDATE=1` is set — **an agent must not change under the person using it** |
 | `lib/sessionInput.ts` | How text is submitted, and how long to wait before deciding the submit failed. Muse writes its `started` record as soon as it accepts a prompt, so 6 seconds is enough; a slower agent needs a longer window |
-| `lib/enginePermissions.ts` | The flag that turns off approval prompts, plus the finer flags you *own*. Listing owned flags is what lets a user who passes one of them keep their choice instead of getting ours on top. Flags are the whole mechanism — Harness will not edit your config file to get past a gate, so if trust lives only in config, that prompt stays with the user. Check the binary for the flag before concluding there isn't one: Amp's is undocumented |
 | `lib/sessionRepair.ts` | Rebinding a pane to its session after a restart |
 | `lib/oneshot.ts` | Running a single prompt outside an interactive session |
 
