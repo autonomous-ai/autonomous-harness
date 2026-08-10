@@ -100,7 +100,7 @@ function hasCursorPackageEntrypoint(args: string): boolean {
 
 function agentAliasCandidate(row: Pick<ProcessRow, 'executable' | 'args'>): boolean {
   if (basename(row.executable).toLowerCase() === 'agent') return true
-  return argvTokens(row.args).slice(0, 8).some((token) => basename(token).toLowerCase() === 'agent')
+  return basename(processEntrypoint(row.args)).toLowerCase() === 'agent'
 }
 
 
@@ -148,7 +148,9 @@ async function processRows(): Promise<ProcessRow[] | null> {
 
 function execText(command: string, args: string[], timeout: number): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout }, (err, stdout) => resolve(err ? null : stdout))
+    // `lsof -p pid1,pid2` exits 1 when even one process disappears or is inaccessible, while still
+    // returning complete records for the surviving PIDs. Keep that usable partial snapshot.
+    execFile(command, args, { timeout }, (err, stdout) => resolve(err && !stdout ? null : stdout))
   })
 }
 

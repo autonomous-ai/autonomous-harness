@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
-import { engineProcessMatchScore, parseProcessRow, resumeSessionId } from './tmux.js'
+import { ambiguousAgentProcess, engineProcessMatchScore, parseProcessRow, resumeSessionId } from './tmux.js'
 
 const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwnershipSnapshot => ({
   cursorFileKeys: new Set(cursor),
@@ -42,6 +42,17 @@ describe('tmux process primitives', () => {
     const conflict = ownership(['same-file'], ['same-file'])
     expect(engineProcessMatchScore({ executable: 'agent', args: 'agent', imageFileKey: 'same-file' }, 'cursor', conflict)).toBe(0)
     expect(engineProcessMatchScore({ executable: 'agent', args: 'agent', imageFileKey: 'same-file' }, 'grok', conflict)).toBe(0)
+  })
+
+  it('does not treat a daemon role named agent as the colliding CLI command', () => {
+    expect(ambiguousAgentProcess({
+      executable: '/usr/sbin/distnoted',
+      args: '/usr/sbin/distnoted agent',
+    }, ownership())).toBe(false)
+    expect(ambiguousAgentProcess({
+      executable: '/usr/sbin/cfprefsd',
+      args: '/usr/sbin/cfprefsd agent',
+    }, ownership())).toBe(false)
   })
 
   it('extracts only explicit resume ids', () => {
