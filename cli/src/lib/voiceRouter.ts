@@ -30,7 +30,7 @@ const ROUTE_SCRATCH = join(env.ADAPTER_DATA_DIR, 'voice-route-scratch')
 
 /** Engines that can serve the router, best first. Hermes and Devin are absent on purpose: they take the
  *  prompt as argv so they cannot be pre-warmed — the same exclusion the recap pool makes. */
-const ROUTER_ENGINE_PRIORITY = ['claude', 'codex', 'commandcode', 'cursor', 'pi', 'opencode'] as const
+const ROUTER_ENGINE_PRIORITY = ['claude', 'codex', 'commandcode', 'cursor', 'pi', 'opencode', 'kilo'] as const
 export type RouterEngine = (typeof ROUTER_ENGINE_PRIORITY)[number]
 
 /**

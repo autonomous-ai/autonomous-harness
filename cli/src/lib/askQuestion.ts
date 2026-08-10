@@ -25,6 +25,7 @@ import type { RegisteredSession } from './registry.js'
 import type { AgentEngine } from '../engines/types.js'
 import { parseMuseQuestionPane } from '../engines/muse/askQuestion.js'
 import { ampSelectionKeys, parseAmpQuestionPane } from '../engines/amp/askQuestion.js'
+import { kiloSelectionKeys, parseKiloQuestionPane } from '../engines/kilo/askQuestion.js'
 import { parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
@@ -121,6 +122,9 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   if (engine === 'muse') return parseMuseQuestionPane(capture)
   // Amp's is a permission prompt with unnumbered rows — nothing the shared parser can anchor on.
   if (engine === 'amp') return parseAmpQuestionPane(capture)
+  // Kilo's is the same kind of prompt but laid out HORIZONTALLY, sharing its line with the key hints —
+  // it is a fork of opencode that did not keep opencode's dialog.
+  if (engine === 'kilo') return parseKiloQuestionPane(capture)
   // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
   if (engine === 'opencode') {
@@ -323,7 +327,10 @@ export function parseQuestionPane(capture: string): PaneView {
  * walking down to them.
  */
 function rowKeys(engine: AgentEngine, row: QuestionRow): string[] {
-  return engine === 'amp' ? ampSelectionKeys(row) : [row.number]
+  if (engine === 'amp') return ampSelectionKeys(row)
+  // Kilo's rows sit side by side, so its walk is horizontal — see engines/kilo/askQuestion.ts.
+  if (engine === 'kilo') return kiloSelectionKeys(row)
+  return [row.number]
 }
 
 export function matchRow(rows: QuestionRow[], answer: string): QuestionRow | null {
@@ -506,7 +513,7 @@ export interface QuestionWatcherDeps {
 const POLL_MS = 1500
 // Amp is here for its PERMISSION prompt, not a question tool — it has none. That prompt is drawn only in
 // the pane and recorded nowhere, so polling the pane is the only way it is ever seen.
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse', 'amp'])
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

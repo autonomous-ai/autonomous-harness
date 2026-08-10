@@ -31,6 +31,12 @@ describe('default permission flags', () => {
       // 0.0.1786064749: an unknown flag is rejected while this one is accepted, an `ask` rule blocks the
       // tool without it ("blocked by a permissions rule"), and the same command runs with it.
       amp: ['--dangerously-allow-all'],
+      // Kilo adds NOTHING, and the empty array is the assertion — it is a measurement, not an omission.
+      // `kilo run` documents `--auto` and `--dangerously-skip-permissions`, but the launcher starts the
+      // TUI, and on a real TTY (with a control: bare `kilo` starts, `kilo --auto` prints usage and exits)
+      // the root command rejects both. Adding either would stop the agent starting at all. The recap
+      // one-shot DOES pass `--auto`, because it invokes the `run` subcommand — see lib/oneshot.ts.
+      kilo: [],
     })
   })
 

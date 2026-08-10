@@ -273,6 +273,15 @@ export async function findLiveSession(
           + ` AND (time_created >= ${Math.trunc(sinceMs)} OR time_updated >= ${Math.trunc(sinceMs)})`
           + ` ORDER BY time_updated DESC LIMIT 2;`,
       )
+    case 'kilo':
+      // Same store shape as opencode (measured: `session` is byte-identical between the two DBs), and
+      // time_created is epoch MILLISECONDS here too — the real row on this machine reads 1786091927554.
+      return dbEngineSession(
+        join(env.KILO_DATA_DIR, 'kilo.db'),
+        `SELECT id FROM session WHERE directory IN (${dirList}) AND parent_id IS NULL`
+          + ` AND (time_created >= ${Math.trunc(sinceMs)} OR time_updated >= ${Math.trunc(sinceMs)})`
+          + ` ORDER BY time_updated DESC LIMIT 2;`,
+      )
     case 'hermes':
       // started_at is epoch SECONDS (fractional).
       return dbEngineSession(

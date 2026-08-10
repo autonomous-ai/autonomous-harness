@@ -51,7 +51,7 @@ describe('DisposableOneShotPool', () => {
       return worker
     }, 300_000, () => {})
 
-    pool.setActiveCounts({ claude: 4, codex: 1, cursor: 2, opencode: 0, pi: 0, commandcode: 0 })
+    pool.setActiveCounts({ claude: 4, codex: 1, cursor: 2, opencode: 0, pi: 0, commandcode: 0, kilo: 0 })
     pool.setDeviceConnected(true)
     await settle()
     expect(pool.snapshot()).toMatchObject({
@@ -83,7 +83,7 @@ describe('DisposableOneShotPool', () => {
       return Promise.resolve(new FakeWorker(engine, calls))
     }, 300_000, () => {})
 
-    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0 })
+    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0, kilo: 0 })
     pool.setDeviceConnected(true)
     expect(pool.snapshot().claude.starting).toBe(1)
 
@@ -103,7 +103,7 @@ describe('DisposableOneShotPool', () => {
       5 * 60_000,
       () => {},
     )
-    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0 })
+    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0, kilo: 0 })
     pool.setDeviceConnected(true)
     await settle()
 
@@ -129,7 +129,7 @@ describe('DisposableOneShotPool', () => {
       created.push(worker)
       return worker
     }, 300_000, () => {})
-    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0 })
+    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0, kilo: 0 })
     pool.setDeviceConnected(true)
     await settle()
     expect(created).toHaveLength(1)
@@ -160,7 +160,7 @@ describe('DisposableOneShotPool', () => {
       60_000, // idle ceiling
     )
 
-    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0 })
+    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0, kilo: 0 })
     pool.setDeviceConnected(true)
     await settle()
     expect(pool.snapshot()).toMatchObject({ claude: { ready: 1 } })
@@ -192,7 +192,7 @@ describe('DisposableOneShotPool', () => {
       60_000,
     )
 
-    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0 })
+    pool.setActiveCounts({ claude: 1, codex: 0, cursor: 0, opencode: 0, pi: 0, commandcode: 0, kilo: 0 })
     pool.setDeviceConnected(true)
     await settle()
     const first = created[0]

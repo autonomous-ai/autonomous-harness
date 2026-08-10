@@ -199,7 +199,7 @@ class Registry {
       }
       let changed = false
       for (const raw of Array.isArray(arr) ? arr : []) {
-        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' ? raw.engine : 'claude'
+        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' || raw?.engine === 'kilo' ? raw.engine : 'claude'
         const pane = typeof raw?.tmuxPane === 'string' && PANE_RE.test(raw.tmuxPane) ? raw.tmuxPane : ''
         let transcriptPath =
           typeof raw?.transcriptPath === 'string' && raw.transcriptPath
@@ -229,7 +229,7 @@ class Registry {
         if (!bound) transcriptPath = null
         if (
           !pane
-          || (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
+          || (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
           || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath))
         ) {
           changed = true
@@ -366,7 +366,7 @@ class Registry {
     const sessionId =
       input.sessionId || (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
     const engine: AgentEngine =
-      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' ? input.engine : 'claude'
+      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' ? input.engine : 'claude'
     const pane = input.tmuxPane
     // The machine id may be omitted only when re-registering a session we already know (the catch hook
     // fires on every prompt and older payloads carried no id) — a NEW session always needs one, because
@@ -377,7 +377,7 @@ class Registry {
       || !agentId
       || !pane
       || !PANE_RE.test(pane)
-      || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
+      || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
       || (transcriptPath && !validTranscriptPath(engine, transcriptPath))
     ) return null
     if (engine === 'codex' && transcriptPath && readCodexRolloutMeta(transcriptPath)?.isSubagent) return null

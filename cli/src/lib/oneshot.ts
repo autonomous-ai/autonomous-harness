@@ -578,6 +578,158 @@ class OpencodeWorker extends ProcessWorker {
   }
 }
 
+function kiloBin(): string {
+  return env.KILO_PATH || 'kilo'
+}
+
+/**
+ * Recap runs in an isolated Kilo data dir so ephemeral summary sessions never land in the user's real
+ * kilo.db, while still reading their ~/.config/kilo provider/model config.
+ *
+ * The isolation mechanism is where kilo parts company with the opencode it forked. Opencode honours
+ * `OPENCODE_DATA_DIR`; kilo has no equivalent — measured with `kilo debug paths`, it ignores both
+ * `KILO_DATA_DIR` and `OPENCODE_DATA_DIR` and moves its store only for `XDG_DATA_HOME`. So the child is
+ * given that instead, and because kilo appends its own name, the store lands at `<dir>/kilo/kilo.db`.
+ *
+ * `XDG_CONFIG_HOME` is deliberately NOT set: it would move the config root too and the recap would lose
+ * the user's provider and model, which is the one thing this worker has to inherit.
+ *
+ * First spawn into a fresh dir prints `Performing one time database migration` and pays for it; the pool
+ * pre-warms workers, so that cost lands before a recap is ever asked for.
+ */
+const KILO_RECAP_DATA_DIR = join(env.ADAPTER_DATA_DIR, 'kilo-recap')
+
+/**
+ * The argv + env for one kilo recap worker. Exported so the containment rules below are testable — a
+ * spawn is not, and both of these have already failed in production once.
+ */
+export function kiloOneShotSpawn(
+  model: string | undefined,
+  parentEnv: NodeJS.ProcessEnv,
+  dataDir: string = KILO_RECAP_DATA_DIR,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  const args = [
+    'run', '--pure', '--auto', '--format', 'json', '--dir', dataDir,
+    ...(model ? ['--model', model] : []),
+  ]
+  const childEnv = { ...parentEnv }
+  delete childEnv.TMUX
+  delete childEnv.TMUX_PANE
+  childEnv.XDG_DATA_HOME = dataDir
+  // Belt and braces with `--dir`. `spawn({cwd})` does NOT rewrite `PWD`, and kilo resolves its project
+  // from that variable, so without this the child inherits the DAEMON's directory.
+  childEnv.PWD = dataDir
+  return { args, env: childEnv }
+}
+
+class KiloWorker extends ProcessWorker {
+  readonly engine = 'kilo' as const
+  private buffer = ''
+  private stderr = ''
+  private readonly assistantParts: string[] = []
+  private pending: {
+    resolve: (result: OneShotResult) => void
+    reject: (err: unknown) => void
+    timer: NodeJS.Timeout
+    signal?: AbortSignal
+    onAbort: () => void
+  } | null = null
+
+  constructor(model?: string) {
+    // `kilo run` reads the prompt from stdin (pipe → EOF), so the worker can be pre-warmed and fed the
+    // prompt later. `--pure` skips external plugins (so the discovery plugin never self-registers this
+    // ephemeral recap session). `--format json` streams one JSON envelope per line.
+    //
+    // `--auto` is REQUIRED here and is not the same question as the launcher's permission table. Measured:
+    // without it a recap run whose model reaches for any tool dies outright — kilo auto-rejects the
+    // permission and ends the run (`run ended with an auto-rejected permission; pass --auto for
+    // autonomous use`), emitting an `error` envelope and NO text. A summariser has no user to ask, and a
+    // recap that returns nothing is the failure this flag prevents. Note the asymmetry that makes this
+    // easy to get wrong: `--auto` is a valid flag of the `run` SUBCOMMAND, while the bare TUI rejects it
+    // — see `enginePermissions.ts`, where kilo therefore adds nothing.
+    mkdirSync(KILO_RECAP_DATA_DIR, { recursive: true })
+    // `--dir` pins the workspace explicitly. Do NOT rely on the spawn `cwd` alone: kilo resolves its
+    // project from `$PWD`, and `spawn({cwd})` does not rewrite that variable — the child inherits the
+    // DAEMON's `PWD`. Measured in production: the worker logged
+    // `kilocode-indexing workspacePath=<the daemon's launch directory> initializing project indexing`
+    // the moment a prompt arrived, i.e. every recap ran against the user's real repository instead of an
+    // empty scratch dir. It then hung indexing and gathering context until the 60s timeout, so no
+    // `turn_summary` was ever emitted and the device tile stayed on `processing` forever.
+    const { args, env: processEnv } = kiloOneShotSpawn(model, process.env)
+    const child = spawn(kiloBin(), args, {
+      cwd: KILO_RECAP_DATA_DIR, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    super(child)
+    child.stdout?.on('data', (chunk: Buffer) => this.onStdout(chunk.toString()))
+    child.stderr?.on('data', (chunk: Buffer) => { this.stderr += chunk.toString() })
+    child.stdin?.on('error', (err) => this.fail(err))
+    child.on('error', (err) => this.fail(err))
+    child.on('close', (code) => {
+      if (this.buffer.trim()) this.handleLine(this.buffer)
+      if (!this.pending) return
+      const text = this.assistantParts.join('').trim()
+      if (!text && code !== 0) this.fail(new Error(`kilo one-shot exited ${code}: ${this.stderr.slice(0, 500)}`))
+      else this.complete(text)
+    })
+  }
+
+  run(options: OneShotOptions): Promise<OneShotResult> {
+    if (this.assigned) return Promise.reject(new Error('kilo recap worker already consumed'))
+    this.assigned = true
+    if (options.signal?.aborted) return Promise.reject(abortError(this.engine))
+    const timeoutMs = options.timeoutMs ?? 60_000
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => { this.fail(abortError(this.engine)); this.dispose() }
+      const timer = setTimeout(() => {
+        this.fail(new Error(`kilo one-shot timed out after ${timeoutMs}ms`))
+        this.dispose()
+      }, timeoutMs)
+      this.pending = { resolve, reject, timer, signal: options.signal, onAbort }
+      options.signal?.addEventListener('abort', onAbort)
+      if (!this.child.stdin || this.child.stdin.destroyed || !this.isAlive()) {
+        this.fail(new Error('kilo recap worker is not writable'))
+        return
+      }
+      try { this.child.stdin.end(options.prompt) } catch (err) { this.fail(err) }
+    })
+  }
+
+  private onStdout(chunk: string): void {
+    this.buffer += chunk
+    const lines = this.buffer.split('\n')
+    this.buffer = lines.pop() ?? ''
+    for (const line of lines) this.handleLine(line)
+  }
+
+  private handleLine(line: string): void {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    let evt: Record<string, unknown>
+    try { evt = JSON.parse(trimmed) } catch { return }
+    if (evt.type === 'text') {
+      const part = evt.part as { text?: string } | undefined
+      if (part && typeof part.text === 'string') this.assistantParts.push(part.text)
+    }
+  }
+
+  private cleanupPending(): typeof this.pending {
+    const pending = this.pending
+    if (!pending) return null
+    this.pending = null
+    clearTimeout(pending.timer)
+    pending.signal?.removeEventListener('abort', pending.onAbort)
+    return pending
+  }
+
+  private complete(text: string): void {
+    this.cleanupPending()?.resolve({ text, sessionId: null })
+  }
+
+  private fail(err: unknown): void {
+    this.cleanupPending()?.reject(err)
+  }
+}
+
 function piBin(): string {
   return env.PI_PATH || 'pi'
 }
@@ -743,6 +895,7 @@ let config: {
   codexModel?: string
   cursorModel?: string
   opencodeModel?: string
+  kiloModel?: string
   piModel?: string
   commandcodeModel?: string
   effort?: OneShotOptions['effort']
@@ -754,6 +907,7 @@ const pool = new DisposableOneShotPool<OneShotOptions, OneShotResult>(async (eng
   if (engine === 'cursor') return new CursorWorker(config.cwd, config.cursorModel).ready()
   if (engine === 'pi') return new PiWorker(config.cwd, config.piModel).ready()
   if (engine === 'commandcode') return new CommandCodeWorker(config.cwd, config.commandcodeModel).ready()
+  if (engine === 'kilo') return new KiloWorker(config.kiloModel).ready()
   return new OpencodeWorker(config.opencodeModel).ready()
 })
 
@@ -763,6 +917,7 @@ export function configureOneShotPool(next: {
   codexModel?: string
   cursorModel?: string
   opencodeModel?: string
+  kiloModel?: string
   piModel?: string
   commandcodeModel?: string
   effort?: OneShotOptions['effort']
@@ -770,7 +925,8 @@ export function configureOneShotPool(next: {
   const changed = config != null && (
     config.cwd !== next.cwd || config.claudeModel !== next.claudeModel ||
     config.codexModel !== next.codexModel || config.cursorModel !== next.cursorModel ||
-    config.opencodeModel !== next.opencodeModel || config.piModel !== next.piModel ||
+    config.opencodeModel !== next.opencodeModel || config.kiloModel !== next.kiloModel ||
+    config.piModel !== next.piModel ||
     config.commandcodeModel !== next.commandcodeModel || config.effort !== next.effort
   )
   config = next
@@ -807,7 +963,9 @@ function createOneShotWorker(
           ? new PiWorker(cwd, model).ready()
           : engine === 'commandcode'
             ? new CommandCodeWorker(cwd, model).ready()
-            : new OpencodeWorker(model).ready()
+            : engine === 'kilo'
+              ? new KiloWorker(model).ready()
+              : new OpencodeWorker(model).ready()
 }
 
 async function runDirect(engine: OneShotEngine, opts: OneShotOptions): Promise<OneShotResult> {
@@ -1139,6 +1297,14 @@ export function runOpencodeOneShot(opts: OneShotOptions): Promise<OneShotResult>
     return runDirect('opencode', opts)
   }
   return pool.run('opencode', opts)
+}
+
+export function runKiloOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) return Promise.reject(abortError('kilo'))
+  if (!config || config.cwd !== opts.cwd || config.kiloModel !== opts.model) {
+    return runDirect('kilo', opts)
+  }
+  return pool.run('kilo', opts)
 }
 
 // ── Voice-router warm worker ─────────────────────────────────────────────────────────────────────────

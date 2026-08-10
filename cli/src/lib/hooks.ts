@@ -222,19 +222,30 @@ export function installCursorHooks(port: number): void {
 }
 
 const OPENCODE_PLUGIN_PATH = join(env.OPENCODE_PLUGIN_DIR, 'launcher-register.js')
+const KILO_PLUGIN_PATH = join(env.KILO_PLUGIN_DIR, 'launcher-register.js')
 
-/** OpenCode has no shell hooks — discovery is a global plugin that POSTs each session to the daemon.
- * The plugin runs INSIDE every interactive `opencode` process (so it sees `$TMUX_PANE` + the cwd) and
- * fires on session.created/updated. The recap worker runs `opencode run --pure`, which skips external
- * plugins, so it never self-registers. */
-function opencodePluginSource(port: number): string {
-  return `// launcher-register — auto-installed by the machine adapter. Registers this OpenCode session with the
+/**
+ * Discovery plugin for the opencode-family engines — opencode itself and `kilo`, which is its fork.
+ *
+ * Neither has shell hooks; discovery is a global plugin that POSTs each session to the daemon. The plugin
+ * runs INSIDE every interactive process (so it sees `$TMUX_PANE` + the cwd) and fires on
+ * session.created/updated. The recap workers run with `--pure`, which skips external plugins, so an
+ * ephemeral summary session never self-registers.
+ *
+ * ONE template, two installers: the engine name is the only difference in the emitted source, and the two
+ * install to different directories with their own log lines. The engine modules are deliberately
+ * duplicated so the forks can drift apart, but this template holds no engine behaviour to drift — if
+ * kilo's plugin API ever diverges from opencode's, that is the moment to split this, not before.
+ */
+function forkPluginSource(engine: 'opencode' | 'kilo', port: number): string {
+  const product = engine === 'kilo' ? 'Kilo' : 'OpenCode'
+  return `// launcher-register — auto-installed by the machine adapter. Registers this ${product} session with the
 // local machine daemon (127.0.0.1:${port}) so it can be mirrored to web/device. No-op if machine isn't running.
 export const MachineRegister = async ({ directory, worktree, project }) => {
   const seen = new Set()
   const post = async (sessionID) => {
     const pane = process.env.TMUX_PANE
-    // The launcher (\`harness opencode\`) mints a UUID per launch and exports it as MACHINE_ID; the daemon
+    // The launcher (\`harness ${engine}\`) mints a UUID per launch and exports it as MACHINE_ID; the daemon
     // binds a session's lifetime to that launcher and REFUSES a registration without one. This plugin runs
     // inside the engine, so it inherits the variable — and an engine started outside the launcher has none,
     // which is exactly when it should not register. Same rule notify.mjs applies for every other engine.
@@ -246,7 +257,7 @@ export const MachineRegister = async ({ directory, worktree, project }) => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          engine: "opencode",
+          engine: "${engine}",
           pluginVersion: ${JSON.stringify(VERSION)},
           launcherId,
           sessionId: sessionID,
@@ -813,22 +824,38 @@ export function installAmpPlugin(port: number): void {
 
 /** Idempotently drop the OpenCode discovery plugin into ~/.config/opencode/plugin/. */
 export function installOpencodePlugin(port: number): void {
-  const source = opencodePluginSource(port)
+  installForkPlugin('opencode', OPENCODE_PLUGIN_PATH, 'OpenCode', port)
+}
+
+/**
+ * Idempotently drop the Kilo discovery plugin into ~/.config/kilo/plugin/.
+ *
+ * Measured: kilo resolves its config root from XDG_CONFIG_HOME (`kilo debug paths` reports
+ * `~/.config/kilo`), and that directory is already scaffolded with the same `package.json` +
+ * `node_modules` layout opencode's has — the plugin dir itself is simply absent until something creates
+ * it, which `mkdirSync` below does.
+ */
+export function installKiloPlugin(port: number): void {
+  installForkPlugin('kilo', KILO_PLUGIN_PATH, 'Kilo', port)
+}
+
+function installForkPlugin(engine: 'opencode' | 'kilo', path: string, product: string, port: number): void {
+  const source = forkPluginSource(engine, port)
   try {
-    if (existsSync(OPENCODE_PLUGIN_PATH) && readFileSync(OPENCODE_PLUGIN_PATH, 'utf-8') === source) {
-      console.log('[hooks] OpenCode discovery plugin already installed')
+    if (existsSync(path) && readFileSync(path, 'utf-8') === source) {
+      console.log(`[hooks] ${product} discovery plugin already installed`)
       return
     }
   } catch { /* unreadable — rewrite it */ }
   try {
-    mkdirSync(dirname(OPENCODE_PLUGIN_PATH), { recursive: true })
-    const tmp = `${OPENCODE_PLUGIN_PATH}.${process.pid}.tmp`
+    mkdirSync(dirname(path), { recursive: true })
+    const tmp = `${path}.${process.pid}.tmp`
     writeFileSync(tmp, source)
-    renameSync(tmp, OPENCODE_PLUGIN_PATH)
-    console.log(`[hooks] installed OpenCode discovery plugin → ${OPENCODE_PLUGIN_PATH}`)
-    console.log('[hooks] (takes effect on the next opencode session start)')
+    renameSync(tmp, path)
+    console.log(`[hooks] installed ${product} discovery plugin → ${path}`)
+    console.log(`[hooks] (takes effect on the next ${engine} session start)`)
   } catch (err) {
-    console.error('[hooks] failed to write OpenCode plugin:', err)
+    console.error(`[hooks] failed to write ${product} plugin:`, err)
   }
 }
 
@@ -849,6 +876,7 @@ export function installHooksFor(engine: AgentEngine, port: number): void {
     case 'codex': installCodexHooks(port); break
     case 'cursor': installCursorHooks(port); break
     case 'opencode': installOpencodePlugin(port); break
+    case 'kilo': installKiloPlugin(port); break
     case 'pi': installPiExtension(port); break
     case 'hermes': installHermesHooks(port); break
     case 'commandcode': installCommandCodeHooks(port); break

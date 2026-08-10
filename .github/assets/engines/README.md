@@ -28,6 +28,7 @@ a retina display.
 | `codex.png` | The transparent Codex product mark bundled as `codex-app-ga-logo--UgmJjKM.png` in the official `com.openai.codex` macOS app v`26.602.30954` | 104 | `8e82b26c98a10e45798ce48124515720657f7735fb8d0853b3f087eaa8a6b74e` |
 | `muse.png` | The Meta mark from the official lockup SVG at `static.xx.fbcdn.net/rsrc.php/y3/r/y6QsbGgc866.svg` — wordmark paths dropped, glyph rasterised to 104×104, gradient kept | 104 | `d7c4568f992e60f6d42a7a819a5a782d479cbfd9ad2bc11e69c82b35b8a5d8fe` |
 | `amp.png` | Amp's official app icon — the `apple-touch-icon` the site itself declares, <https://ampcode.com/app-icon.png?v=3>, fetched 2026-08-07 | 512 | `e5fc0d1178674b80c0dcbbf9811787b44df91f865fac9cd3ef44bb13ef728018` |
+| `kilo.png` | Kilo's official app icon — the 512px `icon` the site itself declares, <https://kilo.ai/favicon/android-chrome-512x512.png?v=2>, fetched 2026-08-10 | 512 | `01d05e48efb03321468e1af0110d05de4550806f653b95adb93ad93a546fee7b` |
 
 Open items, recorded rather than left implicit:
 

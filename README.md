@@ -37,6 +37,8 @@ It drives the agents you already use:
   <img src=".github/assets/engines/muse.png"        height="72" alt="Muse Code"    title="Muse Code">
   &nbsp;&nbsp;
   <img src=".github/assets/engines/amp.png"         height="72" alt="Amp"          title="Amp">
+  &nbsp;&nbsp;
+  <img src=".github/assets/engines/kilo.png"        height="72" alt="Kilo"         title="Kilo">
 </p>
 
 ## Add your agent to Harness
@@ -84,7 +86,7 @@ Your agents stay your processes, on your hardware, with your credentials.
     `harness join`          `harness join`          your HTTP API
           │                       │                       │
      claude · codex          hermes · muse           agents running on
-     cursor · amp · …        opencode · …            your own servers
+     cursor · amp · …        opencode · kilo · …     your own servers
 
           └───────── CLI ─────────┘             └─────── API ───────┘
 ```

@@ -12,14 +12,15 @@ import type { AgentEngine } from '../engines/types.js'
 
 /** Every engine the adapter can drive — also the set of `harness <engine>` launch subcommands. */
 export const ENGINES: readonly AgentEngine[] = [
-  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp',
+  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo',
 ] as const
 
 /**
  * Names users actually type. Several CLIs install more than one binary for the same product, and people
  * reach for whichever one they know — `harness cmd` must mean Command Code, not "unknown command".
- * Verified on disk: command-code ships `commandcode`/`command-code`/`cmd`/`cmdc` (all the same file), and
- * Cursor's CLI is installed as `agent` / `cursor-agent`.
+ * Verified on disk: command-code ships `commandcode`/`command-code`/`cmd`/`cmdc` (all the same file),
+ * Cursor's CLI is installed as `agent` / `cursor-agent`, and `@kilocode/cli` declares
+ * `bin: { kilo, kilocode }` — two names for one file, with `kilo` first and used throughout its help.
  */
 const ENGINE_ALIASES: Readonly<Record<string, AgentEngine>> = {
   cmd: 'commandcode',
@@ -27,6 +28,7 @@ const ENGINE_ALIASES: Readonly<Record<string, AgentEngine>> = {
   'command-code': 'commandcode',
   agent: 'cursor',
   'cursor-agent': 'cursor',
+  kilocode: 'kilo',
 }
 
 /**
@@ -83,5 +85,6 @@ export function engineBin(engine: AgentEngine): string {
     case 'devin': return env.DEVIN_PATH || 'devin'
     case 'muse': return env.MUSE_PATH || 'muse'
     case 'amp': return env.AMP_PATH || 'amp'
+    case 'kilo': return env.KILO_PATH || 'kilo'
   }
 }

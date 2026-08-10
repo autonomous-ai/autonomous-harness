@@ -56,6 +56,45 @@ first. Everything else follows from the recording.
 
 ---
 
+## When your agent is a FORK of one already here
+
+Kilo is opencode's fork: same commands, same `~/.local/share/<name>/<name>.db`, same
+`{type:'text'|'reasoning'|'step-start'|'step-finish'}` parts, and its own log lines still say
+`opencode`. That looks like the cheapest integration possible, and mostly it is — but it is also the
+one where the one rule above is easiest to skip, because everything *seems* already known.
+
+Copy the module, then re-measure it. `engines/kilo/` is a deliberate duplicate of `engines/opencode/`
+rather than a shared abstraction: the forks are free to drift, and the duplication is where that drift
+is allowed to land. Every place the two already differ was found by measuring, and every one of them
+fails silently if inherited unchanged:
+
+- **The model-catalog regex.** Opencode's character class has neither `~` nor `:`. On kilo's real
+  catalog that silently dropped 23 of 299 ids — every floating `~vendor/model-latest` alias and every
+  `:free` / `:discounted` variant — including the model the live session was actually running. The
+  picker would simply not have listed the user's own model.
+- **The pane footer.** Opencode's resolver anchors on its `Build`/`Plan` agent names. Kilo's agent is
+  `code`, so the inherited function matched nothing and returned null forever: a blank model chip, no
+  error anywhere. It had to be rewritten, not renamed.
+- **The permission flag.** Opencode takes `--auto`. Kilo documents `--auto` on its `run` subcommand
+  but its TUI *rejects* it — so inheriting the flag would not have loosened permissions, it would have
+  stopped the agent from starting. Note that a non-TTY check cannot tell you this: with stdin closed,
+  a real flag and an invented one both print the same usage block. Test permission flags on a real TTY
+  inside tmux, with a control run.
+- **The ask-the-user dialog.** Opencode draws Claude's numbered dialog inside a box. Kilo draws an
+  unnumbered row of options laid out *horizontally*, sharing its line with the key hints, and walked
+  with `Right` rather than `Down`. Same product lineage, completely different parser.
+- **The turn boundary.** Kilo ends a refused turn with no `step-finish reason:'stop'` at all. Read
+  only by opencode's stop rule, that turn never closes: the device tile spins forever and no recap
+  runs. The refusal itself had to become a boundary.
+
+Two of those (the catalog and the footer) would have shipped as "working" under any test written from
+the parent engine's fixtures. So: inherit the *structure*, measure the *values*. And where a fork's
+directory layout matches, check the ENV OVERRIDES separately — kilo honours `XDG_DATA_HOME` and
+ignores the `<ENGINE>_DATA_DIR` variable its parent uses, which is the difference between a recap
+running in a scratch directory and a recap writing into the user's real store.
+
+---
+
 ## When your agent writes nothing to disk
 
 This page assumes Harness can read a transcript your agent already writes. Amp is the case where

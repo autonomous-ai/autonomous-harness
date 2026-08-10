@@ -28,6 +28,7 @@ import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normali
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
 import { opencodeMessagesToEvents, windowOpencodeMessages } from './engines/opencode/normalizer.js'
+import { kiloMessagesToEvents, windowKiloMessages } from './engines/kilo/normalizer.js'
 import { museMessagesToEvents } from './engines/muse/normalizer.js'
 import { ampMessagesToEvents } from './engines/amp/normalizer.js'
 import { ampThreadToEvents, readAmpThread } from './engines/amp/threadExport.js'
@@ -38,6 +39,7 @@ import { devinMessagesToEvents, windowDevinMessages } from './engines/devin/norm
 import { readHermesMessages } from './engines/hermes/reader.js'
 import { readDevinMessages } from './engines/devin/reader.js'
 import { readOpencodeMessages } from './engines/opencode/reader.js'
+import { readKiloMessages } from './engines/kilo/reader.js'
 import { E2eeManager, type PairResult } from './lib/e2ee/manager.js'
 import { ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
@@ -48,6 +50,8 @@ import { sid, preview } from './lib/log.js'
 
 // OpenCode has no per-session transcript file — its history is read from this SQLite store.
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
+// Kilo keeps history the same way opencode does, in its own store.
+const KILO_DB = join(env.KILO_DATA_DIR, 'kilo.db')
 const DEVIN_DB = join(env.DEVIN_HOME, 'sessions.db')
 // Hermes history likewise comes from a SQLite store, not a per-session file.
 const HERMES_DB = join(env.HERMES_HOME, 'state.db')
@@ -121,11 +125,11 @@ async function ampHistory(sessionId: string, lines: string[]): Promise<SessionEv
 
 export function deviceAgentListItem(
   raw: unknown,
-): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp'; selectedModel?: string | null } {
+): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo'; selectedModel?: string | null } {
   const o = (raw ?? {}) as Record<string, unknown>
-  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp'; selectedModel?: string | null } = { id: o.id }
+  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo'; selectedModel?: string | null } = { id: o.id }
   if (typeof o.name === 'string') item.name = clipDeviceAgentName(o.name)
-  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp') item.engine = o.engine
+  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp' || o.engine === 'kilo') item.engine = o.engine
   // Runtime model/effort profile (opaque runtime-v1:...) — lets the device render + change model/effort.
   if (typeof o.selectedModel === 'string' || o.selectedModel === null) item.selectedModel = o.selectedModel
   return item
@@ -740,6 +744,31 @@ export class BackendSocket {
               return
             }
             const events = opencodeMessagesToEvents(w.window)
+            if (before && events[events.length - 1]?.type === 'done') events.pop()
+            reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events, timestamp, engine: s.engine, hasMore: w.hasMore, oldestCursor: w.oldestCursor })
+            return
+          }
+          if (s.engine === 'kilo') {
+            // Kilo history likewise comes from its SQLite DB. BOTH branches below are load-bearing: the
+            // web client always sends a `limit`, so handling only the full-transcript one opens an empty
+            // pane — the exact half-dispatch this file has been caught on before. Cursors are namespaced
+            // `kilo:<index>` by `windowKiloMessages`, so a cursor from another engine reads as stale
+            // rather than silently indexing into the wrong conversation.
+            const rawLimit = payload.limit
+            const limit = typeof rawLimit === 'number' && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : undefined
+            const before = typeof payload.before === 'string' ? payload.before : undefined
+            const messages = await readKiloMessages(KILO_DB, sessionId)
+            const timestamp = new Date(s.updatedAt).toISOString()
+            if (!limit) {
+              reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events: kiloMessagesToEvents(messages), timestamp, engine: s.engine })
+              return
+            }
+            const w = windowKiloMessages(messages, { limit, before })
+            if (w.staleCursor) {
+              reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events: [], timestamp, engine: s.engine, hasMore: false, oldestCursor: null, staleCursor: true })
+              return
+            }
+            const events = kiloMessagesToEvents(w.window)
             if (before && events[events.length - 1]?.type === 'done') events.pop()
             reply(type, requestId, { id: sessionId, title: projectDisplayName(s), events, timestamp, engine: s.engine, hasMore: w.hasMore, oldestCursor: w.oldestCursor })
             return

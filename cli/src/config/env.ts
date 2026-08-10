@@ -112,6 +112,18 @@ const envSchema = z.object({
   OPENCODE_PLUGIN_DIR: z
     .string()
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'plugin')),
+  // Kilo state root — the SQLite store lives at <KILO_DATA_DIR>/kilo.db. Kilo is an opencode fork and
+  // keeps the same layout, but NOT the same overrides: measured on 7.4.20 via `kilo debug paths`, it
+  // honours XDG_DATA_HOME and ignores both `KILO_DATA_DIR` and `OPENCODE_DATA_DIR`. So this variable
+  // steers the ADAPTER's reads only; anything that has to move KILO's own writes (the recap one-shot)
+  // must set XDG_DATA_HOME on the child instead — see `KiloWorker` in lib/oneshot.ts.
+  KILO_DATA_DIR: z
+    .string()
+    .default(join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'kilo')),
+  // Kilo plugin dir the adapter drops its discovery plugin into (honors XDG_CONFIG_HOME — measured).
+  KILO_PLUGIN_DIR: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'kilo', 'plugin')),
   // Pi state root. Session transcripts live under <PI_HOME>/agent/sessions/--<mangled-cwd>--/*.jsonl and
   // the adapter's discovery extension is installed into <PI_HOME>/agent/extensions.
   PI_HOME: z.string().default(join(homedir(), '.pi')),
@@ -176,6 +188,9 @@ const envSchema = z.object({
   MUSE_PATH: z.string().optional(),
   // Path to the `amp` CLI for Amp recap one-shots (else `amp` is resolved from PATH).
   AMP_PATH: z.string().optional(),
+  // Path to the `kilo` CLI for Kilo recap one-shots (else `kilo` is resolved from PATH). `@kilocode/cli`
+  // also installs it as `kilocode`; both are the same file.
+  KILO_PATH: z.string().optional(),
   // Model for the device turn-recap one-shot.
   SUMMARY_MODEL: z.string().default('sonnet'),
   // Balanced Codex counterpart used only for recap workers; never inherits the interactive CLI model.
@@ -184,6 +199,8 @@ const envSchema = z.object({
   CURSOR_SUMMARY_MODEL: z.string().default('auto'),
   // OpenCode recap model (`provider/model`). Empty → use the user's opencode config default model.
   OPENCODE_SUMMARY_MODEL: z.string().default(''),
+  // Kilo recap model (`provider/model` as `kilo models` prints it). Empty → the user's kilo default.
+  KILO_SUMMARY_MODEL: z.string().default(''),
   // Pi recap model (`provider/model` or a model pattern). Empty → use the user's pi config default.
   PI_SUMMARY_MODEL: z.string().default(''),
   // Hermes recap model. Empty → use the user's ~/.hermes/config.yaml default (keeps their provider).

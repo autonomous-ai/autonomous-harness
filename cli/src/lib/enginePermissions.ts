@@ -74,6 +74,26 @@ const PERMISSIONS: Readonly<Record<AgentEngine, EnginePermissions>> = {
     add: [{ axis: 'permission', args: ['--auto'] }],
     owned: { permission: ['--auto'] },
   },
+  /**
+   * Kilo adds NOTHING, and this is the one place it diverges hardest from the opencode it forked.
+   *
+   * `kilo run` documents BOTH `--auto` and `--dangerously-skip-permissions`, so the flags exist on the
+   * binary — but they belong to the `run` subcommand, and the launcher starts the TUI (`kilo`), not `run`.
+   * Measured on a real TTY inside tmux, with a control: bare `kilo` starts the TUI, while `kilo --auto`
+   * prints the usage block and exits. Adding the flag anyway would not loosen permissions, it would stop
+   * the agent from starting at all.
+   *
+   * Note the non-TTY form cannot answer this question: with stdin closed, `kilo --auto`,
+   * `kilo --dangerously-skip-permissions` and an invented flag all print byte-identical usage, so the
+   * usual unknown-flag test reads as "rejected" for real flags too. The TTY is the only place it shows.
+   *
+   * `owned` still lists both spellings: a user who types one has chosen the axis, and nothing should be
+   * appended on top of that if this table ever gains an `add`.
+   */
+  kilo: {
+    add: [],
+    owned: { permission: ['--auto', '--dangerously-skip-permissions'] },
+  },
   // Pi has NO permission bypass: its model is tool allow/deny lists (`--tools`, `--exclude-tools`) with no
   // "approve everything" switch, so only the trust axis is set. Inventing a flag would just fail to start.
   pi: {

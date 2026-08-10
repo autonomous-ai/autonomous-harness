@@ -24,7 +24,7 @@ import { homedir } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installHermesHooks, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { ENGINES, aliasesFor, engineBin, engineCommand, resolveEngine } from './lib/engineBin.js'
 import { refuseDuplicateAgent } from './lib/duplicateAgent.js'
@@ -73,6 +73,8 @@ import { CursorTaskHookQueue } from './engines/cursor/taskHookQueue.js'
 import { loadCursorPendingTasks, removeCursorPendingTasks } from './engines/cursor/pendingTasks.js'
 import { OpencodeReader, readOpencodeMessages } from './engines/opencode/reader.js'
 import { lastOpencodeTurnText } from './engines/opencode/normalizer.js'
+import { KiloReader, readKiloMessages } from './engines/kilo/reader.js'
+import { lastKiloTurnText } from './engines/kilo/normalizer.js'
 import { MuseNormalizer, lastMuseTurnText, museMessagesToEvents } from './engines/muse/normalizer.js'
 import { AmpNormalizer, lastAmpTurnText, ampMessagesToEvents } from './engines/amp/normalizer.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
@@ -118,6 +120,8 @@ const COMPUTER_ID_FILE = join(env.ADAPTER_DATA_DIR, 'computer-id')
 const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
 // OpenCode's SQLite store — polled per session by OpencodeReader (no per-session transcript file).
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
+// Kilo's SQLite store — same shape, its own file and its own reader (see engines/kilo/).
+const KILO_DB = join(env.KILO_DATA_DIR, 'kilo.db')
 // Hermes keeps every surface's history in one SQLite store — polled per session by HermesReader.
 const HERMES_DB = join(env.HERMES_HOME, 'state.db')
 // Devin likewise keeps all history in one SQLite store (WAL) — polled per session by DevinReader.
@@ -153,6 +157,10 @@ ${ENGINES.map((e) => { const a = aliasesFor(e); return `  harness ${engineComman
   Two CLIs keep directory trust in their config rather than a flag — codex and devin ask "do you trust
   this directory?" the first time you run one in a new directory. Answer it in the pane; harness will
   not edit your config to skip it.
+  Kilo is the exception with no bypass at all: it offers one on 'kilo run', but its interactive TUI —
+  the thing harness starts — rejects the flag, so a kilo agent still stops at its own permission prompt.
+  You can answer that prompt remotely from the web or the device; it arrives as a question, not as a
+  tool card.
 
 Machine:
   harness join <token>         connect this computer to an existing machine using the token from its machine page
@@ -581,6 +589,7 @@ async function runForeground(token: string): Promise<void> {
   const codexNormalizers = new Map<string, CodexNormalizer>()
   const cursorNormalizers = new Map<string, CursorNormalizer>()
   const opencodeReaders = new Map<string, OpencodeReader>()
+  const kiloReaders = new Map<string, KiloReader>()
   const piNormalizers = new Map<string, PiNormalizer>()
   const museNormalizers = new Map<string, MuseNormalizer>()
   const ampNormalizers = new Map<string, AmpNormalizer>()
@@ -670,6 +679,7 @@ async function runForeground(token: string): Promise<void> {
       || codexNormalizers.has(session.sessionId)
       || cursorNormalizers.has(session.sessionId)
       || opencodeReaders.has(session.sessionId)
+      || kiloReaders.has(session.sessionId)
       || piNormalizers.has(session.sessionId)
       || museNormalizers.has(session.sessionId)
       || ampNormalizers.has(session.sessionId)
@@ -724,6 +734,17 @@ async function runForeground(token: string): Promise<void> {
         onFatal: (err) => console.warn(`[opencode] ${sid(session.sessionId)} ${err.message}`),
       })
       opencodeReaders.set(session.sessionId, reader)
+      await reader.start()
+    } else if (session.engine === 'kilo') {
+      // Kilo is opencode's fork and keeps the same store shape, so it is polled the same way — but from
+      // its OWN db and through its own reader, so the two can diverge without one breaking the other.
+      const reader = new KiloReader({
+        dbPath: KILO_DB,
+        sessionId: session.sessionId,
+        onEvents: (events) => emitSessionEvents(session.sessionId, events),
+        onFatal: (err) => console.warn(`[kilo] ${sid(session.sessionId)} ${err.message}`),
+      })
+      kiloReaders.set(session.sessionId, reader)
       await reader.start()
     } else if (session.engine === 'muse') {
       // Same JSONL tail as claude/pi; only the record shape differs.
@@ -875,6 +896,7 @@ async function runForeground(token: string): Promise<void> {
       const s = registry.bySession(sessionId)
       if (!s) return null
       if (s.engine === 'opencode') return lastOpencodeTurnText(await readOpencodeMessages(OPENCODE_DB, sessionId))
+      if (s.engine === 'kilo') return lastKiloTurnText(await readKiloMessages(KILO_DB, sessionId))
       if (s.engine === 'hermes') return lastHermesTurnText(await readHermesMessages(HERMES_DB, sessionId))
       if (s.engine === 'devin') return lastDevinTurnText(await readDevinMessages(DEVIN_DB, sessionId))
       if (!s.transcriptPath) return null
@@ -961,6 +983,7 @@ async function runForeground(token: string): Promise<void> {
         ?? codexNormalizers.get(sessionId)?.turnOpen
         ?? cursorNormalizers.get(sessionId)?.turnOpen
         ?? opencodeReaders.get(sessionId)?.turnOpen
+        ?? kiloReaders.get(sessionId)?.turnOpen
         ?? piNormalizers.get(sessionId)?.turnOpen
         ?? museNormalizers.get(sessionId)?.turnOpen
         ?? ampNormalizers.get(sessionId)?.turnOpen
@@ -1068,6 +1091,8 @@ async function runForeground(token: string): Promise<void> {
     cursorNormalizers.delete(sessionId)
     opencodeReaders.get(sessionId)?.stop()
     opencodeReaders.delete(sessionId)
+    kiloReaders.get(sessionId)?.stop()
+    kiloReaders.delete(sessionId)
     piNormalizers.delete(sessionId)
     museNormalizers.delete(sessionId)
     ampNormalizers.delete(sessionId)
@@ -1497,6 +1522,7 @@ async function runForeground(token: string): Promise<void> {
     installCodexHooks(hookPort)
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
+    installKiloPlugin(hookPort)
     installPiExtension(hookPort)
     // Amp belongs here with the other plugin-based engines, and it was missed. It matters most after a
     // SELF-UPDATE: the daemon restarts, and this is what puts the new plugin on disk immediately rather
@@ -1583,6 +1609,7 @@ async function runForeground(token: string): Promise<void> {
           ?? codexNormalizers.get(session.sessionId)?.turnOpen
           ?? cursorNormalizers.get(session.sessionId)?.turnOpen
           ?? opencodeReaders.get(session.sessionId)?.turnOpen
+          ?? kiloReaders.get(session.sessionId)?.turnOpen
           ?? piNormalizers.get(session.sessionId)?.turnOpen
           ?? museNormalizers.get(session.sessionId)?.turnOpen
           ?? ampNormalizers.get(session.sessionId)?.turnOpen

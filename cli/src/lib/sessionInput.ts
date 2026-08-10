@@ -10,6 +10,10 @@ const CLAUDE_SUBMIT_VERIFY_MS = 3_000
 // OpenCode's accept signal is the reader's DB poll (~1s) surfacing a new user row → turn_started, so
 // give it a slightly longer window than the file-based engines before a retry-Enter.
 const OPENCODE_SUBMIT_VERIFY_MS = 2_500
+// Kilo is opencode's fork and its user row lands on Enter the same way, read by the same 1s DB poll, so
+// it gets the same window. Measured on a live pane: the row is written as the turn opens, not when the
+// model replies — so this covers the poll, not model latency (which is Command Code's problem, not this).
+const KILO_SUBMIT_VERIFY_MS = 2_500
 // Pi has no composer glyph either, and its JSONL is written per completed message — give the derived
 // turn_started a comparable window before re-pressing Enter.
 const PI_SUBMIT_VERIFY_MS = 2_500
@@ -284,7 +288,9 @@ export class SessionInputController {
                   ? MUSE_SUBMIT_VERIFY_MS
                   : session.engine === 'amp'
                     ? AMP_SUBMIT_VERIFY_MS
-                    : SUBMIT_VERIFY_MS)
+                    : session.engine === 'kilo'
+                      ? KILO_SUBMIT_VERIFY_MS
+                      : SUBMIT_VERIFY_MS)
   }
 
   private async retrySubmit(sessionId: string, session: RegisteredSession, state: InputState): Promise<void> {
@@ -304,7 +310,7 @@ export class SessionInputController {
         this.deps.onError(sessionId, 'The agent did not accept the message. Please try again.')
         return
       }
-    } else if (session.engine === 'opencode' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse'
+    } else if (session.engine === 'opencode' || session.engine === 'kilo' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse'
       || session.engine === 'amp') {
       // OpenCode has no composer glyph, and the submitted text stays visible in the message area, so a
       // pane scrape can't tell "still in the composer" from "already sent". Rely purely on the reader-

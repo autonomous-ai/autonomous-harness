@@ -68,20 +68,23 @@ describe('Cursor recap', () => {
     expect(mocks.cleanupCursor).toHaveBeenCalledWith('cursor-recap-session')
   })
 
-  it('includes Cursor, OpenCode and Pi sessions when sizing recap workers', () => {
+  it('includes Cursor, OpenCode, Kilo and Pi sessions when sizing recap workers', () => {
     syncSummaryPoolSessions([
       { engine: 'claude' },
       { engine: 'codex' },
       { engine: 'cursor' },
       { engine: 'cursor' },
       { engine: 'opencode' },
+      // Kilo IS poolable: `kilo run` takes its prompt on stdin and ends at EOF, so a worker can be warmed
+      // before the prompt exists — the property hermes and devin lack.
+      { engine: 'kilo' },
       { engine: 'pi' },
       { engine: 'commandcode' },
       { engine: 'hermes' }, // not poolable (prompt is argv) — must NOT be counted
       { engine: 'devin' },  // likewise: piping a prompt to `devin -p` panics the CLI
     ])
 
-    expect(mocks.setCounts).toHaveBeenCalledWith({ claude: 1, codex: 1, cursor: 2, opencode: 1, pi: 1, commandcode: 1 })
+    expect(mocks.setCounts).toHaveBeenCalledWith({ claude: 1, codex: 1, cursor: 2, opencode: 1, kilo: 1, pi: 1, commandcode: 1 })
   })
 })
 

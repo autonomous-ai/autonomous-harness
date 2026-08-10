@@ -169,6 +169,13 @@ export function engineProcessMatchScore(
     if (executable === 'opencode') return 3
     return /(^|[\/\s])opencode(?:[\s]|$)/.test(haystack) ? 1 : 0
   }
+  if (engine === 'kilo') {
+    // `@kilocode/cli` installs the same file under both names, and kilo's own installer puts a second
+    // copy at ~/.kilo/bin/kilo — so match either spelling as the executable, and fall back to the argv
+    // scan for the wrapper form. `kilocode` is listed first so the weak regex below cannot claim it.
+    if (executable === 'kilo' || executable === 'kilocode') return 3
+    return /(^|[\/\s])kilocode?(?:[\s]|$)/.test(haystack) ? 1 : 0
+  }
   if (engine === 'commandcode') {
     // The TUI overwrites its own argv within the first second — `ps` shows `⌘ Command Code · <dir>` and
     // then `⌘ <session title>`, with no trace of the node entrypoint. So the ⌘ (U+2318) prefix is the
@@ -259,6 +266,10 @@ function selectEngineProcess(
 const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]; id: RegExp }>> = {
   cursor: { flags: ['--resume'], id: /^[0-9a-f-]{16,}$/i },
   opencode: { flags: ['--session', '-s'], id: /^ses_[A-Za-z0-9]+$/ },
+  // Kilo inherits opencode's resume flags and its `ses_` id prefix — measured on this machine's kilo.db:
+  // `ses_024a007fdffe11yG68JPxsHJly`. `--fork` is deliberately NOT here: it CONTINUES from an id but
+  // writes a NEW session, so the id in argv is the parent's and would bind the agent to the wrong row.
+  kilo: { flags: ['--session', '-s'], id: /^ses_[A-Za-z0-9]+$/ },
   pi: { flags: ['--session', '--session-id'], id: /^[0-9a-f][0-9a-f-]{7,}$/i },
   // Hermes ids are timestamps: 20260728_115628_f2c86a.
   hermes: { flags: ['--resume'], id: /^\d{8}_\d{6}_[0-9a-z]+$/i },
