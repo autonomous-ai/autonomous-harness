@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -26,18 +26,51 @@ async function loadE2ee() {
 }
 
 describe('E2EE setup links', () => {
-  it('creates one-time setup tokens bound to the adapter identity', async () => {
+  it('keeps signed setup tokens reusable without persisted nonce state', async () => {
     const { C, E2eeStore } = await loadE2ee()
     const store = new E2eeStore()
     store.init()
     const setup = store.createSetupToken(AGENT)
 
     expect(C.verifySetupToken(setup.token, Date.now(), AGENT)?.payload.machineId).toBe(AGENT)
-    expect(store.consumeSetupToken(setup.token, AGENT)).toMatchObject({ ok: true, fingerprint: setup.fingerprint })
-    expect(store.consumeSetupToken(setup.token, AGENT)).toEqual({ ok: false, error: 'UNKNOWN_TOKEN' })
+    expect(store.validateSetupToken(setup.token, AGENT)).toMatchObject({ ok: true, fingerprint: setup.fingerprint })
+    expect(store.validateSetupToken(setup.token, AGENT)).toMatchObject({ ok: true, fingerprint: setup.fingerprint })
+
+    // Simulate a pre-upgrade build that already consumed this token and persisted an empty nonce list.
+    // A fresh post-upgrade store must still accept the signed, unexpired link.
+    writeFileSync(join(dataDir, 'e2e', 'setup-nonces.json'), '[]')
+    const afterUpgrade = new E2eeStore()
+    afterUpgrade.init()
+    expect(afterUpgrade.validateSetupToken(setup.token, AGENT)).toMatchObject({ ok: true, fingerprint: setup.fingerprint })
   })
 
-  it('auto-pairs a browser identity from a valid setup claim and rejects replay', async () => {
+  it('keeps every generated link valid until its signed expiry', async () => {
+    const { C, E2eeStore } = await loadE2ee()
+    const store = new E2eeStore()
+    store.init()
+    const first = store.createSetupToken(AGENT)
+    const second = store.createSetupToken(AGENT)
+    const expired = store.createSetupToken(AGENT, -1)
+    const foreign = C.newIdentity()
+    const foreignToken = C.encodeSetupToken({
+      v: 1,
+      typ: 'adapter-e2ee-setup',
+      pub: C.b64e(foreign.pub),
+      nonce: 'foreign-adapter',
+      exp: Date.now() + 60_000,
+      machineId: AGENT,
+    }, foreign.priv)
+    const tampered = `${first.token.slice(0, -1)}${first.token.endsWith('A') ? 'B' : 'A'}`
+
+    expect(store.validateSetupToken(first.token, AGENT).ok).toBe(true)
+    expect(store.validateSetupToken(second.token, AGENT).ok).toBe(true)
+    expect(store.validateSetupToken(expired.token, AGENT)).toEqual({ ok: false, error: 'BAD_TOKEN' })
+    expect(store.validateSetupToken(first.token, '00000000000000000000000000000000')).toEqual({ ok: false, error: 'BAD_TOKEN' })
+    expect(store.validateSetupToken(foreignToken, AGENT)).toEqual({ ok: false, error: 'WRONG_ADAPTER' })
+    expect(store.validateSetupToken(tampered, AGENT)).toEqual({ ok: false, error: 'BAD_TOKEN' })
+  })
+
+  it('auto-pairs multiple browser identities from the same setup link', async () => {
     const { C, E2eeManager } = await loadE2ee()
     const sent: Array<{ connId: string; frame: Record<string, unknown> }> = []
     const mgr = new E2eeManager({
@@ -73,8 +106,12 @@ describe('E2EE setup links', () => {
         sig: C.b64e(C.setupClaimSig(web2.priv, AGENT, setup.token, web2.pub)),
       },
     })
-    expect(sent.at(-1)?.frame.payload).toMatchObject({ requestId: 'r2', error: 'UNKNOWN_TOKEN' })
-    expect(mgr.listPaired()).toHaveLength(1)
+    expect(sent.at(-1)?.frame.payload).toMatchObject({ requestId: 'r2', ok: true, fingerprint: setup.fingerprint })
+    expect(mgr.listPaired()).toHaveLength(2)
+    expect(mgr.listPaired().map((p) => p.fingerprint)).toEqual(expect.arrayContaining([
+      C.fingerprint(web1.pub),
+      C.fingerprint(web2.pub),
+    ]))
   })
 })
 

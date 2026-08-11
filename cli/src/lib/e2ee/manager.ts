@@ -411,12 +411,12 @@ export class E2eeManager {
       this.deps.sendTo(connId, { type: 'e2e_setup_claim_result', payload: { requestId, error } })
     }
     if (!token || !identityPub || !sig) { fail('BAD_CLAIM'); return true }
-    const consumed = this.store.consumeSetupToken(token, this.deps.machineId)
-    if (!consumed.ok) { fail(consumed.error); return true }
+    const validated = this.store.validateSetupToken(token, this.deps.machineId)
+    if (!validated.ok) { fail(validated.error); return true }
     const pub = C.b64d(identityPub)
     if (!C.setupClaimVerify(pub, this.deps.machineId, token, C.b64d(sig))) { fail('BAD_SIG'); return true }
     this.store.addPaired(identityPub, label, this.now(), 'web')
-    this.deps.sendTo(connId, { type: 'e2e_setup_claim_result', payload: { requestId, ok: true, fingerprint: consumed.fingerprint } })
+    this.deps.sendTo(connId, { type: 'e2e_setup_claim_result', payload: { requestId, ok: true, fingerprint: validated.fingerprint } })
     return true
   }
 

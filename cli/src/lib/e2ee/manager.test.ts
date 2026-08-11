@@ -147,7 +147,7 @@ describe('E2eeManager pairing', () => {
     expect(h.mgr.hasSession(conn)).toBe(true)
   })
 
-  it('setup-link claim rejects token reuse', () => {
+  it('one setup link pairs multiple browsers and establishes an E2EE session for each', () => {
     const h = machine()
     const web1 = new WebPeer()
     const web2 = new WebPeer()
@@ -172,9 +172,17 @@ describe('E2eeManager pairing', () => {
         sig: C.b64e(C.setupClaimSig(web2.identity.priv, AGENT, setup.token, web2.identity.pub)),
       },
     })
-    const result = h.lastFor('setup-b', 'e2e_setup_claim_result')!.payload as Record<string, unknown>
-    expect(result.error).toBe('UNKNOWN_TOKEN')
-    expect(h.mgr.listPaired().length).toBe(1)
+    expect(h.lastFor('setup-a', 'e2e_setup_claim_result')!.payload).toMatchObject({ ok: true })
+    expect(h.lastFor('setup-b', 'e2e_setup_claim_result')!.payload).toMatchObject({ ok: true })
+    expect(h.mgr.listPaired().length).toBe(2)
+
+    const adapterPub = C.b64d(C.verifySetupToken(setup.token)!.payload.pub)
+    h.mgr.handleFrame('setup-a', web1.hello())
+    web1.onWelcome(h.lastFor('setup-a', 'e2e_welcome')!, adapterPub)
+    h.mgr.handleFrame('setup-b', web2.hello())
+    web2.onWelcome(h.lastFor('setup-b', 'e2e_welcome')!, adapterPub)
+    expect(h.mgr.hasSession('setup-a')).toBe(true)
+    expect(h.mgr.hasSession('setup-b')).toBe(true)
   })
 
   it('completes a full pairing, pins the browser, and establishes a session + group key', async () => {

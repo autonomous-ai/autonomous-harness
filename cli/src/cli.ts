@@ -155,7 +155,7 @@ Machine:
   harness update               update to the latest build now (it also self-updates in the background)
 
 Browser end-to-end encryption:
-  harness browser-link         print a one-time setup link for this browser
+  harness browser-link         print a reusable 7-day setup link for browsers
   harness pair <code>          pair a BROWSER (code shown on the machine page)
   harness pairings             list paired clients
   harness unpair <#|fp>        unpair one browser (by list number or fingerprint)
@@ -2120,7 +2120,7 @@ async function pairCommand(code: string | undefined): Promise<void> {
   process.exit(1)
 }
 
-/** `adapter browser-link` — print a one-time browser setup link for the current machine. */
+/** `harness browser-link` — print a reusable 7-day browser setup link for the current machine. */
 async function browserLinkCommand(): Promise<void> {
   const token = readSavedToken()
   if (!token) { console.error('\n  ✗ This computer is not joined. Run: harness join <token>\n'); process.exit(1) }
@@ -2140,8 +2140,9 @@ async function browserLinkCommand(): Promise<void> {
     const setup = createSetupToken(agentId)
     url = setupBrowserLink(agentId, setup.token)
   }
-  console.log('\n  Browser setup link (valid for 7 days):\n')
+  console.log('\n  Reusable browser setup link (valid for 7 days):\n')
   console.log(`    ${url}\n`)
+  console.log('  Anyone with this link can pair a browser until it expires. Keep it private.\n')
   if (!readPid()) console.log('  Start the adapter with `harness join` if the browser cannot connect.\n')
   process.exit(0)
 }

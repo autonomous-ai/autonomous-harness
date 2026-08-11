@@ -304,8 +304,8 @@ export function startHookServer(
         return
       }
 
-      // `adapter browser-link` → mint a one-time setup token using the running daemon's E2EE manager
-      // so the nonce is immediately consumable by this process.
+      // `harness browser-link` → mint a reusable 7-day setup token using the running daemon's E2EE
+      // identity. The signed token is self-contained, so it remains valid across daemon restarts.
       if (req.method === 'POST' && url === '/api/e2ee/setup-link') {
         if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
         if (!handlers.onSetupLink) { json(503, { error: 'UNAVAILABLE' }); return }

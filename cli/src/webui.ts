@@ -154,7 +154,7 @@ function buildSetupApproveModal(s){
   document.getElementById('pending').innerHTML =
     '<div class="modal"><div class="modalCard">'
     + '<div class="mTitle">Set up browser encryption?</div>'
-    + '<div class="mSub">This will create a 7-day setup link for the Machine browser you just opened. Approve only if you started this flow.</div>'
+    + '<div class="mSub">This creates a reusable 7-day setup link. Anyone with the link can pair a browser until it expires, so keep it private.</div>'
     + '<div class="mCodeLabel">machine</div><div class="mFp"><span class="fp">'+esc((s&&s.fingerprint)||'—')+'</span></div>'
     + '<div class="mCodeLabel">destination</div><div class="mFp">'+esc(machineUrl)+'</div>'
     + '<div class="mBtns"><button class="btn" onclick="closeSetupModal()">Cancel</button><button id="setupApproveBtn" class="btn primary" onclick="approveBrowserSetup()">Approve</button></div>'

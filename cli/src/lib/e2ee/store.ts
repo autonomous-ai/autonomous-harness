@@ -12,7 +12,6 @@ import { newIdentity, newPairId, b64e, b64d, fingerprint, encodeSetupToken, veri
 const DIR = join(env.ADAPTER_DATA_DIR, 'e2e')
 const IDENTITY_FILE = join(DIR, 'identity.json')
 const PAIRED_FILE = join(DIR, 'paired.json')
-const SETUP_FILE = join(DIR, 'setup-nonces.json')
 const SETUP_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 export interface PairedClient {
@@ -21,12 +20,6 @@ export interface PairedClient {
   pairedAt: number
   role: PairRole      // old records without this field are treated as web
 }
-interface PendingSetupNonce {
-  nonce: string
-  expiresAt: number
-  machineId?: string
-}
-
 function writeSecure(file: string, data: unknown): void {
   mkdirSync(DIR, { recursive: true })
   writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 })
@@ -35,7 +28,6 @@ function writeSecure(file: string, data: unknown): void {
 export class E2eeStore {
   private identity: Identity | null = null
   private paired = new Map<string, PairedClient>() // key = identityPub (base64)
-  private setupNonces = new Map<string, PendingSetupNonce>() // key = nonce
 
   /** Load or create the computer identity keypair; load the paired set. Idempotent. */
   init(): Identity {
@@ -52,13 +44,6 @@ export class E2eeStore {
       const arr = JSON.parse(readFileSync(PAIRED_FILE, 'utf-8')) as Array<PairedClient & { role?: PairRole }>
       for (const p of arr) {
         if (p?.identityPub) this.paired.set(p.identityPub, { ...p, role: p.role === 'device' ? 'device' : 'web' })
-      }
-    } catch { /* none yet */ }
-    try {
-      const arr = JSON.parse(readFileSync(SETUP_FILE, 'utf-8')) as PendingSetupNonce[]
-      const now = Date.now()
-      for (const p of arr) {
-        if (p?.nonce && p.expiresAt > now) this.setupNonces.set(p.nonce, p)
       }
     } catch { /* none yet */ }
     return this.identity
@@ -109,34 +94,17 @@ export class E2eeStore {
     const nonce = b64e(newPairId()).replace(/=+$/g, '')
     const expiresAt = Date.now() + ttlMs
     const payload = { v: 1 as const, typ: 'adapter-e2ee-setup' as const, pub: b64e(id.pub), nonce, exp: expiresAt, ...(machineId ? { machineId } : {}) }
-    this.setupNonces.set(nonce, { nonce, expiresAt, ...(machineId ? { machineId } : {}) })
-    this.writeSetupNonces()
     return { token: encodeSetupToken(payload, id.priv), expiresAt, fingerprint: this.fingerprint() }
   }
 
-  consumeSetupToken(token: string, expectedMachineId?: string): { ok: true; fingerprint: string } | { ok: false; error: 'BAD_TOKEN' | 'WRONG_ADAPTER' | 'UNKNOWN_TOKEN' | 'EXPIRED' | 'WRONG_MACHINE' } {
+  /** Validate a reusable setup link. The signed token is the capability: successful claims never
+   * consume server-side state, so the same unexpired link can pair multiple browser identities —
+   * including a link whose nonce was consumed by an older one-time build before an upgrade. */
+  validateSetupToken(token: string, expectedMachineId?: string): { ok: true; fingerprint: string } | { ok: false; error: 'BAD_TOKEN' | 'WRONG_ADAPTER' } {
     const id = this.getIdentity()
     const verified = verifySetupToken(token, Date.now(), expectedMachineId)
     if (!verified) return { ok: false, error: 'BAD_TOKEN' }
     if (b64e(id.pub) !== verified.payload.pub) return { ok: false, error: 'WRONG_ADAPTER' }
-    const pending = this.setupNonces.get(verified.payload.nonce)
-    if (!pending) return { ok: false, error: 'UNKNOWN_TOKEN' }
-    if (pending.expiresAt < Date.now() || verified.payload.exp < Date.now()) {
-      this.setupNonces.delete(verified.payload.nonce)
-      this.writeSetupNonces()
-      return { ok: false, error: 'EXPIRED' }
-    }
-    if (expectedMachineId && pending.machineId && pending.machineId !== expectedMachineId) return { ok: false, error: 'WRONG_MACHINE' }
-    this.setupNonces.delete(verified.payload.nonce)
-    this.writeSetupNonces()
     return { ok: true, fingerprint: this.fingerprint() }
-  }
-
-  private writeSetupNonces(): void {
-    const now = Date.now()
-    for (const [nonce, p] of [...this.setupNonces.entries()]) {
-      if (p.expiresAt <= now) this.setupNonces.delete(nonce)
-    }
-    writeSecure(SETUP_FILE, [...this.setupNonces.values()])
   }
 }
