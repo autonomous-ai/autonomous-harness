@@ -44,6 +44,8 @@ import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
 import { lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
+import { AnalyticsCollector } from './lib/analytics/collector.js'
+import { runAnalyticsCommand } from './lib/analytics/command.js'
 import { AskQuestionController, pollsQuestions, QuestionWatcher } from './lib/askQuestion.js'
 import { CommanderMirror } from './lib/commander.js'
 import {
@@ -512,6 +514,20 @@ async function runForeground(token: string): Promise<void> {
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
   const watcher = new Watcher()
+  /**
+   * Harness Analytics (autonomous-code docs/design/harness-analytics.md).
+   *
+   * Collection starts now; NOTHING is uploaded until the account owner has acknowledged the field
+   * list — the backend answers `consent: "unacknowledged"` until then and the snapshot simply waits.
+   * That hold is what lets the CLI be on by default while running headless, where there is no screen
+   * to show a preview on.
+   */
+  const analytics = new AnalyticsCollector({
+    token: () => readSavedToken(),
+    enginesPresent: () => [...new Set(registry.list().map((entry) => entry.engine))],
+    collectorVersion: VERSION,
+  })
+  analytics.start()
   const queuedSessionEvents: Array<{
     sessionId: string
     events: ReturnType<CursorNormalizer['ingest']>
@@ -931,6 +947,14 @@ async function runForeground(token: string): Promise<void> {
       backend.send({ ...event, dbSessionId: sessionId })
       if (event.type === 'turn_started') {
         turnStartedAt.set(sessionId, Date.now())
+        // Analytics: count HERE, inside the one funnel every engine's normalizer feeds and BEFORE
+        // backend.send seals the frame. The relay only ever sees ciphertext, so this is the only
+        // layer that can tell a real instruction from a duplicated control frame.
+        analytics.sessionTurnStarted(
+          sessionId,
+          registry.bySession(sessionId)?.engine ?? 'claude',
+          agentIdFor(sessionId),
+        )
         console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · "${preview(event.payload.userMessage)}"`)
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
         startHeartbeat(sessionId)
@@ -938,6 +962,7 @@ async function runForeground(token: string): Promise<void> {
       } else if (event.type === 'turn_ended') {
         const startedAt = turnStartedAt.get(sessionId)
         turnStartedAt.delete(sessionId)
+        analytics.sessionTurnEnded(sessionId, event.payload.aborted === true)
         // Say when a turn was KILLED. The log previously showed an interrupt as a fresh `[turn] started
         // "[Request interrupted by user]"`, which read like a new prompt and hid the bug for weeks.
         console.log(
@@ -992,6 +1017,7 @@ async function runForeground(token: string): Promise<void> {
     syncRecapPool()
     turnStates.delete(sessionId)
     turnStartedAt.delete(sessionId)
+    analytics.sessionClosed(sessionId) // an open turn here died with the session; count it as failed
     codexNormalizers.delete(sessionId)
     cursorNormalizers.delete(sessionId)
     opencodeReaders.get(sessionId)?.stop()
@@ -2246,6 +2272,12 @@ switch (cmd) {
     break
   case 'reset':
     resetCommand().catch(onError)
+    break
+  case 'analytics':
+    // Local half of the consent contract: see exactly what would leave this computer, and stop it.
+    // Runs without the daemon — it reads the persisted snapshot, so it works on a computer that has
+    // never uploaded anything.
+    console.log(runAnalyticsCommand(process.argv[3]))
     break
   case 'status':
     status().catch(onError)

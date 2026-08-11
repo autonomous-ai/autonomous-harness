@@ -168,6 +168,15 @@ const envSchema = z.object({
   DEVIN_CONFIG_PATH: z.string().default(join(homedir(), '.config', 'devin', 'config.json')),
   // Where the tmux-session registry + connect token are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
+  // ---- Harness Analytics (see autonomous-code docs/design/harness-analytics.md) ----
+  // Collection is ON by default, but this computer uploads NOTHING until the account owner has
+  // acknowledged the field list — the backend answers `consent: "unacknowledged"` until then. This
+  // flag exists to switch the collector off entirely (tests, air-gapped installs).
+  ANALYTICS_ENABLED: z.string().default('true').transform((v) => v !== 'false'),
+  // Defaults to BACKEND_WS_URL over https — the ingest endpoint is the same host, and deliberately
+  // NOT the adapter socket: analytics must not share a pipe with the E2EE content channel.
+  ANALYTICS_BACKEND_URL: z.string().optional(),
+  ANALYTICS_FLUSH_INTERVAL_MS: z.string().default('60000').transform(Number),
   // Set to 'true' to skip auto-installing lifecycle hooks for every supported engine.
   DISABLE_HOOK_INSTALL: z.string().default('false').transform((v) => v === 'true'),
   // How often (ms) the reaper checks tmux panes and drops dead sessions.
