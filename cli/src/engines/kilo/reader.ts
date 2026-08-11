@@ -144,7 +144,8 @@ export class KiloReader {
   async start(): Promise<void> {
     try {
       const all = await readKiloMessages(this.deps.dbPath, this.deps.sessionId, null)
-      this.hydrate(all)
+      const opening = this.hydrate(all)
+      if (opening.length) this.deps.onEvents(opening)
     } catch (err) {
       if (err instanceof KiloSqliteMissing) { this.deps.onFatal?.(err); return }
     }
@@ -155,9 +156,35 @@ export class KiloReader {
     if (this.timer) { clearInterval(this.timer); this.timer = null }
   }
 
-  /** Seed state from existing rows without emitting, so we only stream NEW activity after attach. */
-  private hydrate(messages: KiloMessage[]): void {
-    if (messages.length === 0) return
+  /**
+   * Seed state from existing rows without replaying them, so we only stream NEW activity after attach —
+   * and return the one event that MUST still be emitted: a `turn_started` when we attached mid-turn.
+   *
+   * Kilo only creates its session when the FIRST message is submitted, and the discovery plugin fires on
+   * `session.created`. So on a brand-new agent the daemon always attaches with a turn already running,
+   * and a silent hydrate left that turn with no opening frame. Measured on a real pane:
+   *
+   *   [agent]  c5c6227b re-attached · engine=kilo · pane=%10 · session=ses_014f
+   *   [turn]   ses_014f ended                     ← close with nothing to close
+   *   [recap]  DROPPED (no turn_started was ever seen for this session)
+   *
+   * Two distinct shapes reach here mid-turn and BOTH were broken, which is why the check is not simply
+   * "is the tail an unfinished assistant":
+   *
+   *   - tail is an in-flight assistant → `open` was set to true, but silently, so `everOpened` on the
+   *     daemon side never flipped and the close was dropped;
+   *   - tail is the USER row, with no assistant row written yet → `open` stayed false AND the user id
+   *     went into `seenUser`, so `processMessage` could never emit the opening frame for it either.
+   *     This is the common one for a first message, because the plugin fires the moment the row lands.
+   *
+   * Emitting the frame here costs nothing on a re-attach to an idle session (the tail is a finished
+   * assistant, so nothing is emitted) and cannot double-fire: every existing user id is in `seenUser`
+   * before the poll loop starts. The content that predates the attach stays unreplayed on purpose —
+   * re-emitting it would duplicate the transcript after a daemon restart, and the recap does not need
+   * it, because the recap reads kilo's own store (`source=session-json`) rather than the stream.
+   */
+  private hydrate(messages: KiloMessage[]): LiveEvent[] {
+    if (messages.length === 0) return []
     // Find the last closed boundary; everything up to it is "already seen".
     let boundary = -1
     for (let i = messages.length - 1; i >= 0; i--) { if (isDone(messages[i])) { boundary = i; break } }
@@ -167,9 +194,18 @@ export class KiloReader {
       if (msg.role === 'user') this.seenUser.add(msg.id)
       for (const part of msg.parts) this.seedPart(part)
     }
-    // A trailing in-flight assistant means a turn is open (attached mid-turn).
+    // Attached mid-turn: either the assistant is still working, or the user row landed and the assistant
+    // has not started yet. See the note above for why both count.
     const tail = messages[messages.length - 1]
-    this.open = tail.role === 'assistant' && !isDone(tail)
+    this.open = tail.role === 'user' || (tail.role === 'assistant' && !isDone(tail))
+    if (!this.open) return []
+    let userMessage = ''
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role !== 'user') continue
+      userMessage = userMessageText(messages[i])
+      break
+    }
+    return [{ type: 'turn_started', payload: { userMessage } }]
   }
 
   private seedPart(part: KiloPart): void {
