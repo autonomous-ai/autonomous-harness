@@ -354,6 +354,11 @@ export const ENCRYPTED_RPC_RESULT_TYPES = new Set<string>([
 /** Client→adapter frames that carry or can trigger adapter-local user data. */
 export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   'message',
+  // An AskUserQuestion answer is user content, so the firmware wraps it (e2ee_manager.c). Leaving it out
+  // of this set did NOT fail loudly: unwrapDown was simply never called, the payload stayed the raw
+  // {__e2e} envelope, and requestId/sessionId/answers all read back undefined — so the answer was dropped
+  // as "no session/answers", the pane dialog was never keyed, and the CLI waited on question 1 forever.
+  'question_response',
   'agents_list', 'sessions_list', 'session_get', 'models_list',
   'agent_create', 'agent_delete', 'agent_recent', 'agent_update', 'agent_files', 'agent_read_file',
   'device_e2ee_pair', 'e2ee_pairings_list', 'e2ee_pairing_unpair',

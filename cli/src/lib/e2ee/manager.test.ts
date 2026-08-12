@@ -221,6 +221,13 @@ describe('E2eeManager pairing', () => {
     const wrapped = C.wrapPayload(web.session!.c2s, 'p', 0, 'message', undefined, { content: 'fix the bug' })
     const down = mgr.unwrapDown(conn, { type: 'message', payload: wrapped })
     expect((down!.payload as Record<string, unknown>).content).toBe('fix the bug')
+
+    // Same path for an AskUserQuestion answer — the device wraps it, so the answers must survive the trip
+    // intact. When they did not, the CLI dropped the frame and the pane's dialog was never keyed.
+    const qw = C.wrapPayload(web.session!.c2s, 'p', 1, 'question_response', undefined,
+      { requestId: 'q1', sessionId: 'sX', answers: { color: 'Xanh' } })
+    const qdown = mgr.unwrapDown(conn, { type: 'question_response', payload: qw })
+    expect((qdown!.payload as Record<string, unknown>).answers).toEqual({ color: 'Xanh' })
   })
 
   it('rejects a wrong code at the confirmation MAC (round 2)', async () => {

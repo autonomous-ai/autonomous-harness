@@ -139,6 +139,24 @@ describe('e2ee core — codes + fingerprint + classification', () => {
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('models_list_result')).toBe(true)
   })
 
+  it('gates question_response, which the device encrypts', () => {
+    // Regression. The firmware wraps this frame because an AskUserQuestion answer is user content, but the
+    // type was missing from ENCRYPTED_DOWN_TYPES, so dispatchDown never unwrapped it. The failure was
+    // silent in the worst way: no decrypt error, just a payload that still held the {__e2e} envelope, so
+    // requestId/sessionId/answers all read undefined and the answer was discarded as malformed. The device
+    // returned to its tiles believing it had answered, and the CLI sat on question 1 until killed.
+    expect(C.isEncryptedDownType('question_response')).toBe(true)
+
+    const key = seeded(29)(32)
+    const wrapped = C.wrapPayload(key, 'p', 1, 'question_response', undefined, {
+      requestId: 'q_f5809c62', sessionId: 's1', answers: { color: 'Xanh' },
+    })
+    expect(wrapped).not.toHaveProperty('answers')   // the answer text must not travel in the clear
+    expect(C.unwrapPayload(key, wrapped.__e2e, 'question_response', undefined)).toEqual({
+      requestId: 'q_f5809c62', sessionId: 's1', answers: { color: 'Xanh' },
+    })
+  })
+
   it('round trips runtime catalog request and result only as pairwise ciphertext', () => {
     const key = seeded(23)(32)
     const request = C.wrapPayload(key, 'p', 1, 'models_list', undefined, { requestId: 'models-1' })
@@ -168,6 +186,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('9044aa2e2da62fb4bee401ee06941440daabc6265058f34e941c849661ccf167')
+    expect(actual).toBe('ef9c3f25f41bc4ccece8d082aa9c366037399de9b462d5106c165ce25d0f9bb0')
   })
 })
