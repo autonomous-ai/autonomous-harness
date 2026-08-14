@@ -114,8 +114,46 @@ The crypto core is a byte-identical twin of the browser's copy, with a drift-gua
 the two ever diverge, and committed self-vectors that catch a crypto library changing underneath it.
 The code is in [`cli/src/lib/e2ee/`](cli/src/lib/e2ee/).
 
-## Contributing, security, licence
+## How to contribute
 
-- Adding an agent, or a gap in the spec — [CONTRIBUTING.md](CONTRIBUTING.md).
+Harness welcomes two kinds of CLI integration. Open an issue before writing code so we can confirm
+the integration shape and the real software a maintainer will need to reproduce it. The complete
+review and pull-request workflow is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### 1. Add an agent framework
+
+To add an agent CLI such as Claude Code or Grok, start by recording a real session from the real
+binary. The recording is the source of truth for transcript fields, event names, tools, turn
+boundaries, model metadata and capabilities — do not infer them from another engine.
+
+An engine contribution covers process detection, session discovery, transcript reading and event
+normalization, prompt/control behavior, product surfaces, and replay fixtures. Follow
+[`cli/src/engines/README.md`](cli/src/engines/README.md) for the dependency-ordered checklist, then
+run:
+
+```bash
+cd cli && npm install && npm run typecheck && npm test
+```
+
+### 2. Add a terminal multiplexer
+
+Harness uses tmux today; another multiplexer such as Herdr must be added alongside it, not replace
+it. Before coding, confirm that a process inside a pane can identify that pane with a stable,
+multiplexer-namespaced id. The integration must support listing panes with their PID and working
+directory, sending literal text and keys, capturing pane output, displaying a message, and creating
+and killing sessions.
+
+The contribution must also carry the new pane identity through process discovery, registry
+persistence and hooks, and scrub it from recap workers so they cannot register as phantom agents.
+See [Adding a multiplexer](CONTRIBUTING.md#adding-a-multiplexer) for the compatibility requirements,
+then run the normal CLI checks plus the real multiplexer discovery suite:
+
+```bash
+cd cli && npm install && npm run typecheck && npm test
+npm run test:tmux-real
+```
+
+## Security and licence
+
 - Security reports go to [SECURITY.md](SECURITY.md) rather than the issue tracker.
 - [Apache-2.0](LICENSE).
