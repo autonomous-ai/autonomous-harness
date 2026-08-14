@@ -449,3 +449,112 @@ describe('codex turn failure', () => {
     expect(normalizer.turnOpen).toBe(false)
   })
 })
+
+/**
+ * The SECOND rollout vocabulary.
+ *
+ * Codex writes two, and which one appears depends on the surface rather than the version — measured by
+ * correlating `session_meta.originator` with `cli_version` over every rollout on a real machine:
+ *
+ *   codex-tui  0.146  →  user_message / agent_message
+ *   codex-tui  0.147  →  item_completed wrapping item.type UserMessage / AgentMessage
+ *   codex_exec 0.147  →  user_message / agent_message, still
+ *
+ * That last row is why the block above is not deleted: `codex exec` is what the recap, oneshot and router
+ * pools run, so the old names keep arriving from the very version that changed the TUI. The regression
+ * this pins cost every codex turn its device and web presence — no `Processing`, no stream, no recap and
+ * empty history — while the pane itself looked perfectly normal.
+ *
+ * Records below are copied from a real 0.147 rollout, including the detail that only `AgentMessage`
+ * capitalises its content part (`"Text"`) while `UserMessage` does not (`"text"`).
+ */
+describe('Codex rollout normalizer — the 0.147 TUI vocabulary', () => {
+  const userItem = (text: string) => ({
+    type: 'item_completed',
+    item: { type: 'UserMessage', id: 'item-u1', content: [{ type: 'text', text, text_elements: [] }] },
+  })
+  const agentItem = (text: string, phase: string | null = 'final_answer') => ({
+    type: 'item_completed',
+    item: { type: 'AgentMessage', id: 'msg-a1', content: [{ type: 'Text', text }], phase },
+  })
+
+  const fixtureNew = [
+    line('session_meta', { id: 'codex-2', cli_version: '0.147.0', originator: 'codex-tui', cwd: '/tmp/work' }),
+    line('event_msg', { type: 'task_started', turn_id: 'turn-1' }),
+    line('event_msg', userItem('Change the API')),
+    line('response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Change the API' }] }),
+    line('response_item', { type: 'function_call', call_id: 'call-1', name: 'exec_command', arguments: '{"cmd":"npm test"}' }),
+    line('response_item', { type: 'function_call_output', call_id: 'call-1', output: 'tests passed' }),
+    line('response_item', { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'duplicate' }] }),
+    line('event_msg', agentItem('The API is updated.')),
+    line('event_msg', { type: 'task_complete', turn_id: 'turn-1' }),
+  ]
+
+  it('drives the SAME lifecycle the old vocabulary does', () => {
+    const normalizer = new CodexNormalizer('live')
+    const events = fixtureNew.flatMap((raw) => normalizer.ingest(raw))
+    expect(events.map((event) => event.type)).toEqual([
+      'turn_started', 'tool_start', 'tool_end', 'text_delta', 'turn_ended',
+    ])
+    expect(events.find((event) => event.type === 'turn_started')?.payload).toEqual({ userMessage: 'Change the API' })
+    expect(normalizer.turnOpen).toBe(false)
+  })
+
+  it('reads the capitalised "Text" content part', () => {
+    // The one asymmetry in the format. Matched case-sensitively, an assistant message arrives EMPTY
+    // rather than missing — a turn that streams nothing looks like a slow model, not a bug.
+    const normalizer = new CodexNormalizer('live')
+    const events = fixtureNew.flatMap((raw) => normalizer.ingest(raw))
+    expect(events.find((event) => event.type === 'text_delta')?.payload).toEqual({ content: 'The API is updated.' })
+  })
+
+  it('never double-counts a tool card against the response_item stream', () => {
+    // `item_completed` also fires for CommandExecution / Reasoning / FileChange / Plan / Extension, all
+    // of which duplicate records the normalizer ALREADY reads. Measured on a real 630-line rollout:
+    // 87 function_call records and 74 CommandExecution items must still yield 87 tool cards, not 161.
+    const normalizer = new CodexNormalizer('live')
+    const events = [
+      ...fixtureNew.slice(0, 5),
+      line('event_msg', {
+        type: 'item_completed',
+        item: { type: 'CommandExecution', id: 'item-c1', command: 'npm test', status: 'completed' },
+      }),
+      ...fixtureNew.slice(5),
+    ].flatMap((raw) => normalizer.ingest(raw))
+    expect(events.filter((event) => event.type === 'tool_start')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'tool_end')).toHaveLength(1)
+  })
+
+  it('streams every phase, the way the old vocabulary streamed every agent_message', () => {
+    // `commentary` outnumbers `final_answer` 306 to 73 on real rollouts: it is codex's preamble, and the
+    // old format emitted those as agent_message too. Dropping them would quietly shorten every answer.
+    const normalizer = new CodexNormalizer('live')
+    normalizer.ingest(line('event_msg', userItem('go')))
+    const events = [
+      line('event_msg', agentItem('Looking at the tests first.', 'commentary')),
+      line('event_msg', agentItem('No phase here', null)),
+      line('event_msg', agentItem('Done.')),
+    ].flatMap((raw) => normalizer.ingest(raw))
+    expect(events.map((e) => (e.payload as { content: string }).content)).toEqual([
+      'Looking at the tests first.', 'No phase here', 'Done.',
+    ])
+  })
+
+  it('replays to the same history shape as the old vocabulary', () => {
+    const events = codexMessagesToEvents(fixtureNew)
+    expect(events[0]).toEqual({ type: 'user_message', payload: { content: 'Change the API' } })
+    expect(events.at(-1)).toEqual({ type: 'done', payload: { result: 'success' } })
+  })
+
+  it('feeds the recap and the page boundary', () => {
+    // lastCodexTurnText drives the device recap; windowCodexLines drives session_get pagination. Both
+    // matched the old names only, so on 0.147 the recap went silent and paging scanned to line 0.
+    expect(lastCodexTurnText(fixtureNew)).toEqual({
+      userMessage: 'Change the API',
+      assistantText: 'The API is updated.',
+    })
+    const windowed = windowCodexLines([...fixtureNew, ...fixtureNew], { limit: 3 })
+    expect(windowed.window[0]).toBe(fixtureNew[2])   // the UserMessage line opens the page
+    expect(windowed.hasMore).toBe(true)
+  })
+})

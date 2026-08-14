@@ -62,6 +62,8 @@ function clip(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit)}\n…[truncated]` : value
 }
 
+const TEXT_PART_TYPES = new Set(['input_text', 'output_text', 'text'])
+
 function textContent(item: JsonObject): string {
   const content = item.content
   if (typeof content === 'string') return content
@@ -69,10 +71,42 @@ function textContent(item: JsonObject): string {
   return content
     .map((part) => {
       const p = object(part)
-      return p && (p.type === 'input_text' || p.type === 'output_text' || p.type === 'text') ? string(p.text) : ''
+      // Compared case-INSENSITIVELY because codex's TUI capitalises exactly one of these: an
+      // `AgentMessage` part is `{"type":"Text"}` while a `UserMessage` part is `{"type":"text"}`
+      // (measured 475/475 vs 107/107 across real rollouts). A case-sensitive list drops the capitalised
+      // one silently — every assistant message would arrive empty rather than missing, which is the
+      // harder failure to spot.
+      return p && TEXT_PART_TYPES.has(string(p.type).toLowerCase()) ? string(p.text) : ''
     })
     .filter(Boolean)
     .join('')
+}
+
+/**
+ * Codex speaks TWO rollout vocabularies, and which one a file uses depends on the SURFACE, not on the
+ * version. Measured by correlating `session_meta.originator` with `cli_version` over every rollout on a
+ * real machine:
+ *
+ *   codex-tui  0.146  →  event_msg/user_message   · event_msg/agent_message     (text in `item.message`)
+ *   codex-tui  0.147  →  event_msg/item_completed · item.type UserMessage/AgentMessage (text in `content`)
+ *   codex_exec 0.147  →  the OLD pair, still
+ *
+ * So the old names are NOT legacy. `codex exec` — which is what the recap, oneshot and router pools run
+ * (`lib/summarize.ts`, `lib/oneshot.ts`) — keeps writing them at the very version that changed the TUI,
+ * and 0.146 TUI rollouts stay on disk to be replayed as web history. Both are read; neither is dropped.
+ *
+ * Dual support cannot open a turn twice: the two vocabularies never appear in the same file (checked
+ * across every rollout on that machine — each is exclusively one or the other).
+ *
+ * The names below are what `eventMessage` actually sees, because `payload()` unwraps `payload.item` —
+ * the string `item_completed` is never visible to it.
+ */
+const USER_TURN_TYPES = new Set(['user_message', 'UserMessage'])
+const AGENT_TEXT_TYPES = new Set(['agent_message', 'AgentMessage'])
+
+/** The text of one message, from whichever vocabulary wrote it: old carries it flat, new in `content`. */
+function messageText(item: JsonObject): string {
+  return string(item.message) || textContent(item)
 }
 
 function parseInput(value: unknown): unknown {
@@ -282,8 +316,8 @@ export class CodexNormalizer implements EngineNormalizer {
       return []
     }
 
-    if (type === 'user_message') {
-      const message = string(item.message)
+    if (USER_TURN_TYPES.has(type)) {
+      const message = messageText(item)
       if (!message) return []
       if (this.mode === 'replay') return [{ type: 'user_message', payload: { content: message } }]
       const events: LiveEvent[] = []
@@ -294,8 +328,11 @@ export class CodexNormalizer implements EngineNormalizer {
       return events
     }
 
-    if (type === 'agent_message') {
-      const message = string(item.message)
+    // Every `phase` streams — `commentary`, `final_answer`, and the ones that carry none. That is parity
+    // rather than an expansion: the old vocabulary already emitted several `agent_message` per turn
+    // (measured on a real 0.146 rollout), because codex's preambles were always part of the answer.
+    if (AGENT_TEXT_TYPES.has(type)) {
+      const message = messageText(item)
       return message ? [{ type: 'text_delta', payload: { content: message } }] : []
     }
 
@@ -551,11 +588,12 @@ export function lastCodexTurnText(rawLines: string[]): LastTurnText | null {
       continue
     }
     if (raw.type !== 'event_msg') continue
-    if (item.type === 'user_message') {
-      const message = string(item.message)
+    const itemType = string(item.type)
+    if (USER_TURN_TYPES.has(itemType)) {
+      const message = messageText(item)
       if (message) { userMessage = message; assistantText = '' }
-    } else if (item.type === 'agent_message') {
-      const message = string(item.message)
+    } else if (AGENT_TEXT_TYPES.has(itemType)) {
+      const message = messageText(item)
       if (message) assistantText += `${assistantText ? '\n\n' : ''}${message}`
     }
   }
@@ -580,7 +618,7 @@ export function windowCodexLines(
   while (start > 0) {
     const raw = parse(rawLines[start])
     const item = raw ? payload(raw) : null
-    if (raw?.type === 'event_msg' && item?.type === 'user_message') break
+    if (raw?.type === 'event_msg' && item && USER_TURN_TYPES.has(string(item.type))) break
     // A goal turn starts on the injected goal context, not on a `user_message`.
     if (raw?.type === 'response_item' && item && string(item.type) === 'message' && goalObjective(item)) break
     start--
