@@ -26,6 +26,7 @@ import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
+import { flashCommand } from './lib/flash.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
@@ -153,6 +154,8 @@ Machine:
   harness status               show whether it's running (+ version)
   harness version              print the installed version (v${VERSION})
   harness update               update to the latest build now (it also self-updates in the background)
+  harness flash [flags]        re-flash a plugged-in circle device over USB. Flags go straight to the
+                               flasher: --detect-only, --port, --version, --yes, --erase-nvs
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
@@ -2285,6 +2288,13 @@ switch (cmd) {
     break
   case 'update':
     updateCommand().catch(onError)
+    break
+  case 'flash':
+    // Everything after `flash` belongs to the flasher, not to us — see lib/flash.ts on why the flags
+    // are not parsed here. Its exit code is ours, so `harness flash --detect-only` works in a script.
+    flashCommand(process.argv.slice(3))
+      .then((code) => { process.exitCode = code })
+      .catch(onError)
     break
   default:
     console.error(`Unknown command: ${cmd}`)
