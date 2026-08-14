@@ -1,0 +1,74 @@
+codex
+example@mac work-codex % codex
+> [1mYou are in [0m/private/tmp/claude-502/-Users-example-work/00000000-0000-0000-0000-000000000000/scratchpad/permcap/work-codex
+
+  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies
+  to load.
+
+[38;5;6m› 1. Yes, continue[39m
+  2. No, quit
+
+  [2mPress enter to continue[0m
+
+[2m╭─────────────────────────────────────────────────────────╮[0m
+[2m│ >_ [0;1mOpenAI Codex[0;2m (v0.147.0)                              │[0m
+[2m│                                                         │[0m
+[2m│ model:     [3mloading[0;2m   [0m[38;5;6m/model[2m[39m to change                   │[0m
+[2m│ directory: [0m/private/tmp/claude-502/…/permcap/work-codex[2m │[0m
+[2m╰─────────────────────────────────────────────────────────╯[0m
+
+
+[1m›[0m [2mExplain this codebase[0m
+
+  [38;2;246;226;183mgpt-5.6-sol default[2m[39m · [0m[38;2;171;223;167m/private/tmp/claude-502/-Users-example-work/00000000-0000-0000-0000-000000000000/scratchpad/permcap/work-codex[39m
+
+[2m╭─────────────────────────────────────────────────────────╮[0m
+[2m│ >_ [0;1mOpenAI Codex[0;2m (v0.147.0)                              │[0m
+[2m│                                                         │[0m
+[2m│ model:     [0mgpt-5.6-sol high[2m   [0m[38;5;6m/model[2m[39m to change          │[0m
+[2m│ directory: [0m/private/tmp/claude-502/…/permcap/work-codex[2m │[0m
+[2m╰─────────────────────────────────────────────────────────╯[0m
+
+  [1mTip:[0m [3mNew[0m Use [1m/fast[0m to enable our fastest inference with increased plan usage.
+
+
+[1;2m› [0mRun this exact command in the shell, nothing else: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin
+
+
+[1m[38;5;1m•[0m [1mRan[0m [38;2;137;180;250mcurl[38;2;147;153;178m -[38;2;235;160;172ms[38;2;205;214;244m https://api.coingecko.com/api/v3/simple/price[38;2;148;226;213m?[38;2;205;214;244mids=bitcoin[39m
+[2m  └ zsh:1: no matches found: https://api.coingecko.com/api/v3/simple/price?ids=bitcoin[0m
+
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+• [0mzsh:1: no matches found: ]8;;https://api.coingecko.com/api/v3/simple/price?ids=bitcoin\https://api.coingecko.com/api/v3/simple/price?ids=bitcoin]8;;\
+
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[1m› [0mCreate the file /private/etc/harness-probe.txt containing the word hi. Use the shell.
+
+
+[2m• [0mI’ll create that exact file via the shell; writing under [38;5;6m/private/etc[39m requires your approval.
+
+[1m[38;2;202;202;202m•[0m [1mRunning[0m [38;2;137;180;250mprintf[38;2;205;214;244m [38;2;166;227;161m'hi\n'[38;2;205;214;244m [38;2;148;226;213m>[38;2;205;214;244m /private/etc/harness-probe.txt[39m
+
+
+  [1mWould you like to run the following command?[0m
+
+  Environment: [1mlocal[0m
+
+  Reason: [3mAllow creating /private/etc/harness-probe.txt containing the word hi?[0m
+
+  $ [38;2;137;180;250mprintf[38;2;205;214;244m [38;2;166;227;161m'hi\n'[38;2;205;214;244m [38;2;148;226;213m>[38;2;205;214;244m /private/etc/harness-probe.txt
+
+[1m[38;5;6m› 1. Yes, proceed (y)[0m
+  2. Yes, and don't ask again for commands that start with `printf 'hi\n' > /private/etc/harness-probe.txt` ([2mp[0m)
+  3. No, and tell Codex what to do differently ([2mesc[0m)
+
+  [2mPress enter to confirm or esc to cancel
+
+
+
+
+
+

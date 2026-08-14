@@ -280,6 +280,57 @@ than broken — which is the right failure mode, and why they are last.
 |---|---|
 | `engines/<name>/runtimeProfile.ts` + `lib/runtimeProfile.ts` | The model and effort pickers. Some agents expose neither: Amp has no model list at all, only four agent *modes*, so the mode is reported as the model and the effort axis stays `auto`. Note the engine name also lives inside `PROFILE_RE` — miss it there and the picker vanishes with no error |
 | `engines/<name>/askQuestion.ts` + `lib/askQuestion.ts` + `lib/__fixtures__/question-<name>.txt` | Your agent's questions as answerable cards on the device and the web, instead of text in the tool feed. It need not be a question *tool*: Amp has none, and the only thing it blocks a person on is its approval prompt — whose rows are unnumbered, so they are walked with `Down` and committed with `Enter` rather than by pressing a digit |
+| `lib/__fixtures__/permission-<name>.txt` | The same card for your agent's **permission prompt**, which matters more than the question does — see below |
+
+### Permission prompts
+
+Harness does not launch your agent and supplies it no permission flags, so an approval prompt is the
+pane's ordinary state, not an edge case. Left unparsed it is invisible: the turn sits at `Processing`
+until someone walks to the computer. So an approval is modelled as a question whose options are the
+approval choices, and it rides the same `commander_question` / `question_response` round trip — no new
+frame, and the firmware's existing question screen renders it unchanged.
+
+Most engines need **no parser**. `parsePermissionPane` in `lib/askQuestion.ts` reads any dialog that ends
+in numbered rows under a line of key hints, identifying it by the rows rather than the prose: an approval
+always offers a way to say yes and a way to say no. Claude, Command Code, codex, hermes and muse are all
+read that way, and opencode's prompt is the horizontal one kilo inherited from it. Write a parser only
+when your agent's rows are shaped differently — devin's carry no dot after the number, grok's sit in `(●)`
+markers, cursor's are unnumbered and print their own key — and put it beside the question parser in
+`engines/<name>/askQuestion.ts`. If your agent already
+has a question parser, remember the permission prompt is usually a DIFFERENT dialog: muse needs
+`parseMuseQuestionPane(capture) ?? parseQuestionPane(capture)` because only the first of those two
+recognises its questions and only the second recognises its approvals.
+
+Two rules that came out of measuring nine of these:
+
+- **Never drop the row that declines.** A device user given three ways to approve and none to refuse
+  cannot answer the prompt at all.
+- **Drop rows that open a text editor** (`Edit command`, `Describe change to command`) — the device
+  cannot type into them. This is not cosmetic: the firmware shows `OPT_MAX` = 6 options and truncates
+  the rest silently, so on devin's seven-row prompt the row that falls off the end is `No`.
+
+And do not conclude "this agent never asks" from one probe. Muse was filed that way after a single
+sandboxed file write it simply *denied*; its approval is on by default and appears the moment the call is
+one the sandbox allows but policy gates — network egress, in the end. Check the agent's own flags first:
+something like `--yolo`, `--approval-mode` or `--dangerously-skip-permissions` existing at all is proof
+there is a prompt to skip. Only pi has none — no such flag, no permission key in its settings, and
+`curl`, a file write and a plain `rm` all run unprompted.
+
+**Do not wire up the startup trust dialog.** Six engines open with some form of "do you trust this
+directory?" (pi, devin, muse, cursor, codex, commandcode). It is not this feature: harness does not launch
+the engine, so the person already answered it at their own keyboard, and the watcher only polls a pane
+once the session is registered — which is later. Surfacing it would be dead code.
+
+To capture the fixture: start your agent in tmux under its own config, ask it to run
+`curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin`, and while the prompt is up run
+`tmux capture-pane -p -e -t <pane> -S -80 > src/lib/__fixtures__/permission-<name>.txt`. Keep `-e`: the
+existing fixtures carry their SGR codes because that is what `captureTmuxPane` returns. Then press the
+digit and watch what happens. There are three mechanisms in the tree already, so check which one you
+have: a digit that selects **and** submits (claude, commandcode, codex, muse, hermes, devin, grok), an
+unnumbered list walked with arrows (amp, kilo, opencode), or unnumbered rows that each print their own
+key (cursor — `(y)`, `(tab)`, `(shift+tab)`, `(esc or n)`, carried in `number` so `rowKeys` presses it).
+And probe more than one kind of action before deciding your agent has only one prompt: claude gates the
+command *and* the edit, cursor gates only the command.
 | `lib/summarize.ts` | The end-of-turn recap. Note the pooling rule: agents that take their recap prompt as argv rather than stdin cannot be pre-warmed, so they opt out of the worker pool. Pick the cheapest setting your agent has for it — this is the one call Harness makes on its own, on every turn |
 | `lib/goalCommand.ts` | `/goal` and `/loop` support |
 | `cli.ts` | Wire the normalizer into the watcher — the last connection that makes it live |

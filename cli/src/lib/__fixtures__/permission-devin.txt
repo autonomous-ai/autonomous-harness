@@ -1,0 +1,50 @@
+devin
+example@mac work-devin % devin
+[36m◆[39m Trust /private/tmp/claude-502/-Users-example-work/00000000-0000-0000-0000-000000000000/scratchpad/permcap/work-devin? [2mYes, trust /private/tmp/claude-502/-
+Users-example-go-src-github-com-autonomous-ai-autonomous-code/00000000-0000-0000-0000-000000000000/scratchpad/permcap/work-devin[0m
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  [38;2;124;124;124mv3000.4.16[39m
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+                                                              [38;2;68;68;68m┌────────────────────────────────────────────────────────────────────────┐[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m  [1m[38;2;217;70;239mWelcome to Devin CLI![0m                                                 [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m  We have a few tips to help you get the most out of this tool:         [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m    [38;2;124;124;124m1. [39mDevin can set itself up (e.g. Skills and MCPs). Just ask!        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m    [38;2;124;124;124m2. [39mConfused by all the [38;2;220;220;170m[48;2;0;43;54m/model[39m[49ms? Here are [4m[38;2;94;196;255m]8;;https://cli.devin.ai/docs/models#model-selection-tips\our tips to pick[0m[38;2;124;124;124m]8;;\ [39m          [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m    [38;2;124;124;124m(https://cli.devin.ai/docs/models#model-selection-tips)[39m.            [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m    [38;2;124;124;124m3. [39mIf you want to see what Devin is up to, Control + O and the      [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m    down arrow key can be useful.                                       [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m  You won't see this message again but you can talk to us at            [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m  [4m[38;2;94;196;255m]8;;https://x.com/cognition\x.com/cognition[0m[38;2;124;124;124m]8;;\ (https://x.com/cognition)[39m.                            [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m│[39m                                                                        [38;2;68;68;68m│[39m
+                                                              [38;2;68;68;68m└────────────────────────────────────────────────────────────────────────┘[39m
+
+[38;2;124;124;124mFree plan, use /upgrade to access better models · 100% remaining (resets in 29m)[39m
+
+[38;2;255;255;255m[48;2;43;42;0m❭[39m [38;2;255;255;255mRun this exact command in the shell, nothing else: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin[39m
+
+[38;2;74;222;128m[49m⏺ [39mRunning command
+  [38;2;68;68;68m└[39m $ [38;2;220;220;170mcurl[39m [38;2;79;193;255m-s[39m https://api.coingecko.com/api/v3/simple/price?ids=bitcoin
+
+[1m[38;2;94;196;255m[48;2;31;31;31m❭[0m[48;2;31;31;31m [38;2;124;124;124m1[39m [1m[38;2;94;196;255mYes[0m[48;2;31;31;31m  [38;2;124;124;124m(Approve once)[39m
+[38;2;124;124;124m[49m·[39m [38;2;124;124;124m2[39m Yes, allow `curl` commands
+[38;2;124;124;124m·[39m [38;2;124;124;124m3[39m Yes, always allow `curl` commands in `work-devin`
+[38;2;124;124;124m·[39m [38;2;124;124;124m4[39m Yes, always allow `curl` commands in all projects
+[38;2;124;124;124m·[39m [38;2;124;124;124m5[39m Edit command
+[38;2;124;124;124m·[39m [38;2;124;124;124m6[39m Describe change to command
+[38;2;124;124;124m·[39m [38;2;124;124;124m7[39m No
+[38;2;124;124;124m↑↓[39m [38;2;124;124;124mselect[39m [38;2;124;124;124m·[39m [38;2;124;124;124m↵[39m [38;2;124;124;124mconfirm[39m [38;2;124;124;124m·[39m [38;2;124;124;124mesc[39m [38;2;124;124;124mcancel[39m
+
+
+
+
+
+
+
+

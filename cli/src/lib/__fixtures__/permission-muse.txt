@@ -1,0 +1,50 @@
+muse --approval-mode untrusted
+example@mac work-muse2 % muse --approval-mode untrusted
+[38;2;103;108;116m  [39m
+[38;2;103;108;116m  [1m[38;2;204;211;219mMuse Code[0m[38;2;204;211;219m 0.1.0[39m
+
+[38;2;103;108;116m  [38;2;138;144;152mModel set to [38;2;138;190;183mmuse-spark-1.2-contributor[39m
+[38;2;103;108;116m  ⎿  [38;2;138;144;152mDiscounted tokens: your content may be used for product improvement.[39m
+
+[38;2;90;160;255m[48;2;38;56;84m⟩ [38;2;204;211;219mRun this exact command in the shell, nothing else: curl -s https://example.com[39m
+[49m
+[38;2;255;225;74m◆ [1m[38;2;204;211;219mBackgrounded[0m[38;2;204;211;219m [38;2;90;160;255m· Run curl to example.com[38;2;103;108;116m · 13s[2m · ctrl+o[0m
+
+[38;2;103;108;116m  [38;2;138;144;152m(↓ to view terminals)[39m
+
+[1m[38;2;204;211;219m◆ [0m[38;2;204;211;219mCommand executed. Output will be returned when available.[39m
+
+[38;2;103;108;116m◇ Call[38;2;118;123;131mi[38;2;154;160;168mn[38;2;189;196;204mg[38;2;204;211;219m [38;2;189;196;204mt[38;2;154;160;168mo[38;2;118;123;131mo[38;2;103;108;116mls (21s · esc to interrupt)[39m
+
+[2m[38;2;103;108;116m── [0m[38;2;138;144;152mVoice input (⌥ + v to start)[2m[38;2;103;108;116m ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[0;1m[38;2;204;211;219mWould you like to allow this network access?[0m
+
+[38;2;103;108;116m  [38;2;138;144;152mnetwork: example.com:443 https[39m
+[38;2;103;108;116m  requested by:[39m
+[38;2;90;160;255m  $ [38;2;129;162;190mcurl[38;2;125;126;127m -[38;2;137;161;181ms[38;2;129;162;190m https://example.com[39m
+
+[1m[38;2;90;160;255m› [0m[38;2;103;108;116m1. [1m[38;2;204;211;219mYes, proceed[0m[38;2;138;144;152m (y)[39m
+[38;2;103;108;116m  2. [38;2;166;227;161mYes, don't ask again this session[38;2;103;108;116m (p)  [38;2;138;144;152mexample.com:443 (https)[39m
+[38;2;103;108;116m  3. [38;2;243;139;168mNo, and tell Muse Code what to do differently[38;2;103;108;116m (esc)[39m
+[38;2;103;108;116m  Press enter to confirm or esc to cancel[39m
+[2m[38;2;103;108;116m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[0;1m[38;2;90;160;255mmain[0m[38;2;103;108;116m · ↓ to select[39m
+[38;2;103;108;116m└ [38;2;138;144;152m⠼ curl -s https://example.com  running                                                                                                                                                             13s
+[38;2;103;108;116m  [38;2;90;160;255mmuse-spark-1.2-contributor[38;2;138;144;152m · [38;2;90;160;255mmedium[38;2;138;144;152m · /private/tmp/claude-502/-Users-example-work/00000000-0000-0000-0000-000000000000/scratchpad/permcap/work-muse2[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

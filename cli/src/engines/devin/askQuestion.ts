@@ -84,3 +84,71 @@ export function parseDevinQuestionPane(capture: string): PaneView {
   if (/\(multi-select\)/i.test(question)) multi = true
   return { kind: 'question', question: question.replace(/\s*\(multi-select\)\s*$/i, '').trim(), rows, multi, typeRow: null }
 }
+
+/**
+ * Devin's PERMISSION prompt, which reuses the row syntax above and nothing else — no titled rule opens
+ * it and its footer drops the word `navigate`, so neither anchor of the parser above can see it.
+ * Captured live (`__fixtures__/permission-devin.txt`):
+ *
+ *   ⏺ Running command
+ *     └ $ curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin
+ *
+ *   ❭ 1 Yes  (Approve once)
+ *   · 2 Yes, allow `curl` commands
+ *   · 3 Yes, always allow `curl` commands in `work-devin`
+ *   · 4 Yes, always allow `curl` commands in all projects
+ *   · 5 Edit command
+ *   · 6 Describe change to command
+ *   · 7 No
+ *   ↑↓ select · ↵ confirm · esc cancel
+ *
+ * Two measured properties shape this:
+ *
+ *   - **Seven rows, and the device shows six.** `OPT_MAX` is 6 in the firmware, so a verbatim list would
+ *     silently drop the LAST row — which is `No`, the only way to decline. Keeping just the rows that
+ *     approve or reject brings it to five and puts `No` back on screen. The two dropped rows are
+ *     `Edit command` and `Describe change to command`, which open a text editor the device cannot type
+ *     into, so they were never answerable from there anyway.
+ *   - **A digit selects AND submits**, despite a footer advertising only arrows — verified by pressing
+ *     `7` on a live prompt and watching devin report `Tool execution was rejected by the user`. So these
+ *     rows carry no `walk` and are keyed exactly like the ask dialog's.
+ *
+ * Anchored on `↵ confirm`, which the ask dialog spells `↵ select` — the one word that separates the two
+ * footers, and the reason this is a sibling function rather than another branch inside the parser above.
+ */
+const PERMISSION_FOOTER_RE = /↵\s*confirm/i
+/** The command under `⏺ Running command`, minus devin's box-drawing and shell decoration. */
+const COMMAND_RE = /^\s*[└├│]?\s*\$\s*(\S.*?)\s*$/
+const APPROVE_RE = /^(yes|allow|approve|accept|proceed|run|continue)\b/i
+const REJECT_RE = /^(no|reject|deny|decline|cancel|don'?t|stop)\b/i
+
+export function parseDevinPermissionPane(capture: string): PaneView {
+  const lines = stripAnsi(capture).replace(/ /g, ' ').split('\n')
+  const footer = lines.findLastIndex((line) => PERMISSION_FOOTER_RE.test(line))
+  if (footer < 0) return null
+
+  // The rows sit directly above the footer, back to the one numbered 1.
+  const rows: QuestionRow[] = []
+  let start = -1
+  for (let i = footer - 1; i >= 0 && footer - i <= 20; i--) {
+    const match = ROW_RE.exec(lines[i])
+    if (!match) continue
+    const [, , number, label] = match
+    if (!number) continue
+    rows.unshift({ number, label: label.replace(/\s{2,}/g, ' ').trim(), checked: false })
+    if (number === '1') { start = i; break }
+  }
+  if (start < 0 || rows.length < 2) return null
+
+  const answerable = rows.filter((row) => APPROVE_RE.test(row.label) || REJECT_RE.test(row.label))
+  if (!answerable.length || !answerable.some((row) => REJECT_RE.test(row.label))) return null
+
+  // What is being approved: the `$ …` line above the rows. Best-effort, like every other engine's — the
+  // row list is what the answer actually depends on.
+  let command = ''
+  for (let i = start - 1; i >= 0 && start - i <= 8; i--) {
+    const match = COMMAND_RE.exec(lines[i])
+    if (match) { command = match[1]; break }
+  }
+  return { kind: 'question', question: command ? `Approve ${command}` : 'Approval required', rows: answerable, multi: false, typeRow: null }
+}

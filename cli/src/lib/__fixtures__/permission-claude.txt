@@ -1,0 +1,51 @@
+
+
+[38;5;174m╭───[39m [38;5;174mClaude Code[39m [38;5;246mv2.1.232[39m [38;5;174m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m                                                    [2m[38;5;174m│[0m [1m[38;5;174mTips for getting started[0m                                                                                                                        [38;5;174m│
+│[39m                  [1mWelcome back zon![0m                 [2m[38;5;174m│[0m Run /init to create a CLAUDE.md file with instructions for Claude                                                                               [38;5;174m│
+│[39m                                                    [2m[38;5;174m│[0m [38;5;174m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m [38;5;174m│
+│[39m                      [38;5;174m ▐[48;5;16m▛███▜[49m▌[39m                      [2m[38;5;174m│[0m [1m[38;5;174mWhat's new[0m                                                                                                                                      [38;5;174m│
+│[39m                      [38;5;174m▝▜[48;5;16m█████[49m▛▘[39m                     [2m[38;5;174m│[0m Subagent forking is now on by default: a `subagent_type: "fork"` subagent inherits the full conversation and prompt cache, and non-teammate ag… [38;5;174m│
+│[39m                      [38;5;174m  ▘▘ ▝▝  [39m                     [2m[38;5;174m│[0m Type `@` in the prompt to mention another Claude session by name; Claude then uses `SendMessage` to reach that session directly                 [38;5;174m│
+│[39m     [38;5;246mSonnet 5 with xhigh effort · Claude Max · [39m     [2m[38;5;174m│[0m `SendMessage` now delivers to a bare name that exactly matches one live session, instead of asking to confirm with a ref first                  [38;5;174m│
+│[39m     [38;5;246mexample@example.com's Organization[39m             [2m[38;5;174m│[0m [3m[38;5;246m/release-notes for more[0m                                                                                                                         [38;5;174m│
+│[39m             [38;5;246m/…/scratchpad/permcap/work[39m             [2m[38;5;174m│[0m                                                                                                                                                 [38;5;174m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+[38;5;239m[48;5;237m❯ [38;5;231mRun this exact command with Bash, nothing else: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin[39m
+
+[38;5;246m[49m⏺[39m Fetching Bitcoin price from CoinGecko API
+[38;5;246m  ⎿  $ curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin[39m
+
+[38;5;153m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;5;153mBash command[0m
+
+   curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin
+   [38;5;246mFetch Bitcoin price from CoinGecko API[39m
+
+ This command requires approval
+
+ Do you want to proceed?
+ [38;5;153m❯[39m [38;5;246m1. [38;5;153mYes[39m
+   [38;5;246m2. [39mYes, and don’t ask again for: curl *
+   [38;5;246m3. [39mNo
+
+ [38;5;246mEsc to cancel · Tab to amend · ctrl+e to explain[39m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

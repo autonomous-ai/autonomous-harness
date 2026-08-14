@@ -160,12 +160,12 @@ interface Machine {
   controller: AskQuestionController
 }
 
-function machine(captures: string[]): Machine {
+function machine(captures: string[], engine?: string): Machine {
   const keys: string[] = []
   const texts: string[] = []
   let i = 0
   const controller = new AskQuestionController({
-    getSession: () => ({ sessionId: 's1', tmuxPane: '%1' } as RegisteredSession),
+    getSession: () => ({ sessionId: 's1', tmuxPane: '%1', ...(engine ? { engine } : {}) } as RegisteredSession),
     capture: async () => captures[Math.min(i++, captures.length - 1)],
     sendText: async (_pane, text) => { texts.push(text); return true },
     sendKey: async (_pane, key) => { keys.push(key); return true },
@@ -403,5 +403,217 @@ describe('the Command Code review screen', () => {
     // as a question is how a review screen turns into a phantom question on the device.
     const view = parseQuestionPane(capture)
     expect(view?.kind).not.toBe('question')
+  })
+})
+
+/**
+ * Permission prompts — the reason this whole bridge matters on a remote machine.
+ *
+ * The CLI attaches to an agent the USER started, under the user's own config and with no permission flag
+ * of ours, so a blocking approval is the pane's normal state rather than an edge case. Every fixture below
+ * is a real `tmux capture-pane -e` of a live prompt, triggered by asking the engine to run a curl (or, for
+ * opencode, to read outside its workspace) — never hand-written, per `engines/README.md`'s one rule.
+ *
+ * Four engines needed nothing: codex and hermes already fall out of the shared parser (their footers are
+ * its anchor), opencode's is kilo's horizontal prompt, and amp/kilo shipped theirs earlier. Muse and pi
+ * are absent because they have no such prompt at all — both sandbox the shell and refuse outright rather
+ * than ask (measured: muse answers "the shell is sandboxed to the workspace", pi reports the denial and
+ * offers alternatives). Cursor is absent because its free-request limit blocked a capture, and a parser
+ * written without one would be exactly the silent failure the one rule exists to prevent.
+ */
+const permission = (name: string): string =>
+  readFileSync(join(__dirname, '__fixtures__', `permission-${name}.txt`), 'utf8')
+
+describe('permission prompts, per engine', () => {
+  const cases: Array<{ engine: string; fixture: string; question: string; rows: string[] }> = [
+    {
+      engine: 'claude', fixture: 'claude',
+      question: 'Approve Bash command: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin',
+      // Note the TYPOGRAPHIC apostrophe: Claude writes "don’t", not "don't".
+      rows: ['Yes', 'Yes, and don’t ask again for: curl *', 'No'],
+    },
+    {
+      engine: 'claude', fixture: 'claude-edit',
+      question: 'Approve Edit file: README.md',
+      rows: ['Yes', 'Yes, allow all edits during this session (shift+tab)', 'No'],
+    },
+    {
+      engine: 'commandcode', fixture: 'commandcode',
+      question: 'Approve Execute Shell Command: Command Code needs to execute curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin.',
+      rows: ['Yes', "Yes, don't ask again for this exact command in this project", 'No, tell Command Code what to do differently'],
+    },
+    {
+      engine: 'codex', fixture: 'codex',
+      question: "$ printf 'hi\\n' > /private/etc/harness-probe.txt",
+      rows: [
+        'Yes, proceed (y)',
+        "Yes, and don't ask again for commands that start with `printf 'hi\\n' > /private/etc/harness-probe.txt` (p)",
+        'No, and tell Codex what to do differently (esc)',
+      ],
+    },
+    {
+      engine: 'devin', fixture: 'devin',
+      question: 'Approve curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin',
+      rows: ['Yes (Approve once)', 'Yes, allow `curl` commands', 'Yes, always allow `curl` commands in `work-devin`', 'Yes, always allow `curl` commands in all projects', 'No'],
+    },
+    {
+      engine: 'grok', fixture: 'grok',
+      question: 'curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin',
+      rows: ["Yes, and don't ask again for anything (always-approve mode)", 'Yes, proceed', 'No, reject (type to add feedback)'],
+    },
+    {
+      // Muse gates the NETWORK, not the command: its prompt names the host, and it only appears at all
+      // because `--approval-mode` defaults to `on-request`. A first sweep that only tried a sandboxed
+      // file write concluded muse never asks — it does.
+      engine: 'muse', fixture: 'muse',
+      question: '$ curl -s https://example.com',
+      rows: ['Yes, proceed (y)', "Yes, don't ask again this session (p)  example.com:443 (https)", 'No, and tell Muse Code what to do differently (esc)'],
+    },
+    {
+      engine: 'hermes', fixture: 'hermes',
+      question: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin',
+      rows: ['Allow once', 'Allow for this session', 'Deny'],
+    },
+    {
+      // Cursor is the third selection mechanism: it numbers nothing and walks nothing — each row states
+      // its own key, so `number` carries `y` / `Tab` / `BTab` / `n` instead of a digit or an index.
+      engine: 'cursor', fixture: 'cursor',
+      question: 'Approve curl -s https://example.com',
+      rows: ['Run (once)', 'Add Shell(curl) to allowlist?', 'Run Everything', 'Skip & tell the agent what to do instead'],
+    },
+    {
+      engine: 'opencode', fixture: 'opencode',
+      question: 'Access external directory /private/etc',
+      rows: ['Allow once', 'Allow always', 'Reject'],
+    },
+  ]
+
+  for (const c of cases) {
+    describe(`${c.engine} (${c.fixture})`, () => {
+      const view = (): QuestionView => asQuestion(parseEngineQuestionPane(c.engine as never, permission(c.fixture)))
+
+      it('reads the prompt and every option off the pane', () => {
+        expect(view().question).toBe(c.question)
+        expect(view().rows.map((row) => row.label)).toEqual(c.rows)
+      })
+
+      it('keeps a way to say no', () => {
+        // Amp's rule, and the reason its "Reject with feedback" row survives: a device user offered three
+        // ways to approve and none to decline cannot answer the prompt at all. The word varies more than
+        // it looks — cursor says "Skip", hermes says "Deny" — which is why the shared REJECT_RE lists all
+        // of them rather than assuming "no".
+        expect(view().rows.some((row) => /^(no|reject|deny|skip|cancel)\b/i.test(row.label))).toBe(true)
+      })
+
+      it('is single-select with nothing to type into', () => {
+        // The device answers a question by TAPPING (ui_screens.c) and an approval has no free-text row,
+        // so a typeRow here would offer a choice the device can never make.
+        expect(view().multi).toBe(false)
+        expect(view().typeRow).toBeNull()
+      })
+
+      it('fits the device screen', () => {
+        // Firmware caps: Q_MAX 4 questions, OPT_MAX 6 options. Overflow is dropped SILENTLY, and the row
+        // that would fall off the end is the last one — which on devin is "No".
+        expect(view().rows.length).toBeLessThanOrEqual(6)
+      })
+    })
+  }
+})
+
+describe('permission prompts vs the ask dialog', () => {
+  // Both anchors can be on one capture, because a pane keeps its scrollback. Whichever sits LOWER is the
+  // live dialog; getting this backwards shows the user a prompt they already answered, or answers the
+  // wrong dialog with the digit meant for the other.
+  it('takes the permission prompt when it is below an answered question', () => {
+    const view = asQuestion(parseQuestionPane(fixture('single') + permission('claude')))
+    expect(view.rows.map((r) => r.label)).toEqual(['Yes', 'Yes, and don’t ask again for: curl *', 'No'])
+  })
+
+  it('takes the question when IT is the lower of the two', () => {
+    const view = asQuestion(parseQuestionPane(permission('claude') + fixture('single')))
+    expect(view.question).toBe('Which drink would you like?')
+    expect(view.rows.map((r) => r.label)).toEqual(['Tea', 'Coffee'])
+  })
+
+  it('does not read an ordinary numbered list as an approval', () => {
+    // The rows are what identify a permission prompt — a list that offers no way to decline is prose.
+    const prose = [
+      'Here is the plan:',
+      '  1. Yes we should refactor the parser',
+      '  2. Then update the fixtures',
+      '',
+      'Esc to cancel',
+    ].join('\n')
+    expect(parseQuestionPane(prose)).toBeNull()
+  })
+
+  it('does not read a numbered block with no key hints under it as an approval', () => {
+    const orphan = ['  1. Yes', '  2. No', '', '', '', '', '', ''].join('\n')
+    expect(parseQuestionPane(orphan)).toBeNull()
+  })
+})
+
+describe('answering a permission prompt from the device', () => {
+  it('presses the digit that declines, on an engine whose rows are numbered', () => {
+    // Verified on a live claude pane: one digit selects AND submits, so no Enter follows it.
+    const h = machine([permission('claude'), CLOSED])
+    const answers = { 'Approve Bash command: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin': 'No' }
+    return h.controller.answer({ requestId: 'r1', sessionId: 's1', answers }).then((ok) => {
+      expect(ok).toBe(true)
+      expect(h.keys).toEqual(['3'])
+    })
+  })
+
+  it('presses devin\'s real row number, not its position in the shortened list', () => {
+    // Devin's "No" is row 7 of 7; two unanswerable editor rows are dropped from what the device shows, so
+    // the label→digit mapping must survive that filter.
+    const h = machine([permission('devin'), CLOSED], 'devin')
+    return h.controller.answer({ requestId: 'r1', sessionId: 's1', answers: { 'Approve curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin': 'No' } }).then((ok) => {
+      expect(ok).toBe(true)
+      expect(h.keys).toEqual(['7'])
+    })
+  })
+
+  it('walks to the row on opencode, whose permission prompt numbers nothing', () => {
+    // opencode draws BOTH a numbered ask dialog and kilo's horizontal prompt, so the direction travels on
+    // the ROW. Keying "2" here would select nothing at all.
+    const h = machine([permission('opencode'), CLOSED], 'opencode')
+    return h.controller.answer({ requestId: 'r1', sessionId: 's1', answers: { 'Access external directory /private/etc': 'Reject' } }).then((ok) => {
+      expect(ok).toBe(true)
+      expect(h.keys).toEqual(['Right', 'Right', 'Enter'])
+    })
+  })
+
+  it('matches an option the device truncated to its 80-byte buffer', () => {
+    const h = machine([permission('codex'), CLOSED], 'codex')
+    const truncated = "Yes, and don't ask again for commands that start with `printf 'hi\\n' > /priva"
+    return h.controller.answer({ requestId: 'r1', sessionId: 's1', answers: { "$ printf 'hi\\n' > /private/etc/harness-probe.txt": truncated } }).then((ok) => {
+      expect(ok).toBe(true)
+      expect(h.keys).toEqual(['2'])
+    })
+  })
+})
+
+describe('QuestionWatcher on a permission prompt', () => {
+  it('announces it exactly like a question, so the firmware renders it unchanged', async () => {
+    const seen: Array<{ requestId: string; questions: Array<{ key: string; q: string; options: string[]; multi: boolean }> }> = []
+    const w = new QuestionWatcher({
+      getSession: () => ({ sessionId: 's1', tmuxPane: '%1', engine: 'claude' } as RegisteredSession),
+      capture: async () => permission('claude'),
+      hasDevice: () => true,
+      onQuestion: (_s, requestId, questions) => { seen.push({ requestId, questions }) },
+    })
+    const tick = (): Promise<void> => (w as unknown as { tick: (s: string) => Promise<void> }).tick('s1')
+    await tick()
+    expect(seen).toHaveLength(1)
+    expect(seen[0].questions[0]).toMatchObject({
+      q: 'Approve Bash command: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin',
+      options: ['Yes', 'Yes, and don’t ask again for: curl *', 'No'],
+      multi: false,
+    })
+    // Same prompt still on screen ⇒ announced once, not every 1.5s tick.
+    await tick()
+    expect(seen).toHaveLength(1)
   })
 })

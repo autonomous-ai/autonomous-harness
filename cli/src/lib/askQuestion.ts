@@ -26,7 +26,8 @@ import type { AgentEngine } from '../engines/types.js'
 import { parseMuseQuestionPane } from '../engines/muse/askQuestion.js'
 import { ampSelectionKeys, parseAmpQuestionPane } from '../engines/amp/askQuestion.js'
 import { kiloSelectionKeys, parseKiloQuestionPane } from '../engines/kilo/askQuestion.js'
-import { parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
+import { parseCursorPermissionPane } from '../engines/cursor/askQuestion.js'
+import { parseDevinPermissionPane, parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
 import { parseGrokQuestionPane } from '../engines/grok/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
@@ -43,6 +44,15 @@ export interface QuestionRow {
   /** Option text with any `[ ]` checkbox prefix removed. */
   label: string
   checked: boolean
+  /**
+   * Set only when the dialog does NOT number its rows: the row is then reached by walking to it and
+   * pressing Enter, and `number` carries its INDEX rather than a key.
+   *
+   * The direction is a property of the DIALOG, not of the engine. OpenCode draws BOTH a numbered ask
+   * dialog and — for permissions — the horizontal prompt kilo inherited from it, so keying by engine
+   * would send digits into a dialog that numbers nothing and select nothing at all.
+   */
+  walk?: 'right' | 'down'
 }
 
 export interface QuestionView {
@@ -117,10 +127,18 @@ export function shapeQuestions(questions: unknown): ShapedQuestion[] {
  * its own parser rather than more branches in here.
  */
 export function parseEngineQuestionPane(engine: AgentEngine, capture: string): PaneView {
-  if (engine === 'devin') return parseDevinQuestionPane(capture)
+  // Devin's two dialogs are told apart by one word in the footer (`↵ select` vs `↵ confirm`), so they can
+  // never both match. Only one can be on screen anyway: answering either replaces it with a summary line.
+  if (engine === 'devin') return parseDevinQuestionPane(capture) ?? parseDevinPermissionPane(capture)
+  // Cursor has no ask-the-user tool, so its permission prompt is the ONLY dialog it ever draws — and it
+  // numbers nothing, stating each row's key in the row instead.
+  if (engine === 'cursor') return parseCursorPermissionPane(capture)
   // Muse pairs each option with a description on the same line and floats a live Preview box above the
-  // rows — both confuse the shared parser, so it reads its own.
-  if (engine === 'muse') return parseMuseQuestionPane(capture)
+  // rows — both confuse the shared parser, so it reads its own. Its PERMISSION prompt is a different
+  // dialog entirely (`Would you like to allow this network access?` over `1. Yes, proceed (y)` rows under
+  // a `Press enter to confirm` footer, `__fixtures__/permission-muse.txt`) and that one the shared parser
+  // reads exactly, so it falls through rather than getting a parser of its own.
+  if (engine === 'muse') return parseMuseQuestionPane(capture) ?? parseQuestionPane(capture)
   // Amp's is a permission prompt with unnumbered rows — nothing the shared parser can anchor on.
   if (engine === 'amp') return parseAmpQuestionPane(capture)
   // Kilo's is the same kind of prompt but laid out HORIZONTALLY, sharing its line with the key hints —
@@ -130,6 +148,13 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
   if (engine === 'opencode') {
+    // OpenCode's PERMISSION prompt is the horizontal one kilo inherited from it — same `△ Permission
+    // required` title, same `⇆ select · enter confirm` footer, same unnumbered rows. Measured: the live
+    // capture in `permission-opencode.txt` parses through kilo's parser unchanged, so it is shared rather
+    // than copied. Tried FIRST because that dialog numbers nothing: the shared parser would still match
+    // its `enter confirm` footer and then walk up into whatever numbered rows the scrollback holds.
+    const permission = parseKiloQuestionPane(capture)
+    if (permission) return permission
     const plain = unframe(capture)
     return opencodeReview(plain) ?? parseQuestionPane(plain)
   }
@@ -252,6 +277,149 @@ function parseDownward(lines: string[], tabBar: number): PaneView {
   }
 }
 
+// \u2500\u2500 permission prompts \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+/**
+ * A permission prompt is a QUESTION whose options are the approval choices \u2014 the shape amp and kilo
+ * already ship (`engines/amp/askQuestion.ts`, `engines/kilo/askQuestion.ts`). It matters far more on a
+ * remote machine than a question does: the CLI attaches to an agent the USER started, under the user's
+ * own config and with no permission flag of ours (`engines/README.md`), so a blocking approval is the
+ * normal state of a pane, not an edge case. Unparsed, the turn simply sits at `Processing` until someone
+ * walks to the computer.
+ *
+ * Claude and Command Code draw it as a framed block ending in numbered rows, and it carries NONE of the
+ * three anchors `parseQuestionPane` knows. Captured live (`__fixtures__/permission-claude.txt`):
+ *
+ *   \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+ *    Bash command                                    \u2190 the header: what kind of approval this is
+ *
+ *      curl -s https://api.coingecko.com/\u2026           \u2190 the argument, then a one-line description
+ *      Fetch Bitcoin price from CoinGecko API
+ *
+ *    This command requires approval
+ *
+ *    Do you want to proceed?
+ *    \u276f 1. Yes
+ *      2. Yes, and don\u2019t ask again for: curl *
+ *      3. No
+ *
+ *    Esc to cancel \u00b7 Tab to amend \u00b7 ctrl+e to explain
+ *
+ * Command Code differs only in wording (`permission-commandcode.txt`): header `Execute Shell Command`,
+ * a sentence for the body, footer `\u2191/\u2193 navigate \u00b7 enter select \u00b7 ctrl+e explain`. Same frame, same rows \u2014
+ * which is why one parser covers both instead of two near-copies that would drift apart.
+ *
+ * **The prose is not the anchor.** Every engine words it differently and Claude alone writes at least
+ * three ("Do you want to proceed?", "Do you want to make this edit to README.md?", "Do you want to create
+ * \u2026?"). The ROWS are: an approval always offers a way to say yes and a way to say no. That pair is the
+ * signal, guarded by the dialog's own key hints so an ordinary numbered list in assistant output can never
+ * be read as a prompt.
+ */
+
+/** The first row of an approval, measured across claude, commandcode, codex, devin, grok, amp and kilo. */
+const APPROVE_RE = /^(yes|allow|approve|accept|proceed|run|continue)\b/i
+/** \u2026and the row that declines it. Never dropped \u2014 see the rule amp's parser states: a device user given
+ *  three ways to say yes and none to say no cannot answer the prompt at all. */
+// `skip` is here because cursor's decline row is "Skip & tell the agent what to do instead" — an engine
+// whose only way to refuse says neither "no" nor "reject" would otherwise fail the yes/no guard and its
+// whole prompt would go unread.
+const REJECT_RE = /^(no|reject|deny|decline|cancel|skip|don'?t|stop)\b/i
+/** The key hints a permission dialog prints under its rows: claude `Esc to cancel \u00b7 Tab to amend`,
+ *  Command Code `\u2191/\u2193 navigate \u00b7 enter select \u00b7 ctrl+e explain`. Proximity to the rows is what makes this
+ *  a guard and not a search \u2014 it must sit within a few lines UNDER them. */
+const PERMISSION_FOOTER_RE = /\besc\b|enter\s+select|ctrl\+e/i
+/** The solid rule that opens the frame. Deliberately NOT the dashed one (`\u254c`) that brackets an edit diff,
+ *  which sits BELOW the header and would cost the title. */
+const FRAME_RULE_RE = /^\s*[\u2500\u2501\u2550]{6,}\s*$/
+/** Any rule, solid or dashed \u2014 used to skip them while reading the frame's contents. */
+const ANY_RULE_RE = /^\s*[\u2500\u2501\u2550\u254c\u2504\u2508-]{6,}\s*$/
+/** The dialog's own question line, and Command Code's `Press [ctrl+e] \u2026` hint: both sit between the
+ *  header and the rows, and neither says what is being approved. */
+const PERMISSION_PROSE_RE = /^((do|would) you\b|press \[)/i
+
+/** Keep a synthesised title inside the device's `text[200]` buffer, with the tail marked as cut. */
+function clipTitle(value: string): string {
+  return value.length <= 160 ? value : `${value.slice(0, 159)}\u2026`
+}
+
+/**
+ * What is being approved, as one line: `Approve <header>: <argument>`, the form amp's parser already
+ * produces so the two read alike on the device.
+ *
+ * The frame's opening rule is the only reliable top \u2014 the prose under it varies per engine AND per tool.
+ * Below the rule sit the header (`Bash command`, `Edit file`, `Execute Shell Command`) and then the
+ * argument: the command, the file, or the sentence naming it.
+ */
+function permissionTitle(lines: string[], start: number): string {
+  let top = -1
+  for (let i = start - 1; i >= 0 && start - i <= 25; i--) {
+    if (FRAME_RULE_RE.test(lines[i])) { top = i; break }
+  }
+  // No frame above the rows (codex draws none): the nearest text is the dialog's own question, which
+  // names the command outright. Better than inventing a header that is not on screen.
+  if (top < 0) {
+    for (let i = start - 1; i >= 0 && start - i <= 4; i--) {
+      const line = lines[i].trim()
+      if (line) return clipTitle(line)
+    }
+    return 'Approval required'
+  }
+  let header = ''
+  let arg = ''
+  for (let i = top + 1; i < start; i++) {
+    const line = lines[i].trim()
+    if (!line || ANY_RULE_RE.test(line)) continue
+    if (!header) { header = line; continue }
+    if (PERMISSION_PROSE_RE.test(line)) continue
+    arg = line
+    break
+  }
+  if (!header) return 'Approval required'
+  return clipTitle(arg ? `Approve ${header}: ${arg}` : `Approve ${header}`)
+}
+
+/**
+ * The permission prompt on screen, with the index of its first row so the caller can rank it against the
+ * other anchors.
+ *
+ * Only the LOWEST numbered block on the pane is considered, and it is rejected outright if it is not an
+ * approval. Digging further up would find an answered prompt in the scrollback and re-announce it \u2014 the
+ * live dialog is always the bottom-most thing on screen, so there is nothing below it to miss.
+ */
+export function parsePermissionPane(lines: string[]): { view: QuestionView; index: number } | null {
+  let end = -1
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (parseRow(lines[i])) { end = i; break }
+  }
+  if (end < 0) return null
+
+  // Walk up through CONTIGUOUS rows to the one numbered 1. Contiguity is the point: a permission dialog
+  // never interleaves prose with its options, while assistant output that happens to be numbered does.
+  const rows: QuestionRow[] = []
+  let start = -1
+  for (let i = end; i >= 0 && end - i < 12; i--) {
+    const row = parseRow(lines[i])
+    if (!row) break
+    rows.unshift(row)
+    if (row.number === '1') { start = i; break }
+  }
+  if (start < 0 || rows.length < 2) return null
+  if (!APPROVE_RE.test(rows[0].label) || !rows.some((row) => REJECT_RE.test(row.label))) return null
+
+  let hinted = false
+  for (let i = end + 1; i < lines.length && i - end <= 4; i++) {
+    if (PERMISSION_FOOTER_RE.test(lines[i])) { hinted = true; break }
+  }
+  if (!hinted) return null
+
+  // Single-select, and no free-text row: every option here is a choice to be TAPPED. Verified on live
+  // panes for claude, codex, devin and grok \u2014 one digit selects and submits, exactly as `rowKeys` assumes.
+  return {
+    view: { kind: 'question', question: permissionTitle(lines, start), rows, multi: false, typeRow: null },
+    index: start,
+  }
+}
+
 export function parseQuestionPane(capture: string): PaneView {
   const lines = stripAnsi(capture).replace(/\u00a0/g, ' ').split('\n')
   // Each CLI words its own footer, and OpenCode rewords it PER SCREEN — `enter submit` on a single
@@ -261,6 +429,19 @@ export function parseQuestionPane(capture: string): PaneView {
   // The review screen paints no footer and puts its rows BELOW the prompt, so it needs its own anchor.
   // Whichever anchor is LOWER on screen is the live one (the other is scrollback from an earlier step).
   const review = lines.findLastIndex((l) => /Ready to submit your answers/i.test(l))
+  // Command Code's review screen has neither Claude's "Ready to submit your answers" line nor a footer:
+  // it is a "Submit"/"Cancel" pair under a summary that is itself numbered. Anchor on that PAIR — the two
+  // rows adjacent, in that order — because the summary lines above are numbered too and reading them as
+  // options is how the device answered everything and then sat there, never submitting.
+  const submit = findSubmitPair(lines)
+  // A permission prompt is a FOURTH anchor and gets ranked exactly like the other three: whichever sits
+  // lowest on screen is the live dialog. That ordering is what keeps the two apart in both directions —
+  // codex and hermes draw an approval whose footer the question anchor also matches, and there the footer
+  // is BELOW the rows, so the question path (which reads a better title off the same block) still wins.
+  const permission = parsePermissionPane(lines)
+  if (permission && permission.index > footer && permission.index > review && permission.index > (submit?.index ?? -1)) {
+    return permission.view
+  }
   if (review > footer) {
     for (let i = review + 1; i < lines.length && i - review <= 10; i++) {
       const row = parseRow(lines[i])
@@ -268,11 +449,6 @@ export function parseQuestionPane(capture: string): PaneView {
     }
     return null
   }
-  // Command Code's review screen has neither Claude's "Ready to submit your answers" line nor a footer:
-  // it is a "Submit"/"Cancel" pair under a summary that is itself numbered. Anchor on that PAIR — the two
-  // rows adjacent, in that order — because the summary lines above are numbered too and reading them as
-  // options is how the device answered everything and then sat there, never submitting.
-  const submit = findSubmitPair(lines)
   if (submit && submit.index > footer) return { kind: 'review', submitRow: submit.row }
   // Command Code paints the SAME dialog with no footer at all — the pane simply ends at the last option.
   // Its tab bar is the only thing above the rows that is unmistakably part of the dialog, so anchor on
@@ -332,6 +508,10 @@ function rowKeys(engine: AgentEngine, row: QuestionRow): string[] {
   if (engine === 'amp') return ampSelectionKeys(row)
   // Kilo's rows sit side by side, so its walk is horizontal — see engines/kilo/askQuestion.ts.
   if (engine === 'kilo') return kiloSelectionKeys(row)
+  // Same dialog, different engine: opencode numbers its ask dialog but not its permission prompt, so the
+  // ROW says how it is reached and a per-engine rule would break one of the two.
+  if (row.walk === 'right') return kiloSelectionKeys(row)
+  if (row.walk === 'down') return ampSelectionKeys(row)
   return [row.number]
 }
 
@@ -513,9 +693,13 @@ export interface QuestionWatcherDeps {
 }
 
 const POLL_MS = 1500
-// Amp is here for its PERMISSION prompt, not a question tool — it has none. That prompt is drawn only in
-// the pane and recorded nowhere, so polling the pane is the only way it is ever seen.
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok'])
+// Amp and codex are here for their PERMISSION prompt, not a question tool — neither has one. That prompt
+// is drawn only in the pane and recorded nowhere, so polling the pane is the only way it is ever seen.
+// Codex needs no parser of its own: it draws numbered rows under a `Press enter to confirm or esc to
+// cancel` footer, which is the shared parser's anchor exactly (`__fixtures__/permission-codex.txt`), and
+// the question it lands on is the command itself. Membership in this set is what starts the poll, so an
+// engine belongs here only once something can actually read its pane.
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'codex', 'cursor', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

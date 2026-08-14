@@ -106,10 +106,14 @@ export function parseKiloQuestionPane(capture: string): PaneView {
   }
   if (labels.length < 2) return null
 
+  // `walk` travels with the row because this same dialog is opencode's — kilo is its fork — and opencode
+  // numbers its OTHER dialog. Without it, an opencode permission row would be answered with a digit that
+  // the horizontal list does not respond to.
   const rows: QuestionRow[] = labels.map((label, index) => ({
     number: String(index),
     label,
     checked: false,
+    walk: 'right' as const,
   }))
 
   // What is being permitted: the first content line under the title, minus the `←` bullet kilo draws on

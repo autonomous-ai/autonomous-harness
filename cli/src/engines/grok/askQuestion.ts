@@ -16,10 +16,27 @@ function stripAnsi(value: string): string {
  *
  * Descriptions share the row with labels, separated by 2+ spaces. The `z` row opens free text and must
  * not be offered as an option. Digits select and submit directly (verified by pressing `2`).
+ *
+ * Grok's PERMISSION prompt reuses this exact row syntax and only reworded the footer, so it needs a
+ * second footer alternative rather than a second parser (`__fixtures__/permission-grok.txt`):
+ *
+ *   \u2503  Fetch Bitcoin price from CoinGecko
+ *   \u2503  curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin
+ *   \u2503
+ *   \u2503  1 (\u25cf) Yes, and don't ask again for anything (always-approve mode)
+ *   \u2503  2 (\u25cb) Yes, proceed
+ *   \u2503  3 (\u25cb) No, reject (type to add feedback)
+ *
+ *   1/3:select  \u2502  Tab:next option  \u2502  Ctrl+o:always-approve  \u2502  Ctrl+c:cancel  \u2502  Esc:scrollback
+ *
+ * `1/3:select` is the range of digits the dialog accepts, and pressing one both selects AND submits here
+ * too \u2014 verified by pressing `2` on a live prompt and watching the command run. The question line the
+ * parser lands on is the COMMAND rather than grok's own one-line summary above it, which is the more
+ * useful of the two on a device screen.
  */
 export function parseGrokQuestionPane(capture: string): PaneView {
   const lines = stripAnsi(capture).replace(/\u00a0/g, ' ').split('\n')
-  const footer = lines.findLastIndex((line) => /enter\s*:\s*submit/i.test(line))
+  const footer = lines.findLastIndex((line) => /enter\s*:\s*submit|\d+\/\d+\s*:\s*select/i.test(line))
   if (footer < 0) return null
 
   const rows: QuestionRow[] = []

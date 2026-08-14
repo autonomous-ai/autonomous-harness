@@ -1,0 +1,51 @@
+
+
+[38;5;174m╭───[39m [38;5;174mClaude Code[39m [38;5;246mv2.1.232[39m [38;5;174m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│[39m                                                    [2m[38;5;174m│[0m [1m[38;5;174mTips for getting started[0m                                                                                                                        [38;5;174m│
+│[39m                  [1mWelcome back zon![0m                 [2m[38;5;174m│[0m Run /init to create a CLAUDE.md file with instructions for Claude                                                                               [38;5;174m│
+│[39m                                                    [2m[38;5;174m│[0m [38;5;174m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m [38;5;174m│
+│[39m                      [38;5;174m ▐[48;5;16m▛███▜[49m▌[39m                      [2m[38;5;174m│[0m [1m[38;5;174mWhat's new[0m                                                                                                                                      [38;5;174m│
+│[39m                      [38;5;174m▝▜[48;5;16m█████[49m▛▘[39m                     [2m[38;5;174m│[0m Subagent forking is now on by default: a `subagent_type: "fork"` subagent inherits the full conversation and prompt cache, and non-teammate ag… [38;5;174m│
+│[39m                      [38;5;174m  ▘▘ ▝▝  [39m                     [2m[38;5;174m│[0m Type `@` in the prompt to mention another Claude session by name; Claude then uses `SendMessage` to reach that session directly                 [38;5;174m│
+│[39m     [38;5;246mSonnet 5 with xhigh effort · Claude Max · [39m     [2m[38;5;174m│[0m `SendMessage` now delivers to a bare name that exactly matches one live session, instead of asking to confirm with a ref first                  [38;5;174m│
+│[39m     [38;5;246mexample@example.com's Organization[39m             [2m[38;5;174m│[0m [3m[38;5;246m/release-notes for more[0m                                                                                                                         [38;5;174m│
+│[39m             [38;5;246m/…/scratchpad/permcap/work[39m             [2m[38;5;174m│[0m                                                                                                                                                 [38;5;174m│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+[38;5;239m[48;5;237m❯ [38;5;231mRun this exact command with Bash, nothing else: curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin[39m
+
+[49m  [38;5;246mRan [1m1[0m[38;5;246m shell command [39m
+
+[38;5;246m✻[39m [38;5;246mChurned for 1m 16s[39m
+
+[38;5;239m[48;5;237m❯ [38;5;231mUse the Edit tool to change the word hello to world in README.md. Nothing else.[39m
+
+[49m  [38;5;246mRead [1m1[0m[38;5;246m file [39m
+
+[38;5;246m⏺[39m [1mUpdate[0m(]8;id=ffutpc;file:///private/tmp/claude-502/-Users-example-work/00000000-0000-0000-0000-000000000000/scratchpad/permcap/work/README.md\README.md]8;;\)
+
+[38;5;153m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;5;153mEdit file[0m
+ [38;5;246mREADME.md[39m
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[38;5;167m[48;5;52m 1 -[38;5;231mhello
+[38;5;77m[48;5;22m 1 +[38;5;231mworld
+[38;5;239m[49m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m Do you want to make this edit to [1mREADME.md[0m?
+ [38;5;153m❯[39m [38;5;246m1. [38;5;153mYes[39m
+   [38;5;246m2. [39mYes, allow all edits during this session [1m(shift+tab)[0m
+   [38;5;246m3. [39mNo
+
+ [38;5;246mEsc to cancel · Tab to amend[39m
+
+
+
+
+
+
+
+
+
+
+

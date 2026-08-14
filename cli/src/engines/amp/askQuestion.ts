@@ -110,6 +110,7 @@ export function parseAmpQuestionPane(capture: string): PaneView {
     number: String(index),
     label,
     checked: false,
+    walk: 'down' as const,
   }))
 
   // What is being approved. The tool is the line ending in `:` above the JSON; the argument preview is
