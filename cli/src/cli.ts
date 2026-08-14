@@ -766,10 +766,12 @@ async function runForeground(token: string): Promise<void> {
     }
     if (session.transcriptPath) {
       neverFoldedHistory.delete(session.sessionId)
-      await watcher.addSession(
-        { ...session, transcriptPath: session.transcriptPath },
-        { fromStart: replayFromStart },
-      )
+      // Deliberately NOT `fromStart`, even when the caller asked for it: this branch has just folded the
+      // file into the normalizer above, so replaying it from byte 0 emits every line a second time.
+      // Measured: a claude turn opened, closed after 44ms and opened again, because the fold replayed the
+      // open turn and the watcher then re-read the same bytes. `fromStart` belongs to the re-attach path,
+      // which folds nothing.
+      await watcher.addSession({ ...session, transcriptPath: session.transcriptPath })
     } else if (session.engine === 'cursor') {
       await cursorDiscovery.add(session.sessionId)
     } else {
