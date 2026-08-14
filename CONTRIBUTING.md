@@ -11,6 +11,50 @@ fails silently.
 **Everything about the provider spec** is after that, where the most useful contributions are usually
 not code at all.
 
+## How a change lands
+
+1. **Open an issue first.** For an engine, attach the recorded session; for a multiplexer, answer the
+   pane-identity question below before writing code. Both save you from building the wrong shape.
+2. **Fork, then branch.** Work on a branch in your fork — nobody pushes to `main` directly.
+
+   ```bash
+   gh repo fork autonomous-ai/autonomous-harness --clone   # or fork on the web, then clone your fork
+   cd autonomous-harness
+   git remote add upstream https://github.com/autonomous-ai/autonomous-harness.git
+   git checkout -b herdr-support
+   ```
+
+3. **Run the checks for whichever package you touched** (see the two sections below) and keep the
+   change to one package where you can. Then push and open the request:
+
+   ```bash
+   git push -u origin herdr-support
+   gh pr create --base main            # or open it from the web UI
+   ```
+
+   To pick up changes from `main` while your branch is open, **rebase — do not merge**:
+
+   ```bash
+   git fetch upstream && git rebase upstream/main
+   ```
+
+   A merge commit in the branch is not fatal (the squash flattens it anyway), but rebasing keeps the
+   diff readable, which is the whole review.
+4. **Open a pull request against `main`,** and say in the description **which checks you ran and what
+   you ran them against** — "`npm test` plus `test:tmux-real` on tmux 3.5a, macOS" is worth more than
+   a green checkbox.
+
+   That last part is not politeness: **there is no CI on pull requests yet.** Nothing runs
+   automatically when you push, so what you report is what a reviewer starts from.
+5. **Review is manual, and hands-on.** A maintainer pulls the branch and runs the suites locally. For
+   an engine or a multiplexer that also means installing the real software, so tell us exactly what to
+   install and how you exercised it — a change nobody can reproduce cannot be merged, however good it
+   looks.
+6. **Merges are squashed.** The history here is linear on purpose; write the commit message for
+   someone reading `git log` in a year, not for the diff.
+7. **Merging is not shipping.** The CLI self-distributes, so a change reaches users on the next
+   release, which a maintainer cuts. Expect a gap between "merged" and "my machine has it".
+
 ## Conventions across this repository
 
 - **Specs are numbered.** Every normative statement has a stable id, so a failure can point at a
