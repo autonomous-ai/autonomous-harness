@@ -57,3 +57,32 @@ describe('kilo permission dialog', () => {
     expect(parseKiloQuestionPane('┃ △ Permission required\n┃  Access external directory /tmp')).toBeNull()
   })
 })
+
+/**
+ * kilo 7.4.22 added a right-hand status column, and it shares the PHYSICAL LINE with the dialog text.
+ * The fixture above is 7.4.20, which had no such column — so the first capture of this dialog looked
+ * clean and the pollution only showed up after the engine was upgraded. Lines below are the measured
+ * 7.4.22 shape.
+ */
+describe('kilo 7.4.22 status column', () => {
+  const pane = [
+    '  ┃  △ Permission required',
+    '  ┃    ← Access external directory /private/etc                          • Personal credits          $0.00',
+    '  ┃',
+    '  ┃  Patterns                                                            /private/tmp/example/work-kilo2',
+    '  ┃',
+    '  ┃  - /private/etc/*',
+    '  ┃',
+    '  ┃   Allow once   Allow always   Reject                    ctrl+f fullscreen  ⇆ select  enter confirm',
+  ].join('\n')
+
+  it('keeps the credit balance out of what the user is asked to approve', () => {
+    const view = parseKiloQuestionPane(pane) as QuestionView
+    expect(view.question).toBe('Access external directory /private/etc')
+  })
+
+  it('still reads the options, which never shared a line with the column', () => {
+    const view = parseKiloQuestionPane(pane) as QuestionView
+    expect(view.rows.map((r) => r.label)).toEqual(['Allow once', 'Allow always', 'Reject'])
+  })
+})

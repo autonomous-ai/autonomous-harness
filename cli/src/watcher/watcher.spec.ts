@@ -68,4 +68,44 @@ describe('Watcher.pollAll', () => {
     expect(lines).toEqual(['{"n":1}', '{"n":2}'])
     await watcher.stop()
   })
+
+  it('emits a file-backed transcript from the start when nothing was folded', async () => {
+    // The generic byte-tail branch, which every JSONL engine uses. `fromStart` was only ever covered for
+    // cursor, and the gap was live: pi's agent is discovered the moment the engine starts but its session
+    // file only materialises once the first answer is written, so the re-attach that finally brought the
+    // path tailed from the file's END and the whole first turn — prompt, tools and answer — was read as
+    // history that never reached web or device.
+    const dir = await mkdtemp(join(tmpdir(), 'machine-first-turn-'))
+    cleanup.push(dir)
+    const transcriptPath = join(dir, 'session.jsonl')
+    await writeFile(transcriptPath, '{"a":1}\n{"a":2}\n{"a":3}\n')
+    const watcher = new Watcher()
+    const lines: string[] = []
+    watcher.on('line', (event: LineEvent) => lines.push(event.text))
+
+    await watcher.addSession({ sessionId: 'p1', engine: 'pi', transcriptPath }, { fromStart: true })
+    await watcher.pollSession('p1')
+
+    expect(lines).toEqual(['{"a":1}', '{"a":2}', '{"a":3}'])
+    await watcher.stop()
+  })
+
+  it('still starts at the end by default, so a resumed session does not replay', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'machine-resume-'))
+    cleanup.push(dir)
+    const transcriptPath = join(dir, 'session.jsonl')
+    await writeFile(transcriptPath, '{"old":1}\n{"old":2}\n')
+    const watcher = new Watcher()
+    const lines: string[] = []
+    watcher.on('line', (event: LineEvent) => lines.push(event.text))
+
+    await watcher.addSession({ sessionId: 'p2', engine: 'pi', transcriptPath })
+    await watcher.pollSession('p2')
+    expect(lines).toEqual([])
+
+    await writeFile(transcriptPath, '{"old":1}\n{"old":2}\n{"new":3}\n')
+    await watcher.pollSession('p2')
+    expect(lines).toEqual(['{"new":3}'])
+    await watcher.stop()
+  })
 })

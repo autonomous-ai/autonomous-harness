@@ -509,6 +509,18 @@ async function runForeground(token: string): Promise<void> {
   const cursorNormalizers = new Map<string, CursorNormalizer>()
   const opencodeReaders = new Map<string, OpencodeReader>()
   const kiloReaders = new Map<string, KiloReader>()
+  /**
+   * Sessions that attached before their transcript existed, so nothing was folded and nothing has ever
+   * been streamed for them.
+   *
+   * `bornAfterAgent` was supposed to cover this and does not always fire — measured on pi, whose agent is
+   * discovered the instant the engine starts but whose session file only materialises once the first
+   * answer is written: the re-attach that finally brought the path tailed from the file's END, so the
+   * entire first turn — prompt, tools and answer — was read as history and never reached web or device.
+   * A session that folded NOTHING can replay its whole file live without double-showing anything, which
+   * is the one case where starting at byte 0 is unambiguously right.
+   */
+  const neverFoldedHistory = new Set<string>()
   const piNormalizers = new Map<string, PiNormalizer>()
   const museNormalizers = new Map<string, MuseNormalizer>()
   const ampNormalizers = new Map<string, AmpNormalizer>()
@@ -623,9 +635,10 @@ async function runForeground(token: string): Promise<void> {
       || commandcodeNormalizers.has(session.sessionId)
     )) {
       if (session.transcriptPath) {
+        const unseen = neverFoldedHistory.delete(session.sessionId)
         await watcher.addSession(
           { ...session, transcriptPath: session.transcriptPath },
-          { fromStart: replayFromStart || (session.engine === 'cursor' && replayCursorFromStart) },
+          { fromStart: replayFromStart || unseen || (session.engine === 'cursor' && replayCursorFromStart) },
         )
       }
       else if (session.engine === 'cursor') await cursorDiscovery.add(session.sessionId)
@@ -752,9 +765,17 @@ async function runForeground(token: string): Promise<void> {
       turnStates.set(session.sessionId, state)
     }
     if (session.transcriptPath) {
-      await watcher.addSession({ ...session, transcriptPath: session.transcriptPath })
+      neverFoldedHistory.delete(session.sessionId)
+      await watcher.addSession(
+        { ...session, transcriptPath: session.transcriptPath },
+        { fromStart: replayFromStart },
+      )
     } else if (session.engine === 'cursor') {
       await cursorDiscovery.add(session.sessionId)
+    } else {
+      // No transcript to fold: whatever this session writes later is its FIRST content, so the re-attach
+      // that brings the path must read the file whole rather than from its end.
+      neverFoldedHistory.add(session.sessionId)
     }
     if (initialCursorEvents.length) emitSessionEvents(session.sessionId, initialCursorEvents)
     console.log(`[agent] ${sid(session.agentId)} attached · engine=${session.engine} · pane=${session.tmuxPane} · session=${sid(session.sessionId)} · lines=${lines.length}`)
@@ -1027,6 +1048,7 @@ async function runForeground(token: string): Promise<void> {
     opencodeReaders.delete(sessionId)
     kiloReaders.get(sessionId)?.stop()
     kiloReaders.delete(sessionId)
+    neverFoldedHistory.delete(sessionId)
     piNormalizers.delete(sessionId)
     museNormalizers.delete(sessionId)
     ampNormalizers.delete(sessionId)

@@ -629,11 +629,17 @@ const AMP_PLUGIN_PATH = join(env.AMP_PLUGIN_DIR, 'launcher-register.ts')
  * `amp threads export` can fetch the content, but it is a ~1.5s network round trip that never shows a
  * message before it is complete — useless for a live tail.
  *
- * The plugin API is the way in. Five events fire (measured, in the TUI, not read off a doc):
- * `session.start`, `agent.start`, `tool.call`, `tool.result`, `agent.end`. So this plugin writes the
- * JSONL the watcher tails, and from there Amp is an ordinary file-backed engine.
+ * The plugin API is the way in. Four events fire (measured in the TUI by registering for sixteen
+ * candidate names on 0.0.1786681855 and logging what arrived, not read off a doc): `session.start`,
+ * `tool.call`, `tool.result`, `agent.end`. So this plugin writes the JSONL the watcher tails, and from
+ * there Amp is an ordinary file-backed engine.
  *
- * Two details are load-bearing:
+ * `agent.start` used to be a fifth, and was how a turn opened. It no longer fires, and `agent.end` — the
+ * only event that still carries the prompt — arrives at the END of the turn, far too late to open one.
+ * The prompt is therefore read from the thread instead (see `drain`). The handler for `agent.start` is
+ * kept anyway: it costs nothing on a version that never emits it, and an older Amp still works.
+ *
+ * Three details are load-bearing:
  *
  *   - **Text comes from `ctx.thread.messages()`, not from the events.** No event carries assistant text.
  *     But the thread handle reads the client's own local state, and at `tool.call` it ALREADY contains
@@ -641,6 +647,8 @@ const AMP_PLUGIN_PATH = join(env.AMP_PLUGIN_DIR, 'launcher-register.ts')
  *     BEFORE the tool it called, which is the order a transcript has to be in. Nothing is fetched.
  *   - **Blocks are emitted once, keyed `<messageId>#<index>`.** Each snapshot re-reads the same recent
  *     messages, so without that key every event would re-emit the whole tail of the conversation.
+ *   - **The turn opens from the user's own text block**, not from an event — the only place the prompt
+ *     is available while the turn is still running.
  *
  * Being a SYSTEM plugin it loads in every `amp` the user runs, including ones this adapter knows nothing
  * about. The `TMUX_PANE` guard keeps standalone sessions inert; the daemon additionally proves that the
@@ -739,18 +747,51 @@ export default function (amp: any) {
     // it, the next prompt replayed the whole recent history as if it had just happened.
     const seed = !seeded
     seeded = true
+    // The seed pass would swallow the very prompt the turn needs to open on. Measured: \`session.start\`
+    // does NOT fire when Amp launches — it fires on the first submit, and by then the thread already
+    // holds one \`user\` message. So the seed has to tell history from the live prompt, and the test is
+    // whether anything answered it: the LAST user text block with no assistant message after it is
+    // waiting, not past. On a resumed thread the last message is an assistant one, so nothing opens.
+    let liveUserId = ''
+    for (const message of messages) {
+      if (message.role === 'assistant') { liveUserId = ''; continue }
+      const parts = Array.isArray(message.content) ? message.content : []
+      const hasText = parts.some((b: any) => b && b.type === 'text' && typeof b.text === 'string' && b.text)
+      if (hasText) liveUserId = String(message.id)
+    }
     for (const message of messages) {
       const blocks = Array.isArray(message.content) ? message.content : []
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i]
         if (!block) continue
         if (block.type === 'text' || block.type === 'thinking') {
-          if (message.role !== 'assistant') continue
           const key = String(message.id) + '#' + i
           if (emitted.has(key)) continue
           const text = typeof block.text === 'string' ? block.text : block.thinking
           if (typeof text !== 'string' || !text) continue
           emitted.add(key)
+          // A user TEXT block opens the turn.
+          //
+          // Amp used to announce that with an \`agent.start\` event, and the handler below wrote
+          // \`turn_start\` from it. That event no longer fires — probed with a plugin that registered for
+          // sixteen candidate names on amp 0.0.1786681855 and saw only \`session.start\`, \`tool.call\`,
+          // \`tool.result\` and \`agent.end\`. The prompt now reaches a plugin no earlier than
+          // \`agent.end\`, which is the END of the turn, far too late to open one.
+          //
+          // So it is taken from the thread instead, where drain was already reading it and dropping it:
+          // measured at the first \`tool.call\` of a turn, \`messages()\` already returns the prompt, oldest
+          // first. Without this the turn opens with an empty question on web and device, and the recap
+          // loses what was asked.
+          //
+          // Only a TEXT block qualifies: a tool_result is also carried on a \`user\` message, so matching
+          // the role alone would open a turn on every tool that returned.
+          if (message.role !== 'assistant') {
+            const turnId = String(message.id)
+            if (turnsStarted.has(turnId)) continue
+            turnsStarted.add(turnId)
+            if (!seed || turnId === liveUserId) line({ t: 'turn_start', id: turnId, message: text, at: Date.now() })
+            continue
+          }
           if (!seed) line({ t: block.type, id: message.id, i, text })
         } else if (block.type === 'tool_use') {
           const id = String(block.id || '')

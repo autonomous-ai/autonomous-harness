@@ -118,9 +118,15 @@ export function parseKiloQuestionPane(capture: string): PaneView {
 
   // What is being permitted: the first content line under the title, minus the `←` bullet kilo draws on
   // it. Best-effort — the row list is what the answer actually depends on.
+  //
+  // Cut at the first run of 2+ spaces, the same way `labelsFrom` cuts the options line. Kilo 7.4.22
+  // paints a right-hand status column on the SAME physical line as the dialog text — measured live:
+  // `← Access external directory /private/etc      • Personal credits      $0.00` — so without the cut
+  // the device is asked to approve something with the user's credit balance stapled to it. 7.4.20 had no
+  // such column, which is exactly why the first capture of this dialog looked clean.
   let question = ''
   for (let i = title + 1; i < footer; i++) {
-    const line = unbox(raw[i]).trim().replace(/^[←→‣>•-]\s*/, '').trim()
+    const line = unbox(raw[i]).trim().replace(/^[←→‣>•-]\s*/, '').split(/\s{2,}/)[0].trim()
     if (!line) continue
     question = line
     break
