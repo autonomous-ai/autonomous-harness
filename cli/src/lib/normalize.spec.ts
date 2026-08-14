@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lineToEvents, newTurnState, type LiveEvent } from './normalize.js'
+import { foldTranscript, lineToEvents, newTurnState, type LiveEvent } from './normalize.js'
 
 const userPrompt = (text: string): string =>
   JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })
@@ -144,5 +144,58 @@ describe('a /loop iteration', () => {
       message: { role: 'user', content: 'This session is being continued…' },
     }), st)).toEqual([])
     expect(st.turnOpen).toBe(false)
+  })
+})
+
+/**
+ * Folding a transcript that already exists on disk.
+ *
+ * The default is silent: attaching to a session means catching up on turns the user has already seen, so
+ * the events are swallowed and only a half-open turn is replayed. That is wrong for a transcript BORN
+ * AFTER its agent — the file is then the live first turn, and swallowing it loses the question, the tool
+ * cards and the answer with no trace at all, because no `turn_started` means no `turn_ended` and no recap
+ * either. Measured on a real daemon: a codex attach logging `lines=8` over a completed first turn
+ * produced not one line of output.
+ */
+describe('foldTranscript', () => {
+  it('withholds the events as history by default, and reports the open turn', () => {
+    const state = newTurnState()
+    const out = foldTranscript((l) => lineToEvents(l, state), [userPrompt('hi')], () => state.turnOpen, { live: false })
+    expect(out.live).toEqual([])
+    expect(out.history.map((e) => e.type)).toContain('turn_started')
+    expect(out.turnOpen).toBe(true)
+  })
+
+  it('hands the same events over for emission when the file is the live first turn', () => {
+    const state = newTurnState()
+    const out = foldTranscript((l) => lineToEvents(l, state), [userPrompt('hi')], () => state.turnOpen, { live: true })
+    expect(out.history).toEqual([])
+    expect(out.live.map((e) => e.type)).toContain('turn_started')
+  })
+
+  it('forces turnOpen false when live, so the caller does not replay turn_started twice', () => {
+    // The caller's mid-turn rescue re-emits the last `turn_started` whenever turnOpen is true. Combined
+    // with a live fold that already carries that event, the turn would open, close and open again —
+    // exactly the 44ms double-start seen on a real claude pane.
+    const state = newTurnState()
+    const out = foldTranscript((l) => lineToEvents(l, state), [userPrompt('hi')], () => state.turnOpen, { live: true })
+    expect(state.turnOpen).toBe(true)
+    expect(out.turnOpen).toBe(false)
+  })
+
+  it('leaves the normalizer hydrated either way — the fold is what warms it up', () => {
+    const history = newTurnState()
+    const live = newTurnState()
+    const lines = [userPrompt('hi')]
+    foldTranscript((l) => lineToEvents(l, history), lines, () => history.turnOpen, { live: false })
+    foldTranscript((l) => lineToEvents(l, live), lines, () => live.turnOpen, { live: true })
+    expect(history.turnOpen).toBe(true)
+    expect(live.turnOpen).toBe(true)
+  })
+
+  it('is a no-op on an empty transcript', () => {
+    const state = newTurnState()
+    const out = foldTranscript((l) => lineToEvents(l, state), [], () => state.turnOpen, { live: true })
+    expect(out).toEqual({ history: [], live: [], turnOpen: false })
   })
 })

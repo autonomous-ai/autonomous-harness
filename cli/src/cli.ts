@@ -44,7 +44,7 @@ import { TmuxAgentReconciler, type DiscoveredTmuxAgent } from './lib/tmuxAgentDi
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
-import { lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
+import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
 import { AnalyticsCollector } from './lib/analytics/collector.js'
 import { runAnalyticsCommand } from './lib/analytics/command.js'
 import { AskQuestionController, pollsQuestions, QuestionWatcher } from './lib/askQuestion.js'
@@ -521,6 +521,16 @@ async function runForeground(token: string): Promise<void> {
    * is the one case where starting at byte 0 is unambiguously right.
    */
   const neverFoldedHistory = new Set<string>()
+  /**
+   * Sessions whose first turn has already been replayed live by an attach.
+   *
+   * NOT the same question as `neverFoldedHistory` above, which is why they stay two sets: that one asks
+   * "where should the watcher start reading?", this one asks "has this session's file already been
+   * emitted?". A `reset` attach (`meta.isNew` or a repeat `SessionStart`) re-enters the folding branch for
+   * a session that may already have streamed, and without this the whole transcript would go out a second
+   * time.
+   */
+  const replayedFirstTurn = new Set<string>()
   const piNormalizers = new Map<string, PiNormalizer>()
   const museNormalizers = new Map<string, MuseNormalizer>()
   const ampNormalizers = new Map<string, AmpNormalizer>()
@@ -646,29 +656,42 @@ async function runForeground(token: string): Promise<void> {
       return true
     }
     const lines = session.transcriptPath ? await tailFile(session.transcriptPath, Infinity) : []
-    const initialCursorEvents: ReturnType<CursorNormalizer['ingest']> = []
+    const initialEvents: LiveEvent[] = []
     // Folding the transcript in below is deliberately silent — old turns must never replay live. But
     // when the history ENDS mid-turn the turn is still running, and dropping its `turn_started` costs
     // the whole turn: CommanderMirror.onTurnEnded returns early while turnOpen is false, so the close
     // that follows produces no recap and no `done`. Keep the last start and replay exactly that one.
+    //
+    // The exception is a transcript BORN AFTER its agent — the file is then the live first turn rather
+    // than history, and swallowing it loses the whole thing without a trace. `replayLive` routes the same
+    // fold to `initialEvents`, which is emitted below. Cursor has always done this for its own discovery
+    // path; the flag simply makes it available to every engine.
+    const replayLive = (replayFromStart && !replayedFirstTurn.has(session.sessionId))
+      || (session.engine === 'cursor' && replayCursorFromStart)
     const historyEvents: LiveEvent[] = []
     let historyTurnOpen = false
     runtimeProfiles.hydrate(session, lines)
     await runtimeProfiles.ingestConfig(session, true)
+    // Returns `turnOpen` rather than assigning it: every engine folds exactly once, and a second call
+    // quietly overwriting the first is the kind of mistake a returned value makes impossible to write.
+    const fold = (ingest: (line: string) => LiveEvent[], turnOpenAfter: () => boolean): boolean => {
+      const out = foldTranscript(ingest, lines, turnOpenAfter, { live: replayLive })
+      // One at a time, not `push(...arr)`: spreading passes every element as a separate argument and Node
+      // throws RangeError somewhere past 100k of them. Real transcripts are nowhere near that (measured:
+      // 1194 events out of a 25.6 MB rollout) — but the per-line spread this replaced had no ceiling at
+      // all, and re-introducing one for no gain would be a poor trade.
+      for (const event of out.history) historyEvents.push(event)
+      for (const event of out.live) initialEvents.push(event)
+      return out.turnOpen
+    }
     if (session.engine === 'codex') {
       const normalizer = new CodexNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
-      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
-      historyTurnOpen = normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       codexNormalizers.set(session.sessionId, normalizer)
     } else if (session.engine === 'cursor') {
       const normalizer = new CursorNormalizer('live', session.sessionId)
-      for (const line of lines) {
-        const events = normalizer.ingest(line)
-        if (replayCursorFromStart) initialCursorEvents.push(...events)
-        else historyEvents.push(...events)
-      }
-      historyTurnOpen = !replayCursorFromStart && normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       cursorNormalizers.set(session.sessionId, normalizer)
       const capture = await captureTmuxPane(session.tmuxPane, 100)
       if (capture) runtimeProfiles.ingestPane(session, capture, true)
@@ -697,28 +720,24 @@ async function runForeground(token: string): Promise<void> {
     } else if (session.engine === 'muse') {
       // Same JSONL tail as claude/pi; only the record shape differs.
       const normalizer = new MuseNormalizer()
-      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
-      historyTurnOpen = normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       museNormalizers.set(session.sessionId, normalizer)
     } else if (session.engine === 'amp') {
       // A JSONL tail like claude/muse — except the file is written by the adapter's own Amp plugin,
       // because Amp is the one engine that keeps no conversation on disk.
       const normalizer = new AmpNormalizer()
-      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
-      historyTurnOpen = normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       ampNormalizers.set(session.sessionId, normalizer)
     } else if (session.engine === 'grok') {
       const normalizer = new GrokNormalizer()
-      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
-      historyTurnOpen = normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       grokNormalizers.set(session.sessionId, normalizer)
       const capture = await captureTmuxPane(session.tmuxPane, 60)
       if (capture) runtimeProfiles.ingestPane(session, capture, true)
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
-      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
-      historyTurnOpen = normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       piNormalizers.set(session.sessionId, normalizer)
     } else if (session.engine === 'hermes') {
       // Hermes has no transcript file — poll its SQLite store, like opencode.
@@ -755,13 +774,11 @@ async function runForeground(token: string): Promise<void> {
     } else if (session.engine === 'commandcode') {
       const normalizer = new CommandCodeNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
-      for (const line of lines) historyEvents.push(...normalizer.ingest(line))
-      historyTurnOpen = normalizer.turnOpen
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       commandcodeNormalizers.set(session.sessionId, normalizer)
     } else {
       const state = newTurnState()
-      for (const line of lines) historyEvents.push(...lineToEvents(line, state))
-      historyTurnOpen = state.turnOpen
+      historyTurnOpen = fold((line) => lineToEvents(line, state), () => state.turnOpen)
       turnStates.set(session.sessionId, state)
     }
     if (session.transcriptPath) {
@@ -779,7 +796,16 @@ async function runForeground(token: string): Promise<void> {
       // that brings the path must read the file whole rather than from its end.
       neverFoldedHistory.add(session.sessionId)
     }
-    if (initialCursorEvents.length) emitSessionEvents(session.sessionId, initialCursorEvents)
+    // Marked on the FOLD, not on the emission. A live fold that happened to produce nothing — the file
+    // was still empty when this attach ran — would otherwise leave the session unmarked, and the next
+    // `reset` attach (claude fires `SessionStart` on compact, which resets) would fold the by-then
+    // complete transcript and emit it live on top of everything the watcher had already streamed. That
+    // is the same duplicate-turn class this whole change exists to remove.
+    if (replayLive) replayedFirstTurn.add(session.sessionId)
+    if (initialEvents.length) {
+      emitSessionEvents(session.sessionId, initialEvents)
+      console.log(`[agent] ${sid(session.agentId)} replayed the first turn its transcript already held · ${initialEvents.length} events`)
+    }
     console.log(`[agent] ${sid(session.agentId)} attached · engine=${session.engine} · pane=${session.tmuxPane} · session=${sid(session.sessionId)} · lines=${lines.length}`)
     // A first prompt that lands while this attach is running is already in the transcript we just
     // folded, so its turn_started was consumed as history and the live turn would end up untracked.
@@ -1051,6 +1077,10 @@ async function runForeground(token: string): Promise<void> {
     kiloReaders.get(sessionId)?.stop()
     kiloReaders.delete(sessionId)
     neverFoldedHistory.delete(sessionId)
+    // Both sets are per-session and must die with it: left behind they grow without bound in a daemon
+    // that runs for days, and a session forgotten then re-registered under the same id would inherit a
+    // stale "already replayed" and lose a first turn it was entitled to.
+    replayedFirstTurn.delete(sessionId)
     piNormalizers.delete(sessionId)
     museNormalizers.delete(sessionId)
     ampNormalizers.delete(sessionId)
@@ -1091,7 +1121,23 @@ async function runForeground(token: string): Promise<void> {
       forgetSession(meta.evicted, { force: true })
     }
     const reset = meta.isNew || (entry.engine !== 'cursor' && meta.hookEvent === 'SessionStart')
-    const bornAfterAgent = meta.isNew && !meta.rebound && entry.boundAt !== null
+    // Deliberately NOT gated on `meta.isNew`. `isNew` is false in exactly the case this is meant to catch:
+    // a session announced once BEFORE its transcript exists and registered again when the file appears —
+    // the second announcement is the only one that can carry the path, and it reports `isNew=false`
+    // (measured: `[hooks] 019fff7f SessionStart · engine=codex · isNew=false`, whose whole first turn was
+    // then folded away as history and never reached web or device).
+    //
+    // `statBirthMs >= registeredAt` is what actually separates the two cases. Measured on one machine,
+    // same claude session, transcript birth relative to each timestamp:
+    //
+    //             first turn      resumed (`claude --continue`)
+    //   registeredAt   +18.1s          -81.5s      ← separates cleanly
+    //   boundAt         -0.5s          -81.6s      ← negative for BOTH; useless as a test
+    //
+    // so the birth-vs-`registeredAt` comparison stays, and comparing against `boundAt` instead — the
+    // obvious-looking alternative, since `boundAt` is when this session was bound — does not work: the
+    // transcript is created a moment BEFORE the hook binds it.
+    const bornAfterAgent = !meta.rebound && entry.boundAt !== null
       && entry.boundAt - entry.registeredAt > 0
       && !!entry.transcriptPath
       && await statBirthMs(entry.transcriptPath) >= entry.registeredAt

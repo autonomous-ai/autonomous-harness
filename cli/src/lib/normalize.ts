@@ -719,6 +719,36 @@ export function newTurnState(): TurnState {
   return { turnOpen: false, toolIdToName: new Map(), pendingTools: new Set(), thinkingCounter: 0 }
 }
 
+/**
+ * Fold a transcript that already exists into a fresh normalizer, and say whether what came out is
+ * HISTORY (to be swallowed) or the LIVE conversation (to be emitted).
+ *
+ * Attaching to a session normally means catching up on turns the user has already seen elsewhere, so the
+ * events are dropped and only a turn left half-open is replayed. That assumption breaks when the agent
+ * exists BEFORE its session: the first prompt is what makes the engine open the transcript, so by the
+ * time anything binds it, the whole first turn — question, tools and answer — can already be on disk.
+ * Folded as history it is lost silently, and silently is literal: no `turn_started` means no
+ * `turn_ended` and no recap either, so nothing in the log records that a turn ever happened.
+ *
+ * `live` picks the destination. It also forces `turnOpen` to false, because the caller's mid-turn rescue
+ * ("replay the last turn_started") would otherwise emit that event a second time on top of the events
+ * returned here.
+ */
+export function foldTranscript(
+  ingest: (line: string) => LiveEvent[],
+  lines: string[],
+  turnOpenAfter: () => boolean,
+  opts: { live: boolean },
+): { history: LiveEvent[]; live: LiveEvent[]; turnOpen: boolean } {
+  const folded: LiveEvent[] = []
+  for (const line of lines) folded.push(...ingest(line))
+  return {
+    history: opts.live ? [] : folded,
+    live: opts.live ? folded : [],
+    turnOpen: !opts.live && turnOpenAfter(),
+  }
+}
+
 // Terminal assistant stop reasons that close a turn. `tool_use` is deliberately absent (the turn
 // continues into the tool). `pause_turn` is absent too — it may legitimately resume; the Stop hook
 // (which only fires when the agent is truly done) is the authoritative catch-all for that case.
