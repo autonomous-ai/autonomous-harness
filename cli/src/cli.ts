@@ -31,16 +31,15 @@ import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
-import {
-  sendToTmux,
-  sendKeyToTmux,
-  sendLiteralToTmux,
-  validateSessionRuntime,
-  checkSessionRuntime,
-  captureTmuxPane,
-  listPaneTitles,
-} from './lib/tmux.js'
-import { TmuxAgentReconciler, type DiscoveredTmuxAgent } from './lib/tmuxAgentDiscovery.js'
+import { TmuxBackend } from './lib/tmuxBackend.js'
+import { HerdrBackend } from './lib/herdrBackend.js'
+import { listInstalledHerdrSessions, resolveConfiguredHerdrSessions } from './lib/herdrSessions.js'
+import { TerminalBackendCoordinator } from './lib/terminalBackendCoordinator.js'
+import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
+import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
+import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
+import { terminalActionNotStarted, type HookTerminalHint, type TerminalActionResult, type TerminalRuntimeRef } from './lib/terminalTypes.js'
+import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
@@ -397,13 +396,19 @@ async function projectFrame(s: RegisteredSession, selectedModel: string | null):
     id: s.agentId,
     userId: '',
     name: projectDisplayName(s),
-    status: 'active',
+    status: s.active ? 'active' : 'offline',
     createdAt: new Date(s.registeredAt).toISOString(),
     updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
-    tmuxPane: s.tmuxPane,
+    tmuxPane: s.tmuxPane || null,
+    terminal: { primary: s.primaryRuntimeKey, runtimes: s.runtimes },
     engine: s.engine,
     selectedModel,
   }
+}
+
+function primaryTerminalLabel(session: RegisteredSession): string {
+  const runtime = session.runtimes.find((candidate) => terminalRouteKey(candidate) === session.primaryRuntimeKey)
+  return runtime ? terminalRuntimeLabel(runtime) : 'dormant'
 }
 
 /** Birth time of a transcript in ms, or 0 when it cannot be read (treated as "not newer than the agent"). */
@@ -437,13 +442,232 @@ async function runForeground(token: string): Promise<void> {
   })
 
   registry.load()
+  // Persisted locators are hints until this process has observed their terminal root and PID/start marker.
+  // Mark them dormant before the backend socket can publish anything; the first authoritative reconcile
+  // reactivates matching process agents without changing their public identity or session binding.
+  await registry.transaction(() => {
+    for (const session of registry.list()) registry.setActive(session.agentId, false)
+  })
+  const terminalConfig = { backends: env.TERMINAL_BACKENDS, herdrSessions: env.HERDR_SESSIONS }
+  const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend() : null
+  const herdrTargets = terminalConfig.backends.includes('herdr')
+    ? await resolveConfiguredHerdrSessions(terminalConfig.herdrSessions, () => listInstalledHerdrSessions(env.HERDR_BIN))
+    : []
+  const resolvedHerdrPaths = herdrTargets.flatMap((target) => target.state === 'available' ? [target.endpoint.socketPath] : [])
+  if (new Set(resolvedHerdrPaths).size !== resolvedHerdrPaths.length) {
+    throw new Error('two configured Herdr session names resolve to the same canonical endpoint')
+  }
+  const herdrStartup = await Promise.all(herdrTargets.map(async (target) => {
+    if (target.state === 'unavailable') return { sessionName: target.sessionName, state: 'unavailable' as const, reason: target.reason }
+    const backend = new HerdrBackend(target.endpoint)
+    const ping = await backend.client.ping()
+    if (ping.ok) return { sessionName: target.sessionName, state: 'available' as const, backend }
+    return {
+      sessionName: target.sessionName,
+      state: ping.code === 'protocol_mismatch' ? 'incompatible' as const : 'unavailable' as const,
+      reason: ping.reason,
+    }
+  }))
+  const herdrBackends = herdrStartup.flatMap((target) => target.state === 'available' ? [target.backend] : [])
+  const herdrTargetStates = new Map(herdrStartup.map((target) => [target.sessionName, {
+    state: target.state,
+    ...(target.state === 'available' ? {} : { reason: target.reason }),
+  }]))
+  if (!tmuxBackend && herdrStartup.length > 0 && herdrStartup.every((target) => target.state === 'incompatible')) {
+    throw new Error('every enabled terminal backend is protocol-incompatible')
+  }
+  const terminalBackends = [...(tmuxBackend ? [tmuxBackend] : []), ...herdrBackends]
+  const terminals = new TerminalBackendCoordinator(
+    terminalBackends,
+    terminalConfig.backends,
+    terminalConfig.herdrSessions,
+  )
+  const refreshHerdrTargets = async (): Promise<void> => {
+    if (!terminalConfig.backends.includes('herdr')) return
+    const resolved = await resolveConfiguredHerdrSessions(
+      terminalConfig.herdrSessions,
+      () => listInstalledHerdrSessions(env.HERDR_BIN),
+    )
+    const available = resolved.filter((target): target is Extract<typeof target, { state: 'available' }> => target.state === 'available')
+    const aliased = new Set<string>()
+    const byPath = new Map<string, string>()
+    for (const target of available) {
+      const owner = byPath.get(target.endpoint.socketPath)
+      if (owner) { aliased.add(owner); aliased.add(target.sessionName) }
+      else byPath.set(target.endpoint.socketPath, target.sessionName)
+    }
+
+    const recovered = new Map(herdrBackends.map((backend) => [backend.endpoint.sessionName, backend]))
+    for (const target of resolved) {
+      if (target.state === 'unavailable') {
+        herdrTargetStates.set(target.sessionName, { state: 'unavailable', reason: target.reason })
+        continue
+      }
+      if (aliased.has(target.sessionName)) {
+        recovered.delete(target.sessionName)
+        herdrTargetStates.set(target.sessionName, { state: 'incompatible', reason: 'configured Herdr sessions alias one endpoint' })
+        continue
+      }
+      const backend = new HerdrBackend(target.endpoint)
+      const ping = await backend.client.ping()
+      if (!ping.ok) {
+        if (ping.code === 'protocol_mismatch') recovered.delete(target.sessionName)
+        herdrTargetStates.set(target.sessionName, {
+          state: ping.code === 'protocol_mismatch' ? 'incompatible' : 'unavailable',
+          reason: ping.reason,
+        })
+        continue
+      }
+      recovered.set(target.sessionName, backend)
+      herdrTargetStates.set(target.sessionName, { state: 'available' })
+    }
+    herdrBackends.splice(0, herdrBackends.length, ...terminalConfig.herdrSessions.flatMap((name) => {
+      const backend = recovered.get(name)
+      return backend ? [backend] : []
+    }))
+    terminalBackends.splice(0, terminalBackends.length, ...(tmuxBackend ? [tmuxBackend] : []), ...herdrBackends)
+    terminals.replaceBackends(terminalBackends)
+    if (herdrBackends.length === terminalConfig.herdrSessions.length) {
+      writeTerminalConfigSnapshot(env.ADAPTER_DATA_DIR, terminalConfig, herdrBackends.map((backend) => backend.endpoint))
+    }
+  }
+  const completeHerdrSnapshot = !terminalConfig.backends.includes('herdr')
+    || herdrBackends.length === terminalConfig.herdrSessions.length
+  if (completeHerdrSnapshot) {
+    writeTerminalConfigSnapshot(
+      env.ADAPTER_DATA_DIR,
+      terminalConfig,
+      herdrBackends.map((backend) => backend.endpoint),
+    )
+  } else {
+    const previous = readTerminalConfigSnapshot(env.ADAPTER_DATA_DIR)
+    const previousNames = previous?.herdrEndpoints.map((endpoint) => endpoint.sessionName) ?? []
+    if (JSON.stringify(previousNames) !== JSON.stringify(terminalConfig.herdrSessions)
+      || !previous?.backends.includes('herdr')) {
+      // The configured allowlist changed but cannot be resolved completely. Publish a fail-closed
+      // snapshot rather than leaving an old endpoint authorized for daemon-down hooks.
+      writeTerminalConfigSnapshot(env.ADAPTER_DATA_DIR, {
+        backends: terminalConfig.backends.filter((backend) => backend !== 'herdr'),
+        herdrSessions: [],
+      }, [])
+    }
+  }
+  console.log(`[terminal] enabled backends: ${terminalConfig.backends.join(', ')}`)
+  if (tmuxBackend) {
+    const tmuxStartup = await tmuxBackend.inventory()
+    console.log(tmuxStartup.state === 'available'
+      ? '[terminal] tmux: available'
+      : `[terminal] tmux: ${tmuxStartup.state} (${tmuxStartup.reason})`)
+  }
+  for (const target of herdrStartup) {
+    console.log(target.state === 'available'
+      ? `[terminal] Herdr session ${target.sessionName}: available`
+      : `[terminal] Herdr session ${target.sessionName}: ${target.state} (${target.reason})`)
+  }
+
+  const terminalSession = (target: string): RegisteredSession | undefined => registry.resolve(target)
+  const controlLeases = new Map<string, { lease: Awaited<ReturnType<typeof terminals.acquireLease>> & { state: 'succeeded' }; expiresAt: number }>()
+  const pinnedControls = new Set<string>()
+  const invalidControls = new Set<string>()
+  const CONTROL_LEASE_IDLE_MS = 15_000
+  const leasedTerminal = async (session: RegisteredSession): Promise<Extract<Awaited<ReturnType<typeof terminals.acquireLease>>, { state: 'succeeded' }> | null> => {
+    const pinned = pinnedControls.has(session.agentId)
+    if (pinned && invalidControls.has(session.agentId)) return null
+    const current = controlLeases.get(session.agentId)
+    if (current && (pinned || current.expiresAt > Date.now())) {
+      if (!await terminals.validateLease(current.lease.value, session)) {
+        controlLeases.delete(session.agentId)
+        if (pinned) invalidControls.add(session.agentId)
+        return null
+      }
+      current.expiresAt = Date.now() + CONTROL_LEASE_IDLE_MS
+      return current.lease
+    }
+    controlLeases.delete(session.agentId)
+    const acquired = await terminals.acquireLease(session)
+    if (acquired.state !== 'succeeded') return null
+    const value = { lease: acquired, expiresAt: Date.now() + CONTROL_LEASE_IDLE_MS }
+    controlLeases.set(session.agentId, value)
+    return acquired
+  }
+  const pinTerminalControl = (target: string): (() => void) | null => {
+    const session = terminalSession(target)
+    if (!session || pinnedControls.has(session.agentId)) return null
+    pinnedControls.add(session.agentId)
+    invalidControls.delete(session.agentId)
+    return () => {
+      pinnedControls.delete(session.agentId)
+      invalidControls.delete(session.agentId)
+      controlLeases.delete(session.agentId)
+    }
+  }
+  const invalidateTerminalControl = (agentId: string): void => {
+    controlLeases.delete(agentId)
+    if (pinnedControls.has(agentId)) invalidControls.add(agentId)
+  }
+  const captureTerminal = async (target: string, historyLines?: number): Promise<string | null> => {
+    const session = terminalSession(target)
+    if (!session) return null
+    const pinned = pinnedControls.has(session.agentId)
+    if (pinned && invalidControls.has(session.agentId)) return null
+    let activeLease = controlLeases.get(session.agentId)
+    if (activeLease && !pinned && activeLease.expiresAt <= Date.now()) {
+      controlLeases.delete(session.agentId)
+      activeLease = undefined
+    }
+    const leased = activeLease || pinned ? await leasedTerminal(session) : null
+    if ((activeLease || pinned) && !leased) return null
+    const result = leased
+      ? await terminals.captureLease(leased.value, { historyLines })
+      : await terminals.capture(session, { historyLines })
+    return result.state === 'succeeded' ? result.value : null
+  }
+  const terminalActionSucceeded = (result: Awaited<ReturnType<typeof terminals.submitText>>): boolean =>
+    result.state === 'succeeded'
+  const submitTerminalAction = async (target: string, text: string): Promise<TerminalActionResult> => {
+    const session = terminalSession(target)
+    if (!session) return terminalActionNotStarted('terminal agent is unavailable')
+    const lease = await leasedTerminal(session)
+    if (!lease) return terminalActionNotStarted('terminal control lease is unavailable or changed')
+    const result = pinnedControls.has(session.agentId)
+      ? await terminals.submitTextLease(lease.value, text)
+      : await terminals.submitTextForLease(session, lease.value, text)
+    if (result.state !== 'succeeded' && pinnedControls.has(session.agentId)) invalidateTerminalControl(session.agentId)
+    return result
+  }
+  const submitTerminal = async (target: string, text: string): Promise<boolean> => {
+    return terminalActionSucceeded(await submitTerminalAction(target, text))
+  }
+  const typeTerminal = async (target: string, text: string): Promise<boolean> => {
+    const session = terminalSession(target)
+    if (!session) return false
+    const lease = await leasedTerminal(session)
+    if (!lease) return false
+    const succeeded = terminalActionSucceeded(await terminals.typeLiteralLease(lease.value, text))
+    if (!succeeded && pinnedControls.has(session.agentId)) invalidateTerminalControl(session.agentId)
+    return succeeded
+  }
+  const keyTerminalAction = async (target: string, key: string): Promise<TerminalActionResult> => {
+    const session = terminalSession(target)
+    if (!session) return terminalActionNotStarted('terminal session is unavailable')
+    const lease = await leasedTerminal(session)
+    if (!lease) return terminalActionNotStarted('terminal control lease is unavailable or changed')
+    const result = await terminals.sendLegacyKeyLease(lease.value, key)
+    if (result.state !== 'succeeded' && pinnedControls.has(session.agentId)) invalidateTerminalControl(session.agentId)
+    return result
+  }
+  const keyTerminal = async (target: string, key: string): Promise<boolean> => {
+    return terminalActionSucceeded(await keyTerminalAction(target, key))
+  }
+  const validateTerminal = async (session: RegisteredSession): Promise<boolean> =>
+    (await terminals.validate(session)).state === 'alive'
   // Persisted records are not trusted blindly. The process reconciler below adopts a matching live
   // runtime, replaces it immediately when PID/start-marker changed, and requires two successful misses
   // before removing it. Probe errors leave the registry untouched.
   // Recap pool AND voice router share one sync: both need to know which engines the machine actually
   // runs, and a router warmed for an engine no agent uses is exactly the bug this rides along to fix.
   const syncRecapPool = (): void => {
-    const sessions = registry.list()
+    const sessions = registry.active()
     syncSummaryPoolSessions(sessions)
     setVoiceRouterSessions(sessions)
   }
@@ -474,11 +698,11 @@ async function runForeground(token: string): Promise<void> {
     announceRename(s, opts)
   }
 
-  const syncPaneTitles = async (): Promise<void> => {
-    const titles = await listPaneTitles()
+  const syncTerminalTitles = async (): Promise<void> => {
+    const titles = await terminals.titles()
     if (titles.size === 0) return
     for (const session of registry.list()) {
-      const title = titles.get(session.tmuxPane)
+      const title = terminals.titleFor(session, titles)
       if (!title) continue
       const before = projectDisplayName(session)
       const updated = registry.updateTitle(session.sessionId, title)
@@ -495,7 +719,7 @@ async function runForeground(token: string): Promise<void> {
 
   const backend = new BackendSocket(token, (connected) => {
     if (!connected) return
-    const sessions = registry.list()
+    const sessions = registry.active()
     console.log(`[cli] connected · ${sessions.length} agent(s) registered`)
     void fullReconcile(true).catch((err) => {
       console.error('[runtime-profile] connect reconcile failed:', err instanceof Error ? err.message : err)
@@ -595,7 +819,8 @@ async function runForeground(token: string): Promise<void> {
       transcriptPath,
       cwd: existing.cwd ?? undefined,
       source: existing.source ?? undefined,
-      tmuxPane: existing.tmuxPane,
+      runtimes: existing.runtimes,
+      primaryRuntimeKey: existing.primaryRuntimeKey,
       title: existing.title ?? undefined,
       model: existing.model ?? undefined,
       cliVersion: existing.cliVersion ?? undefined,
@@ -629,7 +854,7 @@ async function runForeground(token: string): Promise<void> {
      */
     replayFromStart = false,
   ): Promise<boolean> => {
-    if (!await validateSessionRuntime(session)) return false
+    if (!await validateTerminal(session)) return false
     if (!reset && (
       turnStates.has(session.sessionId)
       || codexNormalizers.has(session.sessionId)
@@ -652,7 +877,7 @@ async function runForeground(token: string): Promise<void> {
         )
       }
       else if (session.engine === 'cursor') await cursorDiscovery.add(session.sessionId)
-      console.log(`[agent] ${sid(session.agentId)} re-attached · engine=${session.engine} · pane=${session.tmuxPane} · session=${sid(session.sessionId)}`)
+      console.log(`[agent] ${sid(session.agentId)} re-attached · engine=${session.engine} · terminal=${primaryTerminalLabel(session)} · session=${sid(session.sessionId)}`)
       return true
     }
     const lines = session.transcriptPath ? await tailFile(session.transcriptPath, Infinity) : []
@@ -693,7 +918,7 @@ async function runForeground(token: string): Promise<void> {
       const normalizer = new CursorNormalizer('live', session.sessionId)
       historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       cursorNormalizers.set(session.sessionId, normalizer)
-      const capture = await captureTmuxPane(session.tmuxPane, 100)
+      const capture = await captureTerminal(session.agentId, 100)
       if (capture) runtimeProfiles.ingestPane(session, capture, true)
     } else if (session.engine === 'opencode') {
       // OpenCode has no transcript file — poll its SQLite DB. The reader hydrates silently, then
@@ -732,7 +957,7 @@ async function runForeground(token: string): Promise<void> {
       const normalizer = new GrokNormalizer()
       historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       grokNormalizers.set(session.sessionId, normalizer)
-      const capture = await captureTmuxPane(session.tmuxPane, 60)
+      const capture = await captureTerminal(session.agentId, 60)
       if (capture) runtimeProfiles.ingestPane(session, capture, true)
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
@@ -769,7 +994,7 @@ async function runForeground(token: string): Promise<void> {
       await reader.start()
       // Devin's model/effort exist ONLY in its pane footer, so read it now. Without this the chip stayed
       // on Auto until the 5-minute reconcile happened to run — the attach itself said nothing about it.
-      const devinPane = await captureTmuxPane(session.tmuxPane, 60)
+      const devinPane = await captureTerminal(session.agentId, 60)
       if (devinPane) runtimeProfiles.ingestPane(session, devinPane, true)
     } else if (session.engine === 'commandcode') {
       const normalizer = new CommandCodeNormalizer('live')
@@ -806,7 +1031,7 @@ async function runForeground(token: string): Promise<void> {
       emitSessionEvents(session.sessionId, initialEvents)
       console.log(`[agent] ${sid(session.agentId)} replayed the first turn its transcript already held · ${initialEvents.length} events`)
     }
-    console.log(`[agent] ${sid(session.agentId)} attached · engine=${session.engine} · pane=${session.tmuxPane} · session=${sid(session.sessionId)} · lines=${lines.length}`)
+    console.log(`[agent] ${sid(session.agentId)} attached · engine=${session.engine} · terminal=${primaryTerminalLabel(session)} · session=${sid(session.sessionId)} · lines=${lines.length}`)
     // A first prompt that lands while this attach is running is already in the transcript we just
     // folded, so its turn_started was consumed as history and the live turn would end up untracked.
     // Replay that one event, after the attach log, so the recovery is visible in order.
@@ -828,13 +1053,40 @@ async function runForeground(token: string): Promise<void> {
     if (pollsQuestions(session.engine)) questionWatcher.start(session.sessionId)
     return true
   }
+  const input = new SessionInputController({
+    getSession: (id) => registry.resolve(id),
+    validateRuntime: validateTerminal,
+    inject: submitTerminalAction,
+    sendKey: keyTerminalAction,
+    capture: captureTerminal,
+    onError: (sessionId, message) => {
+      backend.send({ type: 'error', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { message } })
+      const engine = registry.resolve(sessionId)?.engine
+      backend.sendCommander({ type: 'commander_event', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { kind: 'error', text: deviceErrorText(message, engine) } })
+    },
+  })
+  const acquireTerminalControl = (id: string): (() => void) | null => {
+    const agentId = registry.resolve(id)?.agentId ?? id
+    const releaseInput = input.acquireControl(agentId)
+    if (!releaseInput) return null
+    const releaseTerminal = pinTerminalControl(agentId)
+    if (!releaseTerminal) {
+      releaseInput()
+      return null
+    }
+    return () => {
+      releaseTerminal()
+      releaseInput()
+    }
+  }
   // AskUserQuestion bridge: mirrors the question to the device's question screen, and keys the device's
-  // answer back into the CLI's own dialog in the tmux pane.
+  // answer back into the CLI's own terminal dialog.
   const questions = new AskQuestionController({
     getSession: (id) => registry.resolve(id),
-    capture: captureTmuxPane,
-    sendText: sendToTmux,
-    sendKey: sendKeyToTmux,
+    capture: captureTerminal,
+    sendText: submitTerminal,
+    sendKey: keyTerminal,
+    acquireControl: acquireTerminalControl,
   })
   // Command Code ENDS its turn in order to ask (its Stop hook fires, the dialog goes up, and the answer
   // opens a NEW turn). With the turn closed the device tile falls back to the PREVIOUS task's recap — so
@@ -858,7 +1110,7 @@ async function runForeground(token: string): Promise<void> {
   }
   const questionWatcher = new QuestionWatcher({
     getSession: (id) => registry.resolve(id),
-    capture: captureTmuxPane,
+    capture: captureTerminal,
     hasDevice: () => backend.hasCommander(),
     isDriving: (sessionId) => questions.isDriving(sessionId),
     onQuestion: (sessionId, requestId, shaped) => {
@@ -909,27 +1161,15 @@ async function runForeground(token: string): Promise<void> {
   // and the voice router know. Resolve across the two, or every tile restores empty.
   backend.recentProvider = (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n)
 
-  const input = new SessionInputController({
-    getSession: (id) => registry.resolve(id),
-    validateRuntime: validateSessionRuntime,
-    inject: sendToTmux,
-    sendKey: sendKeyToTmux,
-    capture: captureTmuxPane,
-    onError: (sessionId, message) => {
-      backend.send({ type: 'error', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { message } })
-      const engine = registry.resolve(sessionId)?.engine
-      backend.sendCommander({ type: 'commander_event', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { kind: 'error', text: deviceErrorText(message, engine) } })
-    },
-  })
   const runtimeController = new RuntimeProfileController({
     manager: runtimeProfiles,
     getSession: (id) => registry.resolve(id),
-    validateRuntime: validateSessionRuntime,
-    capture: captureTmuxPane,
-    sendText: sendToTmux,
-    sendLiteral: sendLiteralToTmux,
-    sendKey: sendKeyToTmux,
-    acquireInput: (id) => input.acquireControl(registry.resolve(id)?.agentId ?? id),
+    validateRuntime: validateTerminal,
+    capture: captureTerminal,
+    sendText: submitTerminal,
+    sendLiteral: typeTerminal,
+    sendKey: keyTerminal,
+    acquireInput: acquireTerminalControl,
   })
   /**
    * Engine session id → the agent that owns it. The event stream speaks in ENGINE session ids while
@@ -945,6 +1185,7 @@ async function runForeground(token: string): Promise<void> {
     return session ? runtimeProfiles.modelsForSession(session) : Promise.resolve([])
   }
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
+  backend.onAgentRename = (session, name) => { void terminals.setTitle(session, name) }
   backend.onRuntimeProfileUpdate = (sessionId, selectedModel) => runtimeController.setProfile(sessionId, selectedModel)
   runtimeProfiles.onChanged = (sessionId) => {
     const session = registry.resolve(sessionId)
@@ -994,7 +1235,7 @@ async function runForeground(token: string): Promise<void> {
   }
 
   emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>): void => {
-    if (!events.length || !registry.has(sessionId)) return
+    if (!events.length || !registry.bySession(sessionId)?.active) return
     for (const event of events) {
       backend.send({ ...event, dbSessionId: sessionId })
       if (event.type === 'turn_started') {
@@ -1007,7 +1248,7 @@ async function runForeground(token: string): Promise<void> {
           registry.bySession(sessionId)?.engine ?? 'claude',
           agentIdFor(sessionId),
         )
-        console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · "${preview(event.payload.userMessage)}"`)
+        console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · bytes=${Buffer.byteLength(event.payload.userMessage, 'utf8')}`)
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
@@ -1164,13 +1405,13 @@ async function runForeground(token: string): Promise<void> {
 
   const lastRepairAttempt = new Map<string, number>()
   const repairAttempts = new Map<string, number>()
-  const bindObservedAgent = async (observed: DiscoveredTmuxAgent): Promise<void> => {
-    const agent = registry.byPaneEngine(observed.tmuxPane, observed.engine)
+  const bindObservedAgent = async (observed: DiscoveredTerminalAgent): Promise<void> => {
+    const agent = registry.byProcess(observed.engine, observed.processIdentity)
     if (!agent || agent.sessionId) return
 
     let sessionId = observed.resumeSessionId
     let transcriptPath: string | undefined
-    let source = 'tmux-resume'
+    let source = 'terminal-resume'
     if (sessionId) {
       if (isRecentlyDeleted(sessionId)) return
       const owner = registry.bySession(sessionId)
@@ -1207,9 +1448,10 @@ async function runForeground(token: string): Promise<void> {
       transcriptPath,
       cwd: observed.cwd,
       source,
-      tmuxPane: observed.tmuxPane,
+      runtimes: observed.runtimes,
+      primaryRuntimeKey: observed.primaryRuntimeKey,
       processIdentity: observed.processIdentity,
-      hookEvent: source === 'tmux-resume' ? 'TmuxResumeDiscovery' : 'ProcessRepair',
+      hookEvent: source === 'terminal-resume' ? 'TerminalResumeDiscovery' : 'ProcessRepair',
     })
     if (!result || !result.isNew) return
     if (previousOwner && previousOwner.agentId !== result.entry.agentId) {
@@ -1219,29 +1461,60 @@ async function runForeground(token: string): Promise<void> {
     lastRepairAttempt.delete(agent.agentId)
     repairAttempts.delete(agent.agentId)
     await handleRegistered(result.entry, result)
-    console.log(`[discovery] bound ${observed.engine} session ${sid(result.entry.sessionId)} on ${observed.tmuxPane}`)
+    console.log(`[discovery] bound ${observed.engine} session ${sid(result.entry.sessionId)} via ${observed.primaryRuntimeKey}`)
   }
 
-  const agentReconciler = new TmuxAgentReconciler({
+  const agentReconciler = new TerminalAgentReconciler({
     current: () => registry.list(),
+    backends: terminalBackends,
+    backendOrder: terminalConfig.backends,
+    herdrSessionOrder: terminalConfig.herdrSessions,
+    beforeProbe: refreshHerdrTargets,
+    transaction: (apply) => registry.transaction(apply),
     onDiscovered: async (observed) => {
       const opened = registry.openProcessAgent({
         engine: observed.engine,
-        tmuxPane: observed.tmuxPane,
+        runtimes: observed.runtimes,
+        primaryRuntimeKey: observed.primaryRuntimeKey,
         cwd: observed.cwd,
         processIdentity: observed.processIdentity,
       })
       if (!opened) return
-      if (opened.evicted) console.log(`[discovery] ${observed.tmuxPane} replaced ${sid(opened.evicted)}`)
+      if (opened.evicted) console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted)}`)
       if (opened.isNew) {
-        console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · pane=${observed.tmuxPane}`)
+        console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · terminal=${observed.primaryRuntimeKey}`)
         announceSession(opened.entry)
       }
       await bindObservedAgent(observed)
     },
     onObserved: async (observed, current) => {
+      const wasDormant = !current.active
+      registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
       registry.updateProcessIdentity(current.agentId, observed.processIdentity)
       await bindObservedAgent(observed)
+      if (wasDormant) {
+        const active = registry.byAgent(current.agentId)
+        if (!active) return
+        if (active.sessionId && !await attachSession(active)) {
+          registry.setActive(active.agentId, false)
+          return
+        }
+        syncRecapPool()
+        announceSession(active)
+      }
+    },
+    onDormant: (agent, reason) => {
+      if (!agent.active) return
+      registry.setActive(agent.agentId, false)
+      invalidateTerminalControl(agent.agentId)
+      input.forget(agent.agentId)
+      if (agent.sessionId) {
+        questionWatcher.stop(agent.sessionId)
+        stopHeartbeat(agent.sessionId)
+      }
+      console.log(`[discovery] ${sid(agent.agentId)} dormant · ${reason}`)
+      backend.send({ type: 'agent_deleted', payload: { agentId: agent.agentId } })
+      backend.sendCommander({ type: 'agent_deleted', payload: { agentId: agent.agentId } })
     },
     onRemoved: (agent, reason) => {
       console.log(`[discovery] ${sid(agent.agentId)} removed · ${reason}`)
@@ -1250,15 +1523,65 @@ async function runForeground(token: string): Promise<void> {
   })
 
   // SessionEnd describes the mutable engine session, never process lifetime. Reconcile now; discovery
-  // decides whether the agent still exists from tmux + ps.
+  // decides whether the agent still exists from terminal inventory + ps.
   const onSessionEnd = (_sessionId: string, _reason: string | undefined): void => {
     void agentReconciler.trigger()
   }
 
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
-    resolveHookAgent: async ({ engine, tmuxPane }) => {
-      await agentReconciler.triggerHint(tmuxPane, engine)
-      return registry.byPaneEngine(tmuxPane, engine) ?? null
+    resolveHookAgent: async ({ engine, runtimeHints, callerPid }) => {
+      if (!callerPid) return null
+      const resolved: TerminalRuntimeRef[] = []
+      for (const hint of runtimeHints ?? []) {
+        if (hint.backend === 'tmux') {
+          if (tmuxBackend) resolved.push({ backend: 'tmux', paneId: hint.paneId })
+          continue
+        }
+        const backend = herdrBackends.find((candidate) =>
+          candidate.endpoint.sessionName === hint.sessionName
+          && (!hint.socketPath || candidate.endpoint.socketPath === hint.socketPath))
+        if (!backend) continue
+        const runtime = await backend.resolveRuntimeHint(hint.paneId)
+        if (runtime.state === 'succeeded') resolved.push(runtime.value)
+      }
+      for (const runtime of resolved) await agentReconciler.triggerHint(runtime, engine)
+
+      const rows = await processRows()
+      if (!rows) return null
+      const callerBelongsTo = (session: RegisteredSession): boolean => {
+        const expectedPid = session.processIdentity?.pid
+        if (!expectedPid) return false
+        const byPid = new Map(rows.map((row) => [row.pid, row.parentPid]))
+        let pid = callerPid
+        const visited = new Set<number>()
+        while (pid > 0 && !visited.has(pid)) {
+          if (pid === expectedPid) return true
+          visited.add(pid)
+          pid = byPid.get(pid) ?? 0
+        }
+        return false
+      }
+      const candidates = new Map<string, RegisteredSession>()
+      for (const runtime of resolved) {
+        const candidate = registry.byRuntimeEngine(runtime, engine)
+        if (candidate && callerBelongsTo(candidate)) candidates.set(candidate.agentId, candidate)
+      }
+      // A moved Herdr pane may leave an inherited stale route. Caller/process correlation is the
+      // deterministic fallback, but only within a configured Herdr session named by the hook.
+      if (!candidates.size && runtimeHints?.some((hint) => hint.backend === 'herdr')) {
+        const configuredSessions = new Set(runtimeHints
+          .filter((hint): hint is Extract<HookTerminalHint, { backend: 'herdr' }> => hint.backend === 'herdr')
+          .filter((hint) => herdrBackends.some((backend) => backend.endpoint.sessionName === hint.sessionName
+            && (!hint.socketPath || backend.endpoint.socketPath === hint.socketPath)))
+          .map((hint) => hint.sessionName))
+        for (const candidate of registry.list()) {
+          if (candidate.engine !== engine || !callerBelongsTo(candidate)) continue
+          if (candidate.runtimes.some((runtime) => runtime.backend === 'herdr' && configuredSessions.has(runtime.sessionName))) {
+            candidates.set(candidate.agentId, candidate)
+          }
+        }
+      }
+      return candidates.size === 1 ? [...candidates.values()][0] : null
     },
     onRegistered: handleRegistered,
     onSessionEnd,
@@ -1412,8 +1735,32 @@ async function runForeground(token: string): Promise<void> {
       deviceE2eeConnected: backend.deviceE2eeConnected(),
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       fingerprint: backend.e2eeFingerprint(),
-      config: { watching: 'tmux sessions across all supported engines (including Grok)', dataDir: tildify(env.ADAPTER_DATA_DIR), port: daemonPort() },
-      sessions: registry.list().map((s) => ({ id: s.agentId, sessionId: s.sessionId, name: projectDisplayName(s), engine: s.engine, cwd: tildify(s.cwd ?? ''), tmuxPane: s.tmuxPane, updatedAt: s.updatedAt })),
+      config: {
+        watching: `${terminalConfig.backends.join(' + ')} terminals across all supported engines`,
+        terminalBackends: terminalConfig.backends,
+        herdrSessions: terminalConfig.herdrSessions,
+        terminalTargets: [
+          ...(tmuxBackend ? [{ backend: 'tmux', instance: 'default', state: 'configured' }] : []),
+          ...terminalConfig.herdrSessions.map((sessionName) => ({
+            backend: 'herdr',
+            sessionName,
+            ...(herdrTargetStates.get(sessionName) ?? { state: 'unavailable', reason: 'not yet resolved' }),
+          })),
+        ],
+        dormantAgents: registry.list().filter((session) => !session.active).length,
+        dataDir: tildify(env.ADAPTER_DATA_DIR),
+        port: daemonPort(),
+      },
+      sessions: registry.active().map((s) => ({
+        id: s.agentId,
+        sessionId: s.sessionId,
+        name: projectDisplayName(s),
+        engine: s.engine,
+        cwd: tildify(s.cwd ?? ''),
+        tmuxPane: s.tmuxPane || null,
+        terminal: { primary: s.primaryRuntimeKey, runtimes: s.runtimes },
+        updatedAt: s.updatedAt,
+      })),
       pairs: backend.listPairs(),
       pending: backend.pendingPair(),
     }),
@@ -1447,7 +1794,7 @@ async function runForeground(token: string): Promise<void> {
     // This runs from a void-discarded async read, so a throw here would be an unhandledRejection. A
     // single malformed line must never take the daemon down — contain it per line and move on.
     try {
-      if (!registry.has(evt.sessionId)) return // scope to tmux-registered sessions
+      if (!registry.has(evt.sessionId)) return // scope to terminal-registered sessions
       const session = registry.bySession(evt.sessionId)
       if (!session || session.engine !== evt.engine) return
       runtimeProfiles.ingest(session, evt.text)
@@ -1510,8 +1857,8 @@ async function runForeground(token: string): Promise<void> {
     // hook/store repair path binds it as soon as the engine reports a session. Attaching an
     // empty session id here would tear down an agent the user can see running in their pane, which is
     // exactly what a self-update restart must never do.
-    if (!session.sessionId) continue
-    if (!await attachSession(session)) forgetSession(session.sessionId)
+    if (!session.active || !session.sessionId) continue
+    if (!await attachSession(session)) registry.setActive(session.agentId, false)
     else {
       input.setTurnOpen(
         session.agentId,
@@ -1533,7 +1880,7 @@ async function runForeground(token: string): Promise<void> {
   }
   watcher.start()
   await cursorDiscovery.start()
-  agentReconciler.start(env.TMUX_REAP_INTERVAL_MS)
+  agentReconciler.start(env.TERMINAL_RECONCILE_INTERVAL_MS ?? env.TMUX_REAP_INTERVAL_MS)
   for (const task of await loadCursorPendingTasks(env.ADAPTER_DATA_DIR)) {
     onCursorTaskStart(task.sessionId, task.toolUseId, task.input)
   }
@@ -1551,11 +1898,11 @@ async function runForeground(token: string): Promise<void> {
         await Promise.all(registry.list().map((session) => runtimeProfiles.ingestConfig(session, true)))
         await watcher.pollAll()
         await Promise.all(registry.list().map(async (session) => {
-          const capture = await captureTmuxPane(session.tmuxPane, 120)
+          const capture = await captureTerminal(session.agentId, 120)
           if (capture) runtimeProfiles.ingestPane(session, capture, true)
         }))
       })
-      await syncPaneTitles()
+      await syncTerminalTitles()
       const includeDevice = reconcileNeedsDeviceAnnouncement
       reconcileNeedsDeviceAnnouncement = false
       for (const session of registry.list()) {
@@ -1593,7 +1940,7 @@ async function runForeground(token: string): Promise<void> {
   setInterval(() => {
     for (const session of registry.list()) {
       if (!PANE_POLLED_ENGINES.has(session.engine)) continue
-      void captureTmuxPane(session.tmuxPane, 60)
+      void captureTerminal(session.agentId, 60)
         .then((capture) => { if (capture) runtimeProfiles.ingestPane(session, capture) })
         .catch(() => undefined)
     }
@@ -1607,8 +1954,8 @@ async function runForeground(token: string): Promise<void> {
   }, RUNTIME_RECONCILE_MS)
   const PANE_TITLE_SYNC_MS = 5_000
   const paneTitleSyncTimer = setInterval(() => {
-    void syncPaneTitles().catch((err) => {
-      console.error('[tmux-title] sync failed:', err instanceof Error ? err.message : err)
+    void syncTerminalTitles().catch((err) => {
+      console.error('[terminal-title] sync failed:', err instanceof Error ? err.message : err)
     })
   }, PANE_TITLE_SYNC_MS)
 
@@ -1660,12 +2007,21 @@ async function runForeground(token: string): Promise<void> {
     // boundary. Without the tombstone that hook re-registers the session and the tile comes straight back.
     markDeleted(sessionId)
     if (s?.processIdentity) {
-      agentReconciler.suppress({ engine: s.engine, tmuxPane: s.tmuxPane, processIdentity: s.processIdentity })
+      agentReconciler.suppress(s)
     }
     forgetSession(sessionId, { force: true })
     if (!s) return
     void terminateDeletedAgent(s, {
-      checkRuntime: checkSessionRuntime,
+      checkRuntime: async (session) => {
+        const expected = session.processIdentity
+        if (!expected) return { state: 'gone', reason: 'agent has no saved process identity' }
+        const rows = await processRows()
+        if (!rows) return { state: 'unknown', reason: 'process table is unavailable' }
+        const live = rows.find((row) => row.pid === expected.pid)
+        return live && live.startMarker === expected.startMarker && live.executable === expected.executable
+          ? { state: 'alive' }
+          : { state: 'gone', reason: 'saved process identity is no longer running' }
+      },
       kill: (pid, signal) => process.kill(pid, signal),
       sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.() }),
       log: (message) => console.log(message),
@@ -1689,9 +2045,9 @@ async function runForeground(token: string): Promise<void> {
     // error in the user's terminal instead of running their turn.
     const adapted = adaptSlashCommand(content, engine)
     if (adapted !== content) {
-      console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine} · "${preview(content, 40)}" → "${preview(adapted, 40)}"`)
+      console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine}`)
     }
-    console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · len=${adapted.length} · "${preview(adapted)}"`)
+    console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
     input.submit(record?.agentId ?? sessionId, adapted)
   }
 

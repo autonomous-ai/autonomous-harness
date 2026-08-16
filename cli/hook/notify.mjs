@@ -5,9 +5,9 @@
  * Self-contained — node built-ins only, no dependency on the adapter's
  * node_modules (it runs inside the user's `claude` process).
  *
- * SessionStart: registers { tmuxPane, sessionId, transcriptPath, cwd } with the
- *   adapter — but only when running inside tmux ($TMUX_PANE set).
- * SessionEnd:   asks the adapter to reconcile the pane; process discovery remains
+ * SessionStart: registers terminal hints plus session metadata with the adapter,
+ *   but only from an authenticated tmux or configured Herdr context.
+ * SessionEnd:   asks the adapter to reconcile the terminal; process discovery remains
  *   the authority for whether the agent exists.
  *
  * Always exits 0 quickly and swallows every error, so it can never block or
@@ -15,13 +15,18 @@
  */
 
 import http from 'node:http'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { createConnection } from 'node:net'
 import {
   accessSync,
   closeSync,
   constants,
+  fchmodSync,
+  fstatSync,
+  fsyncSync,
   mkdirSync,
+  lstatSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -32,17 +37,23 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 import { homedir, uptime } from 'node:os'
 
 const BOOT_TOLERANCE_SEC = 120
-const LOCK_STALE_MS = 5000
-const LOCK_RETRIES = 20
+const HOOK_STARTED_AT = performance.now()
+const HOOK_DEADLINE_MS = 4500
+const EXIT_RESERVE_MS = 500
+const LOCK_RETRIES = 60
 const LOCK_RETRY_MS = 25
 const CURSOR_TASK_MAX_AGE_MS = 10 * 60_000
 const CURSOR_TASK_MAX_ENTRIES = 64
 const CURSOR_TASK_MAX_INPUT_BYTES = 128 * 1024
 const CODEX_META_MAX_BYTES = 128 * 1024
+
+function remainingBudget(reserve = EXIT_RESERVE_MS) {
+  return Math.max(0, HOOK_DEADLINE_MS - (performance.now() - HOOK_STARTED_AT) - reserve)
+}
 
 // Claude Code reports the model as {id, display_name}; Codex/Cursor as a plain string. The registry stores
 // a string, so pick the id rather than shipping the object.
@@ -162,14 +173,20 @@ function readStdin() {
 function post(port, path, body) {
   return new Promise((resolve) => {
     const payload = JSON.stringify(body)
+    const credential = readHookCredential()
+    if (!credential) { resolve(false); return }
     const req = http.request(
       {
         host: '127.0.0.1',
         port,
         path,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
-        timeout: 1500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          'X-Harness-Hook-Token': credential,
+        },
+        timeout: Math.max(1, Math.min(500, remainingBudget())),
       },
       (res) => {
         res.resume()
@@ -186,13 +203,102 @@ function post(port, path, body) {
   })
 }
 
+function secureStateDirectory(directory, create = true) {
+  if (create) mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const fd = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  try {
+    const stat = fstatSync(fd)
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    if (!stat.isDirectory() || (uid !== null && stat.uid !== uid)) {
+      throw new Error('state directory has unsafe owner or type')
+    }
+    const mode = stat.mode & 0o777
+    if (mode & 0o022) throw new Error('state directory is group/world writable')
+    if (mode !== 0o700) {
+      fchmodSync(fd, 0o700)
+      if ((fstatSync(fd).mode & 0o777) !== 0o700) {
+        throw new Error('state directory permissions could not be tightened')
+      }
+    }
+  } finally { closeSync(fd) }
+}
+
+function inspectPrivateStateFile(fd, maxBytes = Number.MAX_SAFE_INTEGER) {
+  const stat = fstatSync(fd)
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null
+  if (!stat.isFile() || (uid !== null && stat.uid !== uid)) throw new Error('state file has unsafe owner or type')
+  if (stat.size > maxBytes) throw new Error('state file exceeds its size limit')
+  const mode = stat.mode & 0o777
+  if (mode & 0o022) throw new Error('state file is group/world writable')
+  if (mode !== 0o600) {
+    fchmodSync(fd, 0o600)
+    if ((fstatSync(fd).mode & 0o777) !== 0o600) {
+      throw new Error('state file permissions could not be tightened')
+    }
+  }
+}
+
+function readPrivateStateFile(file, maxBytes = Number.MAX_SAFE_INTEGER) {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    inspectPrivateStateFile(fd, maxBytes)
+    return readFileSync(fd, 'utf8')
+  } finally { closeSync(fd) }
+}
+
+function hardenPrivateStateFileIfPresent(file, maxBytes = Number.MAX_SAFE_INTEGER) {
+  let fd
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    throw error
+  }
+  try {
+    inspectPrivateStateFile(fd, maxBytes)
+    return true
+  } finally { closeSync(fd) }
+}
+
+function readHookCredential() {
+  let fd = null
+  try {
+    const dataDir = paths().dataDir
+    secureStateDirectory(dataDir, false)
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    const file = join(dataDir, 'hook-credential')
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const stat = fstatSync(fd)
+    if (!stat.isFile() || stat.size > 128 || (stat.mode & 0o777) !== 0o600) return ''
+    if (uid !== null && stat.uid !== uid) return ''
+    const value = readFileSync(fd, 'utf8').trim()
+    return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : ''
+  } catch { return '' } finally {
+    if (fd !== null) closeSync(fd)
+  }
+}
+
+function terminalHookFields(tmuxPane) {
+  const runtimeHints = []
+  if (tmuxPane) runtimeHints.push({ backend: 'tmux', paneId: tmuxPane })
+  if (process.env.HERDR_PANE_ID) runtimeHints.push({
+    backend: 'herdr',
+    paneId: process.env.HERDR_PANE_ID,
+    sessionName: process.env.HERDR_SESSION,
+    socketPath: process.env.HERDR_SOCKET_PATH,
+  })
+  return { tmuxPane, runtimeHints, callerPid: process.ppid }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function execFileText(cmd, args, timeout) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout }, (err, stdout) => {
+    const budget = Math.min(timeout, remainingBudget())
+    if (budget < 50) { resolve(null); return }
+    execFile(cmd, args, { timeout: budget }, (err, stdout) => {
       resolve(err ? null : stdout)
     })
   })
@@ -398,6 +504,10 @@ async function paneEngineProcess(pane, engine) {
   const rootPid = await panePid(pane)
   if (rootPid === undefined) return { state: 'unknown' }
   if (!rootPid) return { state: 'gone' }
+  return rootEngineProcess(rootPid, engine)
+}
+
+async function rootEngineProcess(rootPid, engine) {
   const rawRows = await processRows()
   if (!rawRows) return { state: 'unknown' }
   const rows = await enrichProcessImages(rawRows)
@@ -424,6 +534,119 @@ async function paneEngineProcess(pane, engine) {
     state: 'alive',
     identity: { pid: best.row.pid, executable: best.row.executable, startMarker: best.row.startMarker },
   } : { state: 'gone' }
+}
+
+function safePathComponents(path) {
+  const root = parse(path).root
+  const result = [root]
+  for (const component of path.slice(root.length).split(sep).filter(Boolean)) {
+    result.push(resolve(result[result.length - 1], component))
+  }
+  return result
+}
+
+function readTerminalSnapshot(p) {
+  try {
+    const file = join(p.dataDir, 'terminal-config.json')
+    secureStateDirectory(p.dataDir, false)
+    const snapshot = JSON.parse(readPrivateStateFile(file, 64 * 1024))
+    if (snapshot?.version !== 1 || !Array.isArray(snapshot.backends) || !Array.isArray(snapshot.herdrEndpoints)) return null
+    return snapshot
+  } catch { return null }
+}
+
+function checkedHerdrEndpoint(endpoint) {
+  try {
+    if (!endpoint || typeof endpoint.socketPath !== 'string' || !isAbsolute(endpoint.socketPath)) return false
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    if (uid === null) return false
+    for (const component of safePathComponents(dirname(endpoint.socketPath))) {
+      const stat = lstatSync(component)
+      if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.uid !== uid && stat.uid !== 0)) return false
+      if ((stat.mode & 0o002) || (stat.uid === 0 && (stat.mode & 0o020))) return false
+    }
+    const parent = lstatSync(dirname(endpoint.socketPath))
+    const socket = lstatSync(endpoint.socketPath)
+    if (parent.uid !== uid || !socket.isSocket() || socket.isSymbolicLink() || socket.uid !== uid || (socket.mode & 0o777) !== 0o600) return false
+    if (realpathSync(endpoint.socketPath) !== resolve(endpoint.socketPath)) return false
+    return socket.dev === endpoint.generation?.device && socket.ino === endpoint.generation?.inode
+  } catch { return false }
+}
+
+function herdrRequest(endpoint, method, params) {
+  return new Promise((resolveRequest) => {
+    const budget = Math.min(1500, remainingBudget())
+    if (budget < 50 || !checkedHerdrEndpoint(endpoint)) { resolveRequest(null); return }
+    const id = randomUUID()
+    const frame = Buffer.from(`${JSON.stringify({ id, method, params })}\n`)
+    if (frame.byteLength > 1024 * 1024) { resolveRequest(null); return }
+    let response = Buffer.alloc(0)
+    let settled = false
+    let socket
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      socket?.destroy()
+      resolveRequest(value)
+    }
+    const timer = setTimeout(() => finish(null), budget)
+    try { socket = createConnection({ path: endpoint.socketPath }) } catch { finish(null); return }
+    socket.once('connect', () => {
+      if (!checkedHerdrEndpoint(endpoint)) { finish(null); return }
+      try { socket.end(frame) } catch { finish(null) }
+    })
+    socket.on('data', (chunk) => {
+      response = Buffer.concat([response, chunk])
+      if (response.byteLength > 1024 * 1024) { finish(null); return }
+      const newline = response.indexOf(0x0a)
+      if (newline < 0) return
+      if (response.subarray(newline + 1).toString('utf8').trim()) { finish(null); return }
+      try {
+        const parsed = JSON.parse(response.subarray(0, newline).toString('utf8'))
+        finish(parsed?.id === id && parsed.result && !parsed.error ? parsed.result : null)
+      } catch { finish(null) }
+    })
+    socket.once('end', () => finish(null))
+    socket.once('error', () => finish(null))
+  })
+}
+
+async function herdrFallbackRuntime(engine) {
+  const hint = terminalHookFields(process.env.TMUX_PANE).runtimeHints.find((runtime) => runtime.backend === 'herdr')
+  if (!hint?.sessionName || !hint.socketPath || !hint.paneId) return null
+  const snapshot = readTerminalSnapshot(paths())
+  if (!snapshot?.backends.includes('herdr')) return null
+  const endpoint = snapshot.herdrEndpoints.find((candidate) =>
+    candidate?.sessionName === hint.sessionName && candidate?.socketPath === hint.socketPath)
+  if (!endpoint || !checkedHerdrEndpoint(endpoint)) return null
+  const pong = await herdrRequest(endpoint, 'ping', {})
+  if (pong?.type !== 'pong' || pong.protocol !== 19 || !/^0\.8\./.test(String(pong.version || ''))) return null
+  const [pane, info] = await Promise.all([
+    herdrRequest(endpoint, 'pane.get', { pane_id: hint.paneId }),
+    herdrRequest(endpoint, 'pane.process_info', { pane_id: hint.paneId }),
+  ])
+  if (pane?.type !== 'pane_info' || typeof pane.pane?.terminal_id !== 'string'
+    || info?.type !== 'pane_process_info' || !Number.isSafeInteger(info.process_info?.shell_pid)) return null
+  const owner = await rootEngineProcess(info.process_info.shell_pid, engine)
+  if (owner.state !== 'alive' || !owner.identity) return null
+  const rows = await processRows()
+  if (!rows) return null
+  const parents = new Map(rows.map((row) => [row.pid, row.parentPid]))
+  let caller = process.ppid
+  const visited = new Set()
+  while (caller > 0 && !visited.has(caller) && caller !== owner.identity.pid) {
+    visited.add(caller)
+    caller = parents.get(caller) || 0
+  }
+  if (caller !== owner.identity.pid) return null
+  return {
+    identity: owner.identity,
+    runtime: {
+      backend: 'herdr', endpointId: endpoint.endpointId, sessionName: endpoint.sessionName,
+      terminalId: pane.pane.terminal_id, paneId: pane.pane.pane_id,
+    },
+  }
 }
 
 /**
@@ -458,27 +681,58 @@ function bootTimeSec() {
   return Math.round(Date.now() / 1000 - uptime())
 }
 
+function currentBootId() {
+  try {
+    const value = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
+    if (/^[0-9a-f-]{36}$/i.test(value)) return `linux:${value}`
+  } catch { /* non-Linux fallback below */ }
+  return `time:${bootTimeSec()}`
+}
+
 function readSavedBoot(bootFile) {
   try {
-    const n = Number(readFileSync(bootFile, 'utf-8').trim())
-    return Number.isFinite(n) ? n : null
+    secureStateDirectory(dirname(bootFile), false)
+    const raw = readPrivateStateFile(bootFile, 256).trim()
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw)
+      return typeof parsed === 'string' ? parsed : raw
+    } catch { return raw }
   } catch {
     return null
   }
 }
 
 function writeBoot(bootFile) {
+  let tmp = ''
+  let renamed = false
   try {
-    mkdirSync(dirname(bootFile), { recursive: true })
-    writeFileSync(bootFile, String(bootTimeSec()))
+    secureStateDirectory(dirname(bootFile))
+    hardenPrivateStateFileIfPresent(bootFile, 256)
+    tmp = `${bootFile}.${process.pid}.${randomUUID()}.tmp`
+    const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    try { writeFileSync(fd, currentBootId()); fsyncSync(fd) } finally { closeSync(fd) }
+    renameSync(tmp, bootFile)
+    renamed = true
+    const directoryFd = openSync(dirname(bootFile), 'r')
+    try { fsyncSync(directoryFd) } finally { closeSync(directoryFd) }
   } catch {
     // best effort
+  } finally {
+    if (tmp && !renamed) {
+      try { rmSync(tmp, { force: true }) } catch { /* best effort */ }
+    }
   }
 }
 
 function rebootedSinceSnapshot(bootFile) {
   const saved = readSavedBoot(bootFile)
-  return saved !== null && Math.abs(bootTimeSec() - saved) > BOOT_TOLERANCE_SEC
+  if (saved === null) return false
+  const current = currentBootId()
+  if (saved.startsWith('linux:')) return saved !== current
+  const savedNumber = Number(saved.replace(/^time:/, ''))
+  const currentNumber = current.startsWith('time:') ? Number(current.slice(5)) : bootTimeSec()
+  return !Number.isFinite(savedNumber) || Math.abs(currentNumber - savedNumber) > BOOT_TOLERANCE_SEC
 }
 
 function isWithin(root, file) {
@@ -534,43 +788,141 @@ function isCodexSubagent(input, p) {
   }
 }
 
+function removeLockOwnedBy(lockDir, token) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8'))
+    if (owner?.token === token) rmSync(lockDir, { recursive: true, force: true })
+  } catch { /* another owner or unsafe artifact must not be removed */ }
+}
+
+function processStartMarker(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)
+    if (fields[19]) return `linux:${fields[19]}`
+  } catch { /* non-Linux or exited process; use ps below */ }
+  try {
+    const started = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+      encoding: 'utf8', timeout: 1000,
+    }).trim()
+    return started ? `ps:${started}` : null
+  } catch { return null }
+}
+
+function processAlive(pid, startMarker = '') {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false
+  try { process.kill(pid, 0) } catch (error) { if (error?.code !== 'EPERM') return false }
+  if (!startMarker) return true
+  const current = processStartMarker(pid)
+  return current === null || current === startMarker
+}
+
 async function withRegistryLock(registryFile, fn) {
   const lockDir = `${registryFile}.lock`
-  try { mkdirSync(dirname(registryFile), { recursive: true }) } catch { return }
+  const dataDir = dirname(registryFile)
+  try {
+    secureStateDirectory(dataDir)
+  } catch { return }
+  const processMarker = processStartMarker(process.pid) || ''
   for (let i = 0; i < LOCK_RETRIES; i++) {
+    if (remainingBudget(750) < 50) return
+    const token = randomUUID()
+    let created = false
     try {
-      mkdirSync(lockDir)
+      mkdirSync(lockDir, { mode: 0o700 })
+      created = true
+      const ownerFile = join(lockDir, 'owner.json')
+      const ownerFd = openSync(ownerFile, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+      try {
+        writeFileSync(ownerFd, JSON.stringify({ pid: process.pid, startMarker: processMarker, token }))
+        fsyncSync(ownerFd)
+      } finally { closeSync(ownerFd) }
       try {
         return fn()
       } finally {
-        try { rmSync(lockDir, { recursive: true, force: true }) } catch { /* ignore */ }
+        removeLockOwnedBy(lockDir, token)
       }
-    } catch {
+    } catch (error) {
+      if (created) removeLockOwnedBy(lockDir, token)
+      if (error?.code !== 'EEXIST') return
       try {
-        const st = statSync(lockDir)
-        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) rmSync(lockDir, { recursive: true, force: true })
+        const uid = typeof process.getuid === 'function' ? process.getuid() : null
+        const st = lstatSync(lockDir)
+        const ownerStat = lstatSync(join(lockDir, 'owner.json'))
+        if (!st.isDirectory() || st.isSymbolicLink() || (uid !== null && st.uid !== uid) || (st.mode & 0o777) !== 0o700
+          || !ownerStat.isFile() || ownerStat.isSymbolicLink() || (uid !== null && ownerStat.uid !== uid)
+          || (ownerStat.mode & 0o777) !== 0o600) return
+        const owner = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8'))
+        const ownerPid = Number(owner?.pid)
+        const ownerStartMarker = typeof owner?.startMarker === 'string' ? owner.startMarker : ''
+        const ownerToken = typeof owner?.token === 'string' ? owner.token : ''
+        if (!processAlive(ownerPid, ownerStartMarker) && ownerPid > 0 && ownerToken) {
+          const current = JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8'))
+          if (Number(current?.pid) === ownerPid
+            && current?.startMarker === ownerStartMarker
+            && current?.token === ownerToken
+            && !processAlive(ownerPid, ownerStartMarker)) {
+            rmSync(lockDir, { recursive: true, force: true })
+            continue
+          }
+        }
       } catch {
-        // lock disappeared between mkdir attempts
+        // Lock disappeared or is still being initialized; wait without stealing it.
       }
       await sleep(LOCK_RETRY_MS)
     }
   }
 }
 
-function readRegistry(file) {
+function readJsonArray(file) {
   try {
-    const arr = JSON.parse(readFileSync(file, 'utf-8'))
+    secureStateDirectory(dirname(file), false)
+    const arr = JSON.parse(readPrivateStateFile(file))
     return Array.isArray(arr) ? arr : []
-  } catch {
-    return []
+  } catch (error) {
+    return error?.code === 'ENOENT' ? [] : null
+  }
+}
+
+function readRegistryState(file) {
+  try {
+    secureStateDirectory(dirname(file), false)
+    const rows = JSON.parse(readPrivateStateFile(file))
+    if (!Array.isArray(rows)) return null
+    if (rows.some((row) => row && typeof row === 'object'
+      && Object.hasOwn(row, 'schemaVersion') && row.schemaVersion !== 2)) return null
+    const legacyRows = rows.filter((row) => !row || typeof row !== 'object' || !Object.hasOwn(row, 'schemaVersion'))
+    if (legacyRows.some((row) => !validLegacyRegistryRow(row))) return null
+    const v2Rows = rows.filter((row) => row && typeof row === 'object' && row.schemaVersion === 2)
+    if (v2Rows.length && !validV2Registry(v2Rows)) return null
+    return rows
+  } catch (error) {
+    return error?.code === 'ENOENT' ? [] : null
   }
 }
 
 function writeRegistry(file, sessions) {
-  mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(sessions, null, 2))
-  renameSync(tmp, file)
+  secureStateDirectory(dirname(file))
+  hardenPrivateStateFileIfPresent(file)
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
+  let renamed = false
+  try {
+    const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    try {
+      writeFileSync(fd, JSON.stringify(sessions, null, 2))
+      fchmodSync(fd, 0o600)
+      fsyncSync(fd)
+    } finally { closeSync(fd) }
+    renameSync(tmp, file)
+    renamed = true
+    const directoryFd = openSync(dirname(file), 'r')
+    try { fsyncSync(directoryFd) } finally { closeSync(directoryFd) }
+  } finally {
+    if (!renamed) {
+      try { rmSync(tmp, { force: true }) } catch { /* ignore */ }
+    }
+  }
 }
 
 function cursorPendingFile() {
@@ -599,7 +951,9 @@ async function persistCursorTask(input) {
   const file = cursorPendingFile()
   await withRegistryLock(file, () => {
     const now = Date.now()
-    const existing = readRegistry(file).filter((item) =>
+    const current = readJsonArray(file)
+    if (current === null) return
+    const existing = current.filter((item) =>
       item
       && typeof item.sessionId === 'string'
       && typeof item.toolUseId === 'string'
@@ -615,13 +969,123 @@ async function clearCursorTasks(sessionId) {
   if (typeof sessionId !== 'string' || !sessionId) return
   const file = cursorPendingFile()
   await withRegistryLock(file, () => {
-    const current = readRegistry(file)
+    const current = readJsonArray(file)
+    if (current === null) return
     const next = current.filter((item) => !item || item.sessionId !== sessionId)
     if (next.length) writeRegistry(file, next)
     else {
       try { rmSync(file, { force: true }) } catch { /* best effort */ }
     }
   })
+}
+
+function runtimeRouteKey(runtime) {
+  return runtime.backend === 'tmux'
+    ? `tmux\u0000${runtime.paneId}`
+    : `herdr\u0000${runtime.endpointId}\u0000${runtime.paneId}`
+}
+
+function runtimePlacementKey(runtime) {
+  return runtime.backend === 'tmux'
+    ? runtimeRouteKey(runtime)
+    : `herdr\u0000${runtime.endpointId}\u0000${runtime.terminalId}`
+}
+
+function mergeRuntimes(current, observed) {
+  const merged = new Map()
+  for (const runtime of [...(Array.isArray(current) ? current : []), ...observed]) {
+    if (runtime?.backend === 'tmux' || runtime?.backend === 'herdr') merged.set(runtimePlacementKey(runtime), runtime)
+  }
+  return [...merged.values()].sort((a, b) => runtimePlacementKey(a).localeCompare(runtimePlacementKey(b)))
+}
+
+const REGISTRY_ENGINES = new Set([
+  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
+])
+
+function validRegistryString(value, max = 4096) {
+  return typeof value === 'string' && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value)
+}
+
+function validRegistryRuntime(runtime) {
+  if (!runtime || typeof runtime !== 'object') return false
+  if (runtime.backend === 'tmux') return typeof runtime.paneId === 'string' && /^%\d+$/.test(runtime.paneId)
+  return runtime.backend === 'herdr'
+    && validRegistryString(runtime.endpointId, 200) && runtime.endpointId.length > 0
+    && validRegistryString(runtime.sessionName, 64) && runtime.sessionName.length > 0
+    && validRegistryString(runtime.terminalId, 200) && runtime.terminalId.length > 0
+    && validRegistryString(runtime.paneId, 200) && runtime.paneId.length > 0
+}
+
+function validRegistryProcess(identity) {
+  return identity === null || (!!identity && typeof identity === 'object'
+    && Number.isSafeInteger(identity.pid) && identity.pid > 0
+    && validRegistryString(identity.executable, 1000)
+    && validRegistryString(identity.startMarker, 200) && identity.startMarker.length > 0)
+}
+
+function validV2Registry(rows) {
+  const agents = new Set()
+  const sessions = new Set()
+  const processes = new Set()
+  const routes = new Set()
+  for (const row of rows) {
+    if (row.schemaVersion !== 2 || row.active !== true && row.active !== false
+      || !validRegistryString(row.agentId, 200) || !row.agentId
+      || !validRegistryString(row.sessionId, 200)
+      || !REGISTRY_ENGINES.has(row.engine)
+      || !validRegistryString(row.projectDir)
+      || !Array.isArray(row.runtimes) || !row.runtimes.length || !row.runtimes.every(validRegistryRuntime)
+      || typeof row.primaryRuntimeKey !== 'string'
+      || !validRegistryProcess(row.processIdentity)) return false
+    const placementKeys = row.runtimes.map(runtimePlacementKey)
+    if (new Set(placementKeys).size !== placementKeys.length) return false
+    const routeKeys = row.runtimes.map(runtimeRouteKey)
+    if (row.active ? !routeKeys.includes(row.primaryRuntimeKey) : row.primaryRuntimeKey !== '') return false
+    const tmuxProjection = row.runtimes.find((runtime) => runtime.backend === 'tmux')?.paneId
+    if (tmuxProjection ? row.tmuxPane !== tmuxProjection : Object.hasOwn(row, 'tmuxPane')) return false
+    if (agents.has(row.agentId)) return false
+    agents.add(row.agentId)
+    if (row.sessionId) {
+      if (sessions.has(row.sessionId)) return false
+      sessions.add(row.sessionId)
+    }
+    if (row.processIdentity) {
+      const processKey = `${row.engine}\u0000${row.processIdentity.pid}\u0000${row.processIdentity.startMarker}`
+      if (processes.has(processKey)) return false
+      processes.add(processKey)
+    }
+    for (const route of routeKeys) {
+      if (routes.has(route)) return false
+      routes.add(route)
+    }
+  }
+  return true
+}
+
+function validLegacyRegistryRow(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row) || Object.hasOwn(row, 'schemaVersion')) return false
+  const id = typeof row.agentId === 'string' && row.agentId ? row.agentId : row.launcherId
+  if (!validRegistryString(id, 200) || !id) return false
+  if (row.engine !== undefined && !REGISTRY_ENGINES.has(row.engine)) return false
+  if (row.tmuxPane !== undefined && (typeof row.tmuxPane !== 'string' || !/^%\d+$/.test(row.tmuxPane))) return false
+  if (row.runtimes !== undefined
+    && (!Array.isArray(row.runtimes) || !row.runtimes.length || !row.runtimes.every(validRegistryRuntime))) return false
+  return /^%\d+$/.test(row.tmuxPane || '') || (Array.isArray(row.runtimes) && row.runtimes.length > 0)
+}
+
+async function callerOwns(identity) {
+  const rows = await processRows()
+  if (!rows) return false
+  const parents = new Map(rows.map((row) => [row.pid, row.parentPid]))
+  let pid = process.ppid
+  const visited = new Set()
+  while (pid > 0 && !visited.has(pid)) {
+    if (pid === identity.pid) return true
+    visited.add(pid)
+    pid = parents.get(pid) || 0
+  }
+  return false
 }
 
 async function fallbackRegister(input, engine, tmuxPane) {
@@ -631,29 +1095,53 @@ async function fallbackRegister(input, engine, tmuxPane) {
   const sessionId = typeof rawSessionId === 'string' && rawSessionId
     ? rawSessionId
     : (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
-  if (!sessionId || !/^%\d+$/.test(tmuxPane)) return
+  if (!sessionId) return
   const transcriptOptional = ['cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode', 'devin', 'grok'].includes(engine)
   if (!transcriptOptional && !transcriptPath) return
   if (transcriptPath && !validTranscriptPath(engine, transcriptPath, p)) return
-  const process = await paneEngineProcess(tmuxPane, engine)
-  if (process.state !== 'alive' || !process.identity) return
+  const observations = []
+  if (/^%\d+$/.test(tmuxPane || '')) {
+    const tmux = await paneEngineProcess(tmuxPane, engine)
+    if (tmux.state === 'alive' && tmux.identity && await callerOwns(tmux.identity)) {
+      observations.push({ identity: tmux.identity, runtime: { backend: 'tmux', paneId: tmuxPane } })
+    }
+  }
+  const herdr = await herdrFallbackRuntime(engine)
+  if (herdr) observations.push(herdr)
+  if (!observations.length) return
+  const process = observations[0]
+  if (observations.some((observation) => observation.identity.pid !== process.identity.pid
+    || observation.identity.startMarker !== process.identity.startMarker)) return
+  const observedRuntimes = observations.map((observation) => observation.runtime)
   if (engine === 'hermes' && !await hermesTopLevelSession(p.hermesDb, sessionId)) return
 
   await withRegistryLock(p.registryFile, () => {
-    let sessions = rebootedSinceSnapshot(p.bootFile) ? [] : readRegistry(p.registryFile)
+    if (remainingBudget(600) < 50) return
+    const loaded = rebootedSinceSnapshot(p.bootFile) ? [] : readRegistryState(p.registryFile)
+    // Corrupt/non-array/unknown-schema/unsafe bytes are operator-owned recovery data. Never turn them
+    // into an empty registry merely because the daemon is down.
+    if (loaded === null) return
+    let sessions = loaded
     writeBoot(p.bootFile)
     const now = Date.now()
-    const sameRuntime = (s) => s && s.tmuxPane === tmuxPane && s.engine === engine
-      && (!s.processIdentity || (s.processIdentity.pid === process.identity.pid && s.processIdentity.startMarker === process.identity.startMarker))
+    const sameRuntime = (s) => s && s.engine === engine
+      && s.processIdentity?.pid === process.identity.pid && s.processIdentity?.startMarker === process.identity.startMarker
     const existingIndex = sessions.findIndex(sameRuntime)
     const existing = existingIndex >= 0 ? sessions[existingIndex] : null
     // A resumed session moves to this process agent; the previous process remains visible but unbound.
     sessions = sessions.map((s) => s && s.sessionId === sessionId && !sameRuntime(s)
       ? { ...s, sessionId: '', boundAt: null, transcriptPath: null, source: null, updatedAt: now }
       : s)
-    if (existingIndex < 0) sessions = sessions.filter((s) => !s || s.tmuxPane !== tmuxPane)
+    const routeKeys = new Set(observedRuntimes.map(runtimeRouteKey))
+    if (existingIndex < 0) sessions = sessions.filter((s) => !s || !(Array.isArray(s.runtimes)
+      ? s.runtimes.some((runtime) => routeKeys.has(runtimeRouteKey(runtime)))
+      : s.tmuxPane && routeKeys.has(runtimeRouteKey({ backend: 'tmux', paneId: s.tmuxPane }))))
     const agentId = typeof existing?.agentId === 'string' && existing.agentId ? existing.agentId : randomUUID()
+    const runtimes = mergeRuntimes(existing?.runtimes, observedRuntimes)
+    const tmuxProjection = runtimes.find((runtime) => runtime.backend === 'tmux')?.paneId || ''
     const entry = {
+      schemaVersion: 2,
+      active: true,
       agentId,
       sessionId,
       engine,
@@ -665,7 +1153,11 @@ async function fallbackRegister(input, engine, tmuxPane) {
         ? basename(dirname(transcriptPath))
         : basename(typeof input.cwd === 'string' ? input.cwd : '') || sessionId,
       cwd: typeof input.cwd === 'string' ? input.cwd : (existing?.cwd ?? null),
-      tmuxPane,
+      runtimes,
+      primaryRuntimeKey: existing?.primaryRuntimeKey && runtimes.some((runtime) => runtimeRouteKey(runtime) === existing.primaryRuntimeKey)
+        ? existing.primaryRuntimeKey
+        : runtimeRouteKey(observedRuntimes[0]),
+      tmuxPane: tmuxProjection,
       source: typeof input.source === 'string' ? input.source : (existing?.source ?? null),
       title: typeof input.session_title === 'string' ? input.session_title : (existing?.title ?? null),
       model: typeof input.model === 'string' ? input.model : (existing?.model ?? null),
@@ -676,6 +1168,7 @@ async function fallbackRegister(input, engine, tmuxPane) {
       lastHookAt: now,
       lastTranscriptAt: typeof existing?.lastTranscriptAt === 'number' ? existing.lastTranscriptAt : now,
     }
+    if (!tmuxProjection) delete entry.tmuxPane
     if (existingIndex >= 0) sessions[existingIndex] = entry
     else sessions.push(entry)
     writeRegistry(p.registryFile, sessions)
@@ -701,7 +1194,8 @@ async function main() {
 
   const event = input.hook_event_name || input.hookEventName
   const tmuxPane = process.env.TMUX_PANE
-  if (!tmuxPane) return // tmux-only: ignore every lifecycle event from standalone CLI sessions
+  if (!tmuxPane && !process.env.HERDR_PANE_ID) return
+  const mutationFields = { engine, ...terminalHookFields(tmuxPane) }
   if (engine === 'cursor' && input.is_background_agent === true) return
   if (engine === 'codex' && isCodexSubagent(input, paths())) return
   // Devin's documented user-level hook locations include ~/.claude.json and ~/.claude/settings.json, so a
@@ -722,12 +1216,12 @@ async function main() {
     const cwd = input.cwd || input.workspaceRoot
     const transcriptPath = grokTranscriptPath(paths(), cwd, sessionId)
     if (grokEventName === 'SessionEnd') {
-      const ok = await post(port, '/api/hook/session-end', { sessionId, reason: input.reason })
+      const ok = await post(port, '/api/hook/session-end', { sessionId, reason: input.reason, ...mutationFields })
       if (!ok) await fallbackSessionEnd(sessionId, input.reason, engine, tmuxPane)
       return
     }
     if (grokEventName === 'StopFailure') {
-      await post(port, '/api/hook/turn-stop', { sessionId, transcriptPath, status: 'error' })
+      await post(port, '/api/hook/turn-stop', { sessionId, transcriptPath, status: 'error', ...mutationFields })
       return
     }
     if (grokEventName !== 'SessionStart' && grokEventName !== 'UserPromptSubmit') return
@@ -737,7 +1231,7 @@ async function main() {
       sessionId,
       transcriptPath,
       cwd,
-      tmuxPane,
+      ...terminalHookFields(tmuxPane),
       model: modelName(input.model),
       cliVersion: input.cliVersion || input.version,
     }
@@ -759,6 +1253,7 @@ async function main() {
     const ok = await post(port, '/api/hook/session-end', {
       sessionId: input.session_id || input.conversation_id,
       reason: input.reason,
+      ...mutationFields,
     })
     if (!ok) await fallbackSessionEnd(input.session_id || input.conversation_id, input.reason, engine, tmuxPane)
     if (engine === 'cursor' && ok) await clearCursorTasks(input.session_id || input.conversation_id)
@@ -770,6 +1265,7 @@ async function main() {
   if (engine === 'commandcode' && (event === 'PreToolUse' || event === 'preToolUse')) {
     await post(port, '/api/hook/turn-start', {
       sessionId: input.session_id || input.conversation_id,
+      ...mutationFields,
     })
     return
   }
@@ -782,6 +1278,7 @@ async function main() {
         toolUseId: input.tool_use_id,
         toolName: input.tool_name,
         input: input.tool_input,
+        ...mutationFields,
       })
     }
     return
@@ -795,7 +1292,7 @@ async function main() {
       sessionId,
       transcriptPath: input.transcript_path,
       cwd: Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : input.cwd,
-      tmuxPane,
+      ...terminalHookFields(tmuxPane),
       model: modelName(input.model),
       cliVersion: input.cursor_version || input.version,
     }
@@ -805,6 +1302,7 @@ async function main() {
       sessionId,
       status: input.status,
       transcriptPath: input.transcript_path,
+      ...mutationFields,
     })
     if (stopped) await clearCursorTasks(sessionId)
     return
@@ -829,7 +1327,7 @@ async function main() {
         sessionId: input.session_id,
         transcriptPath: existsPath(input.transcript_path) ? input.transcript_path : undefined,
         cwd: input.cwd,
-        tmuxPane,
+        ...terminalHookFields(tmuxPane),
         title: input.session_title,
         model: modelName(input.model),
         cliVersion: input.cli_version || input.version,
@@ -840,6 +1338,7 @@ async function main() {
       sessionId: input.session_id,
       transcriptPath: input.transcript_path,
       status: event === 'StopFailure' ? 'error' : undefined,
+      ...mutationFields,
     })
     return
   }
@@ -866,7 +1365,7 @@ async function main() {
     // Devin's payload carries no cwd; the hook process inherits the session's working directory.
     cwd: Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : (input.cwd || (engine === 'devin' ? process.cwd() : undefined)),
     source: input.source,
-    tmuxPane,
+    ...terminalHookFields(tmuxPane),
     title: input.session_title,
     model: modelName(input.model),
     cliVersion: input.cli_version || input.cursor_version || input.version,

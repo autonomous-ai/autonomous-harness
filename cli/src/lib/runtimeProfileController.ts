@@ -60,11 +60,11 @@ export interface RuntimeProfileControllerDeps {
   manager: RuntimeProfileManager
   getSession: (sessionId: string) => RegisteredSession | undefined
   validateRuntime: (session: RegisteredSession) => Promise<boolean>
-  capture: (pane: string, historyLines?: number) => Promise<string | null>
-  sendText: (pane: string, text: string) => Promise<boolean>
-  /** Type without submitting — see sendLiteralToTmux. */
-  sendLiteral: (pane: string, text: string) => Promise<boolean>
-  sendKey: (pane: string, key: string) => Promise<boolean>
+  capture: (terminalTarget: string, historyLines?: number) => Promise<string | null>
+  sendText: (terminalTarget: string, text: string) => Promise<boolean>
+  /** Type without submitting. */
+  sendLiteral: (terminalTarget: string, text: string) => Promise<boolean>
+  sendKey: (terminalTarget: string, key: string) => Promise<boolean>
   acquireInput: (sessionId: string) => (() => void) | null
 }
 
@@ -335,7 +335,7 @@ export class RuntimeProfileController {
     let pickerOpen = false
     try {
       if (!await this.deps.validateRuntime(session)) throw new RuntimeProfileControlError('TMUX_FAILED')
-      const capture = await this.deps.capture(session.tmuxPane, 100)
+      const capture = await this.deps.capture(session.agentId, 100)
       if (!capture) throw new RuntimeProfileControlError('TMUX_FAILED')
       const inspection = inspectRuntimePane(session.engine, capture)
       if (session.engine === 'codex' && inspection.plan) throw new RuntimeProfileControlError('PLAN_SCOPE_AMBIGUOUS')
@@ -377,9 +377,9 @@ export class RuntimeProfileController {
     } catch (error) {
       if (pickerOpen) {
         for (let attempt = 0; attempt < 3; attempt++) {
-          await this.deps.sendKey(session.tmuxPane, 'Escape').catch(() => false)
+          await this.deps.sendKey(session.agentId, 'Escape').catch(() => false)
           await sleep(100)
-          const next = await this.deps.capture(session.tmuxPane, 100).catch(() => null)
+          const next = await this.deps.capture(session.agentId, 100).catch(() => null)
           if (!next || !inspectRuntimePane(session.engine, next).dialog) break
         }
       }
@@ -402,7 +402,7 @@ export class RuntimeProfileController {
     options: Array<{ id: string }>,
   ): Promise<void> {
     if (current?.model !== target.model) {
-      if (!await this.deps.sendText(session.tmuxPane, `/model ${target.model}`)) {
+      if (!await this.deps.sendText(session.agentId, `/model ${target.model}`)) {
         throw new RuntimeProfileControlError('TMUX_FAILED')
       }
       if (!await this.waitClaudeModel(session)) throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
@@ -421,11 +421,11 @@ export class RuntimeProfileController {
       this.deps.manager.confirmEffort(session.sessionId, 'auto')
       return
     }
-    if (!await this.deps.sendText(session.tmuxPane, `/effort ${target.effort}`)) {
+    if (!await this.deps.sendText(session.agentId, `/effort ${target.effort}`)) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     if (!await this.deps.manager.waitForProfile(session.sessionId, COMMAND_CONFIRM_MS)) {
-      await this.deps.sendKey(session.tmuxPane, 'Enter')
+      await this.deps.sendKey(session.agentId, 'Enter')
       if (!await this.deps.manager.waitForProfile(session.sessionId, 2_000)) {
         throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
       }
@@ -434,12 +434,12 @@ export class RuntimeProfileController {
 
   private async waitClaudeModel(session: RegisteredSession): Promise<boolean> {
     if (await this.deps.manager.waitForModel(session.sessionId, 1_200)) return true
-    const capture = await this.deps.capture(session.tmuxPane, 80)
+    const capture = await this.deps.capture(session.agentId, 80)
     if (capture && /switch model|change model|continue.*model|re-read.*history/i.test(stripAnsi(capture))) {
-      await this.deps.sendKey(session.tmuxPane, 'Enter')
+      await this.deps.sendKey(session.agentId, 'Enter')
     } else {
-      // Claude and Codex can swallow the first Enter immediately after a tmux literal write.
-      await this.deps.sendKey(session.tmuxPane, 'Enter')
+      // Claude and Codex can swallow the first Enter immediately after a terminal literal write.
+      await this.deps.sendKey(session.agentId, 'Enter')
     }
     return this.deps.manager.waitForModel(session.sessionId, COMMAND_CONFIRM_MS)
   }
@@ -453,11 +453,11 @@ export class RuntimeProfileController {
   private async setDevin(session: RegisteredSession, target: RuntimeProfile): Promise<void> {
     const devin = this.deps.manager.devinTarget(session.sessionId, target.id)
     if (!devin) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-    if (!await this.deps.sendText(session.tmuxPane, `/model ${devin.id}`)) {
+    if (!await this.deps.sendText(session.agentId, `/model ${devin.id}`)) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     const answered = await this.waitPane(
-      session.tmuxPane,
+      session.agentId,
       (value) => devinModelCommandResult(stripAnsi(value)) !== null,
       COMMAND_CONFIRM_MS,
     )
@@ -484,7 +484,7 @@ export class RuntimeProfileController {
     current: RuntimeProfile | null,
   ): Promise<void> {
     if (current?.model !== target.model) {
-      if (!await this.deps.sendText(session.tmuxPane, `/model ${target.model}`)) {
+      if (!await this.deps.sendText(session.agentId, `/model ${target.model}`)) {
         throw new RuntimeProfileControlError('TMUX_FAILED')
       }
       if (!await this.deps.manager.waitForModel(session.sessionId, COMMAND_CONFIRM_MS)) {
@@ -500,20 +500,20 @@ export class RuntimeProfileController {
 
   private async setPiThinking(session: RegisteredSession, target: RuntimeProfile): Promise<void> {
     const effort = target.effort
-    if (!await this.deps.sendText(session.tmuxPane, '/settings')) {
+    if (!await this.deps.sendText(session.agentId, '/settings')) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
-    if (!await this.waitPane(session.tmuxPane, (v) => /Type to search/i.test(stripAnsi(v)), PICKER_OPEN_MS)) {
+    if (!await this.waitPane(session.agentId, (v) => /Type to search/i.test(stripAnsi(v)), PICKER_OPEN_MS)) {
       throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
     }
     // Typing alone is enough: the settings filter opens a row the moment it narrows to one. Submitting
     // here would land an Enter on the ladder that just opened and pick the level already highlighted —
     // which is the CURRENT one, so the switch silently did nothing.
-    if (!await this.deps.sendLiteral(session.tmuxPane, 'thinking level')) {
+    if (!await this.deps.sendLiteral(session.agentId, 'thinking level')) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     const ladder = await this.waitPane(
-      session.tmuxPane,
+      session.agentId,
       (v) => /Select reasoning depth/i.test(stripAnsi(v)),
       PICKER_OPEN_MS,
     )
@@ -530,11 +530,11 @@ export class RuntimeProfileController {
     for (let guard = 0; selection !== effort && guard < PI_LADDER_MAX_STEPS; guard++) {
       const steps = piThinkingSteps(selection as string, effort)
       if (steps === null || steps === 0) break
-      if (!await this.deps.sendKey(session.tmuxPane, steps > 0 ? 'Down' : 'Up')) {
+      if (!await this.deps.sendKey(session.agentId, steps > 0 ? 'Down' : 'Up')) {
         throw new RuntimeProfileControlError('TMUX_FAILED')
       }
       const moved = await this.waitPane(
-        session.tmuxPane,
+        session.agentId,
         (value) => {
           const next = parsePiThinkingSelection(stripAnsi(value))
           return !!next && next !== selection
@@ -546,9 +546,9 @@ export class RuntimeProfileController {
       selection = parsePiThinkingSelection(stripAnsi(moved))
     }
     if (selection !== effort) throw new RuntimeProfileControlError('EFFORT_UNSUPPORTED')
-    await this.deps.sendKey(session.tmuxPane, 'Enter')
+    await this.deps.sendKey(session.agentId, 'Enter')
     // The ladder returns to the settings list; Escape closes it so the pane is idle again.
-    await this.deps.sendKey(session.tmuxPane, 'Escape')
+    await this.deps.sendKey(session.agentId, 'Escape')
     if (!await this.waitObservedProfile(session, target)) {
       throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
     }
@@ -556,7 +556,7 @@ export class RuntimeProfileController {
 
   /** Poll the pane INTO the manager until it reports the profile we asked for. */
   private async waitObservedProfile(session: RegisteredSession, target: RuntimeProfile): Promise<boolean> {
-    const confirmed = await this.waitPane(session.tmuxPane, (value) => {
+    const confirmed = await this.waitPane(session.agentId, (value) => {
       this.deps.manager.ingestPane(session, value, true)
       return this.deps.manager.selectedModel(session) === target.id
     }, COMMAND_CONFIRM_MS)
@@ -576,22 +576,22 @@ export class RuntimeProfileController {
     // "Is a picker open?" cannot be asked of a capture that carries scrollback — an EARLIER picker is
     // still up there, so the check passes before this one opens and the filter would be typed into the
     // composer and submitted as a message. Count the openings instead and wait for one more.
-    const before = countOpencodePickers(stripAnsi(await this.deps.capture(session.tmuxPane, 100) ?? ''))
-    if (!await this.deps.sendText(session.tmuxPane, '/models')) {
+    const before = countOpencodePickers(stripAnsi(await this.deps.capture(session.agentId, 100) ?? ''))
+    if (!await this.deps.sendText(session.agentId, '/models')) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     if (!await this.waitPane(
-      session.tmuxPane,
+      session.agentId,
       (v) => countOpencodePickers(stripAnsi(v)) > before,
       PICKER_OPEN_MS,
     )) {
       throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
     }
-    if (!await this.deps.sendLiteral(session.tmuxPane, entry.filter)) {
+    if (!await this.deps.sendLiteral(session.agentId, entry.filter)) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     const narrowed = await this.waitPane(
-      session.tmuxPane,
+      session.agentId,
       (v) => (parseOpencodePickerRows(stripAnsi(v)) ?? []).length === 1,
       PICKER_STEP_MS,
     )
@@ -599,7 +599,7 @@ export class RuntimeProfileController {
     if (rows.length !== 1 || !opencodeRowMatches(entry, rows[0])) {
       throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
     }
-    if (!await this.deps.sendKey(session.tmuxPane, 'Enter')) {
+    if (!await this.deps.sendKey(session.agentId, 'Enter')) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     if (!await this.waitObservedProfile(session, target)) {
@@ -625,7 +625,7 @@ export class RuntimeProfileController {
     if (!entry) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
 
     if (current?.model !== target.model) {
-      if (!await this.deps.sendText(session.tmuxPane, `/model ${entry.id}`)) {
+      if (!await this.deps.sendText(session.agentId, `/model ${entry.id}`)) {
         throw new RuntimeProfileControlError('TMUX_FAILED')
       }
       if (!await this.waitObservedModel(session, target)) {
@@ -640,8 +640,8 @@ export class RuntimeProfileController {
     // Success prints NOTHING and a refusal prints one line, so both have to be watched at once — and the
     // refusal has to be a NEW one. Matching the text anywhere in the capture reported failure in 25ms off
     // a refusal still sitting in the scrollback from an earlier model, while the level had in fact applied.
-    const refusalsBefore = countCommandcodeRefusals(stripAnsi(await this.deps.capture(session.tmuxPane, 100) ?? ''))
-    if (!await this.deps.sendText(session.tmuxPane, `/effort ${target.effort}`)) {
+    const refusalsBefore = countCommandcodeRefusals(stripAnsi(await this.deps.capture(session.agentId, 100) ?? ''))
+    if (!await this.deps.sendText(session.agentId, `/effort ${target.effort}`)) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     const deadline = Date.now() + COMMAND_CONFIRM_MS
@@ -649,7 +649,7 @@ export class RuntimeProfileController {
       // The level is recorded only in the CLI's global config, so confirming it means re-reading that.
       await this.deps.manager.ingestConfig(session, true).catch(() => false)
       if (this.deps.manager.selectedModel(session) === target.id) return
-      const capture = stripAnsi(await this.deps.capture(session.tmuxPane, 100) ?? '')
+      const capture = stripAnsi(await this.deps.capture(session.agentId, 100) ?? '')
       if (countCommandcodeRefusals(capture) > refusalsBefore) {
         throw new RuntimeProfileControlError('EFFORT_UNSUPPORTED')
       }
@@ -670,11 +670,11 @@ export class RuntimeProfileController {
   private async setHermes(session: RegisteredSession, target: RuntimeProfile): Promise<void> {
     const entry = this.deps.manager.hermesTarget(session.sessionId, target.id)
     if (!entry) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-    if (!await this.deps.sendText(session.tmuxPane, '/model')) {
+    if (!await this.deps.sendText(session.agentId, '/model')) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
     const opened = await this.waitPane(
-      session.tmuxPane,
+      session.agentId,
       (v) => !!parseHermesPickerPage(stripAnsi(v)),
       PICKER_OPEN_MS,
     )
@@ -684,7 +684,7 @@ export class RuntimeProfileController {
     if (entry.provider) {
       await this.walkHermesPage(session, (row) => hermesProviderMatches(row, entry.provider))
       if (!await this.waitPane(
-        session.tmuxPane,
+        session.agentId,
         (v) => (parseHermesPickerPage(stripAnsi(v))?.rows ?? []).some((row) => row === entry.id),
         PICKER_OPEN_MS,
       )) {
@@ -704,11 +704,11 @@ export class RuntimeProfileController {
     wanted: (row: string) => boolean,
   ): Promise<void> {
     for (let guard = 0; guard < HERMES_PAGE_MAX_STEPS; guard++) {
-      const capture = await this.deps.capture(session.tmuxPane, 100)
+      const capture = await this.deps.capture(session.agentId, 100)
       const page = capture ? parseHermesPickerPage(stripAnsi(capture)) : null
       if (!page || !page.selected) throw new RuntimeProfileControlError('TMUX_FAILED')
       if (wanted(page.selected)) {
-        if (!await this.deps.sendKey(session.tmuxPane, 'Enter')) {
+        if (!await this.deps.sendKey(session.agentId, 'Enter')) {
           throw new RuntimeProfileControlError('TMUX_FAILED')
         }
         return
@@ -716,10 +716,10 @@ export class RuntimeProfileController {
       const at = page.rows.indexOf(page.selected)
       const to = page.rows.findIndex(wanted)
       if (to < 0) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-      if (!await this.deps.sendKey(session.tmuxPane, to > at ? 'Down' : 'Up')) {
+      if (!await this.deps.sendKey(session.agentId, to > at ? 'Down' : 'Up')) {
         throw new RuntimeProfileControlError('TMUX_FAILED')
       }
-      const moved = await this.waitPane(session.tmuxPane, (v) => {
+      const moved = await this.waitPane(session.agentId, (v) => {
         const next = parseHermesPickerPage(stripAnsi(v))
         return !!next?.selected && next.selected !== page.selected
       }, PICKER_STEP_MS)
@@ -730,7 +730,7 @@ export class RuntimeProfileController {
 
   /** Like waitObservedProfile, but only the model half — used where effort is applied separately. */
   private async waitObservedModel(session: RegisteredSession, target: RuntimeProfile): Promise<boolean> {
-    const confirmed = await this.waitPane(session.tmuxPane, (value) => {
+    const confirmed = await this.waitPane(session.agentId, (value) => {
       this.deps.manager.ingestPane(session, value, true)
       return parseRuntimeProfile(this.deps.manager.selectedModel(session))?.model === target.model
     }, COMMAND_CONFIRM_MS)
@@ -738,23 +738,23 @@ export class RuntimeProfileController {
   }
 
   private async setCodex(session: RegisteredSession, target: RuntimeProfile): Promise<void> {
-    if (!await this.deps.sendText(session.tmuxPane, '/model')) throw new RuntimeProfileControlError('TMUX_FAILED')
+    if (!await this.deps.sendText(session.agentId, '/model')) throw new RuntimeProfileControlError('TMUX_FAILED')
     const isPicker = (value: string): boolean =>
       !!parseCodexModelMenuRows(value) || !!parseCodexEffortRows(value) || !!parseCodexModelRows(value)
-    let capture = await this.waitPane(session.tmuxPane, isPicker, 900)
+    let capture = await this.waitPane(session.agentId, isPicker, 900)
     if (!capture) {
-      await this.deps.sendKey(session.tmuxPane, 'Enter')
-      capture = await this.waitPane(session.tmuxPane, isPicker, PICKER_OPEN_MS)
+      await this.deps.sendKey(session.agentId, 'Enter')
+      capture = await this.waitPane(session.agentId, isPicker, PICKER_OPEN_MS)
     }
     if (!capture) throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
 
     let efforts = parseCodexEffortRows(capture)
     if (efforts) {
-      if (!await this.deps.sendKey(session.tmuxPane, 'Escape')) {
+      if (!await this.deps.sendKey(session.agentId, 'Escape')) {
         throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
       }
       capture = await this.waitPane(
-        session.tmuxPane,
+        session.agentId,
         (value) => !!parseCodexModelMenuRows(value) || !!parseCodexModelRows(value),
         PICKER_STEP_MS,
       )
@@ -767,9 +767,9 @@ export class RuntimeProfileController {
       const quickRow = menu.quickModels.get(target.model)
       const row = quickRow ?? menu.allModelsRow
       if (!row) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-      if (!await this.deps.sendKey(session.tmuxPane, row)) throw new RuntimeProfileControlError('TMUX_FAILED')
+      if (!await this.deps.sendKey(session.agentId, row)) throw new RuntimeProfileControlError('TMUX_FAILED')
       capture = await this.waitPane(
-        session.tmuxPane,
+        session.agentId,
         quickRow
           ? (value) => !!parseCodexEffortRows(value)
           : (value) => !!parseCodexModelRows(value),
@@ -783,20 +783,20 @@ export class RuntimeProfileController {
       const models = parseCodexModelRows(capture)
       const modelRow = models?.get(target.model)
       if (!modelRow) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-      if (!await this.deps.sendKey(session.tmuxPane, modelRow)) throw new RuntimeProfileControlError('TMUX_FAILED')
-      capture = await this.waitPane(session.tmuxPane, (value) => !!parseCodexEffortRows(value), PICKER_STEP_MS)
+      if (!await this.deps.sendKey(session.agentId, modelRow)) throw new RuntimeProfileControlError('TMUX_FAILED')
+      capture = await this.waitPane(session.agentId, (value) => !!parseCodexEffortRows(value), PICKER_STEP_MS)
       efforts = capture ? parseCodexEffortRows(capture) : null
     }
 
     if (!efforts) throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
     let effortRow = target.effort === 'auto' ? efforts.defaultRow : efforts.efforts.get(target.effort) ?? null
     if (!effortRow && (target.effort === 'max' || target.effort === 'ultra') && efforts.advancedRow) {
-      if (!await this.deps.sendKey(session.tmuxPane, efforts.advancedRow)) throw new RuntimeProfileControlError('TMUX_FAILED')
-      capture = await this.waitPane(session.tmuxPane, (value) => !!parseCodexAdvancedRows(value), PICKER_STEP_MS)
+      if (!await this.deps.sendKey(session.agentId, efforts.advancedRow)) throw new RuntimeProfileControlError('TMUX_FAILED')
+      capture = await this.waitPane(session.agentId, (value) => !!parseCodexAdvancedRows(value), PICKER_STEP_MS)
       effortRow = capture ? parseCodexAdvancedRows(capture)?.get(target.effort) ?? null : null
     }
     if (!effortRow) throw new RuntimeProfileControlError('EFFORT_UNSUPPORTED')
-    if (!await this.deps.sendKey(session.tmuxPane, effortRow)) throw new RuntimeProfileControlError('TMUX_FAILED')
+    if (!await this.deps.sendKey(session.agentId, effortRow)) throw new RuntimeProfileControlError('TMUX_FAILED')
     if (!await this.deps.manager.waitForProfile(session.sessionId, COMMAND_CONFIRM_MS)) {
       throw new RuntimeProfileControlError('CONFIRM_TIMEOUT')
     }
@@ -805,13 +805,13 @@ export class RuntimeProfileController {
   private async setCursor(session: RegisteredSession, target: RuntimeProfile): Promise<void> {
     const cursorTarget = this.deps.manager.cursorTarget(session.sessionId, target.id)
     if (!cursorTarget) throw new RuntimeProfileControlError('MODEL_UNAVAILABLE')
-    if (!await this.deps.sendText(session.tmuxPane, `/model ${cursorTarget.familyLabel}`)) {
+    if (!await this.deps.sendText(session.agentId, `/model ${cursorTarget.familyLabel}`)) {
       throw new RuntimeProfileControlError('TMUX_FAILED')
     }
-    let capture = await this.waitPane(session.tmuxPane, (value) => !!parseCursorModelPicker(value), 900)
+    let capture = await this.waitPane(session.agentId, (value) => !!parseCursorModelPicker(value), 900)
     if (!capture) {
-      if (!await this.deps.sendKey(session.tmuxPane, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
-      capture = await this.waitPane(session.tmuxPane, (value) => !!parseCursorModelPicker(value), PICKER_OPEN_MS)
+      if (!await this.deps.sendKey(session.agentId, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
+      capture = await this.waitPane(session.agentId, (value) => !!parseCursorModelPicker(value), PICKER_OPEN_MS)
     }
     const picker = capture ? parseCursorModelPicker(capture) : null
     if (!picker || picker.selectedFamily?.toLowerCase() !== cursorTarget.familyLabel.toLowerCase()) {
@@ -819,8 +819,8 @@ export class RuntimeProfileController {
     }
 
     if (cursorTarget.rawId !== 'auto') {
-      if (!await this.deps.sendKey(session.tmuxPane, 'Tab')) throw new RuntimeProfileControlError('TMUX_FAILED')
-      capture = await this.waitPane(session.tmuxPane, (value) => !!parseCursorParameterRows(value), PICKER_STEP_MS)
+      if (!await this.deps.sendKey(session.agentId, 'Tab')) throw new RuntimeProfileControlError('TMUX_FAILED')
+      capture = await this.waitPane(session.agentId, (value) => !!parseCursorParameterRows(value), PICKER_STEP_MS)
       if (!capture) throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
 
       if (cursorTarget.context) {
@@ -832,16 +832,16 @@ export class RuntimeProfileController {
       await this.setCursorParameter(session, 'thinking', 'true', cursorTarget.thinking ?? false)
       await this.setCursorParameter(session, 'fast', 'true', cursorTarget.fast ?? false)
 
-      if (!await this.deps.sendKey(session.tmuxPane, 'Escape')) throw new RuntimeProfileControlError('TMUX_FAILED')
-      if (!await this.waitPane(session.tmuxPane, (value) => !!parseCursorModelPicker(value), PICKER_STEP_MS)) {
+      if (!await this.deps.sendKey(session.agentId, 'Escape')) throw new RuntimeProfileControlError('TMUX_FAILED')
+      if (!await this.waitPane(session.agentId, (value) => !!parseCursorModelPicker(value), PICKER_STEP_MS)) {
         throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
       }
-      if (!await this.deps.sendKey(session.tmuxPane, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
+      if (!await this.deps.sendKey(session.agentId, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
     } else {
-      if (!await this.deps.sendKey(session.tmuxPane, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
+      if (!await this.deps.sendKey(session.agentId, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
     }
 
-    const confirmed = await this.waitPane(session.tmuxPane, (value) => {
+    const confirmed = await this.waitPane(session.agentId, (value) => {
       this.deps.manager.ingestPane(session, value, true)
       return this.deps.manager.selectedModel(session) === target.id
         || this.cursorFooterMatches(value, cursorTarget, target.effort)
@@ -858,7 +858,7 @@ export class RuntimeProfileController {
     value: string,
     selected: boolean,
   ): Promise<void> {
-    const capture = await this.deps.capture(session.tmuxPane, 100)
+    const capture = await this.deps.capture(session.agentId, 100)
     const rows = capture ? parseCursorParameterRows(capture) : null
     if (!rows) throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
     const target = rows.find((row) => row.kind === kind && row.value === value)
@@ -871,11 +871,11 @@ export class RuntimeProfileController {
     if (!current) throw new RuntimeProfileControlError('UNSUPPORTED_CLI_VERSION')
     const direction = target.index > current.index ? 'Down' : 'Up'
     for (let i = 0; i < Math.abs(target.index - current.index); i++) {
-      if (!await this.deps.sendKey(session.tmuxPane, direction)) throw new RuntimeProfileControlError('TMUX_FAILED')
+      if (!await this.deps.sendKey(session.agentId, direction)) throw new RuntimeProfileControlError('TMUX_FAILED')
       await sleep(120)
     }
-    if (!await this.deps.sendKey(session.tmuxPane, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
-    const updated = await this.waitPane(session.tmuxPane, (next) => {
+    if (!await this.deps.sendKey(session.agentId, 'Enter')) throw new RuntimeProfileControlError('TMUX_FAILED')
+    const updated = await this.waitPane(session.agentId, (next) => {
       const nextRows = parseCursorParameterRows(next)
       return nextRows?.some((row) => row.kind === kind && row.value === value && row.selected === selected) ?? false
     }, PICKER_STEP_MS)
@@ -907,10 +907,10 @@ export class RuntimeProfileController {
     })
   }
 
-  private async waitPane(pane: string, predicate: (capture: string) => boolean, timeoutMs: number): Promise<string | null> {
+  private async waitPane(terminalTarget: string, predicate: (capture: string) => boolean, timeoutMs: number): Promise<string | null> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      const capture = await this.deps.capture(pane, 100)
+      const capture = await this.deps.capture(terminalTarget, 100)
       if (capture && predicate(capture)) return capture
       await sleep(100)
     }

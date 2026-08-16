@@ -16,8 +16,11 @@ import {
 // the catalog minted, and the catalog is agent-scoped. `setProfile` is still addressed with either id.
 function session(engine: 'claude' | 'codex' | 'cursor'): RegisteredSession {
   return {
+    schemaVersion: 2,
+    active: true,
     sessionId: 's1', engine, launcherId: 'h1', agentId: 'h1', boundAt: 0, transcriptPath: '/tmp/s1.jsonl', projectDir: 'tmp', cwd: '/tmp',
     tmuxPane: '%1', source: null, title: null, model: null,
+    runtimes: [{ backend: 'tmux', paneId: '%1' }], primaryRuntimeKey: 'tmux\u0000%1',
     cliVersion: engine === 'codex' ? '0.144.5' : engine === 'cursor' ? '2026.07.20-8cc9c0b' : '2.1.212', processIdentity: null,
     registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
   }

@@ -23,7 +23,6 @@ import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
 import { listFileTree, readProjectFile } from './lib/files.js'
-import { sendToTmux } from './lib/tmux.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
@@ -246,14 +245,15 @@ export class BackendSocket {
   onCommanderPresenceChanged: ((connected: boolean) => void) | null = null
   /** Called when the web cancels a turn (C-c) — cli.ts stops that session's turn heartbeat. */
   onCancel: ((sessionId: string) => void) | null = null
-  /** Called when the web deletes an agent (`agent_delete`) — cli.ts kills the tmux pane (if any) and
-   *  forgets the session (removes it from the list + emits `agent_deleted`). Keeps recap + agent name. */
+  /** Called when the web deletes an agent (`agent_delete`) — cli.ts signals only the validated engine
+   *  process and forgets the session. Keeps recap + agent name. */
   onDeleteAgent: ((sessionId: string) => void) | null = null
-  /** Called when the web/device sends a chat `message` to inject into a session's tmux pane — cli.ts does
-   *  the bracketed-paste inject + a watcher-confirmed Enter retry so long/multi-line text always submits. */
+  /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
+  /** Best-effort terminal-native title sync after a user renames an agent. */
+  onAgentRename: ((session: RegisteredSession, name: string) => void) | null = null
   /** Called when a device answers an AskUserQuestion (`question_response`) — cli.ts drives the CLI's own
-   *  question dialog in that session's tmux pane (option digit / free text), since a remote machine has no
+   *  terminal dialog (option digit / free text), since a remote machine has no
    *  programmatic answer channel the way the hosted runtime’s brain does. */
   onQuestionAnswer: ((payload: { requestId?: string; sessionId?: string; agentId?: string; answers?: Record<string, string> }) => void) | null = null
   /** Called when this machine was deleted/revoked (a `machine_revoked` down-frame, or a 401/403 on the
@@ -652,7 +652,7 @@ export class BackendSocket {
         }
 
         case 'agents_list': {
-          const projects = await Promise.all(registry.list().map((s) => this.toProject(s)))
+          const projects = await Promise.all(registry.active().map((s) => this.toProject(s)))
           // Ordered by creation time, oldest → newest — a stable tab order that doesn't reshuffle as
           // sessions become active (createdAt = the session's registeredAt).
           projects.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
@@ -938,7 +938,7 @@ export class BackendSocket {
             reply(type, requestId, { error: 'MISSING_TRANSCRIPT' })
             return
           }
-          const projects = (await Promise.all(registry.list().map((s) => this.toProject(s)))).slice(0, 24) // cap the router prompt (mirror the hosted runtime path)
+          const projects = (await Promise.all(registry.active().map((s) => this.toProject(s)))).slice(0, 24) // cap the router prompt (mirror the hosted runtime path)
           const agents = projects.map((p) => {
             // Use the last 3 turns' recaps (not just 1) — a single turn can misrepresent what the agent is
             // actually working on; 3 gives the router a more stable picture.
@@ -977,7 +977,10 @@ export class BackendSocket {
               return
             }
           }
-          if (hasName) s = registry.rename(projectId, name) ?? s
+          if (hasName) {
+            s = registry.rename(projectId, name) ?? s
+            this.onAgentRename?.(s, name)
+          }
           const agent = await this.toProject(s)
           reply(type, requestId, { agent })
           if (hasName) {
@@ -993,12 +996,12 @@ export class BackendSocket {
           return
         }
 
-        // A project IS a tmux session; the web/device can't CREATE one remotely.
+        // A project is backed by an existing local terminal agent; the web/device cannot create one remotely.
         case 'agent_create':
           reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' })
           return
 
-        // Delete an agent: kill its tmux pane (if any) + drop it from the list. Idempotent — an already
+        // Delete an agent: signal its validated engine process and drop it from the list. Idempotent — an already
         // gone target still acks + re-emits agent_deleted so the web/device converge. E2EE-gated (the
         // frame arrived decrypted). Keeps the persisted recap + agent name for a later resume.
         case 'agent_delete': {
@@ -1048,7 +1051,7 @@ export class BackendSocket {
           // to the web (mirror-all) — no synthetic events here. Prefer cli.ts's handler (inject + Enter
           // retry); fall back to a direct inject when unwired (isolation/tests).
           if (this.onMessage) this.onMessage(target, content)
-          else { const s = registry.resolve(target); if (s?.tmuxPane) void sendToTmux(s.tmuxPane, content) }
+          else console.warn('[backend] message handler is not wired; terminal input was not dispatched')
           return
         }
 
@@ -1102,17 +1105,18 @@ export class BackendSocket {
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */
   private async toProject(s: RegisteredSession): Promise<{
     id: string; userId: string; name: string; status: string
-    createdAt: string; updatedAt: string; tmuxPane: string | null; engine: RegisteredSession['engine']; selectedModel: string | null
+    createdAt: string; updatedAt: string; tmuxPane: string | null; terminal: { primary: string; runtimes: RegisteredSession['runtimes'] }; engine: RegisteredSession['engine']; selectedModel: string | null
   }> {
     const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
     return {
       id: s.agentId,
       userId: '',
       name: projectDisplayName(s),
-      status: 'active',
+      status: s.active ? 'active' : 'offline',
       createdAt: new Date(s.registeredAt).toISOString(),
       updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
-      tmuxPane: s.tmuxPane,
+      tmuxPane: s.tmuxPane || null,
+      terminal: { primary: s.primaryRuntimeKey, runtimes: s.runtimes },
       engine: s.engine,
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
     }

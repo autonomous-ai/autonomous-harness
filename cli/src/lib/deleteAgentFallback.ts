@@ -77,9 +77,18 @@ export async function terminateDeletedAgent(
 
   for (let waited = 0; waited < killGraceMs; waited += POLL_MS) {
     await deps.sleep(POLL_MS)
-    if ((await check()).state === 'gone') return 'terminated'
+    const current = await check()
+    if (current.state === 'gone') return 'terminated'
   }
 
+  // Revalidate at the escalation boundary. A process-table timeout or PID replacement after SIGTERM is
+  // not permission to send SIGKILL to the saved number.
+  const beforeKill = await check()
+  if (beforeKill.state === 'gone') return 'terminated'
+  if (beforeKill.state === 'unknown') {
+    deps.log(`[delete] could not revalidate ${session.engine} before SIGKILL: ${beforeKill.reason}`)
+    return 'failed'
+  }
   deps.log(`[delete] ${session.engine} ignored SIGTERM — SIGKILL pid ${pid}`)
   if (!signal('SIGKILL')) return (await check()).state === 'gone' ? 'gone' : 'failed'
   await deps.sleep(POLL_MS)

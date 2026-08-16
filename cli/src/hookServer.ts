@@ -16,6 +16,9 @@ import { LOCAL_WEB_HTML } from './webui.js'
 import { sid } from './lib/log.js'
 import { VERSION } from './version.js'
 import { env } from './config/env.js'
+import { hookCredentialMatches, loadOrCreateHookCredential } from './lib/hookAuth.js'
+import type { HookTerminalHint } from './lib/terminalTypes.js'
+import { ENGINES, type AgentEngine } from './engines/types.js'
 
 export interface PairOutcome {
   status: number
@@ -29,7 +32,9 @@ export interface HookServerHandlers {
   /** Ensure a matching process-owned agent exists before a hook binds its mutable engine session. */
   resolveHookAgent?: (session: {
     engine: RegisteredSession['engine']
-    tmuxPane: string
+    tmuxPane?: string
+    runtimeHints: HookTerminalHint[]
+    callerPid?: number
   }) => Promise<RegisteredSession | null>
   /** A turn is now running (Command Code's PreToolUse — its only live turn-open signal). Idempotent:
    *  it fires once per tool call, and every call after the first in a turn must be a no-op. */
@@ -63,14 +68,132 @@ export interface HookServerHandlers {
   onStop?: () => void
 }
 
+const MAX_HOOK_BODY_BYTES = 256 * 1024
+const HOOK_BODY_FIELDS = new Set([
+  'engine', 'launcherId', 'sessionId', 'transcriptPath', 'cwd', 'source', 'tmuxPane', 'title', 'model',
+  'cliVersion', 'runtimeHints', 'callerPid', 'hookEvent', 'pluginVersion', 'reason', 'status', 'toolUseId',
+  'toolName', 'input',
+])
+
+function optionalBoundedString(value: unknown, max: number): boolean {
+  return value === undefined || value === null || (typeof value === 'string'
+    && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value))
+}
+
+function optionalBoundedJson(value: unknown, max: number): boolean {
+  if (value === undefined) return true
+  try { return Buffer.byteLength(JSON.stringify(value)) <= max } catch { return false }
+}
+
+function validHookBody(value: unknown): value is BoundHookBody {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const body = value as Record<string, unknown>
+  if (Object.keys(body).some((field) => !HOOK_BODY_FIELDS.has(field))) return false
+  if (body.engine !== undefined && (typeof body.engine !== 'string' || !ENGINES.includes(body.engine as AgentEngine))) return false
+  if (!optionalBoundedString(body.launcherId, 200)
+    || !optionalBoundedString(body.sessionId, 200)
+    || !optionalBoundedString(body.transcriptPath, 4_096)
+    || !optionalBoundedString(body.cwd, 4_096)
+    || !optionalBoundedString(body.source, 1_000)
+    || !optionalBoundedString(body.tmuxPane, 32)
+    || !optionalBoundedString(body.title, 1_000)
+    || !optionalBoundedString(body.model, 200)
+    || !optionalBoundedString(body.cliVersion, 200)
+    || !optionalBoundedString(body.hookEvent, 100)
+    || !optionalBoundedString(body.pluginVersion, 100)
+    || !optionalBoundedString(body.reason, 500)
+    || !optionalBoundedString(body.status, 100)
+    || !optionalBoundedString(body.toolUseId, 200)
+    || !optionalBoundedString(body.toolName, 200)
+    || !optionalBoundedJson(body.input, 128 * 1024)) return false
+  if (body.callerPid !== undefined
+    && (!Number.isSafeInteger(body.callerPid) || (body.callerPid as number) <= 0)) return false
+  if (body.runtimeHints !== undefined) {
+    if (!Array.isArray(body.runtimeHints) || body.runtimeHints.length > 4) return false
+    for (const value of body.runtimeHints) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+      const hint = value as Record<string, unknown>
+      if (hint.backend === 'tmux') {
+        if (Object.keys(hint).some((field) => field !== 'backend' && field !== 'paneId')
+          || typeof hint.paneId !== 'string' || !/^%\d+$/.test(hint.paneId)) return false
+      } else if (hint.backend === 'herdr') {
+        if (Object.keys(hint).some((field) => !['backend', 'paneId', 'sessionName', 'socketPath'].includes(field))
+          || !optionalBoundedString(hint.paneId, 200) || !hint.paneId
+          || !optionalBoundedString(hint.sessionName, 64)
+          || !optionalBoundedString(hint.socketPath, 4_096)) return false
+      } else return false
+    }
+  }
+  return true
+}
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
     let data = ''
+    let bytes = 0
+    let oversized = false
     req.setEncoding('utf8')
-    req.on('data', (c) => (data += c))
-    req.on('end', () => resolve(data))
-    req.on('error', () => resolve(data))
+    req.on('data', (chunk: string) => {
+      bytes += Buffer.byteLength(chunk)
+      if (bytes > MAX_HOOK_BODY_BYTES) { oversized = true; data = ''; return }
+      data += chunk
+    })
+    req.on('end', () => resolve(oversized ? '' : data))
+    req.on('error', () => resolve(''))
   })
+}
+
+function normalizedRuntimeHints(body: RegisterInput): HookTerminalHint[] {
+  const hints: HookTerminalHint[] = []
+  if (Array.isArray(body.runtimeHints) && body.runtimeHints.length <= 4) {
+    for (const hint of body.runtimeHints) {
+      if (hint?.backend === 'tmux' && /^%\d+$/.test(hint.paneId)) hints.push({ backend: 'tmux', paneId: hint.paneId })
+      if (hint?.backend === 'herdr'
+        && typeof hint.paneId === 'string' && hint.paneId.length <= 200
+        && (hint.sessionName === undefined || (typeof hint.sessionName === 'string' && hint.sessionName.length <= 64))
+        && (hint.socketPath === undefined || (typeof hint.socketPath === 'string' && hint.socketPath.length <= 4_096))) {
+        hints.push({
+          backend: 'herdr', paneId: hint.paneId,
+          ...(hint.sessionName ? { sessionName: hint.sessionName } : {}),
+          ...(hint.socketPath ? { socketPath: hint.socketPath } : {}),
+        })
+      }
+    }
+  }
+  if (body.tmuxPane && /^%\d+$/.test(body.tmuxPane)
+    && !hints.some((hint) => hint.backend === 'tmux' && hint.paneId === body.tmuxPane)) {
+    hints.push({ backend: 'tmux', paneId: body.tmuxPane })
+  }
+  return hints
+}
+
+type BoundHookBody = RegisterInput & {
+  sessionId?: string
+  reason?: string
+  status?: string
+  toolUseId?: string
+  toolName?: string
+  input?: unknown
+}
+
+async function verifiedBoundMutation(
+  body: BoundHookBody,
+  handlers: HookServerHandlers,
+): Promise<RegisteredSession | null> {
+  if (!body.sessionId || !body.engine) return null
+  const runtimeHints = normalizedRuntimeHints(body)
+  if (!runtimeHints.length) return null
+  const processAgent = handlers.resolveHookAgent
+    ? await handlers.resolveHookAgent({
+      engine: body.engine,
+      tmuxPane: body.tmuxPane,
+      runtimeHints,
+      callerPid: Number.isSafeInteger(body.callerPid) && body.callerPid! > 0 ? body.callerPid : undefined,
+    })
+    : body.tmuxPane ? registry.byPaneEngine(body.tmuxPane, body.engine) ?? null : null
+  return processAgent?.engine === body.engine && processAgent.sessionId === body.sessionId
+    ? processAgent
+    : null
 }
 
 /**
@@ -84,6 +207,18 @@ const HERMES_KIND_TRIES = 6
 const HERMES_KIND_WAIT_MS = 120
 const TRANSCRIPT_WAIT_TRIES = 20
 
+function registeredHookProcess(body: RegisterInput, engine: AgentEngine): RegisteredSession | undefined {
+  if (body.processIdentity) {
+    const processAgent = registry.byProcess(engine, body.processIdentity)
+    if (processAgent) return processAgent
+  }
+  for (const runtime of body.runtimes ?? []) {
+    const processAgent = registry.byRuntimeEngine(runtime, engine)
+    if (processAgent) return processAgent
+  }
+  return body.tmuxPane ? registry.byPaneEngine(body.tmuxPane, engine) : undefined
+}
+
 /**
  * Register once the announced transcript exists.
  *
@@ -95,7 +230,7 @@ async function awaitTranscript(body: RegisterInput, handlers: HookServerHandlers
   for (let i = 0; i < TRANSCRIPT_WAIT_TRIES; i++) {
     await new Promise((resolve) => { const t = setTimeout(resolve, TRANSCRIPT_WAIT_MS); t.unref?.() })
     const engine = body.engine ?? 'claude'
-    if (!body.tmuxPane || !registry.byPaneEngine(body.tmuxPane, engine)) return
+    if (!registeredHookProcess(body, engine)) return
     if (isRecentlyDeleted(body.sessionId)) return
     if (!body.transcriptPath || !existsSync(body.transcriptPath)) continue
     const result = registry.register(body)
@@ -117,7 +252,7 @@ async function awaitHermesKind(body: RegisterInput, handlers: HookServerHandlers
   const dbPath = join(env.HERMES_HOME, 'state.db')
   for (let i = 0; i < HERMES_KIND_TRIES; i++) {
     if (i > 0) await new Promise((resolve) => { const t = setTimeout(resolve, HERMES_KIND_WAIT_MS); t.unref?.() })
-    if (!body.tmuxPane || !registry.byPaneEngine(body.tmuxPane, 'hermes')) return
+    if (!registeredHookProcess(body, 'hermes')) return
     if (isRecentlyDeleted(body.sessionId)) return
     const source = await hermesSessionSource(dbPath, body.sessionId ?? '')
     if (source === null) continue
@@ -137,6 +272,7 @@ export function startHookServer(
   port: number,
   handlers: HookServerHandlers,
 ): Promise<{ server: http.Server; port: number }> {
+  const hookCredential = loadOrCreateHookCredential(env.ADAPTER_DATA_DIR)
   const server = http.createServer((req, res) => {
     void (async () => {
       const url = (req.url ?? '').split('?')[0]
@@ -149,6 +285,7 @@ export function startHookServer(
       // (and the CLI, which sends it too) can trigger actions. A local process could still call it —
       // same trust level as the CLI, which is acceptable on loopback.
       const localOk = req.headers['x-adapter-local'] === '1'
+      const hookOk = hookCredentialMatches(hookCredential, req.headers['x-harness-hook-token'])
 
       if (req.method === 'GET' && url === '/api/health') {
         json(200, { ok: true, version: VERSION }); return
@@ -172,8 +309,13 @@ export function startHookServer(
       // SessionStart AND UserPromptSubmit both POST here (the catch hook re-registers so a session
       // whose SessionStart the adapter missed still shows up on its first prompt).
       if (req.method === 'POST' && url === '/api/hook/session-start') {
+        if (!hookOk) { json(401, { error: 'UNAUTHORIZED' }); return }
         let body: RegisterInput
-        try { body = JSON.parse(await readBody(req)) as RegisterInput } catch { json(400, { error: 'bad json' }); return }
+        try {
+          const parsed = JSON.parse(await readBody(req)) as unknown
+          if (!validHookBody(parsed)) { json(400, { error: 'invalid hook body' }); return }
+          body = parsed
+        } catch { json(400, { error: 'bad json' }); return }
         // Every rejection below says WHY, out loud. They used to be silent, and a hook that arrives and
         // is dropped looks exactly like a hook that never fired — which is precisely the confusion behind
         // "the agent is running in my terminal but the list does not show it".
@@ -181,7 +323,8 @@ export function startHookServer(
           console.log(`[hooks] ${sid(body.sessionId ?? '?')} ${body.hookEvent ?? 'session-start'} ignored · ${reason}`)
           json(200, { ignored: true, reason })
         }
-        if (!body.tmuxPane) { ignore('not_in_tmux'); return }
+        const runtimeHints = normalizedRuntimeHints(body)
+        if (!runtimeHints.length) { ignore('not_in_terminal'); return }
         // A plugin/extension is loaded ONCE per engine process, so a pane opened before an update keeps
         // running the old copy — silently, and for hours. Measured on amp: a pane started at 11:49 was
         // still writing transcripts with no tool calls long after the fix reached disk. The engines that
@@ -195,11 +338,18 @@ export function startHookServer(
         }
         const engine = body.engine ?? 'claude'
         const processAgent = handlers.resolveHookAgent
-          ? await handlers.resolveHookAgent({ engine, tmuxPane: body.tmuxPane })
-          : registry.byPaneEngine(body.tmuxPane, engine) ?? null
+          ? await handlers.resolveHookAgent({
+            engine,
+            tmuxPane: body.tmuxPane,
+            runtimeHints,
+            callerPid: Number.isSafeInteger(body.callerPid) && body.callerPid! > 0 ? body.callerPid : undefined,
+          })
+          : body.tmuxPane ? registry.byPaneEngine(body.tmuxPane, engine) ?? null : null
         if (!processAgent || processAgent.engine !== engine) { ignore('no_matching_engine_process'); return }
         // The process scanner is authoritative. Never accept a hook's legacy launcher id or a stale PID.
         body.processIdentity = processAgent.processIdentity ?? undefined
+        body.runtimes = processAgent.runtimes
+        body.primaryRuntimeKey = processAgent.primaryRuntimeKey
         // Deleting an agent no longer kills its pane, so the engine lives on for a moment and its catch
         // hook still fires — and the exact process may remain alive during SIGTERM grace. Without
         // this the tile the user just deleted re-registers itself and comes back.
@@ -241,8 +391,14 @@ export function startHookServer(
       }
 
       if (req.method === 'POST' && url === '/api/hook/session-end') {
-        let body: { sessionId?: string; reason?: string }
-        try { body = JSON.parse(await readBody(req)) as { sessionId?: string; reason?: string } } catch { json(400, { error: 'bad json' }); return }
+        if (!hookOk) { json(401, { error: 'UNAUTHORIZED' }); return }
+        let body: BoundHookBody
+        try {
+          const parsed = JSON.parse(await readBody(req)) as unknown
+          if (!validHookBody(parsed)) { json(400, { error: 'invalid hook body' }); return }
+          body = parsed
+        } catch { json(400, { error: 'bad json' }); return }
+        if (!await verifiedBoundMutation(body, handlers)) { json(403, { error: 'UNBOUND_HOOK' }); return }
         if (body.sessionId) {
           console.log(`[hooks] ${sid(body.sessionId)} session-end${body.reason ? ` · reason=${body.reason}` : ''}`)
           handlers.onSessionEnd(body.sessionId, body.reason)
@@ -252,8 +408,14 @@ export function startHookServer(
       }
 
       if (req.method === 'POST' && url === '/api/hook/tool-start') {
-        let body: { sessionId?: string; toolUseId?: string; toolName?: string; input?: unknown }
-        try { body = JSON.parse(await readBody(req)) as typeof body } catch { json(400, { error: 'bad json' }); return }
+        if (!hookOk) { json(401, { error: 'UNAUTHORIZED' }); return }
+        let body: BoundHookBody
+        try {
+          const parsed = JSON.parse(await readBody(req)) as unknown
+          if (!validHookBody(parsed)) { json(400, { error: 'invalid hook body' }); return }
+          body = parsed
+        } catch { json(400, { error: 'bad json' }); return }
+        if (!await verifiedBoundMutation(body, handlers)) { json(403, { error: 'UNBOUND_HOOK' }); return }
         if (body.sessionId && body.toolUseId && body.toolName) {
           console.log(`[hooks] ${sid(body.sessionId)} tool-start · tool=${body.toolName}`)
           handlers.onToolStart?.({
@@ -268,16 +430,28 @@ export function startHookServer(
       }
 
       if (req.method === 'POST' && url === '/api/hook/turn-start') {
-        let body: { sessionId?: string }
-        try { body = JSON.parse(await readBody(req)) as typeof body } catch { json(400, { error: 'bad json' }); return }
+        if (!hookOk) { json(401, { error: 'UNAUTHORIZED' }); return }
+        let body: BoundHookBody
+        try {
+          const parsed = JSON.parse(await readBody(req)) as unknown
+          if (!validHookBody(parsed)) { json(400, { error: 'invalid hook body' }); return }
+          body = parsed
+        } catch { json(400, { error: 'bad json' }); return }
+        if (!await verifiedBoundMutation(body, handlers)) { json(403, { error: 'UNBOUND_HOOK' }); return }
         if (body.sessionId) handlers.onTurnStart?.({ sessionId: body.sessionId })
         json(200, { ok: true })
         return
       }
 
       if (req.method === 'POST' && url === '/api/hook/turn-stop') {
-        let body: { sessionId?: string; status?: string; transcriptPath?: string }
-        try { body = JSON.parse(await readBody(req)) as typeof body } catch { json(400, { error: 'bad json' }); return }
+        if (!hookOk) { json(401, { error: 'UNAUTHORIZED' }); return }
+        let body: BoundHookBody
+        try {
+          const parsed = JSON.parse(await readBody(req)) as unknown
+          if (!validHookBody(parsed)) { json(400, { error: 'invalid hook body' }); return }
+          body = parsed
+        } catch { json(400, { error: 'bad json' }); return }
+        if (!await verifiedBoundMutation(body, handlers)) { json(403, { error: 'UNBOUND_HOOK' }); return }
         if (body.sessionId) {
           console.log(`[hooks] ${sid(body.sessionId)} turn-stop${body.status ? ` · status=${body.status}` : ''}`)
           handlers.onTurnStop?.({

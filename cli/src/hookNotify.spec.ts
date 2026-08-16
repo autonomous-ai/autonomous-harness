@@ -1,17 +1,25 @@
-import { spawn } from 'child_process'
+import { execFileSync, spawn, spawnSync } from 'child_process'
 import { createServer } from 'http'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { createServer as createNetServer } from 'net'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'fs'
+import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 const HOOK = fileURLToPath(new URL('../hook/notify.mjs', import.meta.url))
 const servers: ReturnType<typeof createServer>[] = []
+const netServers: ReturnType<typeof createNetServer>[] = []
 const tmpDirs: string[] = []
+
+function writeLegacyStateFile(path: string, value: string): void {
+  writeFileSync(path, value, { mode: 0o644 })
+  chmodSync(path, 0o644)
+}
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
+  await Promise.all(netServers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
@@ -53,7 +61,7 @@ function runHook(opts: RunHookOpts): Promise<string> {
       const executable = opts.processExecutable ?? (opts.processEngine === 'cursor' ? 'agent' : opts.processEngine)
       const processArgs = opts.processArgs ?? executable
       writeFileSync(join(binDir, 'tmux'), '#!/bin/sh\necho 7000\n', { mode: 0o755 })
-      writeFileSync(join(binDir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '7000 1 zsh Mon Aug 10 10:00:00 2026 -zsh' '7001 7000 ${executable} Mon Aug 10 10:00:01 2026 ${processArgs}'\n`, { mode: 0o755 })
+      writeFileSync(join(binDir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '7000 1 zsh Mon Aug 10 10:00:00 2026 -zsh' '7001 7000 ${executable} Mon Aug 10 10:00:01 2026 ${processArgs}' '${process.pid} 7001 node Mon Aug 10 10:00:02 2026 hook-parent'\n`, { mode: 0o755 })
       if (opts.processEngine === 'cursor') {
         const target = join(binDir, 'cursor-agent-target')
         writeFileSync(target, '#!/bin/sh\n', { mode: 0o755 })
@@ -80,6 +88,11 @@ function runHook(opts: RunHookOpts): Promise<string> {
     if (opts.hermesHome) args.push('--hermes-home', opts.hermesHome)
     if (opts.grokHome) args.push('--grok-home', opts.grokHome)
     if (opts.devinHome) args.push('--devin-home', opts.devinHome)
+    const hookDataDir = opts.dataDir || process.env.ADAPTER_DATA_DIR
+    if (hookDataDir) {
+      mkdirSync(hookDataDir, { recursive: true, mode: 0o700 })
+      try { writeFileSync(join(hookDataDir, 'hook-credential'), `${'a'.repeat(43)}\n`, { mode: 0o600, flag: 'wx' }) } catch { /* already exists */ }
+    }
     const child = spawn(process.execPath, args, {
       env,
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -115,7 +128,42 @@ async function collect(): Promise<{ port: number; requests: Array<{ url: string;
   return { port: address.port, requests }
 }
 
-describe('hook notify tmux scope', () => {
+describe('hook notify terminal scope', () => {
+  it('refuses a symlinked hook credential instead of authenticating with its target', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-credential-link-'))
+    tmpDirs.push(dir)
+    const dataDir = join(dir, 'data')
+    const target = join(dir, 'credential-target')
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(target, `${'a'.repeat(43)}\n`, { mode: 0o600 })
+    symlinkSync(target, join(dataDir, 'hook-credential'))
+    const { port, requests } = await collect()
+
+    await runHook({ port, tmuxPane: '%42', dataDir })
+
+    expect(requests).toEqual([])
+  })
+
+  it('rejects a hook credential FIFO without blocking', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-credential-fifo-'))
+    tmpDirs.push(dir)
+    const dataDir = join(dir, 'data')
+    mkdirSync(dataDir, { mode: 0o700 })
+    const credential = join(dataDir, 'hook-credential')
+    execFileSync('mkfifo', [credential])
+
+    const result = spawnSync(process.execPath, [HOOK, '--port', '9', '--data-dir', dataDir], {
+      encoding: 'utf8',
+      env: { ...process.env, TMUX_PANE: '%42' },
+      input: JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'fifo', reason: 'logout' }),
+      timeout: 1_500,
+    })
+
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(0)
+    expect(statSync(credential).isFIFO()).toBe(true)
+  })
+
   it('forwards Cursor Task/stop hooks, journals the launcher, and always prints JSON', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-cursor-'))
     tmpDirs.push(dir)
@@ -158,6 +206,10 @@ describe('hook notify tmux scope', () => {
         toolUseId: 'call-1',
         toolName: 'Task',
         input: { description: 'Inspect', prompt: 'Read code', model: 'inherit' },
+        engine: 'cursor',
+        tmuxPane: '%21',
+        runtimeHints: [{ backend: 'tmux', paneId: '%21' }],
+        callerPid: expect.any(Number),
       },
     }])
     expect(JSON.parse(readFileSync(join(dataDir, 'cursor-pending-tasks.json'), 'utf8'))).toMatchObject([{
@@ -295,7 +347,14 @@ describe('hook notify tmux scope', () => {
     await runHook({ port: address.port, tmuxPane: '%42' })
     expect(requests).toEqual([{
       url: '/api/hook/session-end',
-      body: { sessionId: 'session-test', reason: 'logout' },
+      body: {
+        sessionId: 'session-test',
+        reason: 'logout',
+        engine: 'claude',
+        tmuxPane: '%42',
+        runtimeHints: [{ backend: 'tmux', paneId: '%42' }],
+        callerPid: expect.any(Number),
+      },
     }])
   })
 
@@ -306,6 +365,9 @@ describe('hook notify tmux scope', () => {
     const dataDir = join(dir, 'data')
     const transcriptPath = join(claudeProjectsDir, 'demo', 'session-1.jsonl')
     mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
+    mkdirSync(dataDir, { recursive: true })
+    chmodSync(dataDir, 0o755)
+    writeLegacyStateFile(join(dataDir, 'registry.json'), '[]')
     writeFileSync(transcriptPath, '{}\n')
 
     await runHook({
@@ -337,6 +399,75 @@ describe('hook notify tmux scope', () => {
       model: 'sonnet',
       cliVersion: '1.0.0',
     }])
+    expect(statSync(dataDir).mode & 0o777).toBe(0o700)
+    expect(statSync(join(dataDir, 'registry.json')).mode & 0o777).toBe(0o600)
+    expect(statSync(join(dataDir, 'registry-boot')).mode & 0o777).toBe(0o600)
+  })
+
+  it('leaves a corrupt offline registry byte-identical instead of replacing it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-offline-corrupt-'))
+    tmpDirs.push(dir)
+    const claudeProjectsDir = join(dir, 'claude-projects')
+    const dataDir = join(dir, 'data')
+    const transcriptPath = join(claudeProjectsDir, 'demo', 'session-corrupt.jsonl')
+    const registryFile = join(dataDir, 'registry.json')
+    const corrupt = '[{"schemaVersion":2'
+    mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(transcriptPath, '{}\n')
+    writeFileSync(registryFile, corrupt, { mode: 0o600 })
+
+    await runHook({
+      port: 9,
+      tmuxPane: '%70',
+      processEngine: 'claude',
+      dataDir,
+      claudeProjectsDir,
+      input: {
+        hook_event_name: 'SessionStart',
+        session_id: 'session-corrupt',
+        transcript_path: transcriptPath,
+        cwd: '/tmp/demo',
+      },
+    })
+
+    expect(readFileSync(registryFile, 'utf8')).toBe(corrupt)
+  })
+
+  it('leaves malformed current, future, and legacy rows byte-identical while offline', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-offline-invalid-v2-'))
+    tmpDirs.push(dir)
+    const claudeProjectsDir = join(dir, 'claude-projects')
+    const dataDir = join(dir, 'data')
+    const transcriptPath = join(claudeProjectsDir, 'demo', 'session-invalid-v2.jsonl')
+    const registryFile = join(dataDir, 'registry.json')
+    mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(transcriptPath, '{}\n')
+
+    for (const bytes of [
+      JSON.stringify([{ schemaVersion: 2, agentId: 'damaged' }]),
+      JSON.stringify([{ schemaVersion: '3', agentId: 'future' }]),
+      JSON.stringify([{}]),
+      JSON.stringify([7]),
+      JSON.stringify([{ agentId: 'legacy-agent' }]),
+    ]) {
+      writeFileSync(registryFile, bytes, { mode: 0o600 })
+      await runHook({
+        port: 9,
+        tmuxPane: '%71',
+        processEngine: 'claude',
+        dataDir,
+        claudeProjectsDir,
+        input: {
+          hook_event_name: 'SessionStart',
+          session_id: 'session-invalid-v2',
+          transcript_path: transcriptPath,
+          cwd: '/tmp/demo',
+        },
+      })
+      expect(readFileSync(registryFile, 'utf8')).toBe(bytes)
+    }
   })
 
   it('falls back with Codex engine under CODEX_HOME/sessions', async () => {
@@ -367,6 +498,141 @@ describe('hook notify tmux scope', () => {
 
     const registry = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))
     expect(registry).toMatchObject([{ sessionId: 'codex-session', engine: 'codex', tmuxPane: '%8' }])
+  })
+
+  it('uses only a configured, validated Herdr endpoint for daemon-down registration', async () => {
+    const dir = mkdtempSync(join(homedir(), '.adapter-hook-herdr-'))
+    tmpDirs.push(dir)
+    chmodSync(dir, 0o775)
+    const dataDir = join(dir, 'data')
+    const claudeProjectsDir = join(dir, 'claude-projects')
+    const transcriptPath = join(claudeProjectsDir, 'demo', 'herdr-session.jsonl')
+    const socketPath = join(dir, 'herdr.sock')
+    mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
+    mkdirSync(dataDir, { recursive: true })
+    chmodSync(dataDir, 0o755)
+    writeFileSync(transcriptPath, '{}\n')
+    const server = createNetServer((socket) => {
+      let raw = ''
+      socket.on('data', (chunk) => { raw += chunk.toString('utf8') })
+      socket.on('end', () => {
+        const request = JSON.parse(raw.trim()) as { id: string; method: string }
+        const result = request.method === 'ping'
+          ? { type: 'pong', version: '0.8.0', protocol: 19 }
+          : request.method === 'pane.get'
+            ? { type: 'pane_info', pane: { pane_id: 'w1:p1', terminal_id: 'terminal-1' } }
+            : { type: 'pane_process_info', process_info: { pane_id: 'w1:p1', shell_pid: 7000 } }
+        socket.end(`${JSON.stringify({ id: request.id, result })}\n`)
+      })
+    })
+    netServers.push(server)
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve))
+    chmodSync(socketPath, 0o600)
+    const socket = statSync(socketPath)
+    writeFileSync(join(dataDir, 'terminal-config.json'), `${JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      backends: ['herdr'],
+      herdrEndpoints: [{
+        sessionName: 'test', endpointId: 'endpoint-test', socketPath,
+        generation: { device: socket.dev, inode: socket.ino },
+      }],
+    })}\n`, { mode: 0o600 })
+    chmodSync(join(dataDir, 'terminal-config.json'), 0o644)
+
+    await runHook({
+      port: 9,
+      processEngine: 'claude',
+      dataDir,
+      claudeProjectsDir,
+      env: { HERDR_PANE_ID: 'w1:p1', HERDR_SESSION: 'test', HERDR_SOCKET_PATH: socketPath },
+      input: {
+        hook_event_name: 'SessionStart', session_id: 'herdr-session', transcript_path: transcriptPath, cwd: '/tmp/demo',
+      },
+    })
+
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))).toMatchObject([{
+      schemaVersion: 2,
+      active: true,
+      sessionId: 'herdr-session',
+      primaryRuntimeKey: 'herdr\u0000endpoint-test\u0000w1:p1',
+      runtimes: [{
+        backend: 'herdr', endpointId: 'endpoint-test', sessionName: 'test', terminalId: 'terminal-1', paneId: 'w1:p1',
+      }],
+    }])
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))[0]).not.toHaveProperty('tmuxPane')
+    expect(statSync(join(dataDir, 'terminal-config.json')).mode & 0o777).toBe(0o600)
+  })
+
+  it('rejects a world-writable Herdr endpoint parent during daemon-down registration', async () => {
+    const dir = mkdtempSync(join(homedir(), '.adapter-hook-herdr-world-writable-'))
+    tmpDirs.push(dir)
+    const dataDir = join(dir, 'data')
+    const claudeProjectsDir = join(dir, 'claude-projects')
+    const transcriptPath = join(claudeProjectsDir, 'demo', 'herdr-session.jsonl')
+    const socketPath = join(dir, 'herdr.sock')
+    mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
+    mkdirSync(dataDir, { mode: 0o700 })
+    writeFileSync(transcriptPath, '{}\n')
+    let requestCount = 0
+    const server = createNetServer((socket) => {
+      requestCount++
+      socket.end()
+    })
+    netServers.push(server)
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve))
+    chmodSync(socketPath, 0o600)
+    const socket = statSync(socketPath)
+    writeFileSync(join(dataDir, 'terminal-config.json'), `${JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      backends: ['herdr'],
+      herdrEndpoints: [{
+        sessionName: 'test', endpointId: 'endpoint-test', socketPath,
+        generation: { device: socket.dev, inode: socket.ino },
+      }],
+    })}\n`, { mode: 0o600 })
+    chmodSync(dir, 0o777)
+
+    await runHook({
+      port: 9,
+      processEngine: 'claude',
+      dataDir,
+      claudeProjectsDir,
+      env: { HERDR_PANE_ID: 'w1:p1', HERDR_SESSION: 'test', HERDR_SOCKET_PATH: socketPath },
+      input: {
+        hook_event_name: 'SessionStart', session_id: 'herdr-session', transcript_path: transcriptPath, cwd: '/tmp/demo',
+      },
+    })
+
+    expect(requestCount).toBe(0)
+    expect(() => readFileSync(join(dataDir, 'registry.json'), 'utf8')).toThrow()
+  })
+
+  it('rejects a group-writable Herdr config without changing or trusting it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'adapter-hook-herdr-unsafe-config-'))
+    tmpDirs.push(dir)
+    const dataDir = join(dir, 'data')
+    const config = join(dataDir, 'terminal-config.json')
+    mkdirSync(dataDir, { mode: 0o700 })
+    writeFileSync(config, `${JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      backends: ['herdr'],
+      herdrEndpoints: [],
+    })}\n`, { mode: 0o600 })
+    chmodSync(config, 0o660)
+
+    await runHook({
+      port: 9,
+      processEngine: 'claude',
+      dataDir,
+      env: { HERDR_PANE_ID: 'w1:p1', HERDR_SESSION: 'test', HERDR_SOCKET_PATH: join(dir, 'herdr.sock') },
+      input: { hook_event_name: 'SessionStart', session_id: 'unsafe-config' },
+    })
+
+    expect(statSync(config).mode & 0o777).toBe(0o660)
+    expect(() => readFileSync(join(dataDir, 'registry.json'), 'utf8')).toThrow()
   })
 
   it('does not treat engine names in unrelated process arguments as an offline agent', async () => {
@@ -550,9 +816,10 @@ describe('hook notify tmux scope', () => {
     const transcriptPath = join(claudeProjectsDir, 'demo', 'fresh.jsonl')
     mkdirSync(join(claudeProjectsDir, 'demo'), { recursive: true })
     mkdirSync(dataDir, { recursive: true })
+    chmodSync(dataDir, 0o755)
     writeFileSync(transcriptPath, '{}\n')
-    writeFileSync(join(dataDir, 'registry-boot'), '1')
-    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify([{ sessionId: 'stale', tmuxPane: '%1' }]))
+    writeLegacyStateFile(join(dataDir, 'registry-boot'), '1')
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([{ sessionId: 'stale', tmuxPane: '%1' }]))
 
     await runHook({
       port: 9,
@@ -603,7 +870,15 @@ describe('hook notify Grok lifecycle', () => {
     await runHook({ port, tmuxPane: '%44', engine: 'grok', grokHome, input: { hookEventName: 'stop_failure', sessionId, cwd } })
     expect(requests).toEqual([{
       url: '/api/hook/turn-stop',
-      body: { sessionId, transcriptPath: transcript, status: 'error' },
+      body: {
+        sessionId,
+        transcriptPath: transcript,
+        status: 'error',
+        engine: 'grok',
+        tmuxPane: '%44',
+        runtimeHints: [{ backend: 'tmux', paneId: '%44' }],
+        callerPid: expect.any(Number),
+      },
     }])
   })
 

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
+import { parseHerdrSessions, parseTerminalBackends } from './terminalConfig.js'
 
 // Packaged files (cli.js/notify.mjs) live in ~/.harness/cli; mutable state in ~/.harness/cli/data.
 // `~/.harness` is the PRODUCT data root and does not move — see the naming discipline in CLAUDE.md.
@@ -179,6 +180,23 @@ const envSchema = z.object({
   ANALYTICS_FLUSH_INTERVAL_MS: z.string().default('60000').transform(Number),
   // Set to 'true' to skip auto-installing lifecycle hooks for every supported engine.
   DISABLE_HOOK_INSTALL: z.string().default('false').transform((v) => v === 'true'),
+  // Additive terminal capability. Order controls deterministic primary-route tie breaking.
+  TERMINAL_BACKENDS: z.string().default('tmux').transform((value, context) => {
+    try { return parseTerminalBackends(value) } catch (error) {
+      context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'invalid terminal backends' })
+      return z.NEVER
+    }
+  }),
+  // Configured Herdr named sessions only. Hook-supplied socket paths never expand this allowlist.
+  HERDR_SESSIONS: z.string().default('default').transform((value, context) => {
+    try { return parseHerdrSessions(value) } catch (error) {
+      context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'invalid Herdr sessions' })
+      return z.NEVER
+    }
+  }),
+  HERDR_BIN: z.string().default('herdr'),
+  // Neutral discovery interval. The legacy tmux name remains a one-release fallback.
+  TERMINAL_RECONCILE_INTERVAL_MS: z.string().optional().transform((value) => value === undefined ? undefined : Number(value)),
   // How often (ms) the reaper checks tmux panes and drops dead sessions.
   TMUX_REAP_INTERVAL_MS: z.string().default('5000').transform(Number),
   // Path to the `claude` CLI for the device turn-recap one-shot (else resolved from PATH).
@@ -268,6 +286,11 @@ function validateEnv(): Env {
   // local web (:3000) instead of prod — otherwise the printed link points at prod, which can't see it.
   if (!process.env.WEB_URL && /^wss?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(data.BACKEND_WS_URL)) {
     data.WEB_URL = 'http://localhost:3000'
+  }
+  const reconcileMs = data.TERMINAL_RECONCILE_INTERVAL_MS ?? data.TMUX_REAP_INTERVAL_MS
+  if (!Number.isFinite(reconcileMs) || reconcileMs < 5_000) {
+    console.error('Invalid environment variables: TERMINAL_RECONCILE_INTERVAL_MS must be at least 5000')
+    process.exit(1)
   }
   return data
 }

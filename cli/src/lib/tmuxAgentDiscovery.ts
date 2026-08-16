@@ -64,7 +64,7 @@ function execText(command: string, args: string[], timeout: number): Promise<{ o
   })
 }
 
-function parsePanes(stdout: string): TmuxPaneSnapshot[] {
+export function parsePanes(stdout: string): TmuxPaneSnapshot[] {
   const panes: TmuxPaneSnapshot[] = []
   for (const line of stdout.split('\n')) {
     const [tmuxPane, pidText, ...cwdParts] = line.split('\t')
@@ -73,6 +73,16 @@ function parsePanes(stdout: string): TmuxPaneSnapshot[] {
     panes.push({ tmuxPane, rootPid, cwd: cwdParts.join('\t') })
   }
   return panes
+}
+
+export type TmuxPaneInventory =
+  | { ok: true; panes: TmuxPaneSnapshot[] }
+  | { ok: false; error: string }
+
+/** One bounded tmux inventory read, shared by discovery and the neutral backend adapter. */
+export async function listTmuxPanes(): Promise<TmuxPaneInventory> {
+  const result = await execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_path}'], 2_000)
+  return result.ok ? { ok: true, panes: parsePanes(result.stdout) } : result
 }
 
 function childrenByParent(rows: readonly ProcessRow[]): Map<number, ProcessRow[]> {
@@ -188,7 +198,7 @@ export async function probeTmuxAgents(
   hints: ReadonlyMap<string, AgentEngine> = new Map(),
 ): Promise<TmuxAgentProbe> {
   const [tmux, ps] = await Promise.all([
-    execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_path}'], 2_000),
+    listTmuxPanes(),
     execText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3_000),
   ])
   if (!tmux.ok) return { ok: false, error: `tmux list-panes failed: ${tmux.error}` }
@@ -196,7 +206,7 @@ export async function probeTmuxAgents(
   const parsed = ps.stdout.split('\n').map(parseProcessRow).filter((row): row is ProcessRow => row !== null)
   const rows = await enrichProcessRows(parsed)
   return discoverTmuxAgentsFromSnapshot(
-    parsePanes(tmux.stdout),
+    tmux.panes,
     rows,
     daemonPid,
     agentCommandOwnershipSnapshot(),

@@ -15,6 +15,7 @@ import {
   type DisposableWorker,
   type OneShotEngine,
 } from './disposableOneShotPool.js'
+import { scrubTerminalContext } from './terminalEnvironment.js'
 
 function claudeBin(): string {
   return env.CLAUDE_PATH || 'claude'
@@ -286,9 +287,7 @@ class CodexWorker extends ProcessWorker {
       ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
       '-',
     ]
-    const processEnv = { ...process.env }
-    delete processEnv.TMUX
-    delete processEnv.TMUX_PANE
+    const processEnv = scrubTerminalContext({ ...process.env })
     const child = spawn(process.env.CODEX_PATH || 'codex', args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'ignore', 'pipe'],
     })
@@ -377,9 +376,7 @@ class CursorWorker extends ProcessWorker {
       '--output-format', 'stream-json',
       ...(model ? ['--model', model] : []),
     ]
-    const processEnv = { ...process.env }
-    delete processEnv.TMUX
-    delete processEnv.TMUX_PANE
+    const processEnv = scrubTerminalContext({ ...process.env })
     const child = spawn(cursorBin(), args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -503,9 +500,7 @@ class OpencodeWorker extends ProcessWorker {
     // self-registers this ephemeral recap session). `--format json` streams `{type:'text',part:{text}}`.
     mkdirSync(OPENCODE_RECAP_DATA_DIR, { recursive: true })
     const args = ['run', '--pure', '--format', 'json', ...(model ? ['--model', model] : [])]
-    const processEnv = { ...process.env }
-    delete processEnv.TMUX
-    delete processEnv.TMUX_PANE
+    const processEnv = scrubTerminalContext({ ...process.env })
     processEnv.OPENCODE_DATA_DIR = OPENCODE_RECAP_DATA_DIR
     const child = spawn(opencodeBin(), args, {
       cwd: OPENCODE_RECAP_DATA_DIR, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -615,9 +610,7 @@ export function kiloOneShotSpawn(
     'run', '--pure', '--auto', '--format', 'json', '--dir', dataDir,
     ...(model ? ['--model', model] : []),
   ]
-  const childEnv = { ...parentEnv }
-  delete childEnv.TMUX
-  delete childEnv.TMUX_PANE
+  const childEnv = scrubTerminalContext({ ...parentEnv })
   childEnv.XDG_DATA_HOME = dataDir
   // Belt and braces with `--dir`. `spawn({cwd})` does NOT rewrite `PWD`, and kilo resolves its project
   // from that variable, so without this the child inherits the DAEMON's directory.
@@ -754,9 +747,7 @@ class PiWorker extends ProcessWorker {
     // answer, so the worker can be pre-warmed and fed later. `--no-session` keeps the recap out of the
     // user's session store; `--no-extensions` stops the machine discovery extension from registering it.
     const args = ['-p', '--no-session', '--no-extensions', ...(model ? ['--model', model] : [])]
-    const processEnv = { ...process.env }
-    delete processEnv.TMUX
-    delete processEnv.TMUX_PANE
+    const processEnv = scrubTerminalContext({ ...process.env })
     const child = spawn(piBin(), args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -831,12 +822,10 @@ class CommandCodeWorker extends ProcessWorker {
   constructor(cwd: string, model?: string) {
     // `commandcode -p` reads the prompt from piped stdin (verified), so the worker pre-warms and is fed
     // later. `--no-session` keeps the recap out of the user's project/session list — without it every
-    // recap shows up as a session. There is no --no-hooks flag; the scrubbed TMUX_PANE below is what
+    // recap shows up as a session. There is no --no-hooks flag; the scrubbed terminal context below
     // stops our own SessionStart hook registering this process.
     const args = ['-p', '--no-session', ...(model ? ['-m', model] : [])]
-    const processEnv = { ...process.env }
-    delete processEnv.TMUX
-    delete processEnv.TMUX_PANE
+    const processEnv = scrubTerminalContext({ ...process.env })
     const child = spawn(commandCodeBin(), args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -1014,9 +1003,7 @@ export function grokOneShotSpawn(
     ...(opts.effort ? ['--reasoning-effort', opts.effort] : []),
     '-p', opts.prompt,
   ]
-  const childEnv: NodeJS.ProcessEnv = { ...parentEnv, GROK_HOME: scratchHome }
-  delete childEnv.TMUX
-  delete childEnv.TMUX_PANE
+  const childEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...parentEnv, GROK_HOME: scratchHome })
   delete childEnv.MACHINE_ID
   return { args, env: childEnv }
 }
@@ -1103,8 +1090,8 @@ function hermesBin(): string {
  *
  * Notably we do NOT pass `--safe-mode`: it implies `--ignore-user-config`, which would discard the
  * user's model/provider (their whole reason for a working recap). Self-registration is prevented the
- * same way every other worker does it — `TMUX`/`TMUX_PANE` are scrubbed, and the machine hook only
- * registers a session that has a tmux pane. `--source tool` keeps it out of the user's session list.
+ * same way every other worker does it: every terminal location variable is scrubbed. `--source tool`
+ * keeps it out of the user's session list.
  */
 function museBin(): string {
   return env.MUSE_PATH || 'muse'
@@ -1115,15 +1102,13 @@ function museBin(): string {
  *
  * Prompt goes as ARGV (muse has no stdin mode), so this worker cannot be pre-warmed the way a stdin-fed
  * CLI can — it is deliberately outside the pool. `--json` is not used: the recap wants the answer, not
- * the event stream. TMUX vars are stripped so the worker cannot register itself as an agent, and
+ * the event stream. Terminal context is stripped so the worker cannot register itself as an agent, and
  * MUSE_NO_AUTO_UPDATE keeps a background self-update from swapping the binary mid-run.
  */
 export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('muse one-shot aborted'), { name: 'AbortError' }))
   const args = ['exec', opts.prompt, ...(opts.model ? ['--model', opts.model] : [])]
-  const processEnv: NodeJS.ProcessEnv = { ...process.env, MUSE_NO_AUTO_UPDATE: '1' }
-  delete processEnv.TMUX
-  delete processEnv.TMUX_PANE
+  const processEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...process.env, MUSE_NO_AUTO_UPDATE: '1' })
   const timeoutMs = opts.timeoutMs ?? 60_000
 
   return new Promise<OneShotResult>((resolve, reject) => {
@@ -1177,7 +1162,7 @@ export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
  * is what chooses one. `low` is both the cheapest and plenty for a one-sentence recap.
  *
  * Self-registration is prevented twice over. The adapter's Amp plugin already refuses to do anything
- * without `MACHINE_ID` and `TMUX_PANE`, and both are scrubbed here; `AMP_DISABLE_PLUGINS` then stops it
+ * without machine and terminal context, and both are scrubbed here; `AMP_DISABLE_PLUGINS` then stops it
  * loading at all, which also keeps a user's own plugins out of a recap. `-x` archives the thread it
  * creates once it finishes, so recaps do not accumulate in the user's thread list.
  */
@@ -1192,9 +1177,7 @@ export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
  */
 function ampOneShotAttempt(opts: OneShotOptions, timeoutMs: number): Promise<OneShotResult | null> {
   const args = ['-x', '--no-notifications', '-m', opts.model || env.AMP_SUMMARY_MODE]
-  const processEnv: NodeJS.ProcessEnv = { ...process.env, AMP_DISABLE_PLUGINS: '1' }
-  delete processEnv.TMUX
-  delete processEnv.TMUX_PANE
+  const processEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...process.env, AMP_DISABLE_PLUGINS: '1' })
   delete processEnv.MACHINE_ID
 
   return new Promise<OneShotResult | null>((resolve, reject) => {
@@ -1259,9 +1242,7 @@ export async function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult
 export function runHermesOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('hermes one-shot aborted'), { name: 'AbortError' }))
   const args = ['chat', '-q', opts.prompt, '-Q', '--source', 'tool', ...(opts.model ? ['-m', opts.model] : [])]
-  const processEnv = { ...process.env }
-  delete processEnv.TMUX
-  delete processEnv.TMUX_PANE
+  const processEnv = scrubTerminalContext({ ...process.env })
   const timeoutMs = opts.timeoutMs ?? 60_000
 
   return new Promise<OneShotResult>((resolve, reject) => {
@@ -1317,16 +1298,14 @@ function devinBin(): string {
  * so a worker cannot be pre-warmed and Devin is deliberately absent from `OneShotEngine`/the warm pool.
  *
  * `devin -p "<prompt>"` prints just the answer and exits 0. There is no `--no-session` equivalent, so the
- * recap does leave a row in `sessions.db`; it cannot register as an agent, because `TMUX`/`TMUX_PANE` are
- * scrubbed and the machine hook only registers a session that has a tmux pane.
+ * recap does leave a row in `sessions.db`; it cannot register as an agent because every terminal
+ * location variable is scrubbed.
  */
 export function runDevinOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('devin one-shot aborted'), { name: 'AbortError' }))
   if (opts.cwd) trustDevinWorkspace(opts.cwd, (m) => console.warn('[recap] could not trust the devin scratch dir:', m))
   const args = ['-p', opts.prompt, ...(opts.model ? ['--model', opts.model] : [])]
-  const processEnv = { ...process.env }
-  delete processEnv.TMUX
-  delete processEnv.TMUX_PANE
+  const processEnv = scrubTerminalContext({ ...process.env })
   const timeoutMs = opts.timeoutMs ?? 60_000
 
   return new Promise<OneShotResult>((resolve, reject) => {

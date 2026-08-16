@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionInputController } from './sessionInput.js'
 import type { RegisteredSession } from './registry.js'
+import type { TerminalActionResult } from './terminalTypes.js'
 
 function session(engine: 'claude' | 'codex' | 'cursor' | 'commandcode' = 'codex'): RegisteredSession {
   return {
+    schemaVersion: 2,
+    active: true,
     sessionId: 's1', engine, launcherId: 'h1', agentId: 'h1', boundAt: 0, transcriptPath: '/tmp/s1.jsonl', projectDir: 'tmp', cwd: '/tmp',
     tmuxPane: '%1', source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+    runtimes: [{ backend: 'tmux', paneId: '%1' }], primaryRuntimeKey: 'tmux\u0000%1',
     registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
   }
 }
@@ -300,6 +304,147 @@ describe('SessionInputController', () => {
 
     expect(sendKey).toHaveBeenCalledTimes(2)
     expect(onError).toHaveBeenCalledWith('s1', expect.stringContaining('did not accept'))
+    controller.forget('s1')
+  })
+
+  it('does not press Enter after an ambiguous submission when capture cannot prove the draft is pending', async () => {
+    vi.useFakeTimers()
+    const sendKey = vi.fn(async () => true)
+    const onError = vi.fn()
+    const ambiguous: TerminalActionResult = {
+      state: 'unknown', dispatch: 'possibly_executed', reason: 'response was lost',
+    }
+    const controller = new SessionInputController({
+      getSession: () => session('codex'),
+      validateRuntime: async () => true,
+      inject: async () => ambiguous,
+      sendKey,
+      onError,
+    })
+
+    controller.submit('s1', 'hello')
+    await vi.advanceTimersByTimeAsync(1_600)
+
+    expect(sendKey).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith('s1', expect.stringContaining('could not be confirmed'))
+    controller.forget('s1')
+  })
+
+  it('allows one evidence-backed Enter after an ambiguous submission leaves the exact draft in the composer', async () => {
+    vi.useFakeTimers()
+    const sendKey = vi.fn(async () => true)
+    const ambiguous: TerminalActionResult = {
+      state: 'unknown', dispatch: 'possibly_executed', reason: 'response was lost',
+    }
+    const controller = new SessionInputController({
+      getSession: () => session('codex'),
+      validateRuntime: async () => true,
+      inject: async () => ambiguous,
+      sendKey,
+      capture: async () => '› hello',
+      onError: vi.fn(),
+    })
+
+    controller.submit('s1', 'hello')
+    await vi.advanceTimersByTimeAsync(1_600)
+
+    expect(sendKey).toHaveBeenCalledTimes(1)
+    controller.forget('s1')
+  })
+
+  it('does not press Enter after ambiguous submission when repeated capture shows the draft absent', async () => {
+    vi.useFakeTimers()
+    const sendKey = vi.fn(async () => true)
+    const onError = vi.fn()
+    const ambiguous: TerminalActionResult = {
+      state: 'unknown', dispatch: 'possibly_executed', reason: 'response was lost',
+    }
+    const controller = new SessionInputController({
+      getSession: () => session('codex'),
+      validateRuntime: async () => true,
+      inject: async () => ambiguous,
+      sendKey,
+      capture: async () => '› \ngpt-5.6 medium ·',
+      onError,
+    })
+
+    controller.submit('s1', 'hello')
+    await vi.advanceTimersByTimeAsync(1_600 * 7)
+
+    expect(sendKey).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith('s1', expect.stringContaining('could not be confirmed'))
+    controller.forget('s1')
+  })
+
+  it('requires fresh draft evidence before retrying an ambiguously completed Enter', async () => {
+    vi.useFakeTimers()
+    const captures = ['› hello', null]
+    const sendKey = vi.fn(async (_target: string, _key: string): Promise<TerminalActionResult> => ({
+      state: 'unknown', dispatch: 'possibly_executed', reason: 'Enter response was lost',
+    }))
+    const onError = vi.fn()
+    const controller = new SessionInputController({
+      getSession: () => session('codex'),
+      validateRuntime: async () => true,
+      inject: async () => true,
+      sendKey,
+      capture: async () => captures.shift() ?? null,
+      onError,
+    })
+
+    controller.submit('s1', 'hello')
+    await vi.advanceTimersByTimeAsync(1_600 * 2)
+
+    expect(sendKey).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledWith('s1', expect.stringContaining('could not be confirmed'))
+    controller.forget('s1')
+  })
+
+  it('does not re-arm Cursor after an ambiguous submission clears the exact draft', async () => {
+    vi.useFakeTimers()
+    const sendKey = vi.fn(async (_target: string, _key: string) => true)
+    const onError = vi.fn()
+    const ambiguous: TerminalActionResult = {
+      state: 'unknown', dispatch: 'possibly_executed', reason: 'response was lost',
+    }
+    const controller = new SessionInputController({
+      getSession: () => session('cursor'),
+      validateRuntime: async () => true,
+      inject: async () => ambiguous,
+      sendKey,
+      capture: async () => '→ \nAuto',
+      onError,
+    })
+
+    controller.submit('s1', 'hello')
+    await vi.advanceTimersByTimeAsync(1_600)
+
+    expect(sendKey.mock.calls.filter(([, key]) => key === 'Enter')).toHaveLength(0)
+    expect(onError).toHaveBeenCalledWith('s1', expect.stringContaining('could not be confirmed'))
+    controller.forget('s1')
+  })
+
+  it('requires fresh Cursor draft evidence after an ambiguously completed Enter', async () => {
+    vi.useFakeTimers()
+    const captures = ['→ hello\nAuto', null]
+    const sendKey = vi.fn(async (_target: string, _key: string): Promise<TerminalActionResult> => ({
+      state: 'unknown', dispatch: 'possibly_executed', reason: 'key response was lost',
+    }))
+    const onError = vi.fn()
+    const controller = new SessionInputController({
+      getSession: () => session('cursor'),
+      validateRuntime: async () => true,
+      inject: async () => true,
+      sendKey,
+      capture: async () => captures.shift() ?? null,
+      onError,
+    })
+
+    controller.submit('s1', 'hello')
+    await vi.advanceTimersByTimeAsync(1_600 * 2)
+
+    expect(sendKey.mock.calls.filter(([, key]) => key === 'Enter')).toHaveLength(1)
+    expect(onError).toHaveBeenCalledWith('s1', expect.stringContaining('could not be confirmed'))
     controller.forget('s1')
   })
 

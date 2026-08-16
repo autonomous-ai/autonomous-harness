@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { AgentEngine } from '../engines/types.js'
@@ -12,6 +12,11 @@ const processIdentity = (pid: number) => ({
   executable: 'claude',
   startMarker: `Mon Aug 10 10:00:${String(pid % 60).padStart(2, '0')} 2026`,
 })
+
+function writeLegacyStateFile(path: string, value: string): void {
+  writeFileSync(path, value, { mode: 0o644 })
+  chmodSync(path, 0o644)
+}
 
 function registerProcess(
   registry: {
@@ -98,8 +103,9 @@ describe('registry remote display names', () => {
   it('loads persisted names for active sessions', async () => {
     const transcriptPath = join(dataDir, 'session-2.jsonl')
     writeFileSync(transcriptPath, '{}\n')
-    writeFileSync(join(dataDir, 'agent-names.json'), JSON.stringify({ 'session-2': 'Research box' }))
-    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify([{
+    chmodSync(dataDir, 0o755)
+    writeLegacyStateFile(join(dataDir, 'agent-names.json'), JSON.stringify({ 'session-2': 'Research box' }))
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([{
       launcherId: 'h1',
       sessionId: 'session-2',
       transcriptPath,
@@ -124,6 +130,9 @@ describe('registry remote display names', () => {
       engine: 'claude',
       tmuxPane: '%2',
     })
+    expect(statSync(dataDir).mode & 0o777).toBe(0o700)
+    expect(statSync(join(dataDir, 'agent-names.json')).mode & 0o777).toBe(0o600)
+    expect(statSync(join(dataDir, 'registry.json')).mode & 0o777).toBe(0o600)
   })
 
   it('auto-follows the tmux pane title until renamed, then the manual name stays fixed', async () => {
@@ -162,7 +171,7 @@ describe('registry remote display names', () => {
   it('only adds or updates agent-names.json entries', async () => {
     const transcriptPath = join(dataDir, 'session-3.jsonl')
     writeFileSync(transcriptPath, '{}\n')
-    writeFileSync(join(dataDir, 'agent-names.json'), JSON.stringify({ old: 'Keep me' }))
+    writeLegacyStateFile(join(dataDir, 'agent-names.json'), JSON.stringify({ old: 'Keep me' }))
 
     const { registry } = await loadRegistryModule()
     registry.load()
@@ -175,7 +184,7 @@ describe('registry remote display names', () => {
     })
   })
 
-  it('persists Codex engine metadata and rejects records without a valid pane', async () => {
+  it('persists Codex engine metadata and preserves a malformed v2 row for operator recovery', async () => {
     const sessionsDir = join(dataDir, 'sessions')
     const transcriptPath = join(sessionsDir, 'codex-session.jsonl')
     mkdirSync(sessionsDir)
@@ -195,13 +204,205 @@ describe('registry remote display names', () => {
     expect(valid?.engine).toBe('codex')
 
     const persisted = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))
-    persisted.push({ ...persisted[0], sessionId: 'invalid-session', tmuxPane: 'not-a-pane' })
-    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify(persisted))
+    persisted.push({
+      ...persisted[0],
+      sessionId: 'invalid-session',
+      tmuxPane: 'not-a-pane',
+      runtimes: [{ backend: 'tmux', paneId: 'not-a-pane' }],
+    })
+    const malformed = JSON.stringify(persisted)
+    writeFileSync(join(dataDir, 'registry.json'), malformed)
 
     registry.load()
-    expect(registry.get('codex-session')?.engine).toBe('codex')
+    expect(registry.list()).toEqual([])
     expect(registry.get('invalid-session')).toBeUndefined()
-    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8'))).toHaveLength(1)
+    expect(readFileSync(join(dataDir, 'registry.json'), 'utf-8')).toBe(malformed)
+  })
+
+  it('migrates legacy tmux rows additively without changing agent identity or binding', async () => {
+    const transcriptPath = join(dataDir, 'legacy.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([{
+      agentId: 'stable-agent',
+      sessionId: 'legacy-session',
+      engine: 'claude',
+      transcriptPath,
+      projectDir: 'demo',
+      cwd: '/tmp/demo',
+      tmuxPane: '%17',
+      processIdentity: processIdentity(317),
+      registeredAt: 10,
+      updatedAt: 20,
+    }]))
+
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    expect(registry.get('legacy-session')).toMatchObject({
+      agentId: 'stable-agent',
+      tmuxPane: '%17',
+      runtimes: [{ backend: 'tmux', paneId: '%17' }],
+      schemaVersion: 2,
+    })
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))[0]).toMatchObject({
+      agentId: 'stable-agent',
+      tmuxPane: '%17',
+      runtimes: [{ backend: 'tmux', paneId: '%17' }],
+    })
+    expect(JSON.parse(readFileSync(join(dataDir, 'registry.pre-v2.json'), 'utf8'))[0]).toMatchObject({
+      agentId: 'stable-agent', sessionId: 'legacy-session', tmuxPane: '%17',
+    })
+    expect(statSync(join(dataDir, 'registry.pre-v2.json')).mode & 0o777).toBe(0o600)
+  })
+
+  it.each([
+    ['truncated JSON', '[{"agentId":'],
+    ['non-array root', '{"schemaVersion":2}'],
+    ['unknown row schema', JSON.stringify([{ schemaVersion: 99, agentId: 'future' }])],
+    ['nonnumeric row schema', JSON.stringify([{ schemaVersion: '3', agentId: 'future' }])],
+    ['empty legacy row', JSON.stringify([{}])],
+    ['primitive legacy row', JSON.stringify([7])],
+    ['legacy row without runtime', JSON.stringify([{ agentId: 'legacy-agent' }])],
+  ])('preserves %s byte-for-byte and blocks later writes', async (_label, bytes) => {
+    const file = join(dataDir, 'registry.json')
+    writeLegacyStateFile(file, bytes)
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'must-not-write',
+      engine: 'claude',
+      tmuxPane: '%88',
+      processIdentity: processIdentity(888),
+    })
+    expect(readFileSync(file, 'utf8')).toBe(bytes)
+    expect(registry.list()).toEqual([])
+  })
+
+  it('rejects a group-writable registry without tightening or overwriting it', async () => {
+    const file = join(dataDir, 'registry.json')
+    const bytes = '[]'
+    writeFileSync(file, bytes, { mode: 0o600 })
+    chmodSync(file, 0o660)
+
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'must-not-write',
+      engine: 'claude',
+      tmuxPane: '%89',
+      processIdentity: processIdentity(889),
+    })
+
+    expect(readFileSync(file, 'utf8')).toBe(bytes)
+    expect(statSync(file).mode & 0o777).toBe(0o660)
+    expect(registry.list()).toEqual([])
+  })
+
+  it('merges a daemon-down writer committed after load instead of overwriting it', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'daemon-agent', engine: 'claude', tmuxPane: '%31', processIdentity: processIdentity(831),
+    })
+    const file = join(dataDir, 'registry.json')
+    const [daemonRow] = JSON.parse(readFileSync(file, 'utf8')) as Array<Record<string, unknown>>
+    const external = {
+      ...daemonRow,
+      agentId: 'offline-agent',
+      sessionId: '',
+      tmuxPane: '%32',
+      runtimes: [{ backend: 'tmux', paneId: '%32' }],
+      primaryRuntimeKey: 'tmux\u0000%32',
+      processIdentity: processIdentity(832),
+    }
+    writeFileSync(file, JSON.stringify([daemonRow, external]), { mode: 0o600 })
+
+    registry.updateTitle('daemon-agent', 'updated by daemon')
+
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toHaveLength(2)
+    expect(registry.byAgent('offline-agent')?.processIdentity?.pid).toBe(832)
+    expect(registry.byAgent('daemon-agent')?.title).toBe('updated by daemon')
+  })
+
+  it('reclaims a crashed lock whose PID has been reused by another process generation', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const lockDir = join(dataDir, 'registry.json.lock')
+    mkdirSync(lockDir, { mode: 0o700 })
+    writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({
+      pid: process.pid,
+      startMarker: 'different-process-generation',
+      token: 'stale-owner',
+    }), { mode: 0o600 })
+
+    expect(registry.openProcessAgent({
+      agentId: 'after-reused-pid-lock',
+      engine: 'claude',
+      tmuxPane: '%33',
+      processIdentity: processIdentity(833),
+    })?.entry.agentId).toBe('after-reused-pid-lock')
+    expect(registry.byAgent('after-reused-pid-lock')).toBeTruthy()
+  })
+
+  it('deduplicates nested backends by process identity while scoping Herdr routes to endpoints', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const identity = processIdentity(700)
+    const tmux = registry.openProcessAgent({
+      agentId: 'nested-agent',
+      engine: 'claude',
+      tmuxPane: '%7',
+      processIdentity: identity,
+    })
+    const herdrRuntime = {
+      backend: 'herdr' as const,
+      endpointId: 'herdr:default:abc',
+      sessionName: 'default',
+      terminalId: 'terminal-a',
+      paneId: 'w1:p1',
+    }
+    const nested = registry.openProcessAgent({
+      engine: 'claude',
+      runtimes: [herdrRuntime],
+      processIdentity: identity,
+    })
+    const other = registry.openProcessAgent({
+      agentId: 'other-endpoint-agent',
+      engine: 'claude',
+      runtimes: [{ ...herdrRuntime, endpointId: 'herdr:work:def', sessionName: 'work', terminalId: 'terminal-b' }],
+      processIdentity: processIdentity(701),
+    })
+
+    expect(nested?.entry.agentId).toBe(tmux?.entry.agentId)
+    expect(nested?.entry.runtimes).toHaveLength(2)
+    expect(other?.entry.agentId).toBe('other-endpoint-agent')
+    expect(registry.list()).toHaveLength(2)
+  })
+
+  it('persists Herdr-only rows without a legacy tmuxPane projection', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'herdr-agent',
+      engine: 'codex',
+      runtimes: [{
+        backend: 'herdr',
+        endpointId: 'herdr:default:abc',
+        sessionName: 'default',
+        terminalId: 'terminal-1',
+        paneId: 'w1:p1',
+      }],
+      processIdentity: processIdentity(900),
+    })
+
+    const [persisted] = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf8'))
+    expect(persisted).not.toHaveProperty('tmuxPane')
+    expect(persisted).toMatchObject({
+      schemaVersion: 2,
+      agentId: 'herdr-agent',
+      runtimes: [{ backend: 'herdr', endpointId: 'herdr:default:abc', paneId: 'w1:p1' }],
+    })
+    registry.load()
+    expect(registry.byAgent('herdr-agent')?.runtimes[0]).toMatchObject({ backend: 'herdr', terminalId: 'terminal-1' })
   })
 
   it('repairs a Codex parent registry entry overwritten with a child rollout', async () => {
@@ -222,7 +423,7 @@ describe('registry remote display names', () => {
         source: { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1 } } },
       },
     }) + '\n')
-    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify([{
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([{
       launcherId: 'h1',
       sessionId: parentId,
       engine: 'codex',
@@ -610,7 +811,7 @@ describe('agent identity: the process owns the agent, the session is bound to it
     // uuid IS the agent id.
     const path = transcript('legacy')
     const now = Date.now()
-    writeFileSync(join(dataDir, 'registry.json'), JSON.stringify([{
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([{
       sessionId: 'legacy-session', engine: 'claude', launcherId: 'legacy-agent', transcriptPath: path,
       projectDir: 'x', cwd: '/tmp/demo', tmuxPane: '%3', source: null, title: null, model: null,
       cliVersion: null, processIdentity: null, registeredAt: now, updatedAt: now,

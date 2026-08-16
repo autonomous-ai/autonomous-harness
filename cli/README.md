@@ -2,17 +2,17 @@
 
 **Run the coding-agent CLIs you already use, and drive them from anywhere.**
 
-`harness` watches the agent sessions you start in **tmux** on your own machine and bridges them to a
+`harness` watches the agent sessions you start in **tmux, Herdr, or both** on your own machine and bridges them to a
 web UI and, optionally, to a paired hardware device. The agents keep running as your processes, in
 your terminal, with your credentials; this is a bridge, not a wrapper.
 
 It works with the popular coding agents — [`src/engines/`](src/engines/) is the current list, one
 folder per agent, and yours can join them.
 
-- Every agent you open in a tmux pane shows up as an agent you can talk to from the browser.
+- Every supported agent process under a configured terminal backend shows up as one agent you can talk to from the browser.
 - Turns, tool calls, todo lists and sub-agents stream out as they happen.
 - The browser channel is end-to-end encrypted (see `src/lib/e2ee/`).
-- One self-contained bundle, no native dependencies: Node ≥ 20 and `tmux` are all you need.
+- One self-contained bundle with no Node native dependencies. Node ≥ 20 plus tmux and/or Herdr 0.8.x is required.
 
 ## Install & run (`harness`)
 
@@ -50,6 +50,10 @@ build, downloads + verifies + swaps its own bundle and restarts when idle (with 
 build). See [`RELEASE.md`](RELEASE.md) for publishing and the update internals. Disable with
 `ADAPTER_UPDATE_DISABLE=true`.
 
+Custom Herdr-capable builds must keep self-update disabled or use a fork-owned signed
+`ADAPTER_UPDATE_URL` until that build is available in the configured upstream manifest. Otherwise the
+updater can legitimately replace the custom bundle with a release that lacks its terminal support.
+
 **From source (dev):** `cd this package && npm install && npm run build && node dist/cli.js join <token>`
 (or `npm run dev -- join` via tsx — always foreground; self-update is off in dev). `npm run bundle`
 produces the single-file release artifact.
@@ -60,39 +64,43 @@ daemon on it, so `harness` on this computer means your code without publishing a
 turned **off** in the command shim it writes (otherwise the published release overwrites your build within
 the minute). See [`RELEASE.md`](RELEASE.md#local-install-no-upload).
 
-After joining, start each agent yourself in tmux with its normal vendor command. Harness observes the
+After joining, start each agent yourself in tmux or a configured Herdr session with its normal vendor command. Harness observes the
 process; it does not launch the CLI or choose its permission/trust flags:
 
 ```bash
 tmux new
 claude                    # or: codex, agent, opencode, pi, hermes, cmd, devin, muse, amp, kilo, grok
+
+# Or, after starting a named Herdr session through Herdr itself:
+TERMINAL_BACKENDS=herdr HERDR_SESSIONS=default harness join
 ```
 
-Each supported top-level CLI process in a pane appears automatically. Exiting the CLI removes only the
-agent; the tmux pane and its shell remain yours.
+Each supported top-level CLI process appears automatically. Exiting or deleting the agent stops only
+the validated engine process; Harness never closes the user-owned tmux or Herdr pane.
 
 ## How it works
 
 ```
-claude in tmux pane %3 ──writes──▶ ~/.claude/projects/**.jsonl
+claude under a terminal backend ──writes──▶ ~/.claude/projects/**.jsonl
         ▲                                   │ chokidar + byte-offset tail (only new lines)
-        │ sendToTmux (tmux send-keys)       ▼ normalize → ServerEvents (+ derived turn lifecycle)
+        │ backend input contract            ▼ normalize → ServerEvents (+ derived turn lifecycle)
    adapter CLI ◀────── down:{agentId} ── backend /api/adapter-ws ── up:{agentId} ──▶ web chat
 ```
 
 - **The adapter emulates a node** on the backend hub: it answers the hosted runtime RPCs
-  (`agents_list` = discovered tmux processes, `sessions_list`, `session_get` = full JSONL
+  (`agents_list` = discovered engine processes, `sessions_list`, `session_get` = full JSONL
   replay, `project_files`/`project_read_file` = the session's cwd file tree + file view,
   `models_list`, `claude_login_status`) and consumes web chat frames.
 - **Files panel** (`project_files`/`project_read_file`): rooted at the tmux session's working dir,
   it lists the tree (ignoring `node_modules`/`.git`/`dist`/… like the hosted runtime) and views a file only
   if it's **≤ 5 MB and text** (binary → rejected). The same guard was added to the hosted runtime so
   both behave identically.
-- **Process discovery is lifetime authority.** On startup and every five seconds the daemon reads all
-  tmux panes once and the process table once. A supported top-level engine creates an agent immediately,
+- **Process discovery is lifetime authority.** On startup and every five seconds the daemon reads each
+  configured terminal inventory and one shared process table. A supported top-level engine creates an agent immediately,
   before an engine session exists. A changed process in the same pane replaces it immediately; an absent
   process is removed after two successful scans. Probe failures do not remove anything.
-- **Hooks bind mutable engine sessions** to the process agent (tmux-only via `$TMUX_PANE`). They do not
+- **Hooks bind mutable engine sessions** to the process agent using authenticated tmux and/or Herdr
+  runtime hints plus verified caller ancestry. Hook socket paths are lookup hints only. They do not
   require `MACHINE_ID`. `SessionStart` and catch hooks attach transcript/store metadata; `SessionEnd` only
   requests an immediate process reconciliation. `/clear`, `/new`, and resume move or rotate the binding
   without changing the live process agent's UUID.
@@ -108,8 +116,40 @@ claude in tmux pane %3 ──writes──▶ ~/.claude/projects/**.jsonl
   `isCompactSummary` summary line and any `isMeta` bookkeeping line are **suppressed via those
   authoritative flags** (`compactEventFromRaw` in `lib/normalize.ts`) so the summary is never rendered
   as a fake user turn — an auto-compact firing mid-turn keeps the open turn open.
-- A web chat message arrives as a `message` frame → injected into the session's pane via
-  `tmux send-keys -l <text>` + `Enter`.
+- A web chat message arrives as a `message` frame and is submitted through one validated primary runtime.
+  Herdr prompt bytes use its bounded local socket API and never command-line arguments or environment.
+
+### Terminal backend behavior
+
+- `TERMINAL_BACKENDS` is a strict ordered list: `tmux`, `herdr`, or `tmux,herdr`. The default is `tmux`.
+- `HERDR_SESSIONS` is an ordered list of local named sessions. Harness never auto-starts a session and
+  never connects to a socket supplied only by a hook. Herdr support is pinned to compatible 0.8.x,
+  protocol 19.
+- The shared backend contract can create and close a tmux session or Herdr workspace when explicitly
+  invoked. This is lifecycle capability, not automatic startup behavior; normal discovery observes
+  user-owned sessions, and agent deletion still terminates only the validated engine process.
+- One process visible through nested/coexisting backends remains one Harness agent with multiple runtime
+  locators. A Herdr workspace move preserves its stable terminal identity; an engine process replacement does not.
+- Backend and endpoint failures are independent. A failed probe is `unknown`, not proof of death. An
+  agent with no verified runtime becomes dormant and is republished with the same id after recovery.
+- Existing `tmuxPane` registry rows migrate in place. tmux rows retain their legacy projection during
+  the compatibility window; Herdr-only rows never claim a tmux pane. For code rollback, stop the daemon,
+  archive the mixed registry, and give the old binary a copied tmux-only projection.
+
+For reproducible multiplexer verification, install dependencies and run both opt-in real suites from
+`cli/` under a normal umask:
+
+```bash
+umask 022
+npm ci
+npm run test:tmux-real
+npm run test:herdr-real
+```
+
+The Herdr suite requires Herdr 0.8.x protocol 19. Both suites use isolated, test-owned lifecycle
+fixtures. Their engine matrix explicitly skips commands that are not installed; authentication or
+first-run onboarding that prevents a proprietary CLI from running is unavailable evidence and must be
+reported as such, not described as exercised.
 
 ## Config (`.env`, see `.env.example`)
 
@@ -121,6 +161,10 @@ claude in tmux pane %3 ──writes──▶ ~/.claude/projects/**.jsonl
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | where Claude writes session JSONL |
 | `ADAPTER_DATA_DIR` | `~/.harness/cli/data` | registry + token persistence |
 | `DISABLE_HOOK_INSTALL` | `false` | skip auto-installing the claude hooks |
+| `TERMINAL_BACKENDS` | `tmux` | strict ordered list: `tmux`, `herdr`, or `tmux,herdr` |
+| `HERDR_SESSIONS` | `default` | ordered configured local named Herdr sessions |
+| `HERDR_BIN` | `herdr` | Herdr executable used only for session discovery/diagnostics |
+| `TERMINAL_RECONCILE_INTERVAL_MS` | `5000` | backend-neutral discovery interval; minimum 5000 ms |
 | `TMUX_REAP_INTERVAL_MS` | `5000` | process discovery interval (removal requires two confirmed misses) |
 | `ADAPTER_UPDATE_URL` | `…/adapter/metadata.json` | GCS release manifest the daemon polls for a newer build |
 | `ADAPTER_UPDATE_KEY` | `cli` | manifest key for this CLI |

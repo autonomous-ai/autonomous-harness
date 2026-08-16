@@ -267,8 +267,8 @@ function render(s){
   // sessions
   const se = document.getElementById('sessions');
   se.innerHTML = (s.sessions&&s.sessions.length) ? s.sessions.map(x =>
-    '<div class="row"><div class="main"><div class="name">'+esc(x.name)+'</div><div class="sub">'+esc(x.cwd||'')+'  ·  '+esc(x.tmuxPane||'')+'</div></div><div class="mut" style="font-size:12px">'+fmtWhen(x.updatedAt)+'</div></div>'
-  ).join('') : '<div class="empty">No tmux claude sessions. Run <span class="mono">claude</span> in a tmux pane.</div>';
+    '<div class="row"><div class="main"><div class="name">'+esc(x.name)+'</div><div class="sub">'+esc(x.cwd||'')+'  ·  '+esc((x.terminal&&x.terminal.primary)||x.tmuxPane||'')+'</div></div><div class="mut" style="font-size:12px">'+fmtWhen(x.updatedAt)+'</div></div>'
+  ).join('') : '<div class="empty">No active terminal agents.</div>';
 
   // pairs
   const pe = document.getElementById('pairs');
