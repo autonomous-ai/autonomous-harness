@@ -137,11 +137,13 @@ cd cli && npm install && npm run typecheck && npm test
 
 ### 2. Add a terminal multiplexer
 
-Harness supports additive tmux and Herdr 0.8.x protocol 19 backends, with tmux as the default. Another
-multiplexer must be added alongside them, not replace them. Before coding, confirm that a process
-inside a pane can identify that pane with a stable, multiplexer-namespaced id. The integration must
-support listing panes with their PID and working directory, sending literal text and keys, capturing
-pane output, displaying a message, and creating and killing sessions.
+Harness watches tmux and Herdr 0.8.x protocol 19 together, with nothing to configure: whichever is
+installed is used, and `tmux new` then an engine and `herdr` then the same engine both produce an agent.
+Another multiplexer must be added alongside them, not replace them. Before coding, confirm that a
+process inside a pane can identify that pane with a stable, multiplexer-namespaced id — and that your
+tool's presence can be detected without running it, since a machine that does not have it must pay
+nothing. The integration must support listing panes with their PID and working directory, sending
+literal text and keys, capturing pane output, displaying a message, and creating and killing sessions.
 
 The contribution must also carry the new pane identity through process discovery, registry
 persistence and hooks, and scrub it from recap workers so they cannot register as phantom agents.

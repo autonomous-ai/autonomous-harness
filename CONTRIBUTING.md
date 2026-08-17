@@ -94,18 +94,25 @@ into the tool feed — and each one passed its unit tests first.
 
 ### Adding a multiplexer
 
-Harness drives agents inside tmux and Herdr 0.8.x protocol 19. Another multiplexer is welcome, on one
-condition: it is **added alongside tmux, not swapped in for it.** Existing registries contain tmux
-pane identity, so replacing the multiplexer orphans running agents on upgrade. tmux stays the default,
-yours becomes another implementation behind the same interface instead of another rewrite.
+Harness drives agents inside tmux and Herdr 0.8.x protocol 19, watching both by default with nothing to
+configure. Another multiplexer is welcome, on one condition: it is **added alongside them, not swapped
+in.** Existing registries contain tmux pane identity, so replacing the multiplexer orphans running
+agents on upgrade. Yours becomes another implementation behind the same interface instead of another
+rewrite.
 
-Three things decide how much work this is, and the first one is not in this repository at all:
+Four things decide how much work this is, and the first one is not in this repository at all:
 
-1. **Can a process running inside a pane tell which pane it is in?** tmux exports `$TMUX_PANE`; Herdr
-   exports its pane, session, and socket context. The shell hooks in `cli/hook/notify.mjs` and the
-   in-process plugins and extensions generated in `cli/src/lib/hooks.ts` read typed hints and stay
-   deliberately inert without a verifiable configured runtime. If your multiplexer exports no
-   per-pane identifier into the child environment, no abstraction on our side can rescue discovery.
+1. **Can a process running inside a pane tell which pane it is in — and with which of the values your
+   tool actually exports?** tmux exports `$TMUX_PANE`; Herdr exports `HERDR_PANE_ID`,
+   `HERDR_SOCKET_PATH`, `HERDR_ENV`, `HERDR_TAB_ID` and `HERDR_WORKSPACE_ID`. Read that list off a real
+   pane before you rely on any of it. Herdr 0.8.0 exports **no session name**, and matching endpoints by
+   name — a reasonable-looking assumption — silently rejected every hook it ever sent: no session bound,
+   resumed conversations opened blank, and turns typed in a pane produced no events at all. Identify the
+   endpoint by something the tool really puts in the environment, accept more than one form of it, and
+   treat a hint that identifies nothing as matching nothing. The shell hooks in `cli/hook/notify.mjs`
+   and the in-process plugins and extensions generated in `cli/src/lib/hooks.ts` read typed hints and
+   stay deliberately inert without a verifiable runtime. If your multiplexer exports no per-pane
+   identifier into the child environment, no abstraction on our side can rescue discovery.
    **Check this before writing anything else.**
 2. **Pane ids are validated and namespaced.** Identity must include the backend instance so public
    pane ids from two multiplexers or configured endpoints cannot collide.
@@ -113,6 +120,11 @@ Three things decide how much work this is, and the first one is not in this repo
    them before spawning an ephemeral summary run, so that run cannot register itself as an agent.
    Miss the equivalent for yours and every recap spawns a phantom agent — silent, and thoroughly
    unpleasant to trace.
+4. **Detection has to be free when your tool is absent.** Backends are auto-detected before every five
+   second reconcile, so presence is decided by a `PATH` walk (`herdrBinaryAvailable` in
+   `cli/src/lib/herdrSessions.ts`) and nothing is spawned until that succeeds. An installed-but-broken
+   version must degrade to "nothing to adopt", never to a startup failure: only an operator who named
+   the backend explicitly gets an error, because only they asked for it.
 
 The command surface itself is small: list panes with their pid and working directory, send literal
 text and logical keys, capture the pane, display a message, and create and kill sessions/workspaces.
