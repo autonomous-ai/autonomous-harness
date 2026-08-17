@@ -34,7 +34,7 @@
     "vitest": "^4.1.10"
   },
   "description": "Run your own coding-agent CLIs (Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin, Muse, Amp, Kilo, and Grok) in tmux and drive them from the web or a paired device.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/autonomous-ai/autonomous-harness.git",

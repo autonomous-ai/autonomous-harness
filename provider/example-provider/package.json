@@ -2,7 +2,7 @@
   "name": "@autonomous/example-provider",
   "version": "0.2.0",
   "description": "A real Autonomous provider backed by the local Claude Code CLI. Not deterministic — keep it out of CI.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/autonomous-ai/autonomous-harness.git",

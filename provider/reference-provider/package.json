@@ -2,7 +2,7 @@
   "name": "@autonomous/reference-provider",
   "version": "0.2.0",
   "description": "Scripted, deterministic reference implementation of the Autonomous machine provider profile, plus the conformance runner partners point at their own endpoint.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/autonomous-ai/autonomous-harness.git",

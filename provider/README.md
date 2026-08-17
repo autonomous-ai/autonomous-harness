@@ -79,4 +79,4 @@ has to do.
 
 - Found a gap in the spec, or a rule the runner cannot actually check? [Open an issue](https://github.com/autonomous-ai/autonomous-harness/issues) — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 - Security reports: **not the issue tracker** — see [SECURITY.md](../SECURITY.md).
-- Licensed under [Apache-2.0](../LICENSE).
+- Licensed under [MIT](../LICENSE).

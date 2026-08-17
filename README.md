@@ -156,4 +156,4 @@ npm run test:tmux-real
 ## Security and licence
 
 - Security reports go to [SECURITY.md](SECURITY.md) rather than the issue tracker.
-- [Apache-2.0](LICENSE).
+- [MIT](LICENSE).

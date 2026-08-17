@@ -28,8 +28,12 @@ await esbuild.build({
   target: 'node20',
   external: ['bufferutil', 'utf-8-validate'],
   define: { __ADAPTER_VERSION__: JSON.stringify(version) },
+  // The copyright line is MIT's one condition — it has to travel with the copy the user actually
+  // receives, and the published bundle IS that copy (upload-cli.sh ships `cli.js` and `notify.mjs`,
+  // nothing else). `legalComments: 'eof'` below appends the dependencies' own notices; this is ours.
   banner: {
-    js: 'import{createRequire as ___cr}from"module";const require=___cr(import.meta.url);',
+    js: `/*! harness v${version} — Copyright (c) 2026 Autonomous, Inc. — MIT (https://github.com/autonomous-ai/autonomous-harness) */\n`
+      + 'import{createRequire as ___cr}from"module";const require=___cr(import.meta.url);',
   },
   sourcemap: false,
   minify: true,
