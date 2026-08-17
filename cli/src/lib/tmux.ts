@@ -73,6 +73,18 @@ function processEntrypoint(args: string): string {
     while (index < tokens.length && (tokens[index].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]))) index++
     command = basename(tokens[index] ?? '').toLowerCase()
   }
+  // `ori <engine>` (OpenRouter's launcher) computes an environment and then `execve`s the vendor binary
+  // away, so a pane running it looks exactly like a bare `claude`/`codex` for all but the ~100ms before
+  // the exec. Reading through the wrapper covers that window — and keeps the pane resolvable if a future
+  // ori ever spawns a child instead. Its own flags are skipped; everything after them is the engine.
+  if (command === 'ori') {
+    index++
+    const oriFlagsWithValue = new Set(['--model', '--log-level', '--completions'])
+    while (index < tokens.length && tokens[index].startsWith('-')) {
+      index += oriFlagsWithValue.has(tokens[index]) && index + 1 < tokens.length ? 2 : 1
+    }
+    command = basename(tokens[index] ?? '').toLowerCase()
+  }
   if (!/^(?:node|nodejs|bun|deno|python(?:\d+(?:\.\d+)*)?|bash|zsh|sh)$/.test(command)) return tokens[index] ?? ''
 
   index++

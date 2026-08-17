@@ -14,6 +14,7 @@ import {
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
 import type { AgentEngine } from '../engines/types.js'
+import { probeGatewayRuntime } from './gatewayRuntime.js'
 import type { ProcessIdentity, RegisteredSession } from './registry.js'
 import {
   ambiguousAgentProcess,
@@ -38,6 +39,11 @@ export interface DiscoveredTmuxAgent {
   /** The stable engine process argv, used only to bind an explicit `--resume <id>` after discovery. */
   args: string
   resumeSessionId: string | null
+  /**
+   * 'ori' when this process is pointed at OpenRouter (`ori claude` and friends). undefined = the probe
+   * could not read the process; the registry then keeps whatever it already knew.
+   */
+  gateway?: 'ori' | null
 }
 
 export type TmuxAgentProbe =
@@ -195,13 +201,20 @@ export async function probeTmuxAgents(
   if (!ps.ok) return { ok: false, error: `process table failed: ${ps.error}` }
   const parsed = ps.stdout.split('\n').map(parseProcessRow).filter((row): row is ProcessRow => row !== null)
   const rows = await enrichProcessRows(parsed)
-  return discoverTmuxAgentsFromSnapshot(
+  const probe = discoverTmuxAgentsFromSnapshot(
     parsePanes(tmux.stdout),
     rows,
     daemonPid,
     agentCommandOwnershipSnapshot(),
     hints,
   )
+  // Which endpoint each agent is pointed at. Cached per live process, so this is one read per agent for
+  // its whole life, not one per pass — and a failed read leaves `gateway` undefined rather than false.
+  await Promise.all(probe.agents.map(async (agent) => {
+    const runtime = await probeGatewayRuntime(agent.processIdentity, agent.args)
+    agent.gateway = runtime.kind
+  }))
+  return probe
 }
 
 export function sameRuntime(

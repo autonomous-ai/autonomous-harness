@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   runGrok: vi.fn(),
   cleanupCursor: vi.fn(),
   setCounts: vi.fn(),
+  resolveKey: vi.fn(),
+  complete: vi.fn(),
 }))
 
 vi.mock('../config/env.js', () => ({
@@ -19,7 +21,13 @@ vi.mock('../config/env.js', () => ({
     CURSOR_SUMMARY_MODEL: 'auto',
     GROK_SUMMARY_MODEL: 'grok-4.5',
     SUMMARY_EFFORT: 'low',
+    ORI_SUMMARY_MODEL: 'deepseek/deepseek-v4-flash',
   },
+}))
+
+vi.mock('./openrouter.js', () => ({
+  resolveOpenRouterKey: mocks.resolveKey,
+  openRouterComplete: mocks.complete,
 }))
 
 vi.mock('./oneshot.js', () => ({
@@ -44,6 +52,55 @@ beforeEach(() => {
   mocks.cleanupCursor.mockReset()
   mocks.cleanupCursor.mockResolvedValue(undefined)
   mocks.setCounts.mockReset()
+  mocks.resolveKey.mockReset()
+  mocks.complete.mockReset()
+})
+
+describe('gateway recap', () => {
+  const gateway = { kind: 'ori' as const, apiKey: 'sk-or-v1-process' }
+
+  it('calls OpenRouter directly and never spawns a vendor one-shot', async () => {
+    // The point of the whole path: an `ori claude` user may hold no Anthropic credential at all, so the
+    // engine one-shot would spawn a CLI that cannot authenticate and the recap would never arrive.
+    mocks.resolveKey.mockResolvedValue('sk-or-v1-process')
+    mocks.complete.mockResolvedValue('Recap works through the gateway.\n\nThe turn recapped without a vendor login.')
+
+    await expect(summarizeTurnText(
+      'Wired the gateway recap path.',
+      undefined,
+      'Does the gateway recap work?',
+      'claude',
+      gateway,
+    )).resolves.toBe('Recap works through the gateway.\n\nThe turn recapped without a vendor login.')
+
+    expect(mocks.complete).toHaveBeenCalledTimes(1)
+    expect(mocks.complete.mock.calls[0][0]).toMatchObject({
+      model: 'deepseek/deepseek-v4-flash',
+      apiKey: 'sk-or-v1-process',
+    })
+    expect(mocks.runClaude).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the engine one-shot when no key resolves', async () => {
+    mocks.resolveKey.mockResolvedValue(null)
+    mocks.runClaude.mockResolvedValue({ text: 'Engine recap.\n\nThe engine path still runs.', sessionId: null })
+
+    await expect(summarizeTurnText('Did the work.', undefined, 'Status?', 'claude', gateway))
+      .resolves.toBe('Engine recap.\n\nThe engine path still runs.')
+
+    expect(mocks.complete).not.toHaveBeenCalled()
+    expect(mocks.runClaude).toHaveBeenCalledTimes(1)
+    expect(mocks.runClaude.mock.calls[0][0]).toMatchObject({ model: 'sonnet' })
+  })
+
+  it('leaves a normal vendor agent on its own engine one-shot', async () => {
+    mocks.runClaude.mockResolvedValue({ text: 'Engine recap.\n\nNothing changed here.', sessionId: null })
+
+    await expect(summarizeTurnText('Did the work.', undefined, 'Status?', 'claude')).resolves.toBeTruthy()
+
+    expect(mocks.resolveKey).not.toHaveBeenCalled()
+    expect(mocks.complete).not.toHaveBeenCalled()
+  })
 })
 
 describe('Cursor recap', () => {

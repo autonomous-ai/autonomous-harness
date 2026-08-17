@@ -12,6 +12,8 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { env } from '../config/env.js'
 import type { AgentEngine } from '../engines/types.js'
+import type { GatewayRuntime } from './gatewayRuntime.js'
+import { openRouterComplete, resolveOpenRouterKey } from './openrouter.js'
 import {
   cleanupCursorOneShotSession,
   configureOneShotPool,
@@ -30,6 +32,7 @@ import {
   setOneShotPoolActiveCounts,
   setOneShotPoolDeviceConnected,
   shutdownOneShotPool,
+  type OneShotOptions,
 } from './oneshot.js'
 
 const SUMMARY_MAX_WORDS = 120
@@ -215,6 +218,7 @@ export async function summarizeTurnText(
   signal?: AbortSignal,
   userMessage?: string,
   engine: AgentEngine = 'claude',
+  gateway?: GatewayRuntime,
 ): Promise<string | null> {
   let last = (text || '').trim()
   if (!last) return null
@@ -289,7 +293,15 @@ export async function summarizeTurnText(
   const scratch = ensureSummaryScratch()
 
   const t0 = Date.now()
-  const model = engine === 'claude'
+  // A gateway agent (`ori claude`, `ori codex`) bills an OpenRouter account, and its user may hold no
+  // vendor credential at all — the engine one-shot would spawn a CLI that cannot authenticate and the
+  // recap would silently never arrive. Same prompt, same output contract, one HTTPS call instead.
+  const gatewayKey = gateway?.kind === 'ori' && env.ORI_SUMMARY_MODEL
+    ? await resolveOpenRouterKey(gateway)
+    : null
+  const model = gatewayKey
+    ? env.ORI_SUMMARY_MODEL
+    : engine === 'claude'
     ? env.SUMMARY_MODEL
     : engine === 'codex'
       ? env.CODEX_SUMMARY_MODEL
@@ -314,8 +326,12 @@ export async function summarizeTurnText(
                         ? env.GROK_SUMMARY_MODEL
                       : env.OPENCODE_SUMMARY_MODEL
   const effort = engine === 'cursor' ? 'model-defined' : env.SUMMARY_EFFORT
-  console.log(`[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`)
-  const run = engine === 'claude'
+  console.log(
+    gatewayKey
+      ? `[recap] openrouter ${engine} · model=${model} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`
+      : `[recap] one-shot ${engine} · model=${model} · effort=${effort} · inputChars=${last.length}${ask ? ' · withAsk' : ''}`,
+  )
+  const runEngine = engine === 'claude'
     ? runClaudeOneShot
     : engine === 'codex'
       ? runCodexOneShot
@@ -338,8 +354,17 @@ export async function summarizeTurnText(
                       : engine === 'grok'
                         ? runGrokOneShot
                       : runOpencodeOneShot
+  // One shape for both paths so the language-drift retry and the two-part capping below stay single-source.
+  const run: (options: OneShotOptions) => Promise<{ text: string; sessionId: string | null }> = gatewayKey
+    ? async (options) => ({
+      text: await openRouterComplete({
+        prompt: options.prompt, model, apiKey: gatewayKey, signal: options.signal, maxTokens: 1_024,
+      }) ?? '',
+      sessionId: null,
+    })
+    : runEngine
   let r = await run({ prompt, model, effort: env.SUMMARY_EFFORT, cwd: scratch, signal })
-  console.log(`[recap] one-shot returned in ${Date.now() - t0}ms · rawLen=${(r.text || '').length}`)
+  console.log(`[recap] ${gatewayKey ? 'openrouter' : 'one-shot'} returned in ${Date.now() - t0}ms · rawLen=${(r.text || '').length}`)
   await cleanupRecapSession(engine, scratch, r.sessionId)
   // Language check without naming a language: compare the writing system of the output against the inputs
   // it was supposed to mirror. Works in both directions and for any language pair.

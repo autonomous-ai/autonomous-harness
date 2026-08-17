@@ -22,6 +22,13 @@ order. Two engines were each added in a single commit — Muse Code (`b6c58e6`) 
 and reading either alongside this page shows every item below in context. Read Amp's if your agent
 does not write a transcript at all; see "When your agent writes nothing to disk".
 
+**Launchers are not engines.** A wrapper that configures an environment and then hands the pane to a
+vendor CLI — `ori claude`, an `env`-prefixed alias, a shell function — produces an agent of the
+*wrapped* engine, with that engine's name, icon and normalizer. Discovery reads through the wrapper
+(and most wrappers, ori included, `exec` themselves away entirely), so there is nothing to add here
+for one. What a gateway launcher does change is billing: see `lib/gatewayRuntime.ts`, which marks such
+a session display-only for model/effort and routes the daemon's own recap through the gateway.
+
 ---
 
 ## The one rule

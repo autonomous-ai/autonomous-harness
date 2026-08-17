@@ -28,6 +28,21 @@ describe('tmux process primitives', () => {
     expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(3)
   })
 
+  it('reads an engine through the ori launcher, before and after its exec', () => {
+    // `ori claude` computes an environment and then execve's the vendor binary away, so for all but the
+    // first ~100ms the pane row IS `claude` — that case must keep scoring exactly as a bare launch does.
+    expect(engineProcessMatchScore({ executable: 'claude', args: '/Users/demo/.local/bin/claude --resume x' }, 'claude')).toBe(3)
+    // The pre-exec window (and any future ori that spawns instead of exec'ing) resolves through the flags.
+    expect(engineProcessMatchScore({ executable: 'ori', args: 'ori claude' }, 'claude')).toBe(3)
+    expect(engineProcessMatchScore({ executable: 'ori', args: '/Users/demo/.local/bin/ori claude --model anthropic/claude-sonnet-4.6 -p hi' }, 'claude')).toBe(3)
+    expect(engineProcessMatchScore({ executable: 'ori', args: 'ori --log-level debug codex --full-auto' }, 'codex')).toBe(3)
+    expect(engineProcessMatchScore({ executable: 'ori', args: 'ori opencode' }, 'opencode')).toBe(3)
+    // Wrapping does not make it a different engine, and ori's own subcommands are not engines.
+    expect(engineProcessMatchScore({ executable: 'ori', args: 'ori claude' }, 'codex')).toBe(0)
+    expect(engineProcessMatchScore({ executable: 'ori', args: 'ori eval' }, 'claude')).toBe(0)
+    expect(engineProcessMatchScore({ executable: 'ori', args: 'ori login' }, 'claude')).toBe(0)
+  })
+
   it('assigns the colliding agent basename only from executable ownership', () => {
     const cursor = ownership(['cursor-file'], ['grok-file'])
     const grok = ownership(['cursor-file'], ['grok-file'])

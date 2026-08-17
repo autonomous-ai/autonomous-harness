@@ -99,6 +99,33 @@ describe('RuntimeProfileManager', () => {
     }
   })
 
+  it('is display-only through an OpenRouter gateway, but still names the model it runs', async () => {
+    // `ori claude` runs the same CLI with gateway model discovery, so its picker holds the user's
+    // OpenRouter catalog, not the native aliases this controller types. Both gates must hold — an empty
+    // catalogue AND a refusal to control — or a stale profile id from an older client drives the pane.
+    const manager = new RuntimeProfileManager()
+    for (const engine of ['claude', 'codex'] as const) {
+      const value = { ...session(engine), gateway: 'ori' as const }
+      expect(supportsNativeRuntimeControl(value)).toBe(false)
+      await expect(manager.modelsForSession(value)).resolves.toEqual([])
+    }
+
+    // Displaying it is the whole point of the flag being separate from `engine`: the chip still works.
+    const value = { ...session('claude'), gateway: 'ori' as const }
+    manager.hydrate(value, [])
+    manager.ingest(value, JSON.stringify({ type: 'assistant', message: { model: 'anthropic/claude-sonnet-4.6' } }))
+    expect(parseRuntimeProfile(manager.selectedModel(value))).toMatchObject({
+      engine: 'claude',                       // NOT a new engine — the badge stays Claude Code
+      model: 'anthropic/claude-sonnet-4.6',   // the OpenRouter id, percent-encoded in the profile
+      effort: 'auto',
+    })
+
+    // The same session without the flag keeps the native catalogue and native control.
+    const native = session('claude')
+    expect(supportsNativeRuntimeControl(native)).toBe(true)
+    await expect(manager.modelsForSession(native)).resolves.not.toEqual([])
+  })
+
   it('supports both captured Codex picker generations', () => {
     const value = session('codex')
     expect(supportsNativeRuntimeControl(value)).toBe(true)

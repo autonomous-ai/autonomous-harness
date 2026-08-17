@@ -109,3 +109,35 @@ export function preview(text: string, max = 60): string {
   const flat = (text || '').replace(/\s+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max)}…` : flat
 }
+
+/**
+ * One line per backend frame, when LOG_FRAMES is on.
+ *
+ * Every content-bearing frame is E2EE-encrypted before it reaches the socket, so there is no way to see
+ * what the adapter actually said from the outside — not from a packet capture, not from the backend.
+ * This is that view, taken on the plaintext side of the wrap.
+ *
+ * It prints the frame TYPE and a fixed set of opaque identifiers, never a payload body: no message text,
+ * no transcript, no token, no model list. Keep it that way — the point is to see the shape of a
+ * conversation between adapter and clients, not its contents.
+ */
+export function logFrame(direction: '→' | '←', audience: string, frame: { type?: unknown; payload?: unknown }): void {
+  const type = typeof frame.type === 'string' ? frame.type : '?'
+  const payload = (frame.payload ?? {}) as Record<string, unknown>
+  const bits: string[] = []
+  for (const key of ['agentId', 'sessionId', 'dbSessionId', 'requestId'] as const) {
+    const value = payload[key]
+    if (typeof value === 'string' && value) bits.push(`${key}=${sid(value)}`)
+  }
+  // The runtime profile is an opaque id by construction — printing it whole is what makes a model/effort
+  // bug readable in one line, and it carries nothing private.
+  if (typeof payload.selectedModel === 'string') bits.push(`selectedModel=${payload.selectedModel}`)
+  const agent = payload.agent as Record<string, unknown> | undefined
+  if (agent && typeof agent === 'object') {
+    if (typeof agent.engine === 'string') bits.push(`engine=${agent.engine}`)
+    if (typeof agent.selectedModel === 'string') bits.push(`agent.selectedModel=${agent.selectedModel}`)
+  }
+  if (Array.isArray(payload.models)) bits.push(`models=${payload.models.length}`)
+  if (typeof payload.error === 'string') bits.push(`error=${payload.error}`)
+  console.log(`[frame] ${direction} ${audience} ${type}${bits.length ? ` · ${bits.join(' · ')}` : ''}`)
+}

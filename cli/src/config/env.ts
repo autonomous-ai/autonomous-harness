@@ -235,6 +235,23 @@ const envSchema = z.object({
   VOICE_ROUTE_MODEL: z.string().default('haiku'),
   // Test override: run the recap even with no device connected (mirrors node isRecapForced()).
   RECAP_FORCE: z.string().default('false').transform((v) => v === 'true'),
+  // Log one line per backend frame (type + audience + a few opaque ids). OFF by default: it is noisy,
+  // and it is the only place frames are visible in the clear — every content-bearing frame is E2EE
+  // encrypted on the wire, so a packet capture cannot answer "what did the adapter actually send".
+  // Never prints message text, transcripts, tokens or payload bodies.
+  LOG_FRAMES: z.string().default('false').transform((v) => v === 'true'),
+
+  // ── OpenRouter gateway agents (`ori claude`, `ori codex`, …) ───────────────────────────────────
+  // An agent whose CLI is pointed at OpenRouter has no vendor credential to spend, so its recap and
+  // voice route are served by ONE direct chat/completions call instead of a vendor one-shot: a recap
+  // is a 200-token condensation, and spawning a whole coding agent to do it would bill an account the
+  // user may not even have. Both default to a cheap, fast model; '' disables that call (the
+  // VOICE_ROUTE_MODEL convention) and falls back to the engine path.
+  ORI_SUMMARY_MODEL: z.string().default('deepseek/deepseek-v4-flash'),
+  ORI_VOICE_ROUTE_MODEL: z.string().default('deepseek/deepseek-v4-flash'),
+  // Where `ori login` stores the key ({ createdAt, key, userId }). Only read when neither the daemon
+  // env nor the agent's own process supplies one.
+  ORI_CREDENTIALS_PATH: z.string().default(join(homedir(), '.ori', 'credentials.json')),
 
   // ── self-update (the daemon polls a GCS manifest and swaps its own bundle) ──────────────────────
   // Manifest URL (same GCS bucket + metadata.json shape as the device OTA; key = ADAPTER_UPDATE_KEY).

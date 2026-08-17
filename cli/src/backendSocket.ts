@@ -47,7 +47,7 @@ import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from '
 import { shouldReplayCommander } from './lib/commanderReplay.js'
 import { RuntimeProfileControlError, type RuntimeProfileErrorCode } from './lib/runtimeProfileController.js'
 import { parseRuntimeProfile, type RuntimeModelOption } from './lib/runtimeProfile.js'
-import { sid, preview } from './lib/log.js'
+import { sid, preview, logFrame } from './lib/log.js'
 
 // OpenCode has no per-session transcript file — its history is read from this SQLite store.
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
@@ -448,6 +448,7 @@ export class BackendSocket {
   /** Send an up-frame (event or RPC reply) to the WEB audience. Queued while disconnected.
    *  User-content events are group-encrypted (E2EE) here; system frames pass through as plaintext. */
   send(frame: Frame): void {
+    if (env.LOG_FRAMES) logFrame('→', 'web', frame)
     this.enqueue({ t: 'up', frame: this.e2ee.wrapUp(frame) })
   }
 
@@ -464,6 +465,7 @@ export class BackendSocket {
   /** Send a DEVICE-audience frame (commanderEligible, not web). User/data frames are group-encrypted
    *  (E2EE) here so the backend relays only ciphertext; system/presence frames pass through. */
   sendCommander(frame: Frame): void {
+    if (env.LOG_FRAMES) logFrame('→', 'device', frame)
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
   }
 
@@ -536,6 +538,8 @@ export class BackendSocket {
    *  is never returned plaintext: even legacy backend nodeRequest (`connId === ''`) gets only an error. */
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
+    // Before the E2EE wrap: an RPC reply is only readable here.
+    if (env.LOG_FRAMES) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (connId && this.e2ee.hasSession(connId) && ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
       let replyPayload = payload
       if (resultType === 'agent_recent_result') {
@@ -585,6 +589,9 @@ export class BackendSocket {
       if (!dec) return
       frame = dec
     }
+    // Logged AFTER the unwrap above, so a down-frame reads as what the client actually asked for rather
+    // than as an opaque __e2e envelope.
+    if (env.LOG_FRAMES) logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
     // Cross-instance client snapshot. Generation detects leave/join cycles that coalesce to the same
     // count; count rise remains the compatibility fallback for older backends.
@@ -946,7 +953,8 @@ export class BackendSocket {
             const recentSummary = recents.map((r) => r?.recap || r?.text || '').filter(Boolean).join(' · ')
             // engine: the router classifies with a CLI the machine actually runs (a live agent proves it is
             // installed and logged in), so it has to travel with the agent.
-            return { id: p.id, name: p.name, recentSummary, engine: registry.resolve(p.id)?.engine }
+            const session = registry.resolve(p.id)
+            return { id: p.id, name: p.name, recentSummary, engine: session?.engine, gateway: session?.gateway }
           })
           const decision = await routeVoiceTask(transcript, agents)   // logs the task, candidates and pick
           const chosen = projects.find((p) => p.id === decision.agentId)

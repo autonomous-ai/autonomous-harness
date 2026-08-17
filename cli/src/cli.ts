@@ -89,6 +89,7 @@ import {
   commandCodeRunErrorSummary,
   lastCommandCodeTurnText,
 } from './engines/commandcode/normalizer.js'
+import { probeGatewayRuntime } from './lib/gatewayRuntime.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager } from './lib/runtimeProfile.js'
@@ -143,6 +144,7 @@ function usage(): never {
 Agents — after "harness join", run the vendor CLI directly inside tmux. Harness discovers supported
 top-level processes automatically; it does not launch them or change their permission flags:
 ${ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')}
+A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
   harness join <token>         connect this computer to an existing machine using the token from its machine page
@@ -879,8 +881,15 @@ async function runForeground(token: string): Promise<void> {
     sendWeb: (frame) => backend.send(frame), // turn_summary_pending / turn_summary → web indicator
     hasDevice: () => backend.hasCommander(), // device-gate the LLM recap (mirror node)
     active: () => backend.hasActiveCommander(), // stream live cards only to the actively-rendered machine
-    summarize: (text, signal, userMessage, sessionId) =>
-      summarizeTurnText(text, signal, userMessage, sessionId ? registry.bySession(sessionId)?.engine ?? 'claude' : 'claude'),
+    summarize: async (text, signal, userMessage, sessionId) => {
+      const session = sessionId ? registry.bySession(sessionId) : undefined
+      // Gateway agents recap through OpenRouter directly (no vendor credential to spend). The probe is
+      // cached per live process, so this resolves without touching the process table again.
+      const gateway = session?.gateway === 'ori' && session.processIdentity
+        ? await probeGatewayRuntime(session.processIdentity)
+        : undefined
+      return summarizeTurnText(text, signal, userMessage, session?.engine ?? 'claude', gateway)
+    },
     nameFor: (sessionId) => { const s = registry.bySession(sessionId); return s ? projectDisplayName(s) : undefined },
     agentIdFor: (sessionId) => registry.bySession(sessionId)?.agentId,
     readLastTurn: async (sessionId) => {
@@ -1230,6 +1239,7 @@ async function runForeground(token: string): Promise<void> {
         tmuxPane: observed.tmuxPane,
         cwd: observed.cwd,
         processIdentity: observed.processIdentity,
+        gateway: observed.gateway,
       })
       if (!opened) return
       if (opened.evicted) console.log(`[discovery] ${observed.tmuxPane} replaced ${sid(opened.evicted)}`)
@@ -1240,7 +1250,7 @@ async function runForeground(token: string): Promise<void> {
       await bindObservedAgent(observed)
     },
     onObserved: async (observed, current) => {
-      registry.updateProcessIdentity(current.agentId, observed.processIdentity)
+      registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway)
       await bindObservedAgent(observed)
     },
     onRemoved: (agent, reason) => {

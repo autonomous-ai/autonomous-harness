@@ -7,6 +7,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { env } from '../config/env.js'
 import { runGrokOneShot, runRouterOneShot, configureRouterOneShot, setRouterOneShotDeviceConnected, shutdownRouterOneShot } from './oneshot.js'
+import { openRouterComplete, resolveOpenRouterKey } from './openrouter.js'
 
 export interface RouterAgent {
   id: string
@@ -14,6 +15,8 @@ export interface RouterAgent {
   /** The CLI this agent runs on. It is what decides which engine classifies the route — see
    *  chooseRouterEngine — so the decision is made from the very list being routed over. */
   engine?: string
+  /** 'ori' when this agent's CLI is pointed at OpenRouter — see the direct-call path in routeVoiceTask. */
+  gateway?: 'ori' | null
   /** Recaps of the agent's last few completed turns (up to 3), joined — a broader, less skewed picture
    *  of what it's working on than a single turn. */
   recentSummary?: string
@@ -222,6 +225,23 @@ export async function routeVoiceTask(transcript: string, agents: RouterAgent[], 
     return logDecision('only-agent', agents, { agentId: agents[0].id, confidence: 1, reason: 'only agent in machine', needNewAgent: false })
   }
 
+  const prompt = buildRouterPrompt(transcript, agents)
+
+  // A machine running gateway agents (`ori claude`, …) classifies with ONE direct OpenRouter call: the
+  // vendor one-shot it would otherwise warm has no credential to spend, and this is a 20-word
+  // classification either way. Anything short of a usable answer falls through to the engine path below.
+  if (env.ORI_VOICE_ROUTE_MODEL && agents.some((agent) => agent.gateway === 'ori')) {
+    const apiKey = await resolveOpenRouterKey()
+    if (apiKey) {
+      console.log(`[voice-route] classifying with openrouter · model=${env.ORI_VOICE_ROUTE_MODEL}`)
+      const text = await openRouterComplete({
+        prompt, model: env.ORI_VOICE_ROUTE_MODEL, apiKey, signal, timeoutMs: 12_000, maxTokens: 256,
+      })
+      if (text) return logDecision('openrouter', agents, parseRouteOutput(text, agents))
+      console.log('[voice-route] openrouter classification unavailable → engine one-shot')
+    }
+  }
+
   // Decide from the agents in hand, falling back to whatever the registry sync last warmed (a caller that
   // does not label its agents). No usable engine → the heuristic, without burning a doomed spawn on every
   // voice.
@@ -231,7 +251,6 @@ export async function routeVoiceTask(transcript: string, agents: RouterAgent[], 
     return logDecision('heuristic (no engine)', agents, pickAgentHeuristic(transcript, agents))
   }
   const model = routerModelFor(engine)
-  const prompt = buildRouterPrompt(transcript, agents)
   ensureRouterConfigured(engine)   // so runRouterOneShot matches the pool config and uses the warm worker
   // BEFORE the call: on a timeout this is the only record of which CLI was asked.
   console.log(`[voice-route] classifying with ${engine} · model=${model || '(engine default)'}`)

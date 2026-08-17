@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, sta
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
-  ts, sid, preview, installTimestampedConsole,
+  ts, sid, preview, installTimestampedConsole, logFrame,
   adoptLegacyLog, prepareLogFile, trimLogFile, LOG_MAX_BYTES,
 } from './log.js'
 
@@ -17,6 +17,52 @@ describe('log helpers', () => {
 
   it('shortens session ids', () => {
     expect(sid('69aaaa14-89e9-7e21-871a-ee6ea943fc95')).toBe('69aaaa14')
+  })
+
+  describe('logFrame', () => {
+    const lastLine = (spy: ReturnType<typeof vi.spyOn>) => String(spy.mock.calls.at(-1)?.[0] ?? '')
+
+    it('prints direction, audience, type and the opaque ids that make a frame identifiable', () => {
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      logFrame('→', 'web', {
+        type: 'agent_synced',
+        payload: {
+          agentId: '26f49435-71e8-4461-ac59-65c0e854b374',
+          agent: { engine: 'claude', selectedModel: 'runtime-v1:x:claude:anthropic%2Fclaude-sonnet-5@xhigh' },
+        },
+      })
+      const line = lastLine(spy)
+      expect(line).toContain('[frame] → web agent_synced')
+      expect(line).toContain('agentId=26f49435')
+      expect(line).toContain('engine=claude')
+      expect(line).toContain('agent.selectedModel=runtime-v1:x:claude:anthropic%2Fclaude-sonnet-5@xhigh')
+    })
+
+    it('never prints a payload body — this log is the one place frames are in the clear', () => {
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      logFrame('←', 'conn:74dab280', {
+        type: 'message',
+        payload: {
+          sessionId: '9e9f7954-1111-2222-3333-444455556666',
+          text: 'my private prompt about the acquisition',
+          token: 'sk-or-v1-secret',
+          images: ['data:image/png;base64,AAAA'],
+        },
+      })
+      const line = lastLine(spy)
+      expect(line).toContain('sessionId=9e9f7954')
+      expect(line).not.toContain('private prompt')
+      expect(line).not.toContain('sk-or-v1-secret')
+      expect(line).not.toContain('base64')
+    })
+
+    it('summarizes a catalog by size, not by contents', () => {
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      logFrame('→', 'conn:1', { type: 'models_list_result', payload: { models: [{ id: 'a' }, { id: 'b' }] } })
+      expect(lastLine(spy)).toContain('models=2')
+      logFrame('→', 'conn:1', { type: 'models_list_result', payload: { models: [] } })
+      expect(lastLine(spy)).toContain('models=0')
+    })
   })
 
   it('flattens whitespace and caps preview with an ellipsis', () => {

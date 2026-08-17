@@ -54,6 +54,16 @@ export interface RegisteredSession {
   /** When the CURRENT sessionId was bound (vs `registeredAt`, which is when the agent appeared). */
   boundAt: number | null
   engine: AgentEngine
+  /**
+   * Set when the engine process is pointed at an OpenRouter endpoint (`ori claude`, `ori codex`, …).
+   *
+   * It is NOT a second engine: the engine stays `claude`/`codex`/… and every badge, icon and wire field
+   * keeps saying so. It only records HOW the pane's requests are billed, which decides two things — the
+   * runtime profile becomes display-only, and the daemon's recap/route calls go direct to OpenRouter
+   * instead of spawning a vendor CLI that has no credential. Re-derived from the live process on every
+   * discovery, so a pane restarted without the wrapper drops it on the next scan.
+   */
+  gateway?: 'ori' | null
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -321,6 +331,7 @@ class Registry {
     tmuxPane: string
     cwd?: string | null
     processIdentity: ProcessIdentity
+    gateway?: 'ori' | null
   }):
     { entry: RegisteredSession; isNew: boolean; evicted: string | null } | null {
     const { engine, tmuxPane, processIdentity } = input
@@ -336,6 +347,9 @@ class Registry {
       existing.tmuxPane = tmuxPane
       existing.cwd = input.cwd ?? existing.cwd
       existing.processIdentity = processIdentity
+      // Only a successful read speaks: an undefined probe (ps failed, /proc unreadable) keeps whatever
+      // the last good one said rather than silently downgrading a gateway agent to a vendor one.
+      if (input.gateway !== undefined) existing.gateway = input.gateway
       existing.updatedAt = Date.now()
       this.save()
       return { entry: existing, isNew: false, evicted: null }
@@ -352,6 +366,7 @@ class Registry {
       sessionId: '',
       boundAt: null,
       engine,
+      gateway: input.gateway ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -518,10 +533,13 @@ class Registry {
     return this.bySession(sessionId)
   }
 
-  updateProcessIdentity(sessionId: string, processIdentity: ProcessIdentity): boolean {
+  updateProcessIdentity(sessionId: string, processIdentity: ProcessIdentity, gateway?: 'ori' | null): boolean {
     const session = this.resolve(sessionId)
     if (!session || !validProcessIdentity(processIdentity)) return false
     session.processIdentity = processIdentity
+    // A record written before gateways existed, or by a pass whose probe failed, learns it here — the
+    // env cannot change under a running process, so a successful read is always the truth for this pid.
+    if (gateway !== undefined) session.gateway = gateway
     session.updatedAt = Date.now()
     this.save()
     return true

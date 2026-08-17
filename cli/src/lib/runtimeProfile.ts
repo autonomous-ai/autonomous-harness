@@ -229,6 +229,11 @@ function versionAtLeast(value: string | null, wanted: [number, number, number]):
 }
 
 export function supportsNativeRuntimeControl(session: RegisteredSession): boolean {
+  // A gateway agent (`ori claude`, `ori codex`) is DISPLAY-ONLY (owner, 2026-08-17). Its CLI runs with
+  // gateway model discovery, so the picker holds the user's OpenRouter catalog rather than the native
+  // aliases this controller knows how to type — and a `/model opus` typed into that pane would be a
+  // guess. The chip still names what it is running; nothing offers to change it.
+  if (session.gateway) return false
   // Switching is Claude and Codex only (owner, 2026-07-31); everything else is view-only, so it never gets
   // here with anything to apply. This is the second gate rather than the only one — modelsForSession
   // already returns an empty catalogue for those engines — because a stale profile id from an older device
@@ -1000,6 +1005,9 @@ export class RuntimeProfileManager {
    * because the catalogues they fetch are what the ingest paths resolve pane footers against.
    */
   async modelsForSession(session: RegisteredSession): Promise<RuntimeModelOption[]> {
+    // Display-only through a gateway: the empty catalogue IS the mechanism (see the note above), so web
+    // renders a static chip and the device picker closes instead of offering a list we cannot enumerate.
+    if (session.gateway) return []
     if (session.engine === 'codex') return this.codexModels(session)
     if (session.engine === 'claude') return this.claudeModels(session)
     return []

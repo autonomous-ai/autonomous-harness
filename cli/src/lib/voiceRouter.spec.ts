@@ -15,6 +15,14 @@ vi.mock('./oneshot.js', () => ({
   shutdownRouterOneShot: vi.fn(),
 }))
 
+// The gateway path: a machine whose agents run through OpenRouter classifies with one direct call.
+const resolveOpenRouterKey = vi.fn()
+const openRouterComplete = vi.fn()
+vi.mock('./openrouter.js', () => ({
+  resolveOpenRouterKey: (...args: unknown[]) => resolveOpenRouterKey(...args),
+  openRouterComplete: (...args: unknown[]) => openRouterComplete(...args),
+}))
+
 // Import AFTER the mock is registered.
 const { buildRouterPrompt, parseRouteOutput, routeVoiceTask, pickAgentHeuristic, chooseRouterEngine, routerModelFor } = await import('./voiceRouter.js')
 type RouterAgent = import('./voiceRouter.js').RouterAgent
@@ -185,6 +193,50 @@ describe('chooseRouterEngine', () => {
 
   it('uses Grok when it is the only routable CLI', () => {
     expect(chooseRouterEngine([{ engine: 'grok' }, { engine: 'hermes' }])).toBe('grok')
+  })
+})
+
+describe('routeVoiceTask through an OpenRouter gateway', () => {
+  const gatewayAgents: RouterAgent[] = [
+    { id: '1', name: 'Frontend', engine: 'claude', gateway: 'ori' },
+    { id: '2', name: 'Auth', engine: 'claude', gateway: 'ori' },
+  ]
+
+  beforeEach(() => {
+    runRouterOneShot.mockReset(); runGrokOneShot.mockReset()
+    routerImpl = async () => ({ text: '', sessionId: null })
+    resolveOpenRouterKey.mockReset(); openRouterComplete.mockReset()
+  })
+
+  it('classifies with one direct call instead of warming a vendor one-shot', async () => {
+    resolveOpenRouterKey.mockResolvedValue('sk-or-v1-test')
+    openRouterComplete.mockResolvedValue('{"agentId":"2","confidence":0.9,"reason":"auth","needNewAgent":false}')
+
+    const d = await routeVoiceTask('login broken', gatewayAgents)
+
+    expect(d.agentId).toBe('2')
+    expect(openRouterComplete).toHaveBeenCalledOnce()
+    expect(runRouterOneShot).not.toHaveBeenCalled()
+  })
+
+  it('falls through to the engine one-shot when the gateway cannot answer', async () => {
+    resolveOpenRouterKey.mockResolvedValue('sk-or-v1-test')
+    openRouterComplete.mockResolvedValue(null)
+    routerImpl = async () => ({ text: '{"agentId":"1","confidence":0.7,"reason":"ui"}', sessionId: null })
+
+    const d = await routeVoiceTask('dark mode', gatewayAgents)
+
+    expect(d.agentId).toBe('1')
+    expect(runRouterOneShot).toHaveBeenCalledOnce()
+  })
+
+  it('leaves a machine with no gateway agent entirely alone', async () => {
+    routerImpl = async () => ({ text: '{"agentId":"2","confidence":0.9,"reason":"auth"}', sessionId: null })
+
+    await routeVoiceTask('login broken', AGENTS)
+
+    expect(resolveOpenRouterKey).not.toHaveBeenCalled()
+    expect(runRouterOneShot).toHaveBeenCalledOnce()
   })
 })
 
