@@ -19,7 +19,8 @@ const adapterDataDir = join(adapterCliDir, 'data')
 //     dir is FORCE-MOVED across: `~/.machine` wins outright. Anything else would silently roll those
 //     users back to a stale token and an empty session registry.
 //  2. Files INSIDE the data dir were renamed (machine-id → computer-id, harness-name → machine-name,
-//     harness.log → machine.log). Within one tree there is nothing to arbitrate, so those only fire
+//     machine.log → harness.log — the log carries the PRODUCT's name, like the tree it sits in, so this
+//     one went out and came back). Within one tree there is nothing to arbitrate, so those only fire
 //     when the new name is still free — and they run first, so the force-move above still wins.
 //
 // `renameSync` preserves the inode, so a daemon still holding an fd on the old path keeps writing
@@ -59,7 +60,7 @@ function migrateLegacyAdapterState(): void {
   for (const [current, legacy] of [
     ['computer-id', 'machine-id'],
     ['machine-name', 'harness-name'],
-    ['machine.log', 'harness.log'],
+    ['harness.log', 'machine.log'],
   ]) {
     if (adoptPath(join(adapterDataDir, current), join(adapterDataDir, legacy))) moved++
   }

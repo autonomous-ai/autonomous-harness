@@ -37,13 +37,14 @@ harness join -f    # reconnect in the FOREGROUND (for a supervisor: pm2/systemd)
 ```
 
 `join` prints a uniform info block (status, backend, pid, logs, and the **web chat link**
-`WEB_URL/machine/<agentId>`) then detaches; raw logs go to `${ADAPTER_DATA_DIR}/machine.log`. The
+`WEB_URL/machine/<agentId>`) then detaches; raw logs go to `${ADAPTER_DATA_DIR}/harness.log`. The
 credential is persisted to `${ADAPTER_DATA_DIR}/token`, so later runs are just `harness join`.
 
 The log is **capped at 10 MB**: the daemon checks the size every minute and, over the cap, rewrites the
 file with the newest half (the oldest lines are dropped, marked by a `[log] trimmed` line at the top).
-It's one file, not a rotation — 10 MB is the total on disk. A pre-rename `adapter.log` is adopted by
-rename on the first daemon start, so existing history carries over.
+It's one file, not a rotation — 10 MB is the total on disk. A log left under a pre-rename name
+(`machine.log`, or the older `adapter.log`) is adopted by rename on the first start, so existing history
+carries over.
 
 The daemon **auto-updates itself** — it polls the release manifest (default every 60 s) and, on a newer
 build, downloads + verifies + swaps its own bundle and restarts when idle (with rollback on a bad

@@ -108,9 +108,12 @@ import {
 const STOP_HOOK_GRACE_MS = 1_500
 
 // Daemon stdout/stderr. Capped at LOG_MAX_BYTES — see prepareLogFile/trimLogFile in lib/log.ts.
-const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'machine.log')
+const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'harness.log')
 // Pre-rename name. Adopted (renamed, keeping the inode) the first time a daemon opens the log, so a
 // machine that updates mid-run keeps its history instead of stranding it in a file nobody tails.
+// The log has had three names; this slot holds the OLDEST. The middle one (`machine.log`) is adopted
+// earlier and elsewhere — by the table in config/env.ts, which runs at module load, before any daemon
+// opens this file. Two mechanisms, one ancestor each, in the right order.
 const LEGACY_LOG_FILE = join(env.ADAPTER_DATA_DIR, 'adapter.log')
 const COMPUTER_ID_FILE = join(env.ADAPTER_DATA_DIR, 'computer-id')
 // The machine's display name, mirrored from the backend (`machine_meta` on connect + web renames) by the
@@ -418,7 +421,7 @@ async function statBirthMs(path: string): Promise<number> {
 
 /** The daemon body: hooks + watcher + process discovery + backend socket. */
 async function runForeground(token: string): Promise<void> {
-  installTimestampedConsole() // daemon-only: every machine.log line gets a wall-clock timestamp
+  installTimestampedConsole() // daemon-only: every harness.log line gets a wall-clock timestamp
   const startedAt = Date.now()
 
   // Claim the pid file for OURSELVES, first thing. It used to be written by whoever spawned us — the
@@ -2131,8 +2134,9 @@ function clearAdapterState(): void {
     for (const name of [
       'token',
       'adapter.pid',
-      'machine.log',
-      'adapter.log', // pre-rename name — still cleared so a reset leaves nothing behind
+      'harness.log',
+      'machine.log', // pre-rename names — still cleared so a reset leaves nothing behind
+      'adapter.log',
       'computer-id',
       'machine-name',
       'registry.json',

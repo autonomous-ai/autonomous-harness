@@ -90,8 +90,8 @@ describe('log file cap', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'adapter-log-'))
-    file = join(dir, 'machine.log')
-    legacy = join(dir, 'adapter.log')
+    file = join(dir, 'harness.log')
+    legacy = join(dir, 'machine.log')
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
