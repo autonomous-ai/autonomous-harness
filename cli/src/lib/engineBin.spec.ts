@@ -8,6 +8,7 @@ import {
   cursorRuntimeBin,
   ENGINE_CLI_COMMANDS,
   ENGINES,
+  installedEngineBin,
 } from './engineBin.js'
 
 const originalPath = process.env.PATH
@@ -59,10 +60,12 @@ describe('canonical engine CLI commands', () => {
     expect(agentAliasOwner([snapshot.agentCandidates[0]?.fileKey], snapshot)).toBe('grok')
     expect(agentAliasOwner([snapshot.agentCandidates[1]?.fileKey], snapshot)).toBe('cursor')
     expect(cursorRuntimeBin(snapshot)).toBe('cursor-agent')
+    expect(installedEngineBin('cursor', snapshot)).toBe(join(cursorBin, 'cursor-agent'))
 
     process.env.PATH = [cursorBin, grokBin].join(delimiter)
     snapshot = agentCommandOwnershipSnapshot()
     expect(agentAliasOwner([snapshot.agentCandidates[0]?.fileKey], snapshot)).toBe('cursor')
     expect(cursorRuntimeBin(snapshot)).toBe('agent')
+    expect(installedEngineBin('cursor', snapshot)).toBe(join(cursorBin, 'agent'))
   })
 })

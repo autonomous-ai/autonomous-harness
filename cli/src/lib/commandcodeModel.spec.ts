@@ -20,6 +20,8 @@ async function loadRuntimeProfile() {
 }
 
 const session = (): RegisteredSession => ({
+  schemaVersion: 2,
+  active: true,
   sessionId: 'session:1',
   engine: 'commandcode',
   launcherId: 'h1',
@@ -29,6 +31,8 @@ const session = (): RegisteredSession => ({
   projectDir: 'tmp',
   cwd: '/tmp',
   tmuxPane: '%1',
+  runtimes: [{ backend: 'tmux', paneId: '%1' }],
+  primaryRuntimeKey: 'tmux\u0000%1',
   source: null,
   title: null,
   model: null,

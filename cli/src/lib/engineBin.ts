@@ -183,6 +183,20 @@ export function cursorRuntimeBin(snapshot = agentCommandOwnershipSnapshot()): st
   return null
 }
 
+/** Resolve an installed executable for real-engine verification without trusting a colliding alias. */
+export function installedEngineBin(
+  engine: AgentEngine,
+  snapshot = agentCommandOwnershipSnapshot(),
+): string | null {
+  const command = engine === 'cursor' ? cursorRuntimeBin(snapshot) : engineBin(engine)
+  if (!command) return null
+  const candidates = commandCandidates(command)
+  if (engine === 'cursor' || engine === 'grok') {
+    return candidates.find((candidate) => agentAliasOwner([candidate.fileKey], snapshot) === engine)?.path ?? null
+  }
+  return candidates[0]?.path ?? null
+}
+
 /** Existing env override only; process matching must not treat a default basename as ownership proof. */
 export function enginePathOverride(engine: AgentEngine): string | undefined {
   switch (engine) {

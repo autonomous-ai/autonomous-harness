@@ -299,6 +299,8 @@ function observed(pid: number, engine: AgentEngine = 'claude'): DiscoveredTmuxAg
 
 function registered(agent: DiscoveredTmuxAgent, agentId = 'agent-1'): RegisteredSession {
   return {
+    schemaVersion: 2,
+    active: true,
     agentId,
     sessionId: '',
     boundAt: null,
@@ -307,6 +309,8 @@ function registered(agent: DiscoveredTmuxAgent, agentId = 'agent-1'): Registered
     projectDir: 'demo',
     cwd: agent.cwd,
     tmuxPane: agent.tmuxPane,
+    runtimes: [{ backend: 'tmux', paneId: agent.tmuxPane }],
+    primaryRuntimeKey: `tmux\u0000${agent.tmuxPane}`,
     source: null,
     title: null,
     model: null,

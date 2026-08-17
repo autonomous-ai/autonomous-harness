@@ -1,6 +1,6 @@
 /**
  * AskUserQuestion on a REMOTE machine — mirror the question to the device, then answer it by driving the
- * interactive CLI's own dialog in the tmux pane.
+ * interactive CLI's own terminal dialog.
  *
  * A runtime that speaks stream-json gets this for free: a `question_request` event carries
  * the questions out and a `question_response` control-frame carries the answer back. A remote machine has no
@@ -536,9 +536,11 @@ export function pickAnswer(answers: Record<string, string>, question: string, us
 
 export interface AskQuestionDeps {
   getSession: (sessionId: string) => RegisteredSession | undefined
-  capture: (pane: string, historyLines?: number) => Promise<string | null>
-  sendText: (pane: string, text: string) => Promise<boolean>
-  sendKey: (pane: string, key: string) => Promise<boolean>
+  capture: (terminalTarget: string, historyLines?: number) => Promise<string | null>
+  sendText: (terminalTarget: string, text: string) => Promise<boolean>
+  sendKey: (terminalTarget: string, key: string) => Promise<boolean>
+  /** Pins one backend locator for the whole multi-step dialog drive. */
+  acquireControl?: (sessionId: string) => (() => void) | null
   /** Injected for tests. */
   wait?: (ms: number) => Promise<void>
 }
@@ -552,7 +554,7 @@ export interface QuestionAnswerPayload {
 
 /**
  * Owns the OUT side's pending map (requestId → session) and the IN side's pane driving. One answer at a
- * time per pane: a second `question_response` for a dialog already being driven is dropped, not queued.
+ * time per agent: a second `question_response` for a dialog already being driven is dropped, not queued.
  */
 export class AskQuestionController {
   private pending = new Map<string, string>() // requestId → sessionId
@@ -575,25 +577,29 @@ export class AskQuestionController {
       console.warn(`[question] ignoring answer with no session/answers (req=${requestId})`)
       return false
     }
-    const pane = this.deps.getSession(sessionId)?.tmuxPane
-    if (!pane) {
-      console.warn(`[question] no tmux pane for ${sessionId.slice(0, 8)} — answer dropped`)
+    const session = this.deps.getSession(sessionId)
+    const terminalTarget = session?.agentId || session?.sessionId
+    if (!terminalTarget) {
+      console.warn(`[question] no terminal target for ${sessionId.slice(0, 8)} — answer dropped`)
       return false
     }
     if (this.driving.has(sessionId)) return false
+    const release = this.deps.acquireControl?.(terminalTarget)
+    if (this.deps.acquireControl && !release) return false
     this.driving.add(sessionId)
     try {
-      const ok = await this.drive(pane, answers, this.deps.getSession(sessionId)?.engine ?? 'claude')
+      const ok = await this.drive(terminalTarget, answers, this.deps.getSession(sessionId)?.engine ?? 'claude')
       this.pending.delete(requestId)
       console.log(`[question] ${sessionId.slice(0, 8)} answered from device · ${ok ? 'submitted' : 'FAILED'}`)
       return ok
     } finally {
       this.driving.delete(sessionId)
+      release?.()
     }
   }
 
   /** Key the answers into the pane's dialog, question by question, ending on the review screen. */
-  private async drive(pane: string, answers: Record<string, string>, engine: AgentEngine): Promise<boolean> {
+  private async drive(terminalTarget: string, answers: Record<string, string>, engine: AgentEngine): Promise<boolean> {
     const wait = this.deps.wait ?? sleep
     const used = new Set<string>()
     let lastQuestion = ''
@@ -601,15 +607,14 @@ export class AskQuestionController {
     let answered = 0
 
     for (let step = 0; step < MAX_STEPS; step++) {
-      const capture = await this.deps.capture(pane, CAPTURE_LINES)
+      const capture = await this.deps.capture(terminalTarget, CAPTURE_LINES)
       const view = parseEngineQuestionPane(engine, capture ?? '')
       if (!view) {
         // Nothing on screen: either the dialog was never open, or the last keystroke submitted it.
         return answered > 0
       }
       if (view.kind === 'review') {
-        await this.deps.sendKey(pane, view.submitRow)
-        return true
+        return this.deps.sendKey(terminalTarget, view.submitRow)
       }
       // The same question still showing after we acted on it: give the TUI one more beat to repaint,
       // then treat it as stuck rather than hammering the pane with more keystrokes. Never consume a
@@ -636,12 +641,13 @@ export class AskQuestionController {
         for (const label of labels) {
           const row = matchRow(view.rows, label)
           if (!row || row.checked) continue
-          await this.deps.sendKey(pane, row.number)
+          if (!await this.deps.sendKey(terminalTarget, row.number)) return false
           await wait(TEXT_MS)
           toggled++
         }
-        if (!toggled && view.typeRow) await this.typeFreeText(pane, view.typeRow, picked.value, wait)
-        await this.deps.sendKey(pane, multiSubmitKey(engine)) // advance to the next question / review
+        if (!toggled && view.typeRow
+          && !await this.typeFreeText(terminalTarget, view.typeRow, picked.value, wait)) return false
+        if (!await this.deps.sendKey(terminalTarget, multiSubmitKey(engine))) return false // advance to the next question / review
         await wait(STEP_MS)
         continue
       }
@@ -651,14 +657,14 @@ export class AskQuestionController {
         // One digit selects AND submits — except on Amp, whose rows are unnumbered and reached by
         // walking the list, so this is a short sequence rather than a single key.
         for (const key of rowKeys(engine, row)) {
-          await this.deps.sendKey(pane, key)
+          if (!await this.deps.sendKey(terminalTarget, key)) return false
           await wait(TEXT_MS)
         }
         await wait(STEP_MS)
         continue
       }
       if (!view.typeRow) { console.warn(`[question] no option matched "${picked.value.slice(0, 40)}" and no free-text row`); return false }
-      await this.typeFreeText(pane, view.typeRow, picked.value, wait)
+      if (!await this.typeFreeText(terminalTarget, view.typeRow, picked.value, wait)) return false
       await wait(STEP_MS)
     }
     return false
@@ -670,20 +676,20 @@ export class AskQuestionController {
   }
 
   /** Free-text answer (a voice answer is always free text): open the "Type something." row, type, Enter. */
-  private async typeFreeText(pane: string, typeRow: QuestionRow, text: string, wait: (ms: number) => Promise<void>): Promise<void> {
-    await this.deps.sendKey(pane, typeRow.number)
+  private async typeFreeText(terminalTarget: string, typeRow: QuestionRow, text: string, wait: (ms: number) => Promise<void>): Promise<boolean> {
+    if (!await this.deps.sendKey(terminalTarget, typeRow.number)) return false
     await wait(TEXT_MS)
-    await this.deps.sendText(pane, text)
+    if (!await this.deps.sendText(terminalTarget, text)) return false
     await wait(TEXT_MS)
-    await this.deps.sendKey(pane, 'Enter')
+    return this.deps.sendKey(terminalTarget, 'Enter')
   }
 }
 
-// ── watching a pane for an open question ─────────────────────────────────────────────────────────
+// ── watching a terminal for an open question ─────────────────────────────────────────────────────
 
 export interface QuestionWatcherDeps {
   getSession: (sessionId: string) => RegisteredSession | undefined
-  capture: (pane: string, historyLines?: number) => Promise<string | null>
+  capture: (terminalTarget: string, historyLines?: number) => Promise<string | null>
   /** Skip the capture entirely when no device is listening — nothing would consume the question. */
   hasDevice: () => boolean
   /** A dialog is open on screen. Fires ONCE per distinct question (until it changes or closes). */
@@ -728,7 +734,7 @@ export class QuestionWatcher {
     const session = this.deps.getSession(sessionId)
     // Only the engines that actually paint a question dialog: Claude and Command Code share one shape,
     // devin has its own (parseDevinQuestionPane). Polling any other pane would be pure waste.
-    if (!session?.tmuxPane || !QUESTION_ENGINES.has(session.engine)) return
+    if (!session || session.active === false || !(session.agentId || session.sessionId) || !QUESTION_ENGINES.has(session.engine)) return
     this.timers.set(sessionId, setInterval(() => { void this.tick(sessionId) }, POLL_MS))
   }
 
@@ -750,8 +756,9 @@ export class QuestionWatcher {
   }
 
   private async tick(sessionId: string): Promise<void> {
-    const pane = this.deps.getSession(sessionId)?.tmuxPane
-    if (!pane) { this.stop(sessionId); return }
+    const session = this.deps.getSession(sessionId)
+    const terminalTarget = session?.agentId || session?.sessionId
+    if (!terminalTarget) { this.stop(sessionId); return }
     // Both of these silently do nothing, which is how a live dialog can sit on the terminal with no trace
     // in the log. Say it once per transition rather than every 1.5s tick.
     const blocked = !this.deps.hasDevice() ? 'no device' : this.deps.isDriving?.(sessionId) ? 'driving an answer' : ''
@@ -761,7 +768,7 @@ export class QuestionWatcher {
     }
     if (blocked) return
     const engine = this.deps.getSession(sessionId)?.engine ?? 'claude'
-    const view = parseEngineQuestionPane(engine, await this.deps.capture(pane, CAPTURE_LINES) ?? '')
+    const view = parseEngineQuestionPane(engine, await this.deps.capture(terminalTarget, CAPTURE_LINES) ?? '')
     if (!view || view.kind !== 'question' || !view.question || view.rows.length === 0) {
       this.last.delete(sessionId) // dialog closed (or moved to review) → the next one announces fresh
       return

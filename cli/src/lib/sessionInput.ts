@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import type { RegisteredSession } from './registry.js'
 import { sid } from './log.js'
+import type { TerminalActionResult } from './terminalTypes.js'
 
 const MAX_QUEUE_ITEMS = 8
 const MAX_QUEUE_BYTES = 24 * 1024
@@ -63,14 +64,16 @@ interface InputState {
   settleTimer: NodeJS.Timeout | null
   retries: number
   observes: number
+  ambiguousDispatch: boolean
 }
 
 export interface SessionInputDeps {
   getSession: (sessionId: string) => RegisteredSession | undefined
   validateRuntime: (session: RegisteredSession) => Promise<boolean>
-  inject: (pane: string, content: string) => Promise<boolean>
-  sendKey: (pane: string, key: string) => Promise<boolean>
-  capture?: (pane: string) => Promise<string | null>
+  /** Boolean is retained for direct controller tests and legacy embedders. Production returns dispatch evidence. */
+  inject: (terminalTarget: string, content: string) => Promise<boolean | TerminalActionResult>
+  sendKey: (terminalTarget: string, key: string) => Promise<boolean | TerminalActionResult>
+  capture?: (terminalTarget: string) => Promise<string | null>
   onError: (sessionId: string, message: string) => void
 }
 
@@ -83,6 +86,11 @@ export class SessionInputController {
   private states = new Map<string, InputState>()
 
   constructor(private readonly deps: SessionInputDeps) {}
+
+  /** Controller dependencies take the stable agent id, never a backend route. */
+  private controlSession(id: string): RegisteredSession | undefined {
+    return this.deps.getSession(id)
+  }
 
   private state(sessionId: string): InputState {
     let value = this.states.get(sessionId)
@@ -98,6 +106,7 @@ export class SessionInputController {
         settleTimer: null,
         retries: 0,
         observes: 0,
+        ambiguousDispatch: false,
       }
       this.states.set(sessionId, value)
     }
@@ -109,7 +118,7 @@ export class SessionInputController {
   }
 
   submit(sessionId: string, content: string): void {
-    const session = this.deps.getSession(sessionId)
+    const session = this.controlSession(sessionId)
     if (!session) { this.deps.onError(sessionId, 'This agent is no longer available.'); return }
     const state = this.state(sessionId)
     this.dropExpired(sessionId, state)
@@ -124,7 +133,7 @@ export class SessionInputController {
 
   /** Reserve this pane for a short native control interaction such as `/model`. */
   acquireControl(sessionId: string): (() => void) | null {
-    const session = this.deps.getSession(sessionId)
+    const session = this.controlSession(sessionId)
     if (!session) return null
     const state = this.state(sessionId)
     this.dropExpired(sessionId, state)
@@ -160,6 +169,7 @@ export class SessionInputController {
       state.awaitingContent = null
       state.retries = 0
       state.observes = 0
+      state.ambiguousDispatch = false
       if (state.timer) clearTimeout(state.timer)
       state.timer = null
     }
@@ -173,12 +183,12 @@ export class SessionInputController {
    * the terminal during the turn — a small window, but their keystrokes, not ours.
    */
   private async clearCursorEcho(sessionId: string, userMessage: string): Promise<void> {
-    const session = this.deps.getSession(sessionId)
+    const session = this.controlSession(sessionId)
     if (session?.engine !== 'cursor' || !this.deps.capture) return
     try {
-      const capture = await this.deps.capture(session.tmuxPane)
+      const capture = await this.deps.capture(session.agentId)
       if (!capture || !cursorComposerContains(capture, userMessage)) return
-      await this.deps.sendKey(session.tmuxPane, 'C-u')
+      await this.deps.sendKey(session.agentId, 'C-u')
       console.log(`[inject] ${sid(sessionId)} cleared the echoed prompt from the Cursor composer`)
     } catch {
       /* best-effort cosmetics — never let this break the turn */
@@ -192,9 +202,10 @@ export class SessionInputController {
     state.awaitingContent = null
     state.retries = 0
     state.observes = 0
+    state.ambiguousDispatch = false
     if (state.timer) clearTimeout(state.timer)
     state.timer = null
-    const session = this.deps.getSession(sessionId)
+    const session = this.controlSession(sessionId)
     if (session?.engine === 'cursor') {
       // Cursor's stop hook can arrive just before its TUI has returned to the idle composer. A prompt
       // injected in that short window becomes a follow-up; Enter retries then enqueue it repeatedly.
@@ -211,15 +222,16 @@ export class SessionInputController {
   }
 
   cancel(sessionId: string): void {
-    const session = this.deps.getSession(sessionId)
+    const session = this.controlSession(sessionId)
     if (!session) return
     void this.deps.validateRuntime(session).then(async (valid) => {
       if (!valid) { this.deps.onError(sessionId, 'This agent process is no longer running.'); return }
-      await this.deps.sendKey(session.tmuxPane, 'C-c')
+      await this.deps.sendKey(session.agentId, 'C-c')
       const state = this.state(sessionId)
       state.turnOpen = false
       state.awaitingFingerprint = null
       state.awaitingContent = null
+      state.ambiguousDispatch = false
       if (state.timer) clearTimeout(state.timer)
       state.timer = null
       setTimeout(() => this.drainOne(sessionId, state), 250)
@@ -255,18 +267,23 @@ export class SessionInputController {
       // C-u (kill-to-start-of-line) is a no-op on an empty composer, so this costs nothing in the normal
       // case. It does discard a draft a human was typing in the terminal — but pasting into that draft
       // would corrupt it into a run-on prompt anyway, which is worse and harder to notice.
-      await this.deps.sendKey(session.tmuxPane, 'C-u')
+      await this.deps.sendKey(session.agentId, 'C-u')
     }
-    if (!(await this.deps.inject(session.tmuxPane, content))) {
-      console.warn(`[inject] ${sid(sessionId)} paste failed · engine=${session.engine} · pane=${session.tmuxPane}`)
+    const delivery = await this.deps.inject(session.agentId, content)
+    const accepted = typeof delivery === 'boolean'
+      ? delivery
+      : delivery.state === 'succeeded' || delivery.dispatch === 'possibly_executed'
+    if (!accepted) {
+      console.warn(`[inject] ${sid(sessionId)} paste failed · engine=${session.engine} · target=${session.agentId}`)
       this.deps.onError(sessionId, 'The message could not be delivered to the agent.')
       return
     }
-    console.log(`[inject] ${sid(sessionId)} paste ok · engine=${session.engine} · pane=${session.tmuxPane} · len=${content.length}`)
+    console.log(`[inject] ${sid(sessionId)} paste ok · engine=${session.engine} · target=${session.agentId} · len=${content.length}`)
     state.awaitingFingerprint = fingerprint(content)
     state.awaitingContent = content
     state.retries = 0
     state.observes = 0
+    state.ambiguousDispatch = typeof delivery !== 'boolean' && delivery.dispatch === 'possibly_executed'
     this.armSubmitCheck(sessionId, session, state)
   }
 
@@ -301,15 +318,20 @@ export class SessionInputController {
 
   private async retrySubmit(sessionId: string, session: RegisteredSession, state: InputState): Promise<void> {
     if (session.engine === 'cursor') {
-      const capture = await this.deps.capture?.(session.tmuxPane)
+      const capture = await this.deps.capture?.(session.agentId)
       if (!state.awaitingFingerprint || state.turnOpen) return
+      const draftPending = !!capture && cursorComposerContains(capture, state.awaitingContent ?? '')
+      if (state.ambiguousDispatch && !draftPending) {
+        this.failAmbiguousSubmission(sessionId, state)
+        return
+      }
       if (capture && cursorSubmissionAccepted(capture, state.awaitingContent ?? '')) {
         // The transcript hook can trail the TUI by a moment. Observe again without pressing Enter:
         // another Enter here would duplicate a running/queued follow-up.
         this.armSubmitCheck(sessionId, session, state)
         return
       }
-      if (!capture || !cursorComposerContains(capture, state.awaitingContent ?? '')) {
+      if (!draftPending) {
         console.warn(`[inject] ${sid(sessionId)} not accepted · engine=cursor · composer clear of draft`)
         state.awaitingFingerprint = null
         state.awaitingContent = null
@@ -323,9 +345,13 @@ export class SessionInputController {
       // derived turn_started (a new user row in opencode.db) to clear awaitingFingerprint; if it hasn't
       // arrived yet, fall through to a bounded retry-Enter, then error.
       if (!state.awaitingFingerprint || state.turnOpen) return
+      if (state.ambiguousDispatch) {
+        this.failAmbiguousSubmission(sessionId, state)
+        return
+      }
     } else {
-      // claude/codex/commandcode: verify against the pane before pressing Enter again or declaring failure.
-      const capture = await this.deps.capture?.(session.tmuxPane)
+      // claude/codex/commandcode: verify against the terminal before pressing Enter again or declaring failure.
+      const capture = await this.deps.capture?.(session.agentId)
       if (!state.awaitingFingerprint || state.turnOpen) return
       // Command Code writes the user line to its transcript only once the model has finished THINKING, so
       // the turn_started this used to wait for can be half a minute late on a real task — and the user
@@ -337,6 +363,7 @@ export class SessionInputController {
         state.awaitingFingerprint = null
         state.awaitingContent = null
         state.observes = 0
+        state.ambiguousDispatch = false
         return
       }
       if (capture && !terminalComposerContains(capture, state.awaitingContent ?? '')) {
@@ -349,15 +376,25 @@ export class SessionInputController {
           this.armSubmitCheck(sessionId, session, state)
           return
         }
+        // An ambiguous dispatch with no visible draft still may have run. It can never justify Enter.
+        if (state.ambiguousDispatch) {
+          this.failAmbiguousSubmission(sessionId, state)
+          return
+        }
         // Pathological: accepted-looking but no turn opened for a while → fall through to retry/error.
       }
       // capture === null (dep missing / unreadable) → fall through to today's blind retry/error so a
       // real delivery failure is never hidden.
+      if (!capture && state.ambiguousDispatch) {
+        this.failAmbiguousSubmission(sessionId, state)
+        return
+      }
     }
     if (state.retries >= SUBMIT_MAX_RETRIES) {
       console.warn(`[inject] ${sid(sessionId)} not accepted · engine=${session.engine} · gave up after ${state.retries} retries`)
       state.awaitingFingerprint = null
       state.awaitingContent = null
+      state.ambiguousDispatch = false
       this.deps.onError(sessionId, 'The agent did not accept the message. Please try again.')
       return
     }
@@ -367,12 +404,23 @@ export class SessionInputController {
     if (!valid) {
       state.awaitingFingerprint = null
       state.awaitingContent = null
+      state.ambiguousDispatch = false
       this.deps.onError(sessionId, 'This agent process is no longer running.')
       return
     }
     // Only the submit key is retried. The prompt body is never pasted twice.
-    await this.deps.sendKey(session.tmuxPane, 'Enter')
+    const delivery = await this.deps.sendKey(session.agentId, 'Enter')
+    state.ambiguousDispatch = typeof delivery === 'boolean'
+      ? !delivery
+      : delivery.dispatch === 'possibly_executed'
     this.armSubmitCheck(sessionId, session, state)
+  }
+
+  private failAmbiguousSubmission(sessionId: string, state: InputState): void {
+    state.awaitingFingerprint = null
+    state.awaitingContent = null
+    state.ambiguousDispatch = false
+    this.deps.onError(sessionId, 'The message delivery could not be confirmed. Check the agent before trying again.')
   }
 
   private drainOne(sessionId: string, state: InputState): void {
@@ -380,7 +428,7 @@ export class SessionInputController {
     if (state.controlLocked || state.turnOpen || state.awaitingFingerprint || state.settling) return
     const next = state.queue.shift()
     if (!next) return
-    const session = this.deps.getSession(sessionId)
+    const session = this.controlSession(sessionId)
     if (!session) { this.deps.onError(sessionId, 'This agent is no longer available.'); return }
     void this.inject(sessionId, session, next.content)
   }

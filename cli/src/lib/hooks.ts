@@ -284,22 +284,31 @@ function forkPluginSource(engine: 'opencode' | 'kilo', port: number): string {
   const product = engine === 'kilo' ? 'Kilo' : 'OpenCode'
   return `// session-register — auto-installed by the machine adapter. Binds this ${product} session to the
 // local machine daemon (127.0.0.1:${port}) so it can be mirrored to web/device. No-op if machine isn't running.
+import { readFileSync } from "node:fs"
+const hookToken = () => { try { return readFileSync(${JSON.stringify(join(env.ADAPTER_DATA_DIR, 'hook-credential'))}, "utf8").trim() } catch { return "" } }
 export const MachineRegister = async ({ directory, worktree, project }) => {
   const seen = new Set()
   const post = async (sessionID) => {
     const pane = process.env.TMUX_PANE
-    if (!pane || !sessionID || seen.has(sessionID)) return
+    const herdrPane = process.env.HERDR_PANE_ID
+    const token = hookToken()
+    if ((!pane && !herdrPane) || !token || !sessionID || seen.has(sessionID)) return
     seen.add(sessionID)
     try {
       await fetch("http://127.0.0.1:${port}/api/hook/session-start", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-harness-hook-token": token },
         body: JSON.stringify({
           engine: "${engine}",
           pluginVersion: ${JSON.stringify(VERSION)},
           sessionId: sessionID,
           cwd: directory || worktree || (project && project.worktree) || null,
           tmuxPane: pane,
+          callerPid: process.pid,
+          runtimeHints: [
+            ...(pane ? [{ backend: "tmux", paneId: pane }] : []),
+            ...(herdrPane ? [{ backend: "herdr", paneId: herdrPane, sessionName: process.env.HERDR_SESSION, socketPath: process.env.HERDR_SOCKET_PATH }] : []),
+          ],
         }),
       })
     } catch {}
@@ -552,7 +561,7 @@ const PI_EXTENSION_PATH = join(env.PI_HOME, 'agent', 'extensions', 'launcher-reg
 function piExtensionSource(port: number): string {
   return `// session-register — auto-installed by the machine adapter. Binds this Pi session to the local
 // machine daemon (127.0.0.1:${port}) so it can be mirrored to web/device. No-op if machine isn't running.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
@@ -561,7 +570,10 @@ export default function (pi: ExtensionAPI) {
 
   const register = async (ctx: any) => {
     const pane = process.env.TMUX_PANE;
-    if (!pane) return; // tmux-only, like every other engine
+    const herdrPane = process.env.HERDR_PANE_ID;
+    let token = "";
+    try { token = readFileSync(${JSON.stringify(join(env.ADAPTER_DATA_DIR, 'hook-credential'))}, "utf8").trim(); } catch {}
+    if ((!pane && !herdrPane) || !token) return;
     // Pi knows the session file path immediately but only WRITES it once the first assistant message
     // lands. Sending a path that isn't on disk yet is rejected by the daemon (it validates the file),
     // so announce without one first and attach the real path on a later turn.
@@ -573,7 +585,7 @@ export default function (pi: ExtensionAPI) {
     try {
       const res = await fetch("http://127.0.0.1:${port}/api/hook/session-start", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-harness-hook-token": token },
         body: JSON.stringify({
           engine: "pi",
           pluginVersion: ${JSON.stringify(VERSION)},
@@ -581,6 +593,11 @@ export default function (pi: ExtensionAPI) {
           transcriptPath: ready ? file : undefined,
           cwd: ctx?.cwd ?? undefined,
           tmuxPane: pane,
+          callerPid: process.pid,
+          runtimeHints: [
+            ...(pane ? [{ backend: "tmux", paneId: pane }] : []),
+            ...(herdrPane ? [{ backend: "herdr", paneId: herdrPane, sessionName: process.env.HERDR_SESSION, socketPath: process.env.HERDR_SOCKET_PATH }] : []),
+          ],
         }),
       });
       if (!res.ok) return; // daemon refused (e.g. transcript not readable yet) — retry on the next turn
@@ -658,7 +675,7 @@ function ampPluginSource(port: number, sessionsDir: string): string {
   return `// session-register — auto-installed by the machine adapter. Binds this Amp thread to the local
 // machine daemon (127.0.0.1:${port}) and writes the transcript the daemon tails, because Amp keeps none
 // on disk. No-op outside tmux.
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const description = 'Mirrors this Amp thread to the machine adapter (web + device)'
@@ -667,7 +684,8 @@ const SESSIONS_DIR = ${JSON.stringify(sessionsDir)}
 
 export default function (amp: any) {
   const pane = process.env.TMUX_PANE
-  if (!pane) return
+  const herdrPane = process.env.HERDR_PANE_ID
+  if (!pane && !herdrPane) return
 
   // NOT \`process.cwd()\`: Bun runs a plugin with the PLUGIN's directory as its cwd, so that reports
   // \`<project>/.amp/plugins\` (measured). \`PWD\` is inherited from the shell that launched plain Amp.
@@ -706,9 +724,11 @@ export default function (amp: any) {
     open(threadId)
     if (registered || !existsSync(file)) return
     try {
+      const token = readFileSync(${JSON.stringify(join(env.ADAPTER_DATA_DIR, 'hook-credential'))}, 'utf8').trim()
+      if (!token) return
       const res = await fetch('http://127.0.0.1:${port}/api/hook/session-start', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-harness-hook-token': token },
         body: JSON.stringify({
           engine: 'amp',
           pluginVersion: ${JSON.stringify(VERSION)},
@@ -716,6 +736,11 @@ export default function (amp: any) {
           transcriptPath: file,
           cwd: workdir,
           tmuxPane: pane,
+          callerPid: process.pid,
+          runtimeHints: [
+            ...(pane ? [{ backend: 'tmux', paneId: pane }] : []),
+            ...(herdrPane ? [{ backend: 'herdr', paneId: herdrPane, sessionName: process.env.HERDR_SESSION, socketPath: process.env.HERDR_SOCKET_PATH }] : []),
+          ],
         }),
       })
       if (res.ok) registered = true

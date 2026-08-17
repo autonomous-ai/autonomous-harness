@@ -17,7 +17,7 @@ function scratch(): string {
 }
 
 describe('generated discovery scripts', () => {
-  it('lets the Pi extension post from any tmux pane without launcher metadata', async () => {
+  it('lets the Pi extension post from any terminal context without launcher metadata', async () => {
     const piHome = scratch()
     vi.resetModules()
     process.env.PI_HOME = piHome
@@ -26,11 +26,12 @@ describe('generated discovery scripts', () => {
 
     const src = readFileSync(join(piHome, 'agent', 'extensions', 'launcher-register.ts'), 'utf-8')
     expect(src).toContain('process.env.TMUX_PANE')
+    expect(src).toContain('process.env.HERDR_PANE_ID')
     expect(src).not.toContain('MACHINE_ID')
     expect(src).not.toContain('launcherId')
   })
 
-  it('lets the OpenCode plugin post from any tmux pane without launcher metadata', async () => {
+  it('lets the OpenCode plugin post from any terminal context without launcher metadata', async () => {
     const pluginDir = scratch()
     vi.resetModules()
     process.env.OPENCODE_PLUGIN_DIR = pluginDir
@@ -39,8 +40,9 @@ describe('generated discovery scripts', () => {
 
     const src = readFileSync(join(pluginDir, 'launcher-register.js'), 'utf-8')
     expect(src).toContain('process.env.TMUX_PANE')
+    expect(src).toContain('process.env.HERDR_PANE_ID')
     expect(src).not.toContain('MACHINE_ID')
     expect(src).not.toContain('launcherId')
-    expect(src).toMatch(/if \(!pane/)
+    expect(src).toContain('if ((!pane && !herdrPane)')
   })
 })

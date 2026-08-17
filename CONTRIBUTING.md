@@ -76,11 +76,13 @@ fail, which is also why forgetting them is easy:
 
 ```bash
 npm run test:tmux-real     # RUN_REAL_TMUX_DISCOVERY=1 — drives a real tmux server
+npm run test:herdr-real    # RUN_REAL_HERDR=1 — drives isolated Herdr sessions/workspaces
 npm run test:cursor-e2e    # RUN_CURSOR_E2E=1 — needs a real cursor-agent CLI
 ```
 
-If your change touches how agents are discovered or driven, run `test:tmux-real` and say in the pull
-request that you did. It is the one suite that can tell you whether you broke everybody else's setup.
+If your change touches how agents are discovered or driven, run both real multiplexer suites for the
+software available on your machine and say exactly which versions and engine rows ran. A missing
+binary, credential, or onboarding step is an unavailable row, not a passing one.
 
 ### Adding an engine
 
@@ -92,31 +94,34 @@ into the tool feed — and each one passed its unit tests first.
 
 ### Adding a multiplexer
 
-Harness drives agents inside tmux today. A second multiplexer is welcome, on one condition: it is
-**added alongside tmux, not swapped in for it.** Every user's `registry.json` keys its agents by tmux
-pane id, so replacing the multiplexer orphans every running agent on upgrade. tmux stays the default,
-yours becomes a second implementation behind the same interface, and the one after that becomes a
-third instead of a third rewrite.
+Harness drives agents inside tmux and Herdr 0.8.x protocol 19. Another multiplexer is welcome, on one
+condition: it is **added alongside tmux, not swapped in for it.** Existing registries contain tmux
+pane identity, so replacing the multiplexer orphans running agents on upgrade. tmux stays the default,
+yours becomes another implementation behind the same interface instead of another rewrite.
 
 Three things decide how much work this is, and the first one is not in this repository at all:
 
-1. **Can a process running inside a pane tell which pane it is in?** tmux exports `$TMUX_PANE`, and
-   every engine's discovery hangs off it: the shell hooks in `cli/hook/notify.mjs` and the in-process
-   plugins and extensions generated in `cli/src/lib/hooks.ts` all read it, and stay deliberately inert
-   without it. If your multiplexer exports no per-pane identifier into the child environment, no
-   abstraction on our side can rescue discovery. **Check this before writing anything else.**
-2. **Pane ids are validated.** `PANE_RE` in `cli/src/lib/registry.ts` accepts tmux's `%N` and nothing
-   else. It has to widen without letting two multiplexers' ids ever collide.
-3. **The recap workers scrub the pane variable.** `cli/src/lib/oneshot.ts` deletes it before spawning
-   an ephemeral summary run, so that run cannot register itself as an agent. Miss the equivalent for
-   yours and every recap spawns a phantom agent — silent, and thoroughly unpleasant to trace.
+1. **Can a process running inside a pane tell which pane it is in?** tmux exports `$TMUX_PANE`; Herdr
+   exports its pane, session, and socket context. The shell hooks in `cli/hook/notify.mjs` and the
+   in-process plugins and extensions generated in `cli/src/lib/hooks.ts` read typed hints and stay
+   deliberately inert without a verifiable configured runtime. If your multiplexer exports no
+   per-pane identifier into the child environment, no abstraction on our side can rescue discovery.
+   **Check this before writing anything else.**
+2. **Pane ids are validated and namespaced.** Identity must include the backend instance so public
+   pane ids from two multiplexers or configured endpoints cannot collide.
+3. **The recap workers scrub every backend's location variables.** `cli/src/lib/oneshot.ts` removes
+   them before spawning an ephemeral summary run, so that run cannot register itself as an agent.
+   Miss the equivalent for yours and every recap spawns a phantom agent — silent, and thoroughly
+   unpleasant to trace.
 
-The command surface itself is small: list panes with their pid and working directory, send keys,
-capture the pane, display a message, create and kill sessions. Note that reading the conversation
-does **not** go through the multiplexer — each engine tails its own store on disk — so the scope is
-narrower than it first looks. What decides the difficulty is how well your multiplexer answers "read
-this pane" and "send keys to this pane", because that is what the question dialogs and the model
-pickers are driven with.
+The command surface itself is small: list panes with their pid and working directory, send literal
+text and logical keys, capture the pane, display a message, and create and kill sessions/workspaces.
+Lifecycle methods are explicit backend capabilities for callers that request them; normal Harness
+startup does not create user sessions, and deleting an agent does not close its pane. Note that
+reading the conversation does **not** go through the multiplexer — each engine tails its own store on
+disk — so the scope is narrower than it first looks. What decides the difficulty is how well your
+multiplexer answers "read this pane" and "send keys to this pane", because that is what the question
+dialogs and the model pickers are driven with.
 
 ## Found a gap in the spec?
 

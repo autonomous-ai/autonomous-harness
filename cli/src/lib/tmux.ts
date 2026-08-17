@@ -143,7 +143,7 @@ export function parseProcessRow(line: string): ProcessRow | null {
 }
 
 /** The process table, or null when `ps` itself failed — "we could not look" is not "nothing is there". */
-async function processRows(): Promise<ProcessRow[] | null> {
+export async function processRows(): Promise<ProcessRow[] | null> {
   const rows = await new Promise<ProcessRow[] | null>((resolve) => {
     execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000 }, (err, stdout) => {
       if (err) { resolve(null); return }
@@ -501,8 +501,8 @@ export async function checkSessionRuntime(session: RegisteredSession): Promise<R
   return { state: 'alive' }
 }
 
-// A short single-line message fits in ONE pty write, so `send-keys -l` + an immediate Enter submits
-// instantly. Anything longer or multi-line takes the bracketed-paste path below (see sendToTmux).
+// A short single-line message can be pasted without bracketed-paste settling. Anything longer or
+// multi-line uses bracketed paste and waits before Enter (see sendToTmux).
 const INJECT_FASTPATH_MAXLEN = 500
 // Base settle time before the submit Enter; grows with length (Claude needs time to ingest a big paste
 // and collapse it to `[Pasted text]` before a clean Enter counts as submit rather than paste content).
@@ -534,42 +534,49 @@ function tmuxLoadBuffer(name: string, content: string): Promise<boolean> {
   })
 }
 
+function tmuxDeleteBuffer(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('tmux', ['delete-buffer', '-b', name], { timeout: 2_000 }, () => resolve())
+  })
+}
+
+/** Paste text from a uniquely named stdin-loaded buffer so its bytes never enter argv or errors. */
+async function tmuxPasteText(pane: string, content: string, bracketed: boolean): Promise<boolean> {
+  const bufferName = `machinemsg-${process.pid}-${++injectBufferSequence}`
+  if (!(await tmuxLoadBuffer(bufferName, content))) {
+    await tmuxDeleteBuffer(bufferName)
+    console.error(`[tmux] load-buffer for ${pane} failed`)
+    return false
+  }
+  const args = ['paste-buffer', '-t', pane, '-b', bufferName]
+  if (bracketed) args.push('-p')
+  args.push('-d')
+  const pasted = await new Promise<boolean>((resolve) => {
+    execFile('tmux', args, { timeout: 2_000 }, (err) => {
+      if (err) console.error(`[tmux] paste-buffer to ${pane} failed:`, err.message)
+      resolve(!err)
+    })
+  })
+  if (!pasted) await tmuxDeleteBuffer(bufferName)
+  return pasted
+}
+
 /**
  * Type a message into a tmux pane and submit it — the web-chat/device → terminal injection point.
  *
- * SHORT single-line: `send-keys -l` (literal, so "Enter"/"C-m" in the body aren't read as key names) +
- * an immediate Enter. Fast, no added latency.
+ * All text is loaded into a uniquely named tmux buffer over stdin so prompt bytes never enter argv,
+ * environment, logs, or child-process error strings. Short single-line input is pasted literally and
+ * submitted immediately.
  *
- * LONG / multi-line: a big `send-keys -l` is split by tmux into several pty writes, so Claude Code's
- * paste heuristic collapses each chunk into its own `[Pasted text]` block and the immediate Enter lands
- * mid-burst and is SWALLOWED (never submits). Instead we stage the text in a named buffer and
- * bracketed-paste it as ONE unit (`paste-buffer -p`), let Claude settle, then send a clean separate
- * Enter. (Verified: reliably submits up to ~28 KB.)
+ * Long/multiline input is bracketed-pasted as one unit (`paste-buffer -p`), allowed to settle, then
+ * submitted with a separate Enter. (Verified: reliably submits up to ~28 KB.)
  */
 export function sendToTmux(pane: string, text: string): Promise<boolean> {
   const content = text.replace(/[\r\n]+$/, '') // strip trailing newlines so the submit Enter isn't doubled
-  if (content.length <= INJECT_FASTPATH_MAXLEN && !content.includes('\n')) {
-    return new Promise((resolve) => {
-      execFile('tmux', ['send-keys', '-t', pane, '-l', content], { timeout: 2000 }, (err) => {
-        if (err) { console.error(`[tmux] send-keys to ${pane} failed:`, err.message); resolve(false); return }
-        void tmuxEnter(pane).then(resolve)
-      })
-    })
-  }
   return (async () => {
-    const bufferName = `machinemsg-${process.pid}-${++injectBufferSequence}`
-    if (!(await tmuxLoadBuffer(bufferName, content))) {
-      console.error(`[tmux] load-buffer for ${pane} failed`)
-      return false
-    }
-    const pasted = await new Promise<boolean>((resolve) => {
-      execFile('tmux', ['paste-buffer', '-t', pane, '-b', bufferName, '-p', '-d'], { timeout: 2000 }, (err) => {
-        if (err) console.error(`[tmux] paste-buffer to ${pane} failed:`, err.message)
-        resolve(!err)
-      })
-    })
-    if (!pasted) return false
-    await sleep(Math.min(1500, INJECT_PASTE_DELAY_BASE_MS + Math.floor(content.length / 60)))
+    const bracketed = content.length > INJECT_FASTPATH_MAXLEN || content.includes('\n')
+    if (!(await tmuxPasteText(pane, content, bracketed))) return false
+    if (bracketed) await sleep(Math.min(1500, INJECT_PASTE_DELAY_BASE_MS + Math.floor(content.length / 60)))
     return tmuxEnter(pane)
   })()
 }
@@ -581,12 +588,7 @@ export function sendToTmux(pane: string, text: string): Promise<boolean> {
  * land on the row that just opened and pick whatever was already highlighted.
  */
 export function sendLiteralToTmux(pane: string, text: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    execFile('tmux', ['send-keys', '-t', pane, '-l', text], { timeout: 2000 }, (err) => {
-      if (err) console.error(`[tmux] literal send to ${pane} failed:`, err.message)
-      resolve(!err)
-    })
-  })
+  return tmuxPasteText(pane, text, false)
 }
 
 export function sendKeyToTmux(pane: string, key: string): Promise<boolean> {
@@ -595,11 +597,27 @@ export function sendKeyToTmux(pane: string, key: string): Promise<boolean> {
   })
 }
 
-/** Capture terminal text plus SGR style codes. Styles distinguish a dim CLI placeholder from a real draft. */
-export function captureTmuxPane(pane: string, historyLines = 100): Promise<string | null> {
+export function tmuxCaptureArgs(
+  pane: string,
+  historyLines = 100,
+  options: { visible?: boolean; ansi?: boolean } = {},
+): string[] {
   const bounded = Math.max(20, Math.min(300, Math.floor(historyLines)))
+  const args = ['capture-pane', '-p']
+  if (options.ansi !== false) args.push('-e')
+  args.push('-J', '-t', pane)
+  if (!options.visible) args.push('-S', `-${bounded}`)
+  return args
+}
+
+/** Capture terminal text; SGR and bounded history are independently selectable by backend consumers. */
+export function captureTmuxPane(
+  pane: string,
+  historyLines = 100,
+  options: { visible?: boolean; ansi?: boolean } = {},
+): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile('tmux', ['capture-pane', '-p', '-e', '-J', '-t', pane, '-S', `-${bounded}`], { timeout: 2000 }, (err, stdout) => {
+    execFile('tmux', tmuxCaptureArgs(pane, historyLines, options), { timeout: 2000 }, (err, stdout) => {
       if (err) { resolve(null); return }
       resolve(stdout)
     })

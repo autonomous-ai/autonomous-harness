@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:cursor-e2e": "RUN_CURSOR_E2E=1 vitest run src/engines/cursor/localE2e.spec.ts",
     "test:tmux-real": "RUN_REAL_TMUX_DISCOVERY=1 vitest run src/lib/tmuxAgentDiscovery.real.spec.ts --reporter=verbose",
+    "test:herdr-real": "RUN_REAL_HERDR=1 vitest run src/lib/herdrBackend.real.spec.ts --reporter=verbose",
     "release": "bash scripts/upload-cli.sh"
   },
   "dependencies": {
@@ -33,7 +34,7 @@
     "typescript": "^5.5.3",
     "vitest": "^4.1.10"
   },
-  "description": "Run your own coding-agent CLIs (Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin, Muse, Amp, Kilo, and Grok) in tmux and drive them from the web or a paired device.",
+  "description": "Run your own coding-agent CLIs (Claude Code, Codex, Cursor, OpenCode, Pi, Hermes, Command Code, Devin, Muse, Amp, Kilo, and Grok) in tmux, Herdr, or both and drive them from the web or a paired device.",
   "license": "MIT",
   "repository": {
     "type": "git",

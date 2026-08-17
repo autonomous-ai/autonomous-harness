@@ -113,6 +113,35 @@ describe('delete-agent process termination', () => {
     await expect(terminateDeletedAgent(SESSION, d)).resolves.toBe('failed')
     expect(d.logs.join('\n')).toContain('could not validate')
   })
+
+  it('does not SIGKILL when identity validation becomes unknown after SIGTERM', async () => {
+    let checks = 0
+    const d = deps({
+      checkRuntime: async () => {
+        checks += 1
+        return checks > 13
+          ? { state: 'unknown', reason: 'process table timed out' }
+          : runtime(true)
+      },
+    })
+    await expect(terminateDeletedAgent(SESSION, d)).resolves.toBe('failed')
+    expect(d.kills).toEqual([[4242, 'SIGTERM']])
+    expect(d.logs.join('\n')).toContain('before SIGKILL')
+  })
+
+  it('does not SIGKILL a PID whose process identity changed after SIGTERM', async () => {
+    let checks = 0
+    const d = deps({
+      checkRuntime: async () => {
+        checks += 1
+        return checks > 13
+          ? { state: 'gone', reason: 'saved PID was reused' }
+          : runtime(true)
+      },
+    })
+    await expect(terminateDeletedAgent(SESSION, d)).resolves.toBe('terminated')
+    expect(d.kills).toEqual([[4242, 'SIGTERM']])
+  })
 })
 
 describe('delete-agent process termination timing', () => {

@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
-import { ambiguousAgentProcess, engineProcessMatchScore, parseProcessRow, resumeSessionId } from './tmux.js'
+import {
+  ambiguousAgentProcess,
+  engineProcessMatchScore,
+  parseProcessRow,
+  resumeSessionId,
+  sendLiteralToTmux,
+  sendToTmux,
+  tmuxCaptureArgs,
+} from './tmux.js'
 
 const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwnershipSnapshot => ({
   cursorFileKeys: new Set(cursor),
@@ -93,5 +104,69 @@ describe('tmux process primitives', () => {
     expect(resumeSessionId('claude', 'claude --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
     expect(resumeSessionId('codex', 'codex resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
     expect(resumeSessionId('devin', 'devin --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
+  })
+
+  it('maps neutral visible/history and ANSI capture options to tmux flags', () => {
+    expect(tmuxCaptureArgs('%7', 60)).toEqual([
+      'capture-pane', '-p', '-e', '-J', '-t', '%7', '-S', '-60',
+    ])
+    expect(tmuxCaptureArgs('%7', 60, { visible: true, ansi: false })).toEqual([
+      'capture-pane', '-p', '-J', '-t', '%7',
+    ])
+  })
+
+  it('carries prompt and literal bytes only over stdin, never child argv or diagnostics', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'harness-tmux-input-'))
+    const argsFile = join(dir, 'args')
+    const stdinFile = join(dir, 'stdin')
+    const fakeTmux = join(dir, 'tmux')
+    const sentinel = `prompt sentinel $' ${process.pid}`
+    writeFileSync(fakeTmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_INPUT_ARGS"
+if [ "$1" = "load-buffer" ]; then
+  cat >> "$TMUX_INPUT_STDIN"
+  printf '\\n' >> "$TMUX_INPUT_STDIN"
+fi
+if [ "$1" = "paste-buffer" ] && [ "$TMUX_INPUT_FAIL_PASTE" = "1" ]; then
+  printf 'synthetic paste failure\\n' >&2
+  exit 2
+fi
+`)
+    chmodSync(fakeTmux, 0o700)
+    const previous = {
+      path: process.env.PATH,
+      args: process.env.TMUX_INPUT_ARGS,
+      stdin: process.env.TMUX_INPUT_STDIN,
+      fail: process.env.TMUX_INPUT_FAIL_PASTE,
+    }
+    const errors: string[] = []
+    const error = vi.spyOn(console, 'error').mockImplementation((...values) => {
+      errors.push(values.map(String).join(' '))
+    })
+    try {
+      process.env.PATH = `${dir}:${previous.path ?? ''}`
+      process.env.TMUX_INPUT_ARGS = argsFile
+      process.env.TMUX_INPUT_STDIN = stdinFile
+      expect(await sendLiteralToTmux('%7', sentinel)).toBe(true)
+      expect(await sendToTmux('%7', sentinel)).toBe(true)
+      process.env.TMUX_INPUT_FAIL_PASTE = '1'
+      expect(await sendLiteralToTmux('%7', sentinel)).toBe(false)
+
+      const argv = readFileSync(argsFile, 'utf8')
+      expect(argv).not.toContain(sentinel)
+      expect(readFileSync(stdinFile, 'utf8').split(sentinel)).toHaveLength(4)
+      expect(errors.join('\n')).not.toContain(sentinel)
+    } finally {
+      error.mockRestore()
+      if (previous.path === undefined) delete process.env.PATH
+      else process.env.PATH = previous.path
+      if (previous.args === undefined) delete process.env.TMUX_INPUT_ARGS
+      else process.env.TMUX_INPUT_ARGS = previous.args
+      if (previous.stdin === undefined) delete process.env.TMUX_INPUT_STDIN
+      else process.env.TMUX_INPUT_STDIN = previous.stdin
+      if (previous.fail === undefined) delete process.env.TMUX_INPUT_FAIL_PASTE
+      else process.env.TMUX_INPUT_FAIL_PASTE = previous.fail
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
