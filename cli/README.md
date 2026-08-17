@@ -65,16 +65,20 @@ daemon on it, so `harness` on this computer means your code without publishing a
 turned **off** in the command shim it writes (otherwise the published release overwrites your build within
 the minute). See [`RELEASE.md`](RELEASE.md#local-install-no-upload).
 
-After joining, start each agent yourself in tmux or a configured Herdr session with its normal vendor command. Harness observes the
-process; it does not launch the CLI or choose its permission/trust flags:
+After joining, start each agent yourself in tmux or Herdr with its normal vendor command. Harness
+observes the process; it does not launch the CLI or choose its permission/trust flags:
 
 ```bash
 tmux new
 claude                    # or: codex, agent, opencode, pi, hermes, cmd, devin, muse, amp, kilo, grok
 
-# Or, after starting a named Herdr session through Herdr itself:
-TERMINAL_BACKENDS=herdr HERDR_SESSIONS=default harness join
+# Or the same engines under Herdr — nothing to configure, and both at once is fine:
+herdr
+claude
 ```
+
+Both multiplexers are watched by default, and a Herdr session started after the daemon is adopted on
+the next scan. There is no env var to set for either one.
 
 Each supported top-level CLI process appears automatically. Exiting or deleting the agent stops only
 the validated engine process; Harness never closes the user-owned tmux or Herdr pane.
@@ -122,10 +126,14 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
 
 ### Terminal backend behavior
 
-- `TERMINAL_BACKENDS` is a strict ordered list: `tmux`, `herdr`, or `tmux,herdr`. The default is `tmux`.
-- `HERDR_SESSIONS` is an ordered list of local named sessions. Harness never auto-starts a session and
-  never connects to a socket supplied only by a hook. Herdr support is pinned to compatible 0.8.x,
-  protocol 19.
+- **Unset means auto.** Every backend usable on the machine is watched: tmux always, Herdr whenever its
+  binary is on `PATH`. A machine without Herdr pays a few `PATH` lookups and never spawns anything.
+- `TERMINAL_BACKENDS` overrides that with a strict ordered list — `tmux`, `herdr`, or `tmux,herdr`.
+  `TERMINAL_BACKENDS=tmux` is how you turn Herdr off.
+- `HERDR_SESSIONS` unset means every session Herdr reports as **running** is adopted, so a session
+  started later needs no restart. Setting it makes a strict allowlist that discovery never widens.
+- Harness never auto-starts a session, and never connects to a socket supplied only by a hook. Herdr
+  support is pinned to compatible 0.8.x, protocol 19.
 - The shared backend contract can create and close a tmux session or Herdr workspace when explicitly
   invoked. This is lifecycle capability, not automatic startup behavior; normal discovery observes
   user-owned sessions, and agent deletion still terminates only the validated engine process.
@@ -162,8 +170,8 @@ reported as such, not described as exercised.
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | where Claude writes session JSONL |
 | `ADAPTER_DATA_DIR` | `~/.harness/cli/data` | registry + token persistence |
 | `DISABLE_HOOK_INSTALL` | `false` | skip auto-installing the claude hooks |
-| `TERMINAL_BACKENDS` | `tmux` | strict ordered list: `tmux`, `herdr`, or `tmux,herdr` |
-| `HERDR_SESSIONS` | `default` | ordered configured local named Herdr sessions |
+| `TERMINAL_BACKENDS` | *(auto)* | pin the set: `tmux`, `herdr`, or `tmux,herdr`. Unset = every usable backend |
+| `HERDR_SESSIONS` | *(auto)* | pin an allowlist. Unset = every running Herdr session is adopted |
 | `HERDR_BIN` | `herdr` | Herdr executable used only for session discovery/diagnostics |
 | `TERMINAL_RECONCILE_INTERVAL_MS` | `5000` | backend-neutral discovery interval; minimum 5000 ms |
 | `TMUX_REAP_INTERVAL_MS` | `5000` | process discovery interval (removal requires two confirmed misses) |

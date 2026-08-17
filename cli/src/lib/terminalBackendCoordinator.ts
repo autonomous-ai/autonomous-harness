@@ -46,7 +46,7 @@ export class TerminalBackendCoordinator {
   constructor(
     backends: readonly TerminalBackend[],
     private readonly backendOrder: readonly string[],
-    private readonly herdrSessionOrder: readonly string[],
+    private herdrSessionOrder: readonly string[],
   ) {
     this.replaceBackends(backends)
   }
@@ -54,6 +54,14 @@ export class TerminalBackendCoordinator {
   replaceBackends(backends: readonly TerminalBackend[]): void {
     this.byInstance.clear()
     for (const backend of backends) this.byInstance.set(backend.instanceId, backend)
+  }
+
+  /**
+   * The session order is only a deterministic tie-break between two runtimes of the same backend, but it
+   * has to track discovery: with sessions adopted as they start, the set is no longer fixed at boot.
+   */
+  setHerdrSessionOrder(order: readonly string[]): void {
+    this.herdrSessionOrder = order
   }
 
   instances(): TerminalBackend[] {

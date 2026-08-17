@@ -182,14 +182,21 @@ const envSchema = z.object({
   // Set to 'true' to skip auto-installing lifecycle hooks for every supported engine.
   DISABLE_HOOK_INSTALL: z.string().default('false').transform((v) => v === 'true'),
   // Additive terminal capability. Order controls deterministic primary-route tie breaking.
-  TERMINAL_BACKENDS: z.string().default('tmux').transform((value, context) => {
+  //
+  // UNSET MEANS AUTO — every backend that is actually usable here, which is what makes `herdr` then an
+  // engine behave like `tmux new` then an engine, with nothing to configure. Set it to pin: `tmux` is
+  // how you turn Herdr off. Validation is unchanged for a value that IS given.
+  TERMINAL_BACKENDS: z.string().optional().transform((value, context) => {
+    if (value === undefined || value === '') return undefined
     try { return parseTerminalBackends(value) } catch (error) {
       context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'invalid terminal backends' })
       return z.NEVER
     }
   }),
-  // Configured Herdr named sessions only. Hook-supplied socket paths never expand this allowlist.
-  HERDR_SESSIONS: z.string().default('default').transform((value, context) => {
+  // Named Herdr sessions. UNSET means "adopt the sessions Herdr reports as running"; a value is a strict
+  // allowlist that discovery never widens, and hook-supplied socket paths never expand it either.
+  HERDR_SESSIONS: z.string().optional().transform((value, context) => {
+    if (value === undefined || value === '') return undefined
     try { return parseHerdrSessions(value) } catch (error) {
       context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'invalid Herdr sessions' })
       return z.NEVER

@@ -33,7 +33,14 @@ import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
-import { listInstalledHerdrSessions, resolveConfiguredHerdrSessions } from './lib/herdrSessions.js'
+import {
+  discoverRunningHerdrSessions,
+  herdrHintSelects,
+  listInstalledHerdrSessions,
+  resolveConfiguredHerdrSessions,
+  type HerdrTargetResolution,
+} from './lib/herdrSessions.js'
+import { ALL_TERMINAL_BACKENDS } from './config/terminalConfig.js'
 import { TerminalBackendCoordinator } from './lib/terminalBackendCoordinator.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
@@ -453,13 +460,32 @@ async function runForeground(token: string): Promise<void> {
   await registry.transaction(() => {
     for (const session of registry.list()) registry.setActive(session.agentId, false)
   })
-  const terminalConfig = { backends: env.TERMINAL_BACKENDS, herdrSessions: env.HERDR_SESSIONS }
+  // Unset means AUTO: watch every backend usable on this machine, and adopt whatever Herdr sessions are
+  // running. That is what makes `herdr` then an engine behave exactly like `tmux new` then an engine —
+  // no env var to know about. An explicit value still pins the set, and an explicit HERDR_SESSIONS is
+  // still a strict allowlist that discovery never widens.
+  const backendsExplicit = env.TERMINAL_BACKENDS !== undefined
+  const herdrSessionsExplicit = env.HERDR_SESSIONS !== undefined
+  const terminalConfig = {
+    backends: env.TERMINAL_BACKENDS ?? ALL_TERMINAL_BACKENDS,
+    herdrSessions: env.HERDR_SESSIONS ?? [],
+  }
+  /** The names in play right now: the operator's allowlist, or whatever Herdr currently reports. */
+  let activeHerdrSessions: readonly string[] = terminalConfig.herdrSessions
+  const resolveHerdrTargets = async (): Promise<HerdrTargetResolution[]> => {
+    if (!terminalConfig.backends.includes('herdr')) return []
+    return herdrSessionsExplicit
+      ? resolveConfiguredHerdrSessions(terminalConfig.herdrSessions, () => listInstalledHerdrSessions(env.HERDR_BIN))
+      : discoverRunningHerdrSessions(env.HERDR_BIN)
+  }
   const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend() : null
-  const herdrTargets = terminalConfig.backends.includes('herdr')
-    ? await resolveConfiguredHerdrSessions(terminalConfig.herdrSessions, () => listInstalledHerdrSessions(env.HERDR_BIN))
-    : []
+  const herdrTargets = await resolveHerdrTargets()
+  activeHerdrSessions = herdrTargets.map((target) => target.sessionName)
   const resolvedHerdrPaths = herdrTargets.flatMap((target) => target.state === 'available' ? [target.endpoint.socketPath] : [])
-  if (new Set(resolvedHerdrPaths).size !== resolvedHerdrPaths.length) {
+  // Only an operator-named pair of aliases is a configuration error worth refusing to start over.
+  // Discovery cannot produce one — resolveConfiguredHerdrSessions already downgrades aliased sessions to
+  // unavailable — and a machine that never asked for Herdr must not fail to start because of it.
+  if (herdrSessionsExplicit && new Set(resolvedHerdrPaths).size !== resolvedHerdrPaths.length) {
     throw new Error('two configured Herdr session names resolve to the same canonical endpoint')
   }
   const herdrStartup = await Promise.all(herdrTargets.map(async (target) => {
@@ -478,21 +504,24 @@ async function runForeground(token: string): Promise<void> {
     state: target.state,
     ...(target.state === 'available' ? {} : { reason: target.reason }),
   }]))
-  if (!tmuxBackend && herdrStartup.length > 0 && herdrStartup.every((target) => target.state === 'incompatible')) {
+  // Fatal only when the operator asked for these backends. Auto-detection must never let a Herdr this
+  // build does not speak (a newer protocol, say) take down a daemon whose user never mentioned Herdr.
+  if (backendsExplicit && !tmuxBackend && herdrStartup.length > 0
+    && herdrStartup.every((target) => target.state === 'incompatible')) {
     throw new Error('every enabled terminal backend is protocol-incompatible')
   }
   const terminalBackends = [...(tmuxBackend ? [tmuxBackend] : []), ...herdrBackends]
   const terminals = new TerminalBackendCoordinator(
     terminalBackends,
     terminalConfig.backends,
-    terminalConfig.herdrSessions,
+    activeHerdrSessions,
   )
   const refreshHerdrTargets = async (): Promise<void> => {
     if (!terminalConfig.backends.includes('herdr')) return
-    const resolved = await resolveConfiguredHerdrSessions(
-      terminalConfig.herdrSessions,
-      () => listInstalledHerdrSessions(env.HERDR_BIN),
-    )
+    const resolved = await resolveHerdrTargets()
+    // A session started after the daemon shows up here, on the next pass — which is the whole point:
+    // discovery, not configuration, decides what is watched.
+    activeHerdrSessions = resolved.map((target) => target.sessionName)
     const available = resolved.filter((target): target is Extract<typeof target, { state: 'available' }> => target.state === 'available')
     const aliased = new Set<string>()
     const byPath = new Map<string, string>()
@@ -526,18 +555,19 @@ async function runForeground(token: string): Promise<void> {
       recovered.set(target.sessionName, backend)
       herdrTargetStates.set(target.sessionName, { state: 'available' })
     }
-    herdrBackends.splice(0, herdrBackends.length, ...terminalConfig.herdrSessions.flatMap((name) => {
+    herdrBackends.splice(0, herdrBackends.length, ...activeHerdrSessions.flatMap((name) => {
       const backend = recovered.get(name)
       return backend ? [backend] : []
     }))
     terminalBackends.splice(0, terminalBackends.length, ...(tmuxBackend ? [tmuxBackend] : []), ...herdrBackends)
     terminals.replaceBackends(terminalBackends)
-    if (herdrBackends.length === terminalConfig.herdrSessions.length) {
+    terminals.setHerdrSessionOrder(activeHerdrSessions)
+    if (herdrBackends.length === activeHerdrSessions.length) {
       writeTerminalConfigSnapshot(env.ADAPTER_DATA_DIR, terminalConfig, herdrBackends.map((backend) => backend.endpoint))
     }
   }
   const completeHerdrSnapshot = !terminalConfig.backends.includes('herdr')
-    || herdrBackends.length === terminalConfig.herdrSessions.length
+    || herdrBackends.length === activeHerdrSessions.length
   if (completeHerdrSnapshot) {
     writeTerminalConfigSnapshot(
       env.ADAPTER_DATA_DIR,
@@ -547,7 +577,7 @@ async function runForeground(token: string): Promise<void> {
   } else {
     const previous = readTerminalConfigSnapshot(env.ADAPTER_DATA_DIR)
     const previousNames = previous?.herdrEndpoints.map((endpoint) => endpoint.sessionName) ?? []
-    if (JSON.stringify(previousNames) !== JSON.stringify(terminalConfig.herdrSessions)
+    if (JSON.stringify(previousNames) !== JSON.stringify(activeHerdrSessions)
       || !previous?.backends.includes('herdr')) {
       // The configured allowlist changed but cannot be resolved completely. Publish a fail-closed
       // snapshot rather than leaving an old endpoint authorized for daemon-down hooks.
@@ -1550,9 +1580,7 @@ async function runForeground(token: string): Promise<void> {
           if (tmuxBackend) resolved.push({ backend: 'tmux', paneId: hint.paneId })
           continue
         }
-        const backend = herdrBackends.find((candidate) =>
-          candidate.endpoint.sessionName === hint.sessionName
-          && (!hint.socketPath || candidate.endpoint.socketPath === hint.socketPath))
+        const backend = herdrBackends.find((candidate) => herdrHintSelects(candidate.endpoint, hint))
         if (!backend) continue
         const runtime = await backend.resolveRuntimeHint(hint.paneId)
         if (runtime.state === 'succeeded') resolved.push(runtime.value)
@@ -1584,9 +1612,9 @@ async function runForeground(token: string): Promise<void> {
       if (!candidates.size && runtimeHints?.some((hint) => hint.backend === 'herdr')) {
         const configuredSessions = new Set(runtimeHints
           .filter((hint): hint is Extract<HookTerminalHint, { backend: 'herdr' }> => hint.backend === 'herdr')
-          .filter((hint) => herdrBackends.some((backend) => backend.endpoint.sessionName === hint.sessionName
-            && (!hint.socketPath || backend.endpoint.socketPath === hint.socketPath)))
-          .map((hint) => hint.sessionName))
+          .flatMap((hint) => herdrBackends
+            .filter((backend) => herdrHintSelects(backend.endpoint, hint))
+            .map((backend) => backend.endpoint.sessionName)))
         for (const candidate of registry.list()) {
           if (candidate.engine !== engine || !callerBelongsTo(candidate)) continue
           if (candidate.runtimes.some((runtime) => runtime.backend === 'herdr' && configuredSessions.has(runtime.sessionName))) {
@@ -1751,10 +1779,14 @@ async function runForeground(token: string): Promise<void> {
       config: {
         watching: `${terminalConfig.backends.join(' + ')} terminals across all supported engines`,
         terminalBackends: terminalConfig.backends,
-        herdrSessions: terminalConfig.herdrSessions,
+        // What is watched NOW, not what was configured at boot: under auto-detection the session set is
+        // discovered per pass, so reporting the (empty) configured list would answer the wrong question
+        // for the one person most likely to ask it — someone checking why their pane is not showing up.
+        herdrSessions: activeHerdrSessions,
+        terminalSelection: backendsExplicit ? 'configured' : 'auto',
         terminalTargets: [
           ...(tmuxBackend ? [{ backend: 'tmux', instance: 'default', state: 'configured' }] : []),
-          ...terminalConfig.herdrSessions.map((sessionName) => ({
+          ...activeHerdrSessions.map((sessionName) => ({
             backend: 'herdr',
             sessionName,
             ...(herdrTargetStates.get(sessionName) ?? { state: 'unavailable', reason: 'not yet resolved' }),
