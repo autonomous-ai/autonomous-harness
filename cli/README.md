@@ -132,8 +132,14 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
   `TERMINAL_BACKENDS=tmux` is how you turn Herdr off.
 - `HERDR_SESSIONS` unset means every session Herdr reports as **running** is adopted, so a session
   started later needs no restart. Setting it makes a strict allowlist that discovery never widens.
-- Harness never auto-starts a session, and never connects to a socket supplied only by a hook. Herdr
-  support is pinned to compatible 0.8.x, protocol 19.
+- Harness never auto-starts a session, and never connects to a socket supplied only by a hook. A hook's
+  socket path only ever SELECTS among endpoints already validated at discovery — it can never introduce
+  one. (It has to be accepted at all because herdr 0.8.0 exports `HERDR_PANE_ID` and
+  `HERDR_SOCKET_PATH` but **no session name**; matching endpoints by name rejected every real hook, so
+  nothing bound and resumed conversations opened blank.) Herdr support is pinned to compatible 0.8.x,
+  protocol 19.
+- `harness status` answers "is my pane being watched?" — `terminalSelection` says `auto` or `configured`,
+  and `terminalTargets` lists what is live right now, not what was configured at boot.
 - The shared backend contract can create and close a tmux session or Herdr workspace when explicitly
   invoked. This is lifecycle capability, not automatic startup behavior; normal discovery observes
   user-owned sessions, and agent deletion still terminates only the validated engine process.
@@ -180,6 +186,11 @@ reported as such, not described as exercised.
 | `ADAPTER_UPDATE_CHECK_MS` | `60000` | how often (ms) to poll for a newer build (check also runs on start) |
 | `ADAPTER_UPDATE_DISABLE` | `false` | set `true` to turn self-update off |
 | `ADAPTER_CLI_DIR` | `~/.harness/cli` | install dir holding the `cli.js`/`notify.mjs` the updater swaps |
+| `LOG_FRAMES` | `false` | one log line per backend frame — type, audience and opaque ids, never a payload body. Every content-bearing frame is encrypted before it reaches the socket, so this is the only way to see what the daemon actually sent |
+| `HARNESS_HOOK_DEADLINE_MS` | `4500` | wall-clock budget a hook gives itself before abandoning optional work. Raise it on a slow or heavily loaded machine, where the budget is spent on load rather than on the hook and the offline registry fallback silently does nothing. Clamped, never below the default |
+| `ORI_SUMMARY_MODEL` | `deepseek/deepseek-v4-flash` | recap model for agents routed through an OpenRouter gateway (`ori claude`), which have no vendor credential to spend |
+| `ORI_VOICE_ROUTE_MODEL` | `deepseek/deepseek-v4-flash` | same, for the voice router's classification |
+| `ORI_CREDENTIALS_PATH` | `~/.ori/credentials.json` | where `ori login` stores its key; read only when neither the daemon env nor the agent's own process supplies one |
 
 ## Device (hardware commander)
 
