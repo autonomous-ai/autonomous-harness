@@ -5,7 +5,13 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, syml
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Every case here spawns the real hook as a child process, and several spawn shell shims for tmux, ps
+// and sqlite3 on top of that. On a loaded machine — this file runs alongside 88 others — that chain
+// takes well over vitest's 5s default, and the failure looks like a product bug rather than what it is.
+// The hook's own budget still bounds it; this only stops the harness from calling time first.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 
 const HOOK = fileURLToPath(new URL('../hook/notify.mjs', import.meta.url))
 const servers: ReturnType<typeof createServer>[] = []
