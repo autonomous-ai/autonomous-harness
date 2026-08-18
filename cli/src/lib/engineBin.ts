@@ -13,6 +13,7 @@ import type { AgentEngine } from '../engines/types.js'
 /** Every engine the adapter can discover and drive. */
 export const ENGINES: readonly AgentEngine[] = [
   'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
+  'agy',
 ] as const
 
 /** Public vendor command shown to users and matched by the real-binary smoke matrix. */
@@ -29,6 +30,7 @@ export const ENGINE_CLI_COMMANDS: Readonly<Record<AgentEngine, string>> = {
   amp: 'amp',
   kilo: 'kilo',
   grok: 'grok',
+  agy: 'agy',
 }
 
 export interface ExecutableFileIdentity {
@@ -212,6 +214,7 @@ export function enginePathOverride(engine: AgentEngine): string | undefined {
     case 'amp': return env.AMP_PATH
     case 'kilo': return env.KILO_PATH
     case 'grok': return env.GROK_PATH
+    case 'agy': return env.AGY_PATH
   }
 }
 
@@ -231,5 +234,6 @@ export function engineBin(engine: AgentEngine): string {
     case 'amp': return env.AMP_PATH || ENGINE_CLI_COMMANDS.amp
     case 'kilo': return env.KILO_PATH || ENGINE_CLI_COMMANDS.kilo
     case 'grok': return env.GROK_PATH || ENGINE_CLI_COMMANDS.grok
+    case 'agy': return env.AGY_PATH || ENGINE_CLI_COMMANDS.agy
   }
 }

@@ -16,6 +16,10 @@ const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
 const CODEX_HOOKS_PATH = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json')
 const GROK_HOOKS_PATH = join(env.GROK_HOME, 'hooks', 'harness.json')
 const CURSOR_HOOKS_PATH = join(process.env.CURSOR_HOME || join(homedir(), '.cursor'), 'hooks.json')
+// agy reads hooks from its SHARED customization root (~/.gemini/config), not from its own state dir —
+// the CLI's changelog records the move, "ensuring hooks remain synchronized between the TUI and the
+// backend". Verified live: a hooks.json placed there fires for `agy` in a pane.
+const AGY_HOOKS_PATH = join(env.AGY_CONFIG_DIR, 'hooks.json')
 
 // notify.mjs location depends on the layout (import.meta.url is the REAL executing file at runtime):
 //  - packaged/bundled: cli.js at ~/.harness/cli/cli.js → notify.mjs is a SIBLING (dist/ bundle too).
@@ -49,7 +53,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok'): string {
+function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok' | 'agy'): string {
   return [
     'node',
     shellQuote(HOOK_SCRIPT),
@@ -62,6 +66,7 @@ function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' 
     '--hermes-home', shellQuote(env.HERMES_HOME),
     '--commandcode-home', shellQuote(env.COMMANDCODE_HOME),
     '--devin-home', shellQuote(env.DEVIN_HOME),
+    '--agy-home', shellQuote(env.AGY_HOME),
     ...(engine !== 'claude' ? ['--engine', engine] : []),
   ].join(' ')
 }
@@ -213,6 +218,60 @@ export function installGrokHooks(port: number): void {
     console.log('[hooks] (takes effect on the next Grok session start)')
   } catch (err) {
     console.error('[hooks] failed to write Grok hook file:', err)
+  }
+}
+
+/**
+ * agy's hook file is a map of NAMED blocks, each holding per-event handler lists — a different shape
+ * from every other engine here, so it gets its own writer rather than reusing `Settings`.
+ *
+ * Only two events are installed, and the omissions are the point:
+ *
+ *  - `PreToolUse` and `PostToolUse` are DELIBERATELY absent. `PreToolUse`'s contract makes `decision`
+ *    REQUIRED, and a handler that prints anything else — including the `{}` every other hook here
+ *    returns — is read as a denial: measured on a real pane as "Tool call denied by pre-tool hook" on
+ *    every call of the turn. Tool events come off the transcript anyway, so there is nothing to gain
+ *    and a working agent to lose.
+ *  - `PostInvocation` fires per model round-trip, not per turn, so it would add noise without adding a
+ *    boundary. `PreInvocation` is installed only for its FIRST firing, which announces the session.
+ *
+ * `Stop` is the turn boundary. Its output is safe: `{"decision":"continue"}` would BLOCK the stop, and
+ * notify.mjs never prints that.
+ */
+type AgyHookHandler = { type?: string; command: string; timeout?: number }
+type AgyHookFile = Record<string, { enabled?: boolean } & Record<string, unknown>>
+
+export function installAgyHooks(port: number): void {
+  let file: AgyHookFile = {}
+  if (existsSync(AGY_HOOKS_PATH)) {
+    try {
+      file = JSON.parse(readFileSync(AGY_HOOKS_PATH, 'utf-8')) as AgyHookFile
+    } catch {
+      console.error(`[hooks] agy hooks file is invalid JSON; leaving it unchanged: ${AGY_HOOKS_PATH}`)
+      console.error('[hooks] fix the file, then restart harness join')
+      return
+    }
+  }
+  if (!file || typeof file !== 'object' || Array.isArray(file)) file = {}
+
+  const cmd = command(port, 'agy')
+  const handler = (event: string): AgyHookHandler => ({ type: 'command', command: `${cmd} --agy-event ${event}`, timeout: 10 })
+  const block = { PreInvocation: [handler('PreInvocation')], Stop: [handler('Stop')] }
+
+  const existing = file['harness'] as Record<string, AgyHookHandler[]> | undefined
+  const same = JSON.stringify(existing) === JSON.stringify(block)
+  if (same) {
+    console.log('[hooks] agy lifecycle hooks already installed')
+    return
+  }
+  // Every other named block belongs to the user; only ours is replaced.
+  file['harness'] = block
+  try {
+    writeJsonAtomic(AGY_HOOKS_PATH, file)
+    console.log(`[hooks] installed agy lifecycle hooks → ${AGY_HOOKS_PATH}`)
+    console.log('[hooks] (takes effect on the next agy session start)')
+  } catch (err) {
+    console.error('[hooks] failed to write agy hook file:', err)
   }
 }
 

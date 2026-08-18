@@ -32,6 +32,7 @@ import { kiloMessagesToEvents, windowKiloMessages } from './engines/kilo/normali
 import { museMessagesToEvents } from './engines/muse/normalizer.js'
 import { ampMessagesToEvents } from './engines/amp/normalizer.js'
 import { grokMessagesToEvents } from './engines/grok/normalizer.js'
+import { agyMessagesToEvents } from './engines/agy/normalizer.js'
 import { ampThreadToEvents, readAmpThread } from './engines/amp/threadExport.js'
 import { piMessagesToEvents, windowPiLines } from './engines/pi/normalizer.js'
 import { commandcodeMessagesToEvents, windowCommandCodeLines } from './engines/commandcode/normalizer.js'
@@ -133,13 +134,20 @@ export function grokHistoryPage(lines: string[], paginated: boolean):
   return paginated ? { events, hasMore: false, oldestCursor: null } : { events }
 }
 
+/** agy has no transcript windower either; same both-shapes replay as grok, for the same reason. */
+export function agyHistoryPage(lines: string[], paginated: boolean):
+  { events: SessionEvent[]; hasMore?: false; oldestCursor?: null } {
+  const events = agyMessagesToEvents(lines)
+  return paginated ? { events, hasMore: false, oldestCursor: null } : { events }
+}
+
 export function deviceAgentListItem(
   raw: unknown,
-): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok'; selectedModel?: string | null } {
+): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy'; selectedModel?: string | null } {
   const o = (raw ?? {}) as Record<string, unknown>
-  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok'; selectedModel?: string | null } = { id: o.id }
+  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy'; selectedModel?: string | null } = { id: o.id }
   if (typeof o.name === 'string') item.name = clipDeviceAgentName(o.name)
-  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp' || o.engine === 'kilo' || o.engine === 'grok') item.engine = o.engine
+  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp' || o.engine === 'kilo' || o.engine === 'grok' || o.engine === 'agy') item.engine = o.engine
   // Runtime model/effort profile (opaque runtime-v1:...) — lets the device render + change model/effort.
   if (typeof o.selectedModel === 'string' || o.selectedModel === null) item.selectedModel = o.selectedModel
   return item
@@ -825,12 +833,14 @@ export class BackendSocket {
                   ? await ampHistory(sessionId, lines)
                   : s.engine === 'grok'
                     ? grokHistoryPage(lines, false).events
+                  : s.engine === 'agy'
+                    ? agyHistoryPage(lines, false).events
                   : s.engine === 'pi'
                   ? piMessagesToEvents(lines)
                   : s.engine === 'commandcode'
                     ? commandcodeMessagesToEvents(lines)
                     : messagesToEvents(lines)
-            if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode' && s.engine !== 'muse' && s.engine !== 'amp' && s.engine !== 'grok') await enrichSubagentStats(fullEvents, s.transcriptPath)
+            if (s.engine !== 'cursor' && s.engine !== 'pi' && s.engine !== 'commandcode' && s.engine !== 'muse' && s.engine !== 'amp' && s.engine !== 'grok' && s.engine !== 'agy') await enrichSubagentStats(fullEvents, s.transcriptPath)
             reply(type, requestId, {
               id: sessionId,
               title: projectDisplayName(s),
@@ -848,20 +858,24 @@ export class BackendSocket {
           // small: a real one measured 271 lines).
           // Amp is in the same position as muse and for the same reason: no windower, so falling
           // through would pair claude's line-uuid cursor with claude's normalizer and return nothing.
-          if (s.engine === 'muse' || s.engine === 'amp' || s.engine === 'grok') {
-            const grokPage = s.engine === 'grok' ? grokHistoryPage(lines, true) : null
+          if (s.engine === 'muse' || s.engine === 'amp' || s.engine === 'grok' || s.engine === 'agy') {
+            const wholePage = s.engine === 'grok'
+              ? grokHistoryPage(lines, true)
+              : s.engine === 'agy'
+                ? agyHistoryPage(lines, true)
+                : null
             reply(type, requestId, {
               id: sessionId,
               title: projectDisplayName(s),
               events: s.engine === 'amp'
                 ? await ampHistory(sessionId, lines)
-                : s.engine === 'grok'
-                  ? grokPage!.events
+                : wholePage
+                  ? wholePage.events
                   : museMessagesToEvents(lines),
               timestamp,
               engine: s.engine,
-              hasMore: grokPage?.hasMore ?? false,
-              oldestCursor: grokPage?.oldestCursor ?? null,
+              hasMore: wholePage?.hasMore ?? false,
+              oldestCursor: wholePage?.oldestCursor ?? null,
             })
             return
           }

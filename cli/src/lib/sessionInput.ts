@@ -41,6 +41,10 @@ const AMP_SUBMIT_VERIFY_MS = 6_000
 // user_message_chunk. The isolated real run took ~4.4s from paste to watcher-visible turn start; 2.5s
 // pressed Enter a second time on every fresh agent even though the first submission was accepted.
 const GROK_SUBMIT_VERIFY_MS = 6_000
+// agy's first `PreInvocation` is what clears the fingerprint, and it only fires once the model call
+// starts. Measured 3-5s from Enter to the first hook on a warm session; 8s leaves headroom without
+// making a genuinely dropped message wait too long for its error.
+const AGY_SUBMIT_VERIFY_MS = 8_000
 const CURSOR_TURN_SETTLE_MS = 750
 const SUBMIT_MAX_RETRIES = 2
 // Non-cursor engines re-observe the pane (instead of erroring) while an accepted-but-not-yet-started
@@ -132,12 +136,25 @@ export class SessionInputController {
   }
 
   /** Reserve this pane for a short native control interaction such as `/model`. */
-  acquireControl(sessionId: string): (() => void) | null {
+  /**
+   * Take the terminal for a write that is not a new message.
+   *
+   * `forAnswer` exists because an engine's ask-the-user dialog opens INSIDE its turn — claude, agy and
+   * every other engine with a question tool — so the `turnOpen` guard, which is there to stop an
+   * INJECTED message colliding with a running turn, also blocked the one write that is only ever valid
+   * during a turn. Measured on both claude and agy: the device's answer arrived, was refused here, and
+   * the pane sat on the dialog looking like a hung agent, with nothing logged.
+   *
+   * Every other guard still applies: another writer holding the lock, a submit awaiting confirmation, a
+   * settling turn, or queued messages all still refuse.
+   */
+  acquireControl(sessionId: string, opts?: { forAnswer?: boolean }): (() => void) | null {
     const session = this.controlSession(sessionId)
     if (!session) return null
     const state = this.state(sessionId)
     this.dropExpired(sessionId, state)
-    if (state.controlLocked || state.turnOpen || state.awaitingFingerprint || state.settling || state.queue.length > 0) return null
+    const turnBlocks = state.turnOpen && !opts?.forAnswer
+    if (state.controlLocked || turnBlocks || state.awaitingFingerprint || state.settling || state.queue.length > 0) return null
     state.controlLocked = true
     let released = false
     return () => {
@@ -313,6 +330,8 @@ export class SessionInputController {
                       ? KILO_SUBMIT_VERIFY_MS
                       : session.engine === 'grok'
                         ? GROK_SUBMIT_VERIFY_MS
+                        : session.engine === 'agy'
+                          ? AGY_SUBMIT_VERIFY_MS
                       : SUBMIT_VERIFY_MS)
   }
 
@@ -339,7 +358,7 @@ export class SessionInputController {
         return
       }
     } else if (session.engine === 'opencode' || session.engine === 'kilo' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse'
-      || session.engine === 'amp' || session.engine === 'grok') {
+      || session.engine === 'amp' || session.engine === 'grok' || session.engine === 'agy') {
       // OpenCode has no composer glyph, and the submitted text stays visible in the message area, so a
       // pane scrape can't tell "still in the composer" from "already sent". Rely purely on the reader-
       // derived turn_started (a new user row in opencode.db) to clear awaitingFingerprint; if it hasn't

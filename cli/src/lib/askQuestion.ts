@@ -29,6 +29,7 @@ import { kiloSelectionKeys, parseKiloQuestionPane } from '../engines/kilo/askQue
 import { parseCursorPermissionPane } from '../engines/cursor/askQuestion.js'
 import { parseDevinPermissionPane, parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
 import { parseGrokQuestionPane } from '../engines/grok/askQuestion.js'
+import { parseAgyQuestionPane } from '../engines/agy/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
 export interface ShapedQuestion {
@@ -145,6 +146,10 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   // it is a fork of opencode that did not keep opencode's dialog.
   if (engine === 'kilo') return parseKiloQuestionPane(capture)
   if (engine === 'grok') return parseGrokQuestionPane(capture)
+  // agy's ask-the-user dialog anchors on `Question N/M:` under an `↑/↓ Navigate` footer, which the
+  // shared parser cannot see. Its PERMISSION prompt is numbered rows under `Do you want to proceed?`
+  // and the shared parser reads that one exactly, so it falls through.
+  if (engine === 'agy') return parseAgyQuestionPane(capture) ?? parseQuestionPane(capture)
   // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
   if (engine === 'opencode') {
@@ -540,7 +545,7 @@ export interface AskQuestionDeps {
   sendText: (terminalTarget: string, text: string) => Promise<boolean>
   sendKey: (terminalTarget: string, key: string) => Promise<boolean>
   /** Pins one backend locator for the whole multi-step dialog drive. */
-  acquireControl?: (sessionId: string) => (() => void) | null
+  acquireControl?: (sessionId: string, opts?: { forAnswer?: boolean }) => (() => void) | null
   /** Injected for tests. */
   wait?: (ms: number) => Promise<void>
 }
@@ -583,9 +588,18 @@ export class AskQuestionController {
       console.warn(`[question] no terminal target for ${sessionId.slice(0, 8)} — answer dropped`)
       return false
     }
-    if (this.driving.has(sessionId)) return false
-    const release = this.deps.acquireControl?.(terminalTarget)
-    if (this.deps.acquireControl && !release) return false
+    if (this.driving.has(sessionId)) {
+      console.warn(`[question] ${sessionId.slice(0, 8)} answer dropped · already driving this dialog`)
+      return false
+    }
+    // `forAnswer`: a dialog is the engine waiting for input mid-turn, so the open turn must not block it.
+    const release = this.deps.acquireControl?.(terminalTarget, { forAnswer: true })
+    // Silence here is the failure mode this whole file exists to prevent: the device sends an answer,
+    // nothing keys it in, and the pane sits on the dialog looking like a hung agent.
+    if (this.deps.acquireControl && !release) {
+      console.warn(`[question] ${sessionId.slice(0, 8)} answer dropped · terminal control unavailable`)
+      return false
+    }
     this.driving.add(sessionId)
     try {
       const ok = await this.drive(terminalTarget, answers, this.deps.getSession(sessionId)?.engine ?? 'claude')
@@ -705,7 +719,7 @@ const POLL_MS = 1500
 // cancel` footer, which is the shared parser's anchor exactly (`__fixtures__/permission-codex.txt`), and
 // the question it lands on is the command itself. Membership in this set is what starts the poll, so an
 // engine belongs here only once something can actually read its pane.
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'codex', 'cursor', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok'])
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'codex', 'cursor', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok', 'agy'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

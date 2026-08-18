@@ -206,10 +206,31 @@ and can see both `$TMUX_PANE` and the session id, so it registers instead of bei
 OpenCode plugin, the Pi extension and the Amp plugin all do this from `lib/hooks.ts`; none of the
 three needs an entry in `notify.mjs`, which is only for the shell-hook engines.
 
+Scanning is also not always possible by DIRECTORY. agy records no cwd in its transcript, names its
+folder by the conversation id, and keeps a `conversation_summaries.db` that looks like the index for
+exactly this and holds only IDE rows, never CLI ones. What it does leave is
+`presence/<conversationId>.lock`, held open by the live process — a pid→conversation map and a liveness
+test in one. `findLiveSession` takes an optional `pid` for that case (`lsof` on macOS,
+`/proc/<pid>/fd` on Linux). Look for a lock, a socket, or an open descriptor before concluding a
+directory scan is impossible.
+
 Scanning also has to solve **which project a session belongs to**, and the answer is usually not in
 the path. For Muse, nothing in `sessions/YYYY/MM/DD/<uuid>/session.jsonl` names the project;
 `workspace_root` in the first record is the only link. Where the plugin writes the transcript itself
 this is free — Amp's plugin puts `cwd` on the first line precisely so the ordinary scan works.
+
+**A hook can also break the agent, so install only the events you need.** agy's `PreToolUse` contract
+makes `decision` REQUIRED, and a handler that prints anything else — including the `{}` every other
+hook here returns — is read as a DENIAL: measured on a real pane as "Tool call denied by pre-tool hook"
+on every tool call of the turn. Harness installs only `PreInvocation` (announce) and `Stop` (turn
+boundary) for agy. Read each event's output contract before adding it; tool events come off the
+transcript anyway.
+
+**And check whether the announce event repeats.** agy has no session-start event at all; the nearest
+thing, `PreInvocation`, fires before EVERY model round-trip — four to seven times in one measured turn.
+Registration is idempotent, but `handleRegistered` treats a `SessionStart` hook as a reason to re-fold
+the transcript, so each repeat re-emitted `turn_started` for a turn already open (two `turn_started`,
+one `turn_ended`). agy is excluded from that reset in `cli.ts`, the way cursor already was.
 
 Worth knowing even if you do not need it: some agents already record which terminal opened which
 session. Amp keys `lastThreadByTerminal` in its `session.json` by `tmux:<pane>@<server-pid>,<session>`,
@@ -267,6 +288,17 @@ never called at all. None of that is guessable from the tool names.
 
 **Write the spec against the recording, not against your reading of the docs.** If your agent's
 behaviour changes, we want a new recording, not an edited fixture.
+
+**Not every status word resolves.** agy writes a backgrounded step as `status: "RUNNING"` and, the file
+being append-only, that line is never rewritten to `DONE`. Holding the turn open on it pins the device
+tile on "Processing" for ever. The step still CLOSES its tool row — it is the call's result, it just
+says the work continues elsewhere.
+
+**If the transcript has no end-of-turn record at all, say where the answer actually lives.** agy's is
+its `Stop` hook. That works while the daemon is running and fails on restart: folding a FINISHED
+conversation reports the last turn as still open and nothing is ever coming to close it (measured:
+`turn_heartbeat` every second, indefinitely). Its pane knows — `? for shortcuts` when idle,
+`esc to cancel` while busy — so attach reads the pane once and closes the folded turn.
 
 ## Stage D — drive the agent
 

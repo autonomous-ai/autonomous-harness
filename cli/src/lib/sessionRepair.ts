@@ -22,6 +22,7 @@ import { env } from '../config/env.js'
 import { museEvent, museWorkspaceRoot } from '../engines/muse/normalizer.js'
 import type { AgentEngine } from '../engines/types.js'
 import { readCodexRolloutMeta } from '../engines/codex/rollout.js'
+import { agyConversationForPid, findAgyTranscript } from '../engines/agy/session.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -206,7 +207,7 @@ export async function findLiveSession(
   engine: AgentEngine,
   cwd: string,
   startedAtMs: number,
-  opts?: { bornOnly?: boolean },
+  opts?: { bornOnly?: boolean; pid?: number },
 ): Promise<RepairedSession | null> {
   const sinceMs = startedAtMs - START_SLACK_MS
   // The DB engines match on a directory STRING, so ask for both spellings of it (see sameDir).
@@ -304,7 +305,26 @@ export async function findLiveSession(
           + ` AND (created_at >= ${Math.trunc(sinceMs / 1000)} OR last_activity_at >= ${Math.trunc(sinceMs / 1000)})`
           + ` ORDER BY last_activity_at DESC LIMIT 2;`,
       )
+    case 'agy':
+      // The one engine here that cannot be found by directory. agy's transcript records no cwd, its
+      // brain directory is named by the conversation id, and `conversation_summaries.db` — which looks
+      // like the index for exactly this — holds only IDE rows, never CLI ones (measured on 1.1.14).
+      //
+      // What it does leave is `presence/<conversationId>.lock`, held open by the live process for the
+      // life of the conversation. That is a pid→conversation map and a liveness test in one, so repair
+      // asks the process rather than the directory. Without a pid there is nothing to ask.
+      return opts?.pid ? agySession(opts.pid) : null
     default:
       return null
   }
+}
+
+/** The conversation the given `agy` pid is holding, if its transcript exists yet. */
+async function agySession(pid: number): Promise<RepairedSession | null> {
+  const conversationId = await agyConversationForPid(env.AGY_HOME, pid)
+  if (!conversationId) return null
+  const transcriptPath = await findAgyTranscript(env.AGY_HOME, conversationId)
+  // A conversation with no transcript is one agy has opened but not written to; registry derives the
+  // path anyway, so bind it and let the watcher pick the file up when it appears.
+  return { sessionId: conversationId, transcriptPath: transcriptPath ?? undefined }
 }

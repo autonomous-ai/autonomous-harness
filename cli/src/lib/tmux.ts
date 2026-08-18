@@ -316,6 +316,15 @@ export function engineProcessMatchScore(
     if (agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership) === 'grok') return 4
     return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
   }
+  if (engine === 'agy') {
+    // Two binaries answer to `agy` on a machine with Antigravity installed: the CLI at
+    // ~/.local/bin/agy (a single 177MB Go binary that does NOT re-exec — the pane process stays `agy`)
+    // and ~/.antigravity/antigravity/bin/agy, a symlink into the IDE's app bundle. The IDE one is not
+    // an engine, so an entrypoint inside a `.app` is rejected rather than scored.
+    if (/\.app[\/\\]Contents[\/\\]/.test(entrypoint)) return 0
+    if (executable === 'agy' || entrybase === 'agy') return 3
+    return /[\/\\]\.local[\/\\]bin[\/\\]agy$/.test(entrypoint) ? 2 : 0
+  }
   if (executable === 'claude' || entrybase === 'claude') return 3
   return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
 }
@@ -394,6 +403,9 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
   amp: { flags: ['continue', '-c'], id: /^T-[0-9a-f-]{16,}$/i },
   // Grok 1.0.0 accepts both spellings and persists UUID session ids below ~/.grok/sessions.
   grok: { flags: ['--resume', '-r'], id: /^[0-9a-f-]{16,}$/i },
+  // `agy --conversation <uuid>` resumes by conversation id; `-c`/`--continue` names nothing and falls
+  // through to the presence-lock lookup in sessionRepair.
+  agy: { flags: ['--conversation'], id: /^[0-9a-f-]{16,}$/i },
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

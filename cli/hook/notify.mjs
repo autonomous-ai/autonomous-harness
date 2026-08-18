@@ -83,7 +83,19 @@ function argValue(name, fallback) {
 function argEngine() {
   const i = process.argv.indexOf('--engine')
   const value = i !== -1 ? process.argv[i + 1] : ''
-  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' || value === 'grok' ? value : 'claude'
+  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' || value === 'grok' || value === 'agy' ? value : 'claude'
+}
+
+/**
+ * agy names its hook event nowhere in the payload, so the installer puts it on the command line.
+ *
+ * Everything else in the payload is camelCase (protojson): `conversationId`, `workspacePaths`,
+ * `transcriptPath`, `modelName`, and on Stop `terminationReason` / `fullyIdle`.
+ */
+function argAgyEvent() {
+  const i = process.argv.indexOf('--agy-event')
+  const value = i !== -1 ? process.argv[i + 1] : ''
+  return value === 'PreInvocation' || value === 'Stop' ? value : ''
 }
 
 function paths() {
@@ -96,6 +108,7 @@ function paths() {
   const hermesHome = argValue('--hermes-home', process.env.HERMES_HOME || join(homedir(), '.hermes'))
   const commandcodeHome = argValue('--commandcode-home', process.env.COMMANDCODE_HOME || join(homedir(), '.commandcode'))
   const devinHome = argValue('--devin-home', process.env.DEVIN_HOME || join(homedir(), '.local', 'share', 'devin', 'cli'))
+  const agyHome = argValue('--agy-home', process.env.AGY_HOME || join(homedir(), '.gemini', 'antigravity-cli'))
   return {
     dataDir,
     registryFile: join(dataDir, 'registry.json'),
@@ -109,7 +122,39 @@ function paths() {
     commandcodeProjectsDir: join(commandcodeHome, 'projects'),
     devinHome,
     devinLocksDir: join(devinHome, 'session_locks'),
+    agyHome,
+    agyBrainDir: join(agyHome, 'brain'),
+    agyPresenceDir: join(agyHome, 'presence'),
   }
+}
+
+/**
+ * Is this agy conversation the PANE's, or a sub-agent's?
+ *
+ * agy gives every sub-agent its own conversation id, its own transcript AND its own hooks — fired with
+ * the parent's `TMUX_PANE`. Registering those rebinds the pane to whichever child announced last:
+ * measured on a three-sub-agent run as one agent attaching to three different sessions in four
+ * seconds, after which the web pane showed the CHILDREN's messages and the parent's `Task` rows never
+ * rendered at all.
+ *
+ * The discriminator is `presence/<id>.lock`, which agy creates only for a top-level conversation —
+ * measured: four locks on this machine, all parents; the six sub-agent conversations have none. It is
+ * also ordered safely, created BEFORE the first hook of that conversation (lock 17:57:14, first hook
+ * 17:57:15, transcript not until 17:57:17), so a real new session is never mistaken for a child.
+ */
+function agyIsPaneConversation(p, conversationId) {
+  if (!conversationId) return false
+  try {
+    return statSync(join(p.agyPresenceDir, `${conversationId}.lock`)).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** agy's deterministic transcript layout, duplicated here because the hook cannot import from src/. */
+function agyTranscriptPath(p, conversationId) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId || '')) return undefined
+  return join(p.agyBrainDir, conversationId, '.system_generated', 'logs', 'transcript_full.jsonl')
 }
 
 /** True when the path is a real file on disk right now (undefined/missing → false). */
@@ -351,11 +396,12 @@ function processEntrypoint(args) {
 
 const ENGINE_COMMANDS = {
   claude: 'claude', codex: 'codex', cursor: 'agent', hermes: 'hermes', commandcode: 'cmd',
-  devin: 'devin', muse: 'muse', grok: 'grok',
+  devin: 'devin', muse: 'muse', grok: 'grok', agy: 'agy',
 }
 const ENGINE_PATH_ENV = {
   claude: 'CLAUDE_PATH', codex: 'CODEX_PATH', cursor: 'CURSOR_PATH', hermes: 'HERMES_PATH',
   commandcode: 'COMMANDCODE_PATH', devin: 'DEVIN_PATH', muse: 'MUSE_PATH', grok: 'GROK_PATH',
+  agy: 'AGY_PATH',
 }
 
 function executableIdentity(path) {
@@ -752,6 +798,7 @@ function validTranscriptPath(engine, filePath, p) {
     const root = realpathSync(
       engine === 'codex' ? p.codexSessionsDir
         : engine === 'grok' ? p.grokSessionsDir
+        : engine === 'agy' ? p.agyBrainDir
         : engine === 'cursor' ? p.cursorProjectsDir
         : engine === 'commandcode' ? p.commandcodeProjectsDir
         : p.claudeProjectsDir,
@@ -1007,6 +1054,7 @@ function mergeRuntimes(current, observed) {
 
 const REGISTRY_ENGINES = new Set([
   'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
+  'agy',
 ])
 
 function validRegistryString(value, max = 4096) {
@@ -1102,7 +1150,7 @@ async function fallbackRegister(input, engine, tmuxPane) {
     ? rawSessionId
     : (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
   if (!sessionId) return
-  const transcriptOptional = ['cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode', 'devin', 'grok'].includes(engine)
+  const transcriptOptional = ['cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode', 'devin', 'grok', 'agy'].includes(engine)
   if (!transcriptOptional && !transcriptPath) return
   if (transcriptPath && !validTranscriptPath(engine, transcriptPath, p)) return
   const observations = []
@@ -1216,6 +1264,65 @@ async function main() {
   // the final assistant chunk, so treating Stop as authoritative would close the turn too early. The
   // transcript's `turn_completed` record closes normal turns; only StopFailure is needed as an error
   // fallback here.
+  // agy: the hook is the whole binding. Its `PreInvocation` fires before every model round-trip, so the
+  // FIRST one of a turn is the session announce; `Stop` fires exactly once when the execution loop ends
+  // and is the authoritative turn boundary (the transcript records no closing marker of its own, and a
+  // backgrounded step stays `status: RUNNING` forever because the file is append-only).
+  if (engine === 'agy') {
+    const agyEvent = argAgyEvent()
+    if (!agyEvent) return
+    const sessionId = input.conversationId
+    const p = paths()
+    // A sub-agent's hooks carry the parent's pane; only the pane's own conversation may register.
+    if (!agyIsPaneConversation(p, sessionId)) return
+    // Trust the payload's path when it resolves; agy's own docs show a workspace-scoped example that
+    // does not match what the CLI actually writes, so the derived path is the fallback that does.
+    const transcriptPath = existsPath(input.transcriptPath) ? input.transcriptPath : agyTranscriptPath(p, sessionId)
+    const cwd = Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined
+    if (agyEvent === 'Stop') {
+      // agy stops its execution loop as soon as the MODEL has nothing left to say — including the moment
+      // it has launched sub-agents and is waiting on them. Measured on a two-sub-agent run: the parent
+      // fired Stop twice, first `fullyIdle: false` at the "standing by for their reports" point, then
+      // again `fullyIdle: true` when the reports were in. Closing on the first one ended the turn and
+      // ran the recap while the work was still going ("chưa done đã recap").
+      //
+      // So `fullyIdle` is the turn boundary, not Stop itself. A build that omits the field is treated as
+      // idle, which is the pre-existing behaviour.
+      //
+      // A waiting Stop is still REPORTED, as `status: 'waiting'`, rather than swallowed: one measured run
+      // finished its sub-agents and never sent another Stop at all, leaving the turn open with nothing
+      // coming to close it. The daemon uses this to arm a pane-idle backstop.
+      // `terminationReason` is NO_TOOL_CALL on a clean finish; anything else ended the loop early.
+      const failed = typeof input.terminationReason === 'string'
+        && input.terminationReason !== ''
+        && input.terminationReason !== 'NO_TOOL_CALL'
+        && input.terminationReason !== 'model_stop'
+      const status = input.fullyIdle === false ? 'waiting' : failed || input.error ? 'error' : undefined
+      await post(port, '/api/hook/turn-stop', { sessionId, transcriptPath, status, ...mutationFields })
+      return
+    }
+    const body = {
+      engine,
+      hookEvent: 'SessionStart',
+      sessionId,
+      transcriptPath,
+      cwd,
+      ...terminalHookFields(tmuxPane),
+      model: modelName(input.modelName),
+    }
+    const registered = await post(port, '/api/hook/session-start', body)
+    if (!registered) {
+      await fallbackRegister({
+        ...input,
+        hook_event_name: 'SessionStart',
+        session_id: sessionId,
+        transcript_path: transcriptPath,
+        cwd,
+      }, engine, tmuxPane)
+    }
+    return
+  }
+
   if (engine === 'grok') {
     const grokEventName = grokHookEvent(event)
     const sessionId = input.sessionId || input.session_id
@@ -1386,6 +1493,10 @@ main()
     // Cursor and Hermes parse the hook's stdout as JSON; `{}` is the explicit no-op (for Hermes it also
     // guarantees a pre_llm_call hook never injects context). Claude/Codex want no stdout at all.
     const e = argEngine()
-    if (e === 'cursor' || e === 'hermes') process.stdout.write('{}\n', () => process.exit(0))
+    // agy REQUIRES a JSON object on stdout. `{}` is the safe no-op for both events it fires: on Stop,
+    // only `{"decision":"continue"}` would block the stop. It is also why PreToolUse is never installed
+    // — there `decision` is required, and `{}` reads as a denial (measured: every tool call of the turn
+    // came back "Tool call denied by pre-tool hook").
+    if (e === 'cursor' || e === 'hermes' || e === 'agy') process.stdout.write('{}\n', () => process.exit(0))
     else process.exit(0)
   })

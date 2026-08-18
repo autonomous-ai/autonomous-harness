@@ -104,6 +104,13 @@ const envSchema = z.object({
   CODEX_HOME: z.string().default(join(homedir(), '.codex')),
   // Grok state root. Conversation records live below <GROK_HOME>/sessions/<encoded-cwd>/<uuid>/updates.jsonl.
   GROK_HOME: z.string().default(join(homedir(), '.grok')),
+  // Antigravity CLI state root. Conversation transcripts live below
+  // <AGY_HOME>/brain/<conversationId>/.system_generated/logs/transcript_full.jsonl — the `_full`
+  // sibling is the one to read: plain `transcript.jsonl` re-quotes tool arguments and truncates
+  // long content. The hook payload names the same path, so this default is only the fallback.
+  AGY_HOME: z.string().default(join(homedir(), '.gemini', 'antigravity-cli')),
+  // Where the Antigravity CLI reads its shared customization root (hooks.json lives here).
+  AGY_CONFIG_DIR: z.string().default(join(homedir(), '.gemini', 'config')),
   // Cursor state root. Interactive transcripts live below <CURSOR_HOME>/projects and local
   // subagent linkage metadata lives below <CURSOR_HOME>/chats.
   CURSOR_HOME: z.string().default(join(homedir(), '.cursor')),
@@ -229,6 +236,9 @@ const envSchema = z.object({
   KILO_PATH: z.string().optional(),
   // Path to the xAI Grok CLI for interactive sessions and recap one-shots.
   GROK_PATH: z.string().optional(),
+  // Path to the Antigravity CLI. Two binaries answer to `agy` on a typical PATH — the CLI itself and
+  // the Antigravity IDE launcher — so an override is worth having.
+  AGY_PATH: z.string().optional(),
   // Model for the device turn-recap one-shot.
   SUMMARY_MODEL: z.string().default('sonnet'),
   // Balanced Codex counterpart used only for recap workers; never inherits the interactive CLI model.
@@ -241,6 +251,9 @@ const envSchema = z.object({
   KILO_SUMMARY_MODEL: z.string().default(''),
   // Grok recap model. Empty → use the user's Grok CLI default model.
   GROK_SUMMARY_MODEL: z.string().default(''),
+  // Antigravity recap model (a slug from `agy models`). Flash at low effort: a recap is a short
+  // summarisation of text already in hand, so the cheapest tier in the catalog is the right one.
+  AGY_SUMMARY_MODEL: z.string().default('gemini-3.7-flash-low'),
   // Pi recap model (`provider/model` or a model pattern). Empty → use the user's pi config default.
   PI_SUMMARY_MODEL: z.string().default(''),
   // Hermes recap model. Empty → use the user's ~/.hermes/config.yaml default (keeps their provider).

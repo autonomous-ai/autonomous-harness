@@ -29,6 +29,7 @@ import {
   runMuseOneShot,
   runAmpOneShot,
   runGrokOneShot,
+  runAgyOneShot,
   setOneShotPoolActiveCounts,
   setOneShotPoolDeviceConnected,
   shutdownOneShotPool,
@@ -63,7 +64,7 @@ export function syncSummaryPoolSessions(sessions: Array<{ engine: AgentEngine }>
     // Hermes, Devin, Muse and Amp take their recap prompt as argv (`muse exec <prompt>`, `amp -x <prompt>`),
     // so they cannot be pre-warmed the way a stdin-fed CLI can — no pooled worker for them.
     if (session.engine === 'hermes' || session.engine === 'devin' || session.engine === 'muse'
-      || session.engine === 'amp' || session.engine === 'grok') continue
+      || session.engine === 'amp' || session.engine === 'grok' || session.engine === 'agy') continue
     counts[session.engine]++
   }
   setOneShotPoolActiveCounts(counts)
@@ -324,6 +325,8 @@ export async function summarizeTurnText(
                       ? env.KILO_SUMMARY_MODEL
                       : engine === 'grok'
                         ? env.GROK_SUMMARY_MODEL
+                        : engine === 'agy'
+                          ? env.AGY_SUMMARY_MODEL
                       : env.OPENCODE_SUMMARY_MODEL
   const effort = engine === 'cursor' ? 'model-defined' : env.SUMMARY_EFFORT
   console.log(
@@ -353,6 +356,8 @@ export async function summarizeTurnText(
                       ? runKiloOneShot
                       : engine === 'grok'
                         ? runGrokOneShot
+                        : engine === 'agy'
+                          ? runAgyOneShot
                       : runOpencodeOneShot
   // One shape for both paths so the language-drift retry and the two-part capping below stay single-source.
   const run: (options: OneShotOptions) => Promise<{ text: string; sessionId: string | null }> = gatewayKey

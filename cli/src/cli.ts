@@ -24,7 +24,7 @@ import { homedir } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
@@ -84,6 +84,9 @@ import { MuseNormalizer, lastMuseTurnText, museMessagesToEvents } from './engine
 import { AmpNormalizer, lastAmpTurnText, ampMessagesToEvents } from './engines/amp/normalizer.js'
 import { GrokNormalizer, lastGrokTurnText } from './engines/grok/normalizer.js'
 import { findGrokTranscript } from './engines/grok/session.js'
+import { AgyNormalizer, lastAgyTurnText } from './engines/agy/normalizer.js'
+import { findAgyTranscript } from './engines/agy/session.js'
+import { agyPaneIdle } from './engines/agy/runtimeProfile.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
 import { HermesReader, readHermesMessages } from './engines/hermes/reader.js'
 import { DevinReader, readDevinMessages } from './engines/devin/reader.js'
@@ -794,6 +797,7 @@ async function runForeground(token: string): Promise<void> {
   const museNormalizers = new Map<string, MuseNormalizer>()
   const ampNormalizers = new Map<string, AmpNormalizer>()
   const grokNormalizers = new Map<string, GrokNormalizer>()
+  const agyNormalizers = new Map<string, AgyNormalizer>()
   const hermesReaders = new Map<string, HermesReader>()
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
@@ -900,6 +904,7 @@ async function runForeground(token: string): Promise<void> {
       || museNormalizers.has(session.sessionId)
       || ampNormalizers.has(session.sessionId)
       || grokNormalizers.has(session.sessionId)
+      || agyNormalizers.has(session.sessionId)
       || hermesReaders.has(session.sessionId)
       || devinReaders.has(session.sessionId)
       || commandcodeNormalizers.has(session.sessionId)
@@ -994,6 +999,21 @@ async function runForeground(token: string): Promise<void> {
       grokNormalizers.set(session.sessionId, normalizer)
       const capture = await captureTerminal(session.agentId, 60)
       if (capture) runtimeProfiles.ingestPane(session, capture, true)
+    } else if (session.engine === 'agy') {
+      // A JSONL tail like claude/grok. agy announces its model only in the hook payload and its pane
+      // footer, so the pane is read once on attach to fill the chip before the first turn.
+      const normalizer = new AgyNormalizer()
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
+      agyNormalizers.set(session.sessionId, normalizer)
+      const capture = await captureTerminal(session.agentId, 60)
+      if (capture) runtimeProfiles.ingestPane(session, capture, true)
+      // agy's transcript has no end-of-turn record - only its Stop hook does - so a fold of a FINISHED
+      // conversation still reports the last turn as open, and after a daemon restart nothing is ever
+      // coming to close it. The pane is the one place the answer exists; ask it.
+      if (historyTurnOpen && capture && agyPaneIdle(capture)) {
+        normalizer.closeTurn()
+        historyTurnOpen = false
+      }
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
@@ -1100,9 +1120,57 @@ async function runForeground(token: string): Promise<void> {
       backend.sendCommander({ type: 'commander_event', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { kind: 'error', text: deviceErrorText(message, engine) } })
     },
   })
-  const acquireTerminalControl = (id: string): (() => void) | null => {
+  /**
+   * agy only: close a turn whose final `Stop` never came.
+   *
+   * agy reports `fullyIdle: false` when it pauses for sub-agents, and normally sends one more Stop with
+   * `fullyIdle: true` once they report — measured, and that is the path a healthy turn takes. But one
+   * measured run completed its sub-agents, wrote its summary, and sent nothing further; the turn stayed
+   * open with no recap. The pane is the only other place the answer exists (`? for shortcuts` idle vs
+   * `esc to cancel` busy), so a waiting Stop arms a bounded poll of it.
+   *
+   * Bounded on purpose: it stops after AGY_IDLE_WATCH_MAX checks (~10 min) rather than polling a pane
+   * forever, and any real Stop clears it first.
+   */
+  const AGY_IDLE_WATCH_MS = 15_000
+  const AGY_IDLE_WATCH_MAX = 40
+  const agyIdleWatch = new Map<string, { timer: NodeJS.Timeout; checks: number }>()
+
+  const clearAgyIdleWatch = (sessionId: string): void => {
+    const watch = agyIdleWatch.get(sessionId)
+    if (!watch) return
+    clearTimeout(watch.timer)
+    agyIdleWatch.delete(sessionId)
+  }
+
+  const armAgyIdleWatch = (sessionId: string): void => {
+    const checks = agyIdleWatch.get(sessionId)?.checks ?? 0
+    clearAgyIdleWatch(sessionId)
+    if (checks >= AGY_IDLE_WATCH_MAX) return
+    const timer = setTimeout(() => {
+      void (async () => {
+        agyIdleWatch.delete(sessionId)
+        const normalizer = agyNormalizers.get(sessionId)
+        if (!normalizer?.turnOpen) return
+        const entry = registry.bySession(sessionId)
+        if (!entry) return
+        const capture = await captureTerminal(entry.agentId, 60)
+        if (!capture || !agyPaneIdle(capture)) { armAgyIdleWatch(sessionId); return }
+        await watcher.pollSession(sessionId)
+        if (!normalizer.turnOpen) return
+        console.log(`[turn] ${sid(sessionId)} closed by the agy idle backstop · no final Stop arrived`)
+        emitSessionEvents(sessionId, normalizer.closeTurn())
+      })().catch((err) => {
+        console.error('[agy] idle backstop failed:', err instanceof Error ? err.message : err)
+      })
+    }, AGY_IDLE_WATCH_MS)
+    timer.unref?.()
+    agyIdleWatch.set(sessionId, { timer, checks: checks + 1 })
+  }
+
+  const acquireTerminalControl = (id: string, opts?: { forAnswer?: boolean }): (() => void) | null => {
     const agentId = registry.resolve(id)?.agentId ?? id
-    const releaseInput = input.acquireControl(agentId)
+    const releaseInput = input.acquireControl(agentId, opts)
     if (!releaseInput) return null
     const releaseTerminal = pinTerminalControl(agentId)
     if (!releaseTerminal) {
@@ -1191,6 +1259,7 @@ async function runForeground(token: string): Promise<void> {
       if (s.engine === 'muse') return lastMuseTurnText(lines)
       if (s.engine === 'amp') return lastAmpTurnText(lines)
       if (s.engine === 'grok') return lastGrokTurnText(lines)
+      if (s.engine === 'agy') return lastAgyTurnText(lines)
       if (s.engine === 'pi') return lastPiTurnText(lines)
       if (s.engine === 'commandcode') return lastCommandCodeTurnText(lines)
       return lastTurnTextFromRawLines(lines)
@@ -1263,6 +1332,7 @@ async function runForeground(token: string): Promise<void> {
         ?? museNormalizers.get(sessionId)?.turnOpen
         ?? ampNormalizers.get(sessionId)?.turnOpen
         ?? grokNormalizers.get(sessionId)?.turnOpen
+        ?? agyNormalizers.get(sessionId)?.turnOpen
         ?? hermesReaders.get(sessionId)?.turnOpen
         ?? devinReaders.get(sessionId)?.turnOpen
         ?? commandcodeNormalizers.get(sessionId)?.turnOpen
@@ -1368,6 +1438,8 @@ async function runForeground(token: string): Promise<void> {
     museNormalizers.delete(sessionId)
     ampNormalizers.delete(sessionId)
     grokNormalizers.delete(sessionId)
+    agyNormalizers.delete(sessionId)
+    clearAgyIdleWatch(sessionId)
     hermesReaders.get(sessionId)?.stop()
     hermesReaders.delete(sessionId)
     devinReaders.get(sessionId)?.stop()
@@ -1403,7 +1475,14 @@ async function runForeground(token: string): Promise<void> {
     } else if (meta.evicted) {
       forgetSession(meta.evicted, { force: true })
     }
-    const reset = meta.isNew || (entry.engine !== 'cursor' && meta.hookEvent === 'SessionStart')
+    // agy is excluded for the same reason as cursor, arriving by a different road: it has no
+    // session-start event at all. The closest thing is `PreInvocation`, which fires before EVERY model
+    // round-trip — four to seven times in one measured turn — and each one re-folded the transcript and
+    // re-emitted `turn_started` for a turn already open (measured: two turn_started, one turn_ended).
+    // Its first bind is covered by `meta.isNew`, and registry derives the transcript path from the
+    // conversation id, so nothing here depends on a later announcement carrying it.
+    const reset = meta.isNew
+      || (entry.engine !== 'cursor' && entry.engine !== 'agy' && meta.hookEvent === 'SessionStart')
     // Deliberately NOT gated on `meta.isNew`. `isNew` is false in exactly the case this is meant to catch:
     // a session announced once BEFORE its transcript exists and registered again when the file appears —
     // the second announcement is the only one that can carry the path, and it reports `isNew=false`
@@ -1466,7 +1545,9 @@ async function runForeground(token: string): Promise<void> {
         ? await findCursorTranscript(env.CURSOR_HOME, sessionId) ?? undefined
         : observed.engine === 'grok'
           ? await findGrokTranscript(env.GROK_HOME, observed.cwd, sessionId) ?? undefined
-          : undefined
+          : observed.engine === 'agy'
+            ? await findAgyTranscript(env.AGY_HOME, sessionId) ?? undefined
+            : undefined
       if ((observed.engine === 'cursor' || observed.engine === 'grok') && !transcriptPath) return
     } else {
       const attempts = repairAttempts.get(agent.agentId) ?? 0
@@ -1476,7 +1557,11 @@ async function runForeground(token: string): Promise<void> {
       repairAttempts.set(agent.agentId, attempts + 1)
       const startedAtMs = Date.parse(observed.processIdentity.startMarker)
       if (!Number.isFinite(startedAtMs)) return
-      const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, { bornOnly: true })
+      // agy cannot be found by directory — its repair reads the presence lock the process holds open.
+      const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, {
+        bornOnly: true,
+        pid: observed.processIdentity.pid,
+      })
       if (!found || registry.has(found.sessionId) || isRecentlyDeleted(found.sessionId)) return
       sessionId = found.sessionId
       transcriptPath = found.transcriptPath
@@ -1739,6 +1824,37 @@ async function runForeground(token: string): Promise<void> {
         })
         return
       }
+      // agy's Stop hook is the ONLY turn boundary it has. Nothing in the transcript says a turn ended:
+      // a backgrounded step is written `status: RUNNING` and, the file being append-only, stays that way
+      // forever. Drain first so the closing prose is on the wire before turn_ended, then force-close.
+      if (session.engine === 'agy') {
+        // `waiting` = agy's loop stopped only because it is standing by for its sub-agents. The turn is
+        // NOT over, so nothing closes here — but the run that proved this necessary also finished its
+        // sub-agents and then never sent another Stop, so a backstop watches the pane instead.
+        if (status === 'waiting') {
+          armAgyIdleWatch(sessionId)
+          return
+        }
+        clearAgyIdleWatch(sessionId)
+        void (async () => {
+          await watcher.pollSession(sessionId)
+          const normalizer = agyNormalizers.get(sessionId)
+          if (!normalizer?.turnOpen) return
+          await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
+          await watcher.pollSession(sessionId)
+          if (!normalizer.turnOpen) return
+          if (status === 'error') {
+            announceTurnAborted(sessionId, 'agy', 'agy ended the turn early')
+            emitSessionEvents(sessionId, normalizer.abortTurn())
+            return
+          }
+          console.log(`[turn] ${sid(sessionId)} closed by agy Stop hook (after grace)`)
+          emitSessionEvents(sessionId, normalizer.closeTurn())
+        })().catch((err) => {
+          console.error('[hooks] agy stop hook failed:', err instanceof Error ? err.message : err)
+        })
+        return
+      }
       if (session.engine === 'grok') {
         void (async () => {
           await watcher.pollSession(sessionId)
@@ -1862,6 +1978,7 @@ async function runForeground(token: string): Promise<void> {
     installDevinHooks(hookPort)
     installCommandCodeHooks(hookPort)
     installGrokHooks(hookPort)
+    installAgyHooks(hookPort)
   }
   backend.setDashboardPort(hookPort) // surfaced to the web (e2e_status) so it can link here to approve
   console.log(`[cli] local dashboard → http://127.0.0.1:${hookPort}`)
@@ -1904,6 +2021,10 @@ async function runForeground(token: string): Promise<void> {
       } else if (session.engine === 'grok') {
         let normalizer = grokNormalizers.get(evt.sessionId)
         if (!normalizer) { normalizer = new GrokNormalizer(); grokNormalizers.set(evt.sessionId, normalizer) }
+        events = normalizer.ingest(evt.text)
+      } else if (session.engine === 'agy') {
+        let normalizer = agyNormalizers.get(evt.sessionId)
+        if (!normalizer) { normalizer = new AgyNormalizer(); agyNormalizers.set(evt.sessionId, normalizer) }
         events = normalizer.ingest(evt.text)
       } else if (session.engine === 'pi') {
         let normalizer = piNormalizers.get(evt.sessionId)
@@ -1949,6 +2070,7 @@ async function runForeground(token: string): Promise<void> {
           ?? museNormalizers.get(session.sessionId)?.turnOpen
           ?? ampNormalizers.get(session.sessionId)?.turnOpen
           ?? grokNormalizers.get(session.sessionId)?.turnOpen
+          ?? agyNormalizers.get(session.sessionId)?.turnOpen
           ?? hermesReaders.get(session.sessionId)?.turnOpen
           ?? devinReaders.get(session.sessionId)?.turnOpen
           ?? commandcodeNormalizers.get(session.sessionId)?.turnOpen
@@ -2013,7 +2135,9 @@ async function runForeground(token: string): Promise<void> {
   //
   // Read just the footer, and only while such a session exists. NOT silent: a real change has to push to
   // the device, which is the whole point.
-  const PANE_POLLED_ENGINES = new Set(['devin', 'cursor', 'grok'])
+  // agy joins these three: its model/effort exist only in the hook payload and the pane footer, never
+  // in the transcript, so the chip goes stale without a poll.
+  const PANE_POLLED_ENGINES = new Set(['devin', 'cursor', 'grok', 'agy'])
   const PANE_POLL_MS = 15_000
   setInterval(() => {
     for (const session of registry.list()) {
@@ -2060,6 +2184,7 @@ async function runForeground(token: string): Promise<void> {
     museNormalizers.get(sessionId)?.closeTurn()
     ampNormalizers.get(sessionId)?.closeTurn()
     grokNormalizers.get(sessionId)?.closeTurn()
+    agyNormalizers.get(sessionId)?.closeTurn()
     hermesReaders.get(sessionId)?.closeTurn()
     devinReaders.get(sessionId)?.closeTurn()
     commandcodeNormalizers.get(sessionId)?.closeTurn()

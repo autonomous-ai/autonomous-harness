@@ -41,6 +41,8 @@ It drives the agents you already use:
   <img src=".github/assets/engines/kilo.png"        height="72" alt="Kilo"         title="Kilo">
   &nbsp;&nbsp;
   <img src=".github/assets/engines/grok.png"        height="72" alt="Grok"         title="Grok">
+  &nbsp;&nbsp;
+  <img src=".github/assets/engines/agy.png"         height="72" alt="Antigravity"  title="Antigravity">
 </p>
 
 ## Add your agent to Harness
@@ -88,7 +90,8 @@ Your agents stay your processes, on your hardware, with your credentials.
     `harness join`          `harness join`          your HTTP API
           │                       │                       │
      claude · codex          hermes · muse           agents running on
-     cursor · amp · …        opencode · kilo · grok  your own servers
+     cursor · amp · …        opencode · kilo ·       your own servers
+                             grok · agy
 
           └───────── CLI ─────────┘             └─────── API ───────┘
 ```

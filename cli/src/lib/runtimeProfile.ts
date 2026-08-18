@@ -44,6 +44,7 @@ import {
   parsePiModelsOutput,
 } from '../engines/pi/runtimeProfile.js'
 import { parseGrokFooterProfile } from '../engines/grok/runtimeProfile.js'
+import { parseAgyFooterProfile } from '../engines/agy/runtimeProfile.js'
 
 export interface RuntimeProfile {
   id: string
@@ -108,7 +109,7 @@ interface CodexCache {
   models?: CodexCacheModel[]
 }
 
-const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp|kilo|grok):([^@]+)@([a-z0-9_-]+)$/i
+const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp|kilo|grok|agy):([^@]+)@([a-z0-9_-]+)$/i
 const CODEX_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 const CLAUDE_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 const CURSOR_EFFORTS = new Set(['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -863,6 +864,15 @@ export class RuntimeProfileManager {
       }
     } else if (session.engine === 'grok') {
       const footer = parseGrokFooterProfile(paneText)
+      if (footer) {
+        state.model = footer.model
+        state.effort = footer.effort
+        state.observedAt = Date.now()
+      }
+    } else if (session.engine === 'agy') {
+      // agy's transcript never names the model, so the pane footer is the only continuous source; the
+      // hook payload's `modelName` seeds it at session start.
+      const footer = parseAgyFooterProfile(paneText)
       if (footer) {
         state.model = footer.model
         state.effort = footer.effort

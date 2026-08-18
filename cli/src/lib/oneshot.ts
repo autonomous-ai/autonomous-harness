@@ -1079,6 +1079,128 @@ export async function runGrokOneShot(opts: OneShotOptions): Promise<OneShotResul
   }
 }
 
+/**
+ * The measured Antigravity 1.1.14 headless invocation.
+ *
+ * `-p` takes the prompt on argv, so this cannot be pre-warmed into the worker pool.
+ *
+ * Two deliberate omissions:
+ *  - **No scratch data dir.** `ANTIGRAVITY_EXECUTABLE_DATA_DIR` looks like the override and is not one
+ *    (measured: the run still wrote to the real `~/.gemini/antigravity-cli`), and a scratch `HOME` DOES
+ *    isolate the store but takes the credentials with it — the re-auth prompt makes it unusable for a
+ *    background worker. So the run lands in the user's store and is deleted afterwards by id.
+ *  - **No workspace.** `-p` opens none, and agy refuses every tool without one ("no active workspace"),
+ *    which is exactly the confinement a recap wants: it cannot read or write the user's files at all.
+ */
+export function agyOneShotSpawn(
+  opts: Pick<OneShotOptions, 'prompt' | 'model' | 'effort'>,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  const args = [
+    '--output-format', 'json',
+    // A recap prompt is user text; without this a leading `/` would be expanded as a slash command.
+    '--disable-slash-commands',
+    ...(opts.model ? ['--model', opts.model] : []),
+    ...(opts.effort ? ['--effort', opts.effort] : []),
+    '-p', opts.prompt,
+  ]
+  const childEnv = scrubTerminalContext({ ...parentEnv })
+  delete childEnv.MACHINE_ID
+  return { args, env: childEnv }
+}
+
+interface AgyOneShotOutput {
+  text: string
+  conversationId: string
+}
+
+/** agy prints one JSON object: `{conversation_id, status, response, duration_seconds, usage}`. */
+export function agyOutputText(stdout: string): AgyOneShotOutput {
+  const raw = stdout.trim()
+  // The id is needed for cleanup even when the envelope does not parse, so read it directly too.
+  const idMatch = /"conversation_id"\s*:\s*"([0-9a-f-]{16,})"/i.exec(raw)
+  const conversationId = idMatch ? idMatch[1] : ''
+  for (const candidate of [raw, ...raw.split('\n').reverse()]) {
+    if (!candidate) continue
+    try {
+      const parsed = JSON.parse(candidate) as { response?: unknown; conversation_id?: unknown }
+      if (typeof parsed.response === 'string') {
+        return { text: parsed.response.trim(), conversationId: typeof parsed.conversation_id === 'string' ? parsed.conversation_id : conversationId }
+      }
+    } catch { /* try the next complete JSON value */ }
+  }
+  return { text: '', conversationId }
+}
+
+/**
+ * Remove the conversation a recap created.
+ *
+ * One `-p` run leaves exactly five artifacts, all named by the conversation id (measured):
+ * `brain/<id>/`, `conversations/<id>.db` plus its `-wal`/`-shm`, and `presence/<id>.lock`. Deleting by
+ * id touches nothing else, so a concurrent interactive agy session is never at risk.
+ */
+async function removeAgyConversation(conversationId: string): Promise<void> {
+  if (!/^[0-9a-f-]{16,}$/i.test(conversationId)) return
+  const targets = [
+    join(env.AGY_HOME, 'brain', conversationId),
+    join(env.AGY_HOME, 'conversations', `${conversationId}.db`),
+    join(env.AGY_HOME, 'conversations', `${conversationId}.db-wal`),
+    join(env.AGY_HOME, 'conversations', `${conversationId}.db-shm`),
+    join(env.AGY_HOME, 'presence', `${conversationId}.lock`),
+  ]
+  for (const target of targets) await rm(target, { recursive: true, force: true }).catch(() => {})
+}
+
+export async function runAgyOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) throw Object.assign(new Error('agy one-shot aborted'), { name: 'AbortError' })
+  const { args, env: processEnv } = agyOneShotSpawn(opts)
+  const timeoutMs = opts.timeoutMs ?? 60_000
+  let created = ''
+  try {
+    return await new Promise<OneShotResult>((resolve, reject) => {
+      const child = spawn(env.AGY_PATH || 'agy', args, {
+        cwd: opts.cwd, env: processEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      let settled = false
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        fn()
+      }
+      const kill = (): void => killGroup(child)
+      const onAbort = (): void => {
+        created = created || agyOutputText(stdout).conversationId
+        finish(() => reject(Object.assign(new Error('agy one-shot aborted'), { name: 'AbortError' })))
+        kill()
+      }
+      const timer = setTimeout(() => {
+        created = created || agyOutputText(stdout).conversationId
+        finish(() => reject(new Error(`agy one-shot timed out after ${timeoutMs}ms`)))
+        kill()
+      }, timeoutMs)
+      opts.signal?.addEventListener('abort', onAbort)
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+      child.on('error', (err) => finish(() => reject(err)))
+      child.on('close', (code) => {
+        const { text, conversationId } = agyOutputText(stdout)
+        created = conversationId
+        finish(() => {
+          if (!text) reject(new Error(`agy one-shot exited ${code}: ${stderr.slice(0, 500)}`))
+          else resolve({ text, sessionId: null })
+        })
+      })
+    })
+  } finally {
+    // An aborted run may still have created the conversation before it died, so this runs either way.
+    if (created) await removeAgyConversation(created)
+  }
+}
+
 function hermesBin(): string {
   return env.HERMES_PATH || 'hermes'
 }
