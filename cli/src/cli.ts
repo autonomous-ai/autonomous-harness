@@ -48,7 +48,7 @@ import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDi
 import { terminalActionNotStarted, type HookTerminalHint, type TerminalActionResult, type TerminalRuntimeRef } from './lib/terminalTypes.js'
 import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
-import { startHookServer } from './hookServer.js'
+import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
 import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
 import { AnalyticsCollector } from './lib/analytics/collector.js'
@@ -1603,9 +1603,25 @@ async function runForeground(token: string): Promise<void> {
         return false
       }
       const candidates = new Map<string, RegisteredSession>()
+      /**
+       * Agents the hint points at whose ancestry we could NOT confirm.
+       *
+       * Caller ancestry is the strongest evidence and stays the first choice, but it assumes every engine
+       * spawns its hook from inside its own process tree — and Cursor does not. Measured on both
+       * backends: `agent` in a pane registers fine, then every one of its hooks is rejected because the
+       * process that POSTs is not a descendant of the pane's engine, so no session ever binds. It is not
+       * a Herdr problem; tmux fails identically.
+       *
+       * The pane is itself proof: the hook knew a runtime id, that runtime carries exactly one agent of
+       * this engine, and the caller already had to read the 0600 hook credential to be heard at all. So
+       * fall back to that, and only when it is unambiguous.
+       */
+      const onHintedRuntime = new Map<string, RegisteredSession>()
       for (const runtime of resolved) {
         const candidate = registry.byRuntimeEngine(runtime, engine)
-        if (candidate && callerBelongsTo(candidate)) candidates.set(candidate.agentId, candidate)
+        if (!candidate) continue
+        if (callerBelongsTo(candidate)) candidates.set(candidate.agentId, candidate)
+        else onHintedRuntime.set(candidate.agentId, candidate)
       }
       // A moved Herdr pane may leave an inherited stale route. Caller/process correlation is the
       // deterministic fallback, but only within a configured Herdr session named by the hook.
@@ -1622,7 +1638,24 @@ async function runForeground(token: string): Promise<void> {
           }
         }
       }
-      return candidates.size === 1 ? [...candidates.values()][0] : null
+      const choice = chooseHookAgent([...candidates.values()], [...onHintedRuntime.values()])
+      if (choice.agent) {
+        if (choice.reason === 'runtime') {
+          console.log(`[hooks] ${engine} hook accepted on runtime evidence alone`
+            + ` · agent=${sid(choice.agent.agentId)} · caller=${callerPid} is outside that engine's process tree`)
+        }
+        return choice.agent
+      }
+      // Say WHY, once per rejected hook. "no_matching_engine_process" alone sent two people down the
+      // wrong path already: the interesting question is never "did it match" but which of the three
+      // gates closed — no runtime resolved from the hint, no registered agent on that runtime, or the
+      // hook's own process is not a descendant of the engine we registered.
+      const onRuntime = resolved.map((runtime) => registry.byRuntimeEngine(runtime, engine)).filter(Boolean)
+      console.log(`[hooks] unmatched ${engine} hook · hints=${(runtimeHints ?? []).map((hint) => `${hint.backend}:${hint.paneId}`).join(',') || 'none'}`
+        + ` · resolvedRuntimes=${resolved.length} · agentsOnRuntime=${onRuntime.length}`
+        + ` · callerPid=${callerPid}${onRuntime.length && !candidates.size ? ' · caller is not a descendant of that engine process' : ''}`
+        + `${candidates.size > 1 ? ` · ambiguous (${candidates.size} candidates)` : ''}`)
+      return null
     },
     onRegistered: handleRegistered,
     onSessionEnd,

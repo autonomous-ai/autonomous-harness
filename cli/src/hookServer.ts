@@ -20,6 +20,29 @@ import { hookCredentialMatches, loadOrCreateHookCredential } from './lib/hookAut
 import type { HookTerminalHint } from './lib/terminalTypes.js'
 import { ENGINES, type AgentEngine } from './engines/types.js'
 
+/**
+ * Which agent does a hook belong to, given the two grades of evidence?
+ *
+ * Caller ancestry — the hook's process descends from the engine we registered — is the strong one and
+ * always wins. It is not always available: Cursor posts its hooks from outside the pane's process tree,
+ * on tmux and on Herdr alike, so requiring ancestry rejected every hook that engine ever sent and no
+ * session bound at all.
+ *
+ * The weaker grade is the runtime itself: the hook named a pane, and that pane carries exactly one agent
+ * of this engine. Accepted only when it is unambiguous, and only after the caller has already proven it
+ * can read the 0600 hook credential. Two candidates is not a tie to break — it is a question we cannot
+ * answer, so we answer nothing.
+ */
+export function chooseHookAgent<T>(byAncestry: readonly T[], byRuntimeOnly: readonly T[]): {
+  agent: T | null
+  reason: 'ancestry' | 'runtime' | 'ambiguous' | 'none'
+} {
+  if (byAncestry.length === 1) return { agent: byAncestry[0], reason: 'ancestry' }
+  if (byAncestry.length > 1) return { agent: null, reason: 'ambiguous' }
+  if (byRuntimeOnly.length === 1) return { agent: byRuntimeOnly[0], reason: 'runtime' }
+  return { agent: null, reason: byRuntimeOnly.length ? 'ambiguous' : 'none' }
+}
+
 export interface PairOutcome {
   status: number
   body: Record<string, unknown>

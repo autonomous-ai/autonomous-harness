@@ -1,6 +1,6 @@
 import type { Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { startHookServer, type HookServerHandlers } from './hookServer.js'
+import { startHookServer, type HookServerHandlers, chooseHookAgent } from './hookServer.js'
 import { env } from './config/env.js'
 import { readHookCredential } from './lib/hookAuth.js'
 
@@ -136,5 +136,26 @@ describe('process-owned hook server', () => {
     expect(response.status).toBe(403)
     expect(await response.json()).toEqual({ error: 'UNBOUND_HOOK' })
     expect(handler).not.toHaveBeenCalled()
+  })
+})
+
+describe('chooseHookAgent', () => {
+  it('prefers caller ancestry, the evidence that cannot be guessed at', () => {
+    expect(chooseHookAgent(['strong'], ['weak'])).toEqual({ agent: 'strong', reason: 'ancestry' })
+  })
+
+  it('accepts the runtime alone when ancestry is unavailable and the pane is unambiguous', () => {
+    // Cursor posts its hooks from outside the pane's process tree — on tmux and on Herdr alike — so
+    // demanding ancestry rejected every hook it ever sent and no session bound. The pane is the proof:
+    // the hook named a runtime, and that runtime carries exactly one agent of this engine.
+    expect(chooseHookAgent([], ['only-agent-on-that-pane'])).toEqual({
+      agent: 'only-agent-on-that-pane', reason: 'runtime',
+    })
+  })
+
+  it('answers nothing rather than guessing', () => {
+    expect(chooseHookAgent([], [])).toEqual({ agent: null, reason: 'none' })
+    expect(chooseHookAgent([], ['a', 'b'])).toEqual({ agent: null, reason: 'ambiguous' })
+    expect(chooseHookAgent(['a', 'b'], ['c'])).toEqual({ agent: null, reason: 'ambiguous' })
   })
 })
