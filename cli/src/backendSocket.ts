@@ -18,6 +18,7 @@ import { join } from 'path'
 import { hostname } from 'os'
 import { createHash } from 'crypto'
 import { env } from './config/env.js'
+import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
@@ -324,8 +325,10 @@ export class BackendSocket {
   constructor(token: string, onStatus: (connected: boolean) => void = () => {}, computerId = '') {
     this.token = token
     // `?label=<hostname>` lets the backend record which machine connected (shown on the machine card);
-    // `?computer=<stable id>` enforces one-computer-per-computer (a 2nd computer is rejected with HTTP 409).
-    const base = `${env.BACKEND_WS_URL.replace(/\/$/, '')}/api/adapter-ws?label=${encodeURIComponent(hostname())}`
+    // `?computer=<stable id>` enforces one-computer-per-computer (a 2nd computer is rejected with HTTP 409);
+    // `?v=<VERSION>` is our own version, which the backend stores on the machine at every connect (the
+    // analytics report also carries it, but that path is opt-in, so this is the reliable one).
+    const base = `${env.BACKEND_WS_URL.replace(/\/$/, '')}/api/adapter-ws?label=${encodeURIComponent(hostname())}&v=${encodeURIComponent(VERSION)}`
     this.url = computerId ? `${base}&computer=${encodeURIComponent(computerId)}` : base
     this.onStatus = onStatus
     this.machineId = createHash('sha256').update(token).digest('hex').slice(0, 32)
