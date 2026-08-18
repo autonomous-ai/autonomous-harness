@@ -40,6 +40,63 @@ d('OpencodeReader (sqlite3 CLI)', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'oc-reader-')); db = join(dir, 'opencode.db'); schema(db) })
   afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
+  /**
+   * Attaching mid-turn must still open the turn.
+   *
+   * A silent hydrate loses the opening frame of a turn that is already running, and the daemon then
+   * drops that turn's recap because it never saw it open — measured on a real pane as
+   * `[turn] ses_fec1 ended` followed by `[recap] DROPPED (no turn_started was ever seen…)`, on both
+   * terminal backends. Kilo, an opencode fork, already carried this fix; opencode was left behind.
+   */
+  it('opens the turn when only the user row exists yet', async () => {
+    insertMessage(db, 'm1', 1, { role: 'user' }, [{ id: 'p1', tc: 1, data: { type: 'text', text: 'price eth' } }])
+    const events: LiveEvent[] = []
+    const reader = new OpencodeReader({ dbPath: db, sessionId: SID, onEvents: (e) => events.push(...e), pollMs: 600_000 })
+    await reader.start()
+    reader.stop()
+    expect(events).toEqual([{ type: 'turn_started', payload: { userMessage: 'price eth' } }])
+  })
+
+  it('opens the turn when the assistant is already working', async () => {
+    insertMessage(db, 'm1', 1, { role: 'user' }, [{ id: 'p1', tc: 1, data: { type: 'text', text: 'hi there' } }])
+    insertMessage(db, 'm2', 2, { role: 'assistant' }, [{ id: 'p2', tc: 2, data: { type: 'text', text: 'working…' } }])
+    const events: LiveEvent[] = []
+    const reader = new OpencodeReader({ dbPath: db, sessionId: SID, onEvents: (e) => events.push(...e), pollMs: 600_000 })
+    await reader.start()
+    reader.stop()
+    expect(events).toEqual([{ type: 'turn_started', payload: { userMessage: 'hi there' } }])
+  })
+
+  /** Re-attaching to an idle session must stay silent, or every daemon restart invents a turn. */
+  it('says nothing when the last turn already finished, or the session is empty', async () => {
+    const quiet: LiveEvent[] = []
+    const empty = new OpencodeReader({ dbPath: db, sessionId: SID, onEvents: (e) => quiet.push(...e), pollMs: 600_000 })
+    await empty.start(); empty.stop()
+    expect(quiet).toEqual([])
+
+    insertMessage(db, 'm1', 1, { role: 'user' }, [{ id: 'p1', tc: 1, data: { type: 'text', text: 'hi' } }])
+    insertMessage(db, 'm2', 2, { role: 'assistant' }, [
+      { id: 'p2', tc: 2, data: { type: 'text', text: 'done' } },
+      { id: 'p3', tc: 3, data: { type: 'step-finish', reason: 'stop' } },
+    ])
+    const idle: LiveEvent[] = []
+    const reader = new OpencodeReader({ dbPath: db, sessionId: SID, onEvents: (e) => idle.push(...e), pollMs: 600_000 })
+    await reader.start(); reader.stop()
+    expect(idle).toEqual([])
+  })
+
+  /** The backstop must not double-fire once the poll re-reads the same rows. */
+  it('does not open the same turn twice when the poll re-reads it', async () => {
+    insertMessage(db, 'm1', 1, { role: 'user' }, [{ id: 'p1', tc: 1, data: { type: 'text', text: 'once' } }])
+    insertMessage(db, 'm2', 2, { role: 'assistant' }, [{ id: 'p2', tc: 2, data: { type: 'text', text: 'w' } }])
+    const events: LiveEvent[] = []
+    const reader = new OpencodeReader({ dbPath: db, sessionId: SID, onEvents: (e) => events.push(...e), pollMs: 10 })
+    await reader.start()
+    await wait(120)
+    reader.stop()
+    expect(events.filter((e) => e.type === 'turn_started')).toHaveLength(1)
+  })
+
   it('reads messages grouped with their parts, ordered', async () => {
     insertMessage(db, 'm1', 1, { role: 'user' }, [{ id: 'p1', tc: 1, data: { type: 'text', text: 'hi' } }])
     insertMessage(db, 'm2', 2, { role: 'assistant' }, [

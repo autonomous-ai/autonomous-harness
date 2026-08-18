@@ -135,7 +135,8 @@ export class OpencodeReader {
   async start(): Promise<void> {
     try {
       const all = await readOpencodeMessages(this.deps.dbPath, this.deps.sessionId, null)
-      this.hydrate(all)
+      const opening = this.hydrate(all)
+      if (opening.length) this.deps.onEvents(opening)
     } catch (err) {
       if (err instanceof OpencodeSqliteMissing) { this.deps.onFatal?.(err); return }
     }
@@ -146,9 +147,36 @@ export class OpencodeReader {
     if (this.timer) { clearInterval(this.timer); this.timer = null }
   }
 
-  /** Seed state from existing rows without emitting, so we only stream NEW activity after attach. */
-  private hydrate(messages: OcMessage[]): void {
-    if (messages.length === 0) return
+  /**
+   * Seed state from existing rows without replaying them, so we only stream NEW activity after attach —
+   * and return the one event that MUST still be emitted: a `turn_started` when we attached mid-turn.
+   *
+   * Hydrating in silence loses the opening frame of a turn that is already running, and the daemon then
+   * drops that turn's recap because it never saw it open. Measured on a real pane, on both terminal
+   * backends:
+   *
+   *   [agent] fa12f4cb re-attached · engine=opencode · terminal=herdr:default:wG:p1 · session=ses_fec1
+   *   [turn]  ses_fec1 ended                     ← close with nothing to close
+   *   [recap] DROPPED (no turn_started was ever seen for this session)
+   *
+   * Two shapes reach here mid-turn and both were broken, which is why the check is not simply "is the
+   * tail an unfinished assistant":
+   *
+   *   - tail is an in-flight assistant → `open` became true, but silently, so the daemon's `everOpened`
+   *     never flipped and the close was dropped;
+   *   - tail is the USER row, with no assistant row written yet → `open` stayed false AND the user id
+   *     went into `seenUser`, so `processMessage` could never emit the opening frame for it either.
+   *
+   * Emitting it here costs nothing on a re-attach to an idle session (the tail is a finished assistant,
+   * so nothing is emitted) and cannot double-fire: every existing user id is in `seenUser` before the
+   * poll loop starts. Content that predates the attach stays unreplayed on purpose — re-emitting it
+   * would duplicate the transcript after a daemon restart, and the recap does not need it because it
+   * reads opencode's own store (`source=session-json`) rather than this stream.
+   *
+   * This is the same fix kilo (an opencode fork) already carried; opencode was left behind.
+   */
+  private hydrate(messages: OcMessage[]): LiveEvent[] {
+    if (messages.length === 0) return []
     // Find the last closed boundary; everything up to it is "already seen".
     let boundary = -1
     for (let i = messages.length - 1; i >= 0; i--) { if (isDone(messages[i])) { boundary = i; break } }
@@ -158,9 +186,18 @@ export class OpencodeReader {
       if (msg.role === 'user') this.seenUser.add(msg.id)
       for (const part of msg.parts) this.seedPart(part)
     }
-    // A trailing in-flight assistant means a turn is open (attached mid-turn).
+    // Attached mid-turn: either the assistant is still working, or the user row landed and the assistant
+    // has not started yet. See the note above for why both count.
     const tail = messages[messages.length - 1]
-    this.open = tail.role === 'assistant' && !isDone(tail)
+    this.open = tail.role === 'user' || (tail.role === 'assistant' && !isDone(tail))
+    if (!this.open) return []
+    let userMessage = ''
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role !== 'user') continue
+      userMessage = userMessageText(messages[i])
+      break
+    }
+    return [{ type: 'turn_started', payload: { userMessage } }]
   }
 
   private seedPart(part: OcPart): void {
