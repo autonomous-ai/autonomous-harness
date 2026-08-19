@@ -29,7 +29,7 @@ a retina display.
 | `muse.png` | The Meta mark from the official lockup SVG at `static.xx.fbcdn.net/rsrc.php/y3/r/y6QsbGgc866.svg` — wordmark paths dropped, glyph rasterised to 104×104, gradient kept | 104 | `d7c4568f992e60f6d42a7a819a5a782d479cbfd9ad2bc11e69c82b35b8a5d8fe` |
 | `amp.png` | Amp's official app icon — the `apple-touch-icon` the site itself declares, <https://ampcode.com/app-icon.png?v=3>, fetched 2026-08-07 | 512 | `e5fc0d1178674b80c0dcbbf9811787b44df91f865fac9cd3ef44bb13ef728018` |
 | `kilo.png` | Kilo's official mark SVG, <https://kilo.ai/favicon/favicon.svg?v=2>, rendered to a 512px PNG — see the note below | 512 | `03a348a04c622938a278d803cbb6333819de855d2b3127de8e412fd261db3701` |
-| `grok.png` | SpaceXAI symbol, the WHITE transparent variant xAI publishes alongside the black one, composited on a black tile — see the note below | 600 | `36e28f05a8301b1848c29a6f1faa3a83d65b9b4d0a0a08df492d6498c25674c6` |
+| `grok.png` | SpaceXAI symbol, the WHITE transparent variant, <https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png>, fetched 2026-08-19 — composited on a black tile, see the note below | 600 | `56357e60b43284734c58e06596be038c58d7fd1a9bea7325d21a107a44ea4b47` |
 | `agy.png` | Antigravity's official gradient "A" mark — the logo the site itself declares, <https://antigravity.google/assets/image/antigravity-logo.png>, fetched 2026-08-18 | 200 | `8f0b95d2d21dbf930b4d100e2fdc4505673e900a731aa56ea633a4b59c312799` |
 
 Open items, recorded rather than left implicit:
@@ -52,7 +52,8 @@ Open items, recorded rather than left implicit:
 - **`grok.png` is the one mark given a ground it did not ship with.** xAI publishes the SpaceXAI
   symbol as a transparent glyph in black and in white, and neither survives both GitHub themes on its
   own: the black one measured 87% transparent and vanished on the dark ground this README is most
-  often read on. The WHITE variant — the same file the web app vendors — is composited unchanged onto
+  often read on. The WHITE variant — pixel-identical to the copy the web app vendors, which carries a
+  different SHA-256 only because it was re-encoded — is composited unchanged onto
   a 448px black tile, the same tile shape `pi.png` and `commandcode.png` already use. The mark itself
   is untouched: not recoloured, not redrawn, only placed on a ground. If xAI would rather it stood
   alone, dropping the tile is a one-line change.
