@@ -45,6 +45,9 @@ const GROK_SUBMIT_VERIFY_MS = 6_000
 // starts. Measured 3-5s from Enter to the first hook on a warm session; 8s leaves headroom without
 // making a genuinely dropped message wait too long for its error.
 const AGY_SUBMIT_VERIFY_MS = 8_000
+// Copilot's first hook of a turn is `userPromptSubmitted`, which fires as soon as Enter is accepted —
+// faster than agy's, which waits for the model call. 6s is the same headroom grok gets.
+const COPILOT_SUBMIT_VERIFY_MS = 6_000
 const CURSOR_TURN_SETTLE_MS = 750
 const SUBMIT_MAX_RETRIES = 2
 // Non-cursor engines re-observe the pane (instead of erroring) while an accepted-but-not-yet-started
@@ -332,6 +335,8 @@ export class SessionInputController {
                         ? GROK_SUBMIT_VERIFY_MS
                         : session.engine === 'agy'
                           ? AGY_SUBMIT_VERIFY_MS
+                          : session.engine === 'copilot'
+                            ? COPILOT_SUBMIT_VERIFY_MS
                       : SUBMIT_VERIFY_MS)
   }
 
@@ -358,7 +363,7 @@ export class SessionInputController {
         return
       }
     } else if (session.engine === 'opencode' || session.engine === 'kilo' || session.engine === 'pi' || session.engine === 'hermes' || session.engine === 'muse'
-      || session.engine === 'amp' || session.engine === 'grok' || session.engine === 'agy') {
+      || session.engine === 'amp' || session.engine === 'grok' || session.engine === 'agy' || session.engine === 'copilot') {
       // OpenCode has no composer glyph, and the submitted text stays visible in the message area, so a
       // pane scrape can't tell "still in the composer" from "already sent". Rely purely on the reader-
       // derived turn_started (a new user row in opencode.db) to clear awaitingFingerprint; if it hasn't

@@ -83,7 +83,14 @@ function argValue(name, fallback) {
 function argEngine() {
   const i = process.argv.indexOf('--engine')
   const value = i !== -1 ? process.argv[i + 1] : ''
-  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' || value === 'grok' || value === 'agy' ? value : 'claude'
+  return value === 'codex' || value === 'cursor' || value === 'hermes' || value === 'commandcode' || value === 'devin' || value === 'muse' || value === 'grok' || value === 'agy' || value === 'copilot' ? value : 'claude'
+}
+
+/** Copilot names its hook event only on the command line, like agy. */
+function argCopilotEvent() {
+  const i = process.argv.indexOf('--copilot-event')
+  const value = i !== -1 ? process.argv[i + 1] : ''
+  return ['sessionStart', 'userPromptSubmitted', 'agentStop', 'sessionEnd'].includes(value) ? value : ''
 }
 
 /**
@@ -108,6 +115,7 @@ function paths() {
   const hermesHome = argValue('--hermes-home', process.env.HERMES_HOME || join(homedir(), '.hermes'))
   const commandcodeHome = argValue('--commandcode-home', process.env.COMMANDCODE_HOME || join(homedir(), '.commandcode'))
   const devinHome = argValue('--devin-home', process.env.DEVIN_HOME || join(homedir(), '.local', 'share', 'devin', 'cli'))
+  const copilotHome = argValue('--copilot-home', process.env.COPILOT_HOME || join(homedir(), '.copilot'))
   const agyHome = argValue('--agy-home', process.env.AGY_HOME || join(homedir(), '.gemini', 'antigravity-cli'))
   return {
     dataDir,
@@ -125,7 +133,15 @@ function paths() {
     agyHome,
     agyBrainDir: join(agyHome, 'brain'),
     agyPresenceDir: join(agyHome, 'presence'),
+    copilotHome,
+    copilotSessionsDir: join(copilotHome, 'session-state'),
   }
+}
+
+/** Copilot's deterministic transcript layout, duplicated here because the hook cannot import src/. */
+function copilotTranscriptPath(p, sessionId) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId || '')) return undefined
+  return join(p.copilotSessionsDir, sessionId, 'events.jsonl')
 }
 
 /**
@@ -396,12 +412,12 @@ function processEntrypoint(args) {
 
 const ENGINE_COMMANDS = {
   claude: 'claude', codex: 'codex', cursor: 'agent', hermes: 'hermes', commandcode: 'cmd',
-  devin: 'devin', muse: 'muse', grok: 'grok', agy: 'agy',
+  devin: 'devin', muse: 'muse', grok: 'grok', agy: 'agy', copilot: 'copilot',
 }
 const ENGINE_PATH_ENV = {
   claude: 'CLAUDE_PATH', codex: 'CODEX_PATH', cursor: 'CURSOR_PATH', hermes: 'HERMES_PATH',
   commandcode: 'COMMANDCODE_PATH', devin: 'DEVIN_PATH', muse: 'MUSE_PATH', grok: 'GROK_PATH',
-  agy: 'AGY_PATH',
+  agy: 'AGY_PATH', copilot: 'COPILOT_PATH',
 }
 
 function executableIdentity(path) {
@@ -799,6 +815,7 @@ function validTranscriptPath(engine, filePath, p) {
       engine === 'codex' ? p.codexSessionsDir
         : engine === 'grok' ? p.grokSessionsDir
         : engine === 'agy' ? p.agyBrainDir
+        : engine === 'copilot' ? p.copilotSessionsDir
         : engine === 'cursor' ? p.cursorProjectsDir
         : engine === 'commandcode' ? p.commandcodeProjectsDir
         : p.claudeProjectsDir,
@@ -1054,7 +1071,7 @@ function mergeRuntimes(current, observed) {
 
 const REGISTRY_ENGINES = new Set([
   'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
-  'agy',
+  'agy', 'copilot',
 ])
 
 function validRegistryString(value, max = 4096) {
@@ -1150,7 +1167,7 @@ async function fallbackRegister(input, engine, tmuxPane) {
     ? rawSessionId
     : (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
   if (!sessionId) return
-  const transcriptOptional = ['cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode', 'devin', 'grok', 'agy'].includes(engine)
+  const transcriptOptional = ['cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode', 'devin', 'grok', 'agy', 'copilot'].includes(engine)
   if (!transcriptOptional && !transcriptPath) return
   if (transcriptPath && !validTranscriptPath(engine, transcriptPath, p)) return
   const observations = []
@@ -1264,6 +1281,47 @@ async function main() {
   // the final assistant chunk, so treating Stop as authoritative would close the turn too early. The
   // transcript's `turn_completed` record closes normal turns; only StopFailure is needed as an error
   // fallback here.
+  // Copilot: every event carries `sessionId` and `cwd`, and `agentStop` additionally names the
+  // transcript. `sessionStart` fires AFTER the first prompt (measured: userPromptSubmitted at
+  // …796411, sessionStart at …798963), so registration is driven by whichever arrives first —
+  // both are idempotent.
+  if (engine === 'copilot') {
+    const copilotEvent = argCopilotEvent()
+    if (!copilotEvent) return
+    const sessionId = input.sessionId
+    const p = paths()
+    const transcriptPath = existsPath(input.transcriptPath) ? input.transcriptPath : copilotTranscriptPath(p, sessionId)
+    const cwd = input.cwd
+    if (copilotEvent === 'sessionEnd') {
+      const ok = await post(port, '/api/hook/session-end', { sessionId, reason: input.reason, ...mutationFields })
+      if (!ok) await fallbackSessionEnd(sessionId, input.reason, engine, tmuxPane)
+      return
+    }
+    if (copilotEvent === 'agentStop') {
+      // `stopReason` is `end_turn` on a clean finish; anything else ended the loop early.
+      const failed = typeof input.stopReason === 'string' && input.stopReason !== '' && input.stopReason !== 'end_turn'
+      await post(port, '/api/hook/turn-stop', {
+        sessionId, transcriptPath, status: failed ? 'error' : undefined, ...mutationFields,
+      })
+      return
+    }
+    const body = {
+      engine,
+      hookEvent: 'SessionStart',
+      sessionId,
+      transcriptPath,
+      cwd,
+      ...terminalHookFields(tmuxPane),
+    }
+    const registered = await post(port, '/api/hook/session-start', body)
+    if (!registered) {
+      await fallbackRegister({
+        ...input, hook_event_name: 'SessionStart', session_id: sessionId, transcript_path: transcriptPath, cwd,
+      }, engine, tmuxPane)
+    }
+    return
+  }
+
   // agy: the hook is the whole binding. Its `PreInvocation` fires before every model round-trip, so the
   // FIRST one of a turn is the session announce; `Stop` fires exactly once when the execution loop ends
   // and is the authoritative turn boundary (the transcript records no closing marker of its own, and a
@@ -1497,6 +1555,7 @@ main()
     // only `{"decision":"continue"}` would block the stop. It is also why PreToolUse is never installed
     // — there `decision` is required, and `{}` reads as a denial (measured: every tool call of the turn
     // came back "Tool call denied by pre-tool hook").
-    if (e === 'cursor' || e === 'hermes' || e === 'agy') process.stdout.write('{}\n', () => process.exit(0))
+    // Copilot parses stdout as JSON too; `{}` is the documented no-op for every event installed here.
+    if (e === 'cursor' || e === 'hermes' || e === 'agy' || e === 'copilot') process.stdout.write('{}\n', () => process.exit(0))
     else process.exit(0)
   })

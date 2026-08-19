@@ -325,6 +325,13 @@ export function engineProcessMatchScore(
     if (executable === 'agy' || entrybase === 'agy') return 3
     return /[\/\\]\.local[\/\\]bin[\/\\]agy$/.test(entrypoint) ? 2 : 0
   }
+  if (engine === 'copilot') {
+    // Two builds answer to `copilot` on a typical machine: a compiled binary (~160MB, measured) and
+    // the npm loader script that execs it. Both keep the bare `copilot` argv, so the basename is the
+    // signal and the install paths only cover a wrapped launch.
+    if (executable === 'copilot' || entrybase === 'copilot') return 3
+    return /@github[\/\\]copilot[\/\\](?:npm-loader\.js|.*copilot)$/.test(entrypoint) ? 2 : 0
+  }
   if (executable === 'claude' || entrybase === 'claude') return 3
   return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
 }
@@ -406,6 +413,9 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
   // `agy --conversation <uuid>` resumes by conversation id; `-c`/`--continue` names nothing and falls
   // through to the presence-lock lookup in sessionRepair.
   agy: { flags: ['--conversation'], id: /^[0-9a-f-]{16,}$/i },
+  // `copilot --resume=<id>` and `--session-id <id>`; bare `--resume`/`--continue` name nothing and
+  // fall through to the directory scan in sessionRepair.
+  copilot: { flags: ['--resume', '--session-id'], id: /^[0-9a-f-]{16,}$/i },
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

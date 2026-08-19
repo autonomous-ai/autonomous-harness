@@ -38,6 +38,7 @@ import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/roll
 import type { AgentEngine } from '../engines/types.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
+import { copilotTranscriptPath } from '../engines/copilot/session.js'
 import { hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
 import { mergeTerminalRuntimes, processIdentityKey, terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { HookTerminalHint, ProcessIdentity, TerminalRuntimeRef } from './terminalTypes.js'
@@ -145,7 +146,7 @@ const PANE_RE = /^%\d+$/
 const GROK_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const AGENT_ENGINES = new Set<AgentEngine>([
   'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
-  'agy',
+  'agy', 'copilot',
 ])
 const LOCK_WAIT_MS = 20
 const LOCK_ATTEMPTS = 100
@@ -459,6 +460,8 @@ export function validTranscriptPath(engine: AgentEngine, filePath: string): bool
         ? join(env.GROK_HOME, 'sessions')
         : engine === 'agy'
         ? join(env.AGY_HOME, 'brain')
+        : engine === 'copilot'
+        ? join(env.COPILOT_HOME, 'session-state')
         : engine === 'cursor'
           ? join(env.CURSOR_HOME, 'projects')
           : engine === 'pi'
@@ -629,7 +632,7 @@ class Registry {
       }
       let changed = false
       for (const raw of Array.isArray(arr) ? arr : []) {
-        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' || raw?.engine === 'kilo' || raw?.engine === 'grok' || raw?.engine === 'agy' ? raw.engine : 'claude'
+        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' || raw?.engine === 'kilo' || raw?.engine === 'grok' || raw?.engine === 'agy' || raw?.engine === 'copilot' ? raw.engine : 'claude'
         const runtimes = normalizedRuntimes(raw?.runtimes, raw?.tmuxPane)
         const pane = tmuxProjection(runtimes)
         let transcriptPath =
@@ -865,7 +868,7 @@ class Registry {
     const sessionId =
       input.sessionId || (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
     const engine: AgentEngine =
-      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' || input.engine === 'grok' || input.engine === 'agy' ? input.engine : 'claude'
+      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' || input.engine === 'grok' || input.engine === 'agy' || input.engine === 'copilot' ? input.engine : 'claude'
     const pane = input.tmuxPane
     // Hooks carry process metadata, not ownership. The already-discovered pane+engine process chooses the
     // agent; an optional legacy launcherId is intentionally ignored.
@@ -882,7 +885,9 @@ class Registry {
       || (engine === 'grok' && !GROK_SESSION_RE.test(sessionId))
       // agy's session id IS its conversation id, and it names the directory the transcript lives in.
       || (engine === 'agy' && !GROK_SESSION_RE.test(sessionId))
-      || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && engine !== 'grok' && engine !== 'agy' && !transcriptPath)
+      // Copilot's session id is a uuid and names the directory its event stream lives in.
+      || (engine === 'copilot' && !GROK_SESSION_RE.test(sessionId))
+      || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && engine !== 'grok' && engine !== 'agy' && engine !== 'copilot' && !transcriptPath)
       || (transcriptPath && !validTranscriptPath(engine, transcriptPath))
     ) return null
     if (engine === 'codex' && transcriptPath && readCodexRolloutMeta(transcriptPath)?.isSubagent) return null
@@ -919,7 +924,11 @@ class Registry {
         // land before the first line is flushed — derive rather than wait a turn for the path.
         : !transcriptPath && engine === 'agy'
           ? agyTranscriptPath(env.AGY_HOME, sessionId)
-          : null
+          // Copilot announces its session before the first event is flushed; its layout is
+          // deterministic, so derive rather than wait a turn for the path.
+          : !transcriptPath && engine === 'copilot'
+            ? copilotTranscriptPath(env.COPILOT_HOME, sessionId)
+            : null
     const effectiveTranscriptPath = transcriptPath ?? existing?.transcriptPath ?? derived ?? null
     const entry: RegisteredSession = {
       schemaVersion: 2,
@@ -929,7 +938,7 @@ class Registry {
       boundAt: isNew ? now : existing?.boundAt ?? now,
       engine,
       transcriptPath: effectiveTranscriptPath,
-      projectDir: engine === 'grok' || engine === 'agy'
+      projectDir: engine === 'grok' || engine === 'agy' || engine === 'copilot'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId
         : effectiveTranscriptPath
         ? basename(dirname(effectiveTranscriptPath))

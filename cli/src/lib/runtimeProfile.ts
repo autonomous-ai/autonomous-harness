@@ -109,7 +109,7 @@ interface CodexCache {
   models?: CodexCacheModel[]
 }
 
-const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp|kilo|grok|agy):([^@]+)@([a-z0-9_-]+)$/i
+const PROFILE_RE = /^runtime-v1:([^:]+):(claude|codex|cursor|commandcode|pi|devin|opencode|hermes|muse|amp|kilo|grok|agy|copilot):([^@]+)@([a-z0-9_-]+)$/i
 const CODEX_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 const CLAUDE_EFFORTS = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 const CURSOR_EFFORTS = new Set(['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'])

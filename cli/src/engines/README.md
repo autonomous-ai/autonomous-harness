@@ -300,6 +300,18 @@ conversation reports the last turn as still open and nothing is ever coming to c
 `turn_heartbeat` every second, indefinitely). Its pane knows — `? for shortcuts` when idle,
 `esc to cancel` while busy — so attach reads the pane once and closes the folded turn.
 
+**Two announce events for one turn is a thing that happens.** Copilot fires `userPromptSubmitted` and
+then `sessionStart` (measured 2.5s apart, in that order — its sessionStart comes AFTER the first
+prompt). Both register, registration is idempotent, and that is fine — but `handleRegistered` treats a
+`SessionStart` hook as a reason to re-fold the transcript, so the second one re-emitted `turn_started`
+for a turn already open. Copilot is excluded from that reset in `cli.ts`, next to cursor and agy.
+
+**Read the hook's exit-code contract before installing an event, not just its payload.** Copilot's
+docs are explicit that every hook fails OPEN except `preToolUse`, which fails CLOSED: a non-zero exit
+denies the tool. A crashing hook would stop the user's agent from running anything. It is not
+installed — the same rows are in the transcript anyway. (agy's version of this trap is worse: there
+`{}` itself is a denial.)
+
 ## Stage D — drive the agent
 
 Only needed for the capabilities your agent actually has. Skip what does not apply.

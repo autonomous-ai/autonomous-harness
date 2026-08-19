@@ -23,6 +23,7 @@ import { museEvent, museWorkspaceRoot } from '../engines/muse/normalizer.js'
 import type { AgentEngine } from '../engines/types.js'
 import { readCodexRolloutMeta } from '../engines/codex/rollout.js'
 import { agyConversationForPid, findAgyTranscript } from '../engines/agy/session.js'
+import { copilotSessionCwd } from '../engines/copilot/session.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -305,6 +306,16 @@ export async function findLiveSession(
           + ` AND (created_at >= ${Math.trunc(sinceMs / 1000)} OR last_activity_at >= ${Math.trunc(sinceMs / 1000)})`
           + ` ORDER BY last_activity_at DESC LIMIT 2;`,
       )
+    case 'copilot':
+      // Copilot names its session directory by uuid, so the cwd lives inside the file — on the first
+      // record, `session.start.data.context.cwd`. readTranscriptMeta scans the first lines for a
+      // `cwd`, but Copilot nests it, so this reads it out itself.
+      return fileEngineSession(join(env.COPILOT_HOME, 'session-state'), cwd, startedAtMs, async (path) => {
+        if (basename(path) !== 'events.jsonl') return null
+        const head = (await readFile(path, 'utf8').catch(() => '')).split('\n', 5)
+        const root = copilotSessionCwd(head)
+        return root ? { cwd: root, sessionId: basename(dirname(path)) } : null
+      }, opts)
     case 'agy':
       // The one engine here that cannot be found by directory. agy's transcript records no cwd, its
       // brain directory is named by the conversation id, and `conversation_summaries.db` — which looks

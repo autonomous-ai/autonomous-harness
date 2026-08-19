@@ -43,6 +43,8 @@ It drives the agents you already use:
   <img src=".github/assets/engines/grok.png"        height="72" alt="Grok"         title="Grok">
   &nbsp;&nbsp;
   <img src=".github/assets/engines/agy.png"         height="72" alt="Antigravity"  title="Antigravity">
+  &nbsp;&nbsp;
+  <img src=".github/assets/engines/copilot.png"     height="72" alt="GitHub Copilot" title="GitHub Copilot">
 </p>
 
 ## Add your agent to Harness
@@ -91,7 +93,7 @@ Your agents stay your processes, on your hardware, with your credentials.
           │                       │                       │
      claude · codex          hermes · muse           agents running on
      cursor · amp · …        opencode · kilo ·       your own servers
-                             grok · agy
+                             grok · agy · copilot
 
           └───────── CLI ─────────┘             └─────── API ───────┘
 ```

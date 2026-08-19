@@ -111,6 +111,10 @@ const envSchema = z.object({
   AGY_HOME: z.string().default(join(homedir(), '.gemini', 'antigravity-cli')),
   // Where the Antigravity CLI reads its shared customization root (hooks.json lives here).
   AGY_CONFIG_DIR: z.string().default(join(homedir(), '.gemini', 'config')),
+  // GitHub Copilot CLI state root. Its per-session event stream lives at
+  // <COPILOT_HOME>/session-state/<sessionId>/events.jsonl, and hooks are read from
+  // <COPILOT_HOME>/hooks/*.json — a directory, so Harness drops in its own file.
+  COPILOT_HOME: z.string().default(join(homedir(), '.copilot')),
   // Cursor state root. Interactive transcripts live below <CURSOR_HOME>/projects and local
   // subagent linkage metadata lives below <CURSOR_HOME>/chats.
   CURSOR_HOME: z.string().default(join(homedir(), '.cursor')),
@@ -236,6 +240,9 @@ const envSchema = z.object({
   KILO_PATH: z.string().optional(),
   // Path to the xAI Grok CLI for interactive sessions and recap one-shots.
   GROK_PATH: z.string().optional(),
+  // Path to the GitHub Copilot CLI. Two builds answer to `copilot` on a typical machine — a compiled
+  // binary and the npm loader script — so an override is worth having.
+  COPILOT_PATH: z.string().optional(),
   // Path to the Antigravity CLI. Two binaries answer to `agy` on a typical PATH — the CLI itself and
   // the Antigravity IDE launcher — so an override is worth having.
   AGY_PATH: z.string().optional(),
@@ -251,6 +258,8 @@ const envSchema = z.object({
   KILO_SUMMARY_MODEL: z.string().default(''),
   // Grok recap model. Empty → use the user's Grok CLI default model.
   GROK_SUMMARY_MODEL: z.string().default(''),
+  // Copilot recap model. Empty -> `auto`, which lets Copilot pick and keeps the user's credit policy.
+  COPILOT_SUMMARY_MODEL: z.string().default(''),
   // Antigravity recap model (a slug from `agy models`). Flash at low effort: a recap is a short
   // summarisation of text already in hand, so the cheapest tier in the catalog is the right one.
   AGY_SUMMARY_MODEL: z.string().default('gemini-3.7-flash-low'),

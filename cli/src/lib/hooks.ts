@@ -20,6 +20,9 @@ const CURSOR_HOOKS_PATH = join(process.env.CURSOR_HOME || join(homedir(), '.curs
 // the CLI's changelog records the move, "ensuring hooks remain synchronized between the TUI and the
 // backend". Verified live: a hooks.json placed there fires for `agy` in a pane.
 const AGY_HOOKS_PATH = join(env.AGY_CONFIG_DIR, 'hooks.json')
+// Copilot reads every *.json in this directory, so Harness gets its own file and never edits the
+// user's. Measured: a file dropped here fires without any further opt-in.
+const COPILOT_HOOKS_PATH = join(env.COPILOT_HOME, 'hooks', 'harness.json')
 
 // notify.mjs location depends on the layout (import.meta.url is the REAL executing file at runtime):
 //  - packaged/bundled: cli.js at ~/.harness/cli/cli.js → notify.mjs is a SIBLING (dist/ bundle too).
@@ -53,7 +56,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok' | 'agy'): string {
+function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok' | 'agy' | 'copilot'): string {
   return [
     'node',
     shellQuote(HOOK_SCRIPT),
@@ -67,6 +70,7 @@ function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' 
     '--commandcode-home', shellQuote(env.COMMANDCODE_HOME),
     '--devin-home', shellQuote(env.DEVIN_HOME),
     '--agy-home', shellQuote(env.AGY_HOME),
+    '--copilot-home', shellQuote(env.COPILOT_HOME),
     ...(engine !== 'claude' ? ['--engine', engine] : []),
   ].join(' ')
 }
@@ -272,6 +276,53 @@ export function installAgyHooks(port: number): void {
     console.log('[hooks] (takes effect on the next agy session start)')
   } catch (err) {
     console.error('[hooks] failed to write agy hook file:', err)
+  }
+}
+
+/**
+ * Copilot's user-level hooks: a directory of JSON files, each `{version, hooks: {<event>: [handler]}}`.
+ *
+ * Four events, and the omissions are deliberate:
+ *
+ *  - `preToolUse` is NOT installed. Its exit-code contract is fail-CLOSED — the docs are explicit that
+ *    a non-zero exit denies the tool, while every other event fails open. A crashing hook would stop
+ *    the user's agent from running anything. Tool cards come off the transcript instead, which costs
+ *    nothing.
+ *  - `postToolUse` is not installed either: the same rows are already in `events.jsonl`, so posting
+ *    them would only duplicate work on every tool call.
+ *
+ * `agentStop` is the turn boundary and the one event that names the transcript
+ * (`transcriptPath: <COPILOT_HOME>/session-state/<id>/events.jsonl`).
+ */
+type CopilotHookFile = { version: number; hooks: Record<string, Array<{ type: string; command: string }>> }
+
+export function installCopilotHooks(port: number): void {
+  const cmd = command(port, 'copilot')
+  const handler = (event: string): { type: string; command: string } => ({ type: 'command', command: `${cmd} --copilot-event ${event}` })
+  const file: CopilotHookFile = {
+    version: 1,
+    hooks: {
+      sessionStart: [handler('sessionStart')],
+      userPromptSubmitted: [handler('userPromptSubmitted')],
+      agentStop: [handler('agentStop')],
+      sessionEnd: [handler('sessionEnd')],
+    },
+  }
+
+  let existing: unknown = null
+  if (existsSync(COPILOT_HOOKS_PATH)) {
+    try { existing = JSON.parse(readFileSync(COPILOT_HOOKS_PATH, 'utf-8')) } catch { existing = null }
+  }
+  if (JSON.stringify(existing) === JSON.stringify(file)) {
+    console.log('[hooks] Copilot lifecycle hooks already installed')
+    return
+  }
+  try {
+    writeJsonAtomic(COPILOT_HOOKS_PATH, file)
+    console.log(`[hooks] installed Copilot lifecycle hooks → ${COPILOT_HOOKS_PATH}`)
+    console.log('[hooks] (takes effect on the next copilot session start)')
+  } catch (err) {
+    console.error('[hooks] failed to write Copilot hook file:', err)
   }
 }
 

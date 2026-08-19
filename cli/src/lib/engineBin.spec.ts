@@ -20,7 +20,7 @@ afterEach(() => {
 })
 
 describe('canonical engine CLI commands', () => {
-  it('keeps the user-facing 13-engine command contract exact and ordered', () => {
+  it('keeps the user-facing 14-engine command contract exact and ordered', () => {
     expect(ENGINES.map((engine) => [engine, ENGINE_CLI_COMMANDS[engine]])).toEqual([
       ['claude', 'claude'],
       ['codex', 'codex'],
@@ -35,6 +35,7 @@ describe('canonical engine CLI commands', () => {
       ['kilo', 'kilo'],
       ['grok', 'grok'],
       ['agy', 'agy'],
+      ['copilot', 'copilot'],
     ])
   })
 

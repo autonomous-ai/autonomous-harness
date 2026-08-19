@@ -1201,6 +1201,97 @@ export async function runAgyOneShot(opts: OneShotOptions): Promise<OneShotResult
   }
 }
 
+/**
+ * The measured Copilot CLI 1.0.80 headless invocation.
+ *
+ * Three things settled by running it:
+ *
+ *  - **`--no-color` makes stdout the answer and nothing else.** The "Changes / AI Credits / Tokens /
+ *    Resume" block goes to stderr, so the recap needs no parsing at all — 12 bytes of stdout for a
+ *    12-byte reply.
+ *  - **`--available-tools` with no values leaves the model no tools.** `-p` demands
+ *    `--allow-all-tools`, which on its own would let a recap run shell commands; pairing the two gives
+ *    a run that can answer but cannot touch anything.
+ *  - **`--session-id` accepts a UUID we choose for a NEW session**, so the state this leaves behind is
+ *    known before it exists and can be removed by name rather than by scraping stderr.
+ */
+export function copilotOneShotSpawn(
+  opts: Pick<OneShotOptions, 'prompt' | 'model'>,
+  sessionId: string,
+  parentEnv: NodeJS.ProcessEnv = process.env,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  const args = [
+    '-p', opts.prompt,
+    '--allow-all-tools',
+    '--available-tools',
+    '--no-color',
+    '--session-id', sessionId,
+    ...(opts.model ? ['--model', opts.model] : []),
+  ]
+  const childEnv = scrubTerminalContext({ ...parentEnv })
+  delete childEnv.MACHINE_ID
+  return { args, env: childEnv }
+}
+
+/**
+ * Remove the session a recap created.
+ *
+ * The event stream lives in a directory named by the id, so it goes cleanly. The row Copilot also
+ * writes into `session-store.db` is deliberately left alone: that database belongs to the user's
+ * running CLI, and deleting from it to tidy a recap is not worth writing into a live vendor store.
+ * The cost is an unnamed entry in `copilot --resume`.
+ */
+async function removeCopilotSession(sessionId: string): Promise<void> {
+  if (!/^[0-9a-f-]{16,}$/i.test(sessionId)) return
+  await rm(join(env.COPILOT_HOME, 'session-state', sessionId), { recursive: true, force: true }).catch(() => {})
+}
+
+export async function runCopilotOneShot(opts: OneShotOptions): Promise<OneShotResult> {
+  if (opts.signal?.aborted) throw Object.assign(new Error('copilot one-shot aborted'), { name: 'AbortError' })
+  const sessionId = randomUUID()
+  const { args, env: processEnv } = copilotOneShotSpawn(opts, sessionId)
+  const timeoutMs = opts.timeoutMs ?? 60_000
+  try {
+    return await new Promise<OneShotResult>((resolve, reject) => {
+      const child = spawn(env.COPILOT_PATH || 'copilot', args, {
+        cwd: opts.cwd, env: processEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      let settled = false
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        fn()
+      }
+      const kill = (): void => killGroup(child)
+      const onAbort = (): void => {
+        finish(() => reject(Object.assign(new Error('copilot one-shot aborted'), { name: 'AbortError' })))
+        kill()
+      }
+      const timer = setTimeout(() => {
+        finish(() => reject(new Error(`copilot one-shot timed out after ${timeoutMs}ms`)))
+        kill()
+      }, timeoutMs)
+      opts.signal?.addEventListener('abort', onAbort)
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+      child.on('error', (err) => finish(() => reject(err)))
+      child.on('close', (code) => {
+        const text = stdout.trim()
+        finish(() => {
+          if (!text) reject(new Error(`copilot one-shot exited ${code}: ${stderr.slice(0, 500)}`))
+          else resolve({ text, sessionId: null })
+        })
+      })
+    })
+  } finally {
+    await removeCopilotSession(sessionId)
+  }
+}
+
 function hermesBin(): string {
   return env.HERMES_PATH || 'hermes'
 }

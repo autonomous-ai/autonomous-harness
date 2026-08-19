@@ -719,7 +719,7 @@ const POLL_MS = 1500
 // cancel` footer, which is the shared parser's anchor exactly (`__fixtures__/permission-codex.txt`), and
 // the question it lands on is the command itself. Membership in this set is what starts the poll, so an
 // engine belongs here only once something can actually read its pane.
-const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'codex', 'cursor', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok', 'agy'])
+const QUESTION_ENGINES = new Set<AgentEngine>(['claude', 'commandcode', 'codex', 'cursor', 'devin', 'hermes', 'opencode', 'muse', 'amp', 'kilo', 'grok', 'agy', 'copilot'])
 
 /** Does this engine ever paint a question dialog? Callers use it to decide whether to watch its pane. */
 export function pollsQuestions(engine: AgentEngine): boolean {

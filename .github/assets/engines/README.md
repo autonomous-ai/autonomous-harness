@@ -30,10 +30,16 @@ a retina display.
 | `amp.png` | Amp's official app icon — the `apple-touch-icon` the site itself declares, <https://ampcode.com/app-icon.png?v=3>, fetched 2026-08-07 | 512 | `e5fc0d1178674b80c0dcbbf9811787b44df91f865fac9cd3ef44bb13ef728018` |
 | `kilo.png` | Kilo's official mark SVG, <https://kilo.ai/favicon/favicon.svg?v=2>, rendered to a 512px PNG — see the note below | 512 | `03a348a04c622938a278d803cbb6333819de855d2b3127de8e412fd261db3701` |
 | `grok.png` | SpaceXAI symbol, the WHITE transparent variant, <https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png>, fetched 2026-08-19 — composited on a black tile, see the note below | 600 | `56357e60b43284734c58e06596be038c58d7fd1a9bea7325d21a107a44ea4b47` |
+| `copilot.png` | GitHub's official Copilot octicon, <https://raw.githubusercontent.com/primer/octicons/main/icons/copilot-48.svg>, fetched 2026-08-19 — rendered white, see the note below | 48 (SVG) | `d94b7a94a4c23816b02285f53eca6386429b67522271483fa0f18ab3596617dc` |
 | `agy.png` | Antigravity's official gradient "A" mark — the logo the site itself declares, <https://antigravity.google/assets/image/antigravity-logo.png>, fetched 2026-08-18 | 200 | `8f0b95d2d21dbf930b4d100e2fdc4505673e900a731aa56ea633a4b59c312799` |
 
 Open items, recorded rather than left implicit:
 
+- **`copilot.png` is a monochrome icon, not a logo.** GitHub publishes the Copilot mark as an
+  octicon whose paths inherit `currentColor`, so it ships with no colour at all and cannot be
+  vendored as-is. It is rendered at `fill="#ffffff"` — a choice of ink for a shape that has none,
+  the same call Kilo's `oklch()` rewrite documents, not a recolour of a coloured mark. Being an SVG
+  it rasterises at any size, so this one has no resolution caveat.
 - **`agy.png` is a 200px source.** Antigravity publishes the bare mark only at 200×184; the 512px
   `icon.icns` inside the macOS app is an app TILE (a white rounded square with a small glyph),
   not the same class of asset as the marks here. The site logo was taken and recorded rather

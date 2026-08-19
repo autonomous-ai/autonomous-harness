@@ -24,7 +24,7 @@ import { homedir } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
+import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
@@ -87,6 +87,8 @@ import { findGrokTranscript } from './engines/grok/session.js'
 import { AgyNormalizer, lastAgyTurnText } from './engines/agy/normalizer.js'
 import { findAgyTranscript } from './engines/agy/session.js'
 import { agyPaneIdle } from './engines/agy/runtimeProfile.js'
+import { CopilotNormalizer, lastCopilotTurnText } from './engines/copilot/normalizer.js'
+import { findCopilotTranscript } from './engines/copilot/session.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
 import { HermesReader, readHermesMessages } from './engines/hermes/reader.js'
 import { DevinReader, readDevinMessages } from './engines/devin/reader.js'
@@ -798,6 +800,7 @@ async function runForeground(token: string): Promise<void> {
   const ampNormalizers = new Map<string, AmpNormalizer>()
   const grokNormalizers = new Map<string, GrokNormalizer>()
   const agyNormalizers = new Map<string, AgyNormalizer>()
+  const copilotNormalizers = new Map<string, CopilotNormalizer>()
   const hermesReaders = new Map<string, HermesReader>()
   const devinReaders = new Map<string, DevinReader>()
   const commandcodeNormalizers = new Map<string, CommandCodeNormalizer>()
@@ -905,6 +908,7 @@ async function runForeground(token: string): Promise<void> {
       || ampNormalizers.has(session.sessionId)
       || grokNormalizers.has(session.sessionId)
       || agyNormalizers.has(session.sessionId)
+      || copilotNormalizers.has(session.sessionId)
       || hermesReaders.has(session.sessionId)
       || devinReaders.has(session.sessionId)
       || commandcodeNormalizers.has(session.sessionId)
@@ -1014,6 +1018,11 @@ async function runForeground(token: string): Promise<void> {
         normalizer.closeTurn()
         historyTurnOpen = false
       }
+    } else if (session.engine === 'copilot') {
+      // A JSONL tail like claude/agy. Its turn lifecycle comes from the agentStop hook, not the file.
+      const normalizer = new CopilotNormalizer()
+      historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
+      copilotNormalizers.set(session.sessionId, normalizer)
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.
@@ -1260,6 +1269,7 @@ async function runForeground(token: string): Promise<void> {
       if (s.engine === 'amp') return lastAmpTurnText(lines)
       if (s.engine === 'grok') return lastGrokTurnText(lines)
       if (s.engine === 'agy') return lastAgyTurnText(lines)
+      if (s.engine === 'copilot') return lastCopilotTurnText(lines)
       if (s.engine === 'pi') return lastPiTurnText(lines)
       if (s.engine === 'commandcode') return lastCommandCodeTurnText(lines)
       return lastTurnTextFromRawLines(lines)
@@ -1333,6 +1343,7 @@ async function runForeground(token: string): Promise<void> {
         ?? ampNormalizers.get(sessionId)?.turnOpen
         ?? grokNormalizers.get(sessionId)?.turnOpen
         ?? agyNormalizers.get(sessionId)?.turnOpen
+        ?? copilotNormalizers.get(sessionId)?.turnOpen
         ?? hermesReaders.get(sessionId)?.turnOpen
         ?? devinReaders.get(sessionId)?.turnOpen
         ?? commandcodeNormalizers.get(sessionId)?.turnOpen
@@ -1439,6 +1450,7 @@ async function runForeground(token: string): Promise<void> {
     ampNormalizers.delete(sessionId)
     grokNormalizers.delete(sessionId)
     agyNormalizers.delete(sessionId)
+    copilotNormalizers.delete(sessionId)
     clearAgyIdleWatch(sessionId)
     hermesReaders.get(sessionId)?.stop()
     hermesReaders.delete(sessionId)
@@ -1481,8 +1493,13 @@ async function runForeground(token: string): Promise<void> {
     // re-emitted `turn_started` for a turn already open (measured: two turn_started, one turn_ended).
     // Its first bind is covered by `meta.isNew`, and registry derives the transcript path from the
     // conversation id, so nothing here depends on a later announcement carrying it.
+    // Copilot joins cursor and agy for a third reason: it announces the SAME turn twice. Its
+    // `userPromptSubmitted` and `sessionStart` hooks both register (measured 2.5s apart, and in that
+    // order — sessionStart fires AFTER the first prompt), so treating the second as a reset re-folded
+    // the transcript and emitted a second `turn_started` for one exchange.
     const reset = meta.isNew
-      || (entry.engine !== 'cursor' && entry.engine !== 'agy' && meta.hookEvent === 'SessionStart')
+      || (entry.engine !== 'cursor' && entry.engine !== 'agy' && entry.engine !== 'copilot'
+        && meta.hookEvent === 'SessionStart')
     // Deliberately NOT gated on `meta.isNew`. `isNew` is false in exactly the case this is meant to catch:
     // a session announced once BEFORE its transcript exists and registered again when the file appears —
     // the second announcement is the only one that can carry the path, and it reports `isNew=false`
@@ -1547,7 +1564,9 @@ async function runForeground(token: string): Promise<void> {
           ? await findGrokTranscript(env.GROK_HOME, observed.cwd, sessionId) ?? undefined
           : observed.engine === 'agy'
             ? await findAgyTranscript(env.AGY_HOME, sessionId) ?? undefined
-            : undefined
+            : observed.engine === 'copilot'
+              ? await findCopilotTranscript(env.COPILOT_HOME, sessionId) ?? undefined
+              : undefined
       if ((observed.engine === 'cursor' || observed.engine === 'grok') && !transcriptPath) return
     } else {
       const attempts = repairAttempts.get(agent.agentId) ?? 0
@@ -1824,6 +1843,28 @@ async function runForeground(token: string): Promise<void> {
         })
         return
       }
+      // Copilot's agentStop hook is the turn boundary: its own `assistant.turn_end` records mark model
+      // round-trips, several per exchange. Drain first so the closing text is on the wire, then close.
+      if (session.engine === 'copilot') {
+        void (async () => {
+          await watcher.pollSession(sessionId)
+          const normalizer = copilotNormalizers.get(sessionId)
+          if (!normalizer?.turnOpen) return
+          await new Promise((r) => setTimeout(r, STOP_HOOK_GRACE_MS))
+          await watcher.pollSession(sessionId)
+          if (!normalizer.turnOpen) return
+          if (status === 'error') {
+            announceTurnAborted(sessionId, 'copilot', 'Copilot ended the turn early')
+            emitSessionEvents(sessionId, normalizer.abortTurn())
+            return
+          }
+          console.log(`[turn] ${sid(sessionId)} closed by copilot agentStop hook (after grace)`)
+          emitSessionEvents(sessionId, normalizer.closeTurn())
+        })().catch((err) => {
+          console.error('[hooks] copilot stop hook failed:', err instanceof Error ? err.message : err)
+        })
+        return
+      }
       // agy's Stop hook is the ONLY turn boundary it has. Nothing in the transcript says a turn ended:
       // a backgrounded step is written `status: RUNNING` and, the file being append-only, stays that way
       // forever. Drain first so the closing prose is on the wire before turn_ended, then force-close.
@@ -1979,6 +2020,7 @@ async function runForeground(token: string): Promise<void> {
     installCommandCodeHooks(hookPort)
     installGrokHooks(hookPort)
     installAgyHooks(hookPort)
+    installCopilotHooks(hookPort)
   }
   backend.setDashboardPort(hookPort) // surfaced to the web (e2e_status) so it can link here to approve
   console.log(`[cli] local dashboard → http://127.0.0.1:${hookPort}`)
@@ -2026,6 +2068,10 @@ async function runForeground(token: string): Promise<void> {
         let normalizer = agyNormalizers.get(evt.sessionId)
         if (!normalizer) { normalizer = new AgyNormalizer(); agyNormalizers.set(evt.sessionId, normalizer) }
         events = normalizer.ingest(evt.text)
+      } else if (session.engine === 'copilot') {
+        let normalizer = copilotNormalizers.get(evt.sessionId)
+        if (!normalizer) { normalizer = new CopilotNormalizer(); copilotNormalizers.set(evt.sessionId, normalizer) }
+        events = normalizer.ingest(evt.text)
       } else if (session.engine === 'pi') {
         let normalizer = piNormalizers.get(evt.sessionId)
         if (!normalizer) { normalizer = new PiNormalizer('live'); piNormalizers.set(evt.sessionId, normalizer) }
@@ -2071,6 +2117,7 @@ async function runForeground(token: string): Promise<void> {
           ?? ampNormalizers.get(session.sessionId)?.turnOpen
           ?? grokNormalizers.get(session.sessionId)?.turnOpen
           ?? agyNormalizers.get(session.sessionId)?.turnOpen
+          ?? copilotNormalizers.get(session.sessionId)?.turnOpen
           ?? hermesReaders.get(session.sessionId)?.turnOpen
           ?? devinReaders.get(session.sessionId)?.turnOpen
           ?? commandcodeNormalizers.get(session.sessionId)?.turnOpen
@@ -2185,6 +2232,7 @@ async function runForeground(token: string): Promise<void> {
     ampNormalizers.get(sessionId)?.closeTurn()
     grokNormalizers.get(sessionId)?.closeTurn()
     agyNormalizers.get(sessionId)?.closeTurn()
+    copilotNormalizers.get(sessionId)?.closeTurn()
     hermesReaders.get(sessionId)?.closeTurn()
     devinReaders.get(sessionId)?.closeTurn()
     commandcodeNormalizers.get(sessionId)?.closeTurn()
