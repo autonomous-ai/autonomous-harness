@@ -88,7 +88,7 @@ import { AgyNormalizer, lastAgyTurnText } from './engines/agy/normalizer.js'
 import { findAgyTranscript } from './engines/agy/session.js'
 import { agyPaneIdle } from './engines/agy/runtimeProfile.js'
 import { CopilotNormalizer, copilotHistoryTurnOpen, lastCopilotTurnText } from './engines/copilot/normalizer.js'
-import { findCopilotTranscript } from './engines/copilot/session.js'
+import { copilotSessionForPid, findCopilotTranscript } from './engines/copilot/session.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
 import { HermesReader, readHermesMessages } from './engines/hermes/reader.js'
 import { DevinReader, readDevinMessages } from './engines/devin/reader.js'
@@ -1552,7 +1552,34 @@ async function runForeground(token: string): Promise<void> {
   const repairAttempts = new Map<string, number>()
   const bindObservedAgent = async (observed: DiscoveredTerminalAgent): Promise<void> => {
     const agent = registry.byProcess(observed.engine, observed.processIdentity)
-    if (!agent || agent.sessionId) return
+    if (!agent) return
+
+    // Copilot can change session WITHOUT changing process: `/resume` inside the CLI opens another one,
+    // and the pane then shows a conversation the daemon is not streaming. Every other engine here
+    // starts a new process for that, which is why this path used to stop at `agent.sessionId`.
+    //
+    // The switch leaves exactly one trace — the `inuse.<pid>.lock` Copilot takes on the new session
+    // directory. It writes nothing to the transcript and fires no hook until the next prompt.
+    if (agent.sessionId) {
+      if (observed.engine !== 'copilot') return
+      const current = await copilotSessionForPid(env.COPILOT_HOME, observed.processIdentity.pid)
+      if (!current || current === agent.sessionId || isRecentlyDeleted(current)) return
+      const transcript = await findCopilotTranscript(env.COPILOT_HOME, current)
+      console.log(`[discovery] ${sid(agent.agentId)} switched copilot session ${sid(agent.sessionId)} → ${sid(current)} (/resume)`)
+      const rotated = registry.register({
+        engine: 'copilot',
+        sessionId: current,
+        transcriptPath: transcript ?? undefined,
+        cwd: observed.cwd,
+        source: 'copilot-resume',
+        runtimes: observed.runtimes,
+        primaryRuntimeKey: observed.primaryRuntimeKey,
+        processIdentity: observed.processIdentity,
+        hookEvent: 'CopilotResume',
+      })
+      if (rotated?.isNew) await handleRegistered(rotated.entry, rotated)
+      return
+    }
 
     let sessionId = observed.resumeSessionId
     let transcriptPath: string | undefined
@@ -1584,6 +1611,7 @@ async function runForeground(token: string): Promise<void> {
       const startedAtMs = Date.parse(observed.processIdentity.startMarker)
       if (!Number.isFinite(startedAtMs)) return
       // agy cannot be found by directory — its repair reads the presence lock the process holds open.
+      //
       const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, {
         bornOnly: true,
         pid: observed.processIdentity.pid,

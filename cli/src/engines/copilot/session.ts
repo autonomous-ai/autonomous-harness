@@ -67,3 +67,28 @@ export function copilotSessionCwd(firstLines: string[]): string | null {
   }
   return null
 }
+
+/**
+ * The session a live Copilot process is CURRENTLY in, read from the lock it takes on the directory.
+ *
+ * Copilot writes `session-state/<sessionId>/inuse.<pid>.lock` when a process opens a session, and
+ * `/resume` inside the CLI opens another one — measured: pid 63310 held two locks at once, the session
+ * it started with and the one it switched to. So the lock is not one-per-process, and the NEWEST is
+ * the answer.
+ *
+ * This is the only trace a resume leaves. It writes nothing to the transcript (measured: pick a
+ * session and not one byte of `events.jsonl` changes) and fires no hook until the first prompt, which
+ * is why a directory scan cannot find it and why the agent used to sit unbound after `/resume`.
+ */
+export async function copilotSessionForPid(copilotHome: string, pid: number): Promise<string | null> {
+  const root = join(copilotHome, 'session-state')
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+  let best: { sessionId: string; mtimeMs: number } | null = null
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !SESSION_ID.test(entry.name)) continue
+    const info = await stat(join(root, entry.name, `inuse.${pid}.lock`)).catch(() => null)
+    if (!info) continue
+    if (!best || info.mtimeMs > best.mtimeMs) best = { sessionId: entry.name, mtimeMs: info.mtimeMs }
+  }
+  return best?.sessionId ?? null
+}

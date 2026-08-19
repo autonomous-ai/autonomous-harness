@@ -300,6 +300,20 @@ conversation reports the last turn as still open and nothing is ever coming to c
 `turn_heartbeat` every second, indefinitely). Its pane knows — `? for shortcuts` when idle,
 `esc to cancel` while busy — so attach reads the pane once and closes the folded turn.
 
+**One process can change session underneath you.** Every engine here but Copilot starts a new process
+to switch conversations, so `bindObservedAgent` stops at the first `agent.sessionId` and never looks
+again. Copilot's `/resume` switches IN PROCESS: same pid, same pane, different conversation — and the
+pane then shows something the daemon is not streaming.
+
+Worse, the switch leaves almost no trace. Measured: resuming writes not one byte to `events.jsonl`
+and fires no hook until the next prompt, so neither a transcript tail nor a directory scan can see it.
+The one thing it does is take a lock, `session-state/<id>/inuse.<pid>.lock` — and it does NOT release
+the old one, so a process holds several and the NEWEST is the current session.
+
+When adding an engine, ask whether switching conversations requires a new process. If it does not, the
+bind path needs a re-check for an already-bound agent, and something that identifies the CURRENT
+session of a live pid.
+
 **A fold is not a live stream, and `--resume` is where that bites.** Every engine here whose turn is
 closed by a HOOK has the same hole: attaching to an existing conversation folds its transcript, the
 fold opens a turn on the last user message, and no hook is coming to close it — the tile spins on a

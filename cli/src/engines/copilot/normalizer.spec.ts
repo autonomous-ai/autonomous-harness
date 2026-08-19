@@ -134,3 +134,26 @@ describe('resuming a finished conversation', () => {
     expect(copilotHistoryTurnOpen([...LINES, JSON.stringify({ type: 'session.shutdown', data: {} })])).toBe(false)
   })
 })
+
+describe('the session a Copilot process is in', () => {
+  it('picks the NEWEST lock: /resume adds one without releasing the old', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, utimesSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { copilotSessionForPid } = await import('./session.js')
+
+    const home = mkdtempSync(join(tmpdir(), 'copilot-home-'))
+    const started = '11111111-1111-4111-8111-111111111111'
+    const resumed = '22222222-2222-4222-8222-222222222222'
+    for (const id of [started, resumed]) {
+      mkdirSync(join(home, 'session-state', id), { recursive: true })
+      writeFileSync(join(home, 'session-state', id, 'inuse.4242.lock'), '')
+    }
+    // measured on a real pid: both locks survive, so recency is what distinguishes them
+    utimesSync(join(home, 'session-state', started, 'inuse.4242.lock'), new Date(1000), new Date(1000))
+    utimesSync(join(home, 'session-state', resumed, 'inuse.4242.lock'), new Date(9000), new Date(9000))
+
+    expect(await copilotSessionForPid(home, 4242)).toBe(resumed)
+    expect(await copilotSessionForPid(home, 9999)).toBeNull()   // another process holds nothing here
+  })
+})

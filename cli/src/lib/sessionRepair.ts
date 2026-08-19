@@ -23,7 +23,7 @@ import { museEvent, museWorkspaceRoot } from '../engines/muse/normalizer.js'
 import type { AgentEngine } from '../engines/types.js'
 import { readCodexRolloutMeta } from '../engines/codex/rollout.js'
 import { agyConversationForPid, findAgyTranscript } from '../engines/agy/session.js'
-import { copilotSessionCwd } from '../engines/copilot/session.js'
+import { copilotSessionCwd, copilotSessionForPid, findCopilotTranscript } from '../engines/copilot/session.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -204,6 +204,25 @@ function quote(value: string): string {
  * transcripts are located by id rather than listed by directory, and its resumes already have a
  * dedicated discovery path.
  */
+
+/**
+ * Copilot names its session directory by uuid, so the cwd lives inside the file — on the first record,
+ * `session.start.data.context.cwd`. `readTranscriptMeta` scans the first lines for a bare `cwd`, but
+ * Copilot nests it, so this reads it out itself.
+ */
+async function copilotDirectoryScan(
+  cwd: string,
+  startedAtMs: number,
+  opts?: { bornOnly?: boolean },
+): Promise<RepairedSession | null> {
+  return fileEngineSession(join(env.COPILOT_HOME, 'session-state'), cwd, startedAtMs, async (path) => {
+    if (basename(path) !== 'events.jsonl') return null
+    const head = (await readFile(path, 'utf8').catch(() => '')).split('\n', 5)
+    const root = copilotSessionCwd(head)
+    return root ? { cwd: root, sessionId: basename(dirname(path)) } : null
+  }, opts)
+}
+
 export async function findLiveSession(
   engine: AgentEngine,
   cwd: string,
@@ -306,16 +325,18 @@ export async function findLiveSession(
           + ` AND (created_at >= ${Math.trunc(sinceMs / 1000)} OR last_activity_at >= ${Math.trunc(sinceMs / 1000)})`
           + ` ORDER BY last_activity_at DESC LIMIT 2;`,
       )
-    case 'copilot':
-      // Copilot names its session directory by uuid, so the cwd lives inside the file — on the first
-      // record, `session.start.data.context.cwd`. readTranscriptMeta scans the first lines for a
-      // `cwd`, but Copilot nests it, so this reads it out itself.
-      return fileEngineSession(join(env.COPILOT_HOME, 'session-state'), cwd, startedAtMs, async (path) => {
-        if (basename(path) !== 'events.jsonl') return null
-        const head = (await readFile(path, 'utf8').catch(() => '')).split('\n', 5)
-        const root = copilotSessionCwd(head)
-        return root ? { cwd: root, sessionId: basename(dirname(path)) } : null
-      }, opts)
+    case 'copilot': {
+      // The lock the process holds is the only thing a `/resume` leaves behind, and it is exact.
+      // Fall through to the directory scan when there is no pid or no lock yet (a brand-new session
+      // takes its lock only once Copilot creates it).
+      const locked = opts?.pid ? await copilotSessionForPid(env.COPILOT_HOME, opts.pid) : null
+      if (locked) {
+        const transcriptPath = await findCopilotTranscript(env.COPILOT_HOME, locked)
+        return { sessionId: locked, transcriptPath: transcriptPath ?? undefined }
+      }
+      return copilotDirectoryScan(cwd, startedAtMs, opts)
+    }
+
     case 'agy':
       // The one engine here that cannot be found by directory. agy's transcript records no cwd, its
       // brain directory is named by the conversation id, and `conversation_summaries.db` — which looks
