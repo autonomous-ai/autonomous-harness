@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import {
   CopilotNormalizer,
   copilotEvent,
+  copilotHistoryTurnOpen,
   copilotMessagesToEvents,
   copilotSessionModel,
   copilotToolName,
@@ -106,5 +107,30 @@ describe('copilot tool names', () => {
     // `sql` is Copilot's todo mechanism AND its general query tool; it must not become TodoWrite.
     expect(copilotToolName('sql')).toBe('Sql')
     expect(copilotToolName('some_future_tool')).toBe('Some Future Tool')
+  })
+})
+
+describe('resuming a finished conversation', () => {
+  it('does not report the last turn as still running', () => {
+    // `copilot --resume` folds this whole file at attach. The fold opens a turn on the last
+    // `user.message` and nothing closes it — the agentStop hook only fires for a NEW turn — so the
+    // device sat on "busy loading" for a conversation that had already finished.
+    const normalizer = new CopilotNormalizer()
+    for (const line of LINES) normalizer.ingest(line)
+    expect(normalizer.turnOpen).toBe(true)                 // what the fold alone believes
+    expect(copilotHistoryTurnOpen(LINES)).toBe(false)      // what the records actually say
+  })
+
+  it('still reports a genuinely unfinished exchange as open', () => {
+    const upToFirstPrompt: string[] = []
+    for (const line of LINES) {
+      upToFirstPrompt.push(line)
+      if (copilotEvent(line)?.type === 'user.message') break
+    }
+    expect(copilotHistoryTurnOpen(upToFirstPrompt)).toBe(true)
+  })
+
+  it('treats a session that shut down as closed', () => {
+    expect(copilotHistoryTurnOpen([...LINES, JSON.stringify({ type: 'session.shutdown', data: {} })])).toBe(false)
   })
 })

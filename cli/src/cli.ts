@@ -87,7 +87,7 @@ import { findGrokTranscript } from './engines/grok/session.js'
 import { AgyNormalizer, lastAgyTurnText } from './engines/agy/normalizer.js'
 import { findAgyTranscript } from './engines/agy/session.js'
 import { agyPaneIdle } from './engines/agy/runtimeProfile.js'
-import { CopilotNormalizer, lastCopilotTurnText } from './engines/copilot/normalizer.js'
+import { CopilotNormalizer, copilotHistoryTurnOpen, lastCopilotTurnText } from './engines/copilot/normalizer.js'
 import { findCopilotTranscript } from './engines/copilot/session.js'
 import { PiNormalizer, lastPiTurnText } from './engines/pi/normalizer.js'
 import { HermesReader, readHermesMessages } from './engines/hermes/reader.js'
@@ -1019,10 +1019,17 @@ async function runForeground(token: string): Promise<void> {
         historyTurnOpen = false
       }
     } else if (session.engine === 'copilot') {
-      // A JSONL tail like claude/agy. Its turn lifecycle comes from the agentStop hook, not the file.
+      // A JSONL tail like claude/agy. Its turn lifecycle comes from the agentStop hook, not the file —
+      // which is exactly why a fold cannot be trusted on its own: `copilot --resume` replays a finished
+      // conversation, the fold opens a turn on its last `user.message`, and no hook is coming to close
+      // it. Ask the records where the last activity actually ended.
       const normalizer = new CopilotNormalizer()
       historyTurnOpen = fold((line) => normalizer.ingest(line), () => normalizer.turnOpen)
       copilotNormalizers.set(session.sessionId, normalizer)
+      if (historyTurnOpen && !copilotHistoryTurnOpen(lines)) {
+        normalizer.closeTurn()
+        historyTurnOpen = false
+      }
     } else if (session.engine === 'pi') {
       const normalizer = new PiNormalizer('live')
       // Hydrate state silently; never replay history live — except a turn left open, below.

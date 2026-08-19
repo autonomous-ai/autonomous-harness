@@ -241,6 +241,34 @@ export function lastCopilotTurnText(lines: string[]): LastTurnText | null {
   return assistantText ? { userMessage, assistantText } : null
 }
 
+/**
+ * Is the LAST exchange in a recorded conversation still running?
+ *
+ * The live path never asks this — a turn opens on `user.message` and closes on the `agentStop` hook.
+ * But `--resume` folds an existing file at attach, and a turn opened by that fold has no hook coming
+ * to close it: the device sat on "busy loading" for a conversation that finished hours ago. (agy had
+ * the same failure and had to ask the PANE, because its transcript records no end at all. Copilot's
+ * does, so this is answerable from the file.)
+ *
+ * `assistant.turn_end` marks a model round-trip, not the exchange — but its POSITION still settles the
+ * question: a turn is only unfinished if something started after the last one ended.
+ */
+export function copilotHistoryTurnOpen(lines: string[]): boolean {
+  let lastOpener = -1
+  let lastEnd = -1
+  let shutdown = -1
+  lines.forEach((line, index) => {
+    const event = copilotEvent(line)
+    if (!event) return
+    if (event.type === 'user.message' || event.type === 'assistant.turn_start') lastOpener = index
+    else if (event.type === 'assistant.turn_end') lastEnd = index
+    else if (event.type === 'session.shutdown') shutdown = index
+  })
+  // A shutdown after the last activity ends the conversation whatever came before it.
+  if (shutdown > lastOpener && shutdown > lastEnd) return false
+  return lastOpener > lastEnd
+}
+
 /** The model Copilot resolved for this session — `session.model_change`, then each assistant message. */
 export function copilotSessionModel(lines: string[]): string | null {
   let model = ''

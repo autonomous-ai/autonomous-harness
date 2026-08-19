@@ -300,6 +300,23 @@ conversation reports the last turn as still open and nothing is ever coming to c
 `turn_heartbeat` every second, indefinitely). Its pane knows — `? for shortcuts` when idle,
 `esc to cancel` while busy — so attach reads the pane once and closes the folded turn.
 
+**A fold is not a live stream, and `--resume` is where that bites.** Every engine here whose turn is
+closed by a HOOK has the same hole: attaching to an existing conversation folds its transcript, the
+fold opens a turn on the last user message, and no hook is coming to close it — the tile spins on a
+conversation that finished hours ago. It has now shipped twice, on agy and on Copilot.
+
+Whatever closes a turn LIVE, you also need an answer for "was the last exchange in this FILE
+finished?", and the two are rarely the same source:
+
+- agy's transcript records no end at all, so it asks the PANE (`? for shortcuts` idle vs
+  `esc to cancel` busy) once at attach.
+- Copilot's records `assistant.turn_end` — useless as a live boundary, since it marks a model
+  round-trip and one exchange holds several, but its POSITION settles history exactly:
+  open iff something started after the last one ended (`copilotHistoryTurnOpen`).
+
+Test it by folding a fixture that ENDS, and asserting the fold and the answer disagree. A fixture that
+stops mid-turn will pass a broken implementation.
+
 **Two announce events for one turn is a thing that happens.** Copilot fires `userPromptSubmitted` and
 then `sessionStart` (measured 2.5s apart, in that order — its sessionStart comes AFTER the first
 prompt). Both register, registration is idempotent, and that is fine — but `handleRegistered` treats a
