@@ -300,6 +300,18 @@ conversation reports the last turn as still open and nothing is ever coming to c
 `turn_heartbeat` every second, indefinitely). Its pane knows — `? for shortcuts` when idle,
 `esc to cancel` while busy — so attach reads the pane once and closes the folded turn.
 
+**A dialog you can read is not a dialog you can judge.** Copilot names the SUBJECT of a permission
+prompt above the question, not in it: "Copilot is attempting to access the following URL:" over a
+boxed value, then "Do you want to allow this access?" with a bare "Yes" as option 1. The shared parser
+returns the question correctly and the device still gets a choice nobody can make — approving network
+access without seeing the domain. Fold the subject into the question; leave the rows alone.
+
+**And one silent run does not prove a prompt is absent.** Copilot gates on FOLDER trust first, so a
+shell command in a trusted directory runs with no prompt at all — which reads exactly like "this
+engine never asks". Its permission model is patterns (`shell(cmd)`, `write(path)`, `url(domain)`),
+and it took a URL fetch to raise one. Find the condition that triggers the prompt before writing that
+an engine has none.
+
 **One process can change session underneath you.** Every engine here but Copilot starts a new process
 to switch conversations, so `bindObservedAgent` stops at the first `agent.sessionId` and never looks
 again. Copilot's `/resume` switches IN PROCESS: same pid, same pane, different conversation — and the

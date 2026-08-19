@@ -30,6 +30,7 @@ import { parseCursorPermissionPane } from '../engines/cursor/askQuestion.js'
 import { parseDevinPermissionPane, parseDevinQuestionPane } from '../engines/devin/askQuestion.js'
 import { parseGrokQuestionPane } from '../engines/grok/askQuestion.js'
 import { parseAgyQuestionPane } from '../engines/agy/askQuestion.js'
+import { withCopilotSubject } from '../engines/copilot/askQuestion.js'
 
 /** Device-facing question shape — byte-for-byte the hosted runtime’s `commanderQuestions()` output. */
 export interface ShapedQuestion {
@@ -150,8 +151,14 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   // shared parser cannot see. Its PERMISSION prompt is numbered rows under `Do you want to proceed?`
   // and the shared parser reads that one exactly, so it falls through.
   if (engine === 'agy') return parseAgyQuestionPane(capture) ?? parseQuestionPane(capture)
-  // Hermes and OpenCode paint Claude's dialog inside a box; peel the border and the shared parser fits.
+  // Hermes, OpenCode and Copilot paint the dialog inside a box; peel the border and the shared parser
+  // fits. Measured on Copilot: framed it returns null, unframed it reads the question, the three
+  // options AND spots `4. Other (type your answer)` as the free-text row rather than an option.
   if (engine === 'hermes') return parseQuestionPane(unframe(capture))
+  // Copilot boxes its dialog the same way, but names the SUBJECT of a permission prompt above the
+  // question — "attempting to access the following URL:" over a boxed value. Without it the device
+  // shows "Do you want to allow this access?" and a bare "Yes", with nothing to judge.
+  if (engine === 'copilot') return withCopilotSubject(parseQuestionPane(unframe(capture)), capture)
   if (engine === 'opencode') {
     // OpenCode's PERMISSION prompt is the horizontal one kilo inherited from it — same `△ Permission
     // required` title, same `⇆ select · enter confirm` footer, same unnumbered rows. Measured: the live

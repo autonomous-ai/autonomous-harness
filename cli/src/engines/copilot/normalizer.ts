@@ -42,6 +42,9 @@ const TOOL_NAMES: Record<string, string> = {
   bash: 'Bash',
   create: 'Write',
   view: 'Read',
+  // Must be exactly `AskUserQuestion`, or the dialog renders as an ordinary card in the tool feed —
+  // where nobody can answer it. Measured: it drew as "Asked user" from the Title-Case fallback.
+  ask_user: 'AskUserQuestion',
 }
 
 export function copilotToolName(name: string): string {

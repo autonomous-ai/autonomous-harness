@@ -157,3 +157,46 @@ describe('the session a Copilot process is in', () => {
     expect(await copilotSessionForPid(home, 9999)).toBeNull()   // another process holds nothing here
   })
 })
+
+describe('the ask-user dialog', () => {
+  it('maps the tool to the exact shared name', () => {
+    // Anything else and it renders in the tool feed instead of as a question the device can answer.
+    expect(copilotToolName('ask_user')).toBe('AskUserQuestion')
+  })
+
+  it('is read off a real pane once the box is peeled', async () => {
+    const { parseEngineQuestionPane, parseQuestionPane } = await import('../../lib/askQuestion.js')
+    const capture = readFileSync(fileURLToPath(new URL('../../lib/__fixtures__/question-copilot.txt', import.meta.url)), 'utf8')
+    expect(parseQuestionPane(capture)).toBeNull()          // the frame defeats the shared parser
+    const view = parseEngineQuestionPane('copilot', capture)
+    expect(view).not.toBeNull()
+    const question = view as Extract<typeof view, { kind: 'question' }>
+    expect(question.question).toBe('Which colour do you prefer?')
+    expect(question.rows.map((r) => r.label)).toEqual(['Red', 'Green', 'Blue'])
+    // "Other (type your answer)" is a free-text row: the device has no text input, so it must not be
+    // offered as a choice.
+    expect(question.typeRow?.label).toContain('Other')
+  })
+})
+
+describe('the permission prompt', () => {
+  const capture = () => readFileSync(fileURLToPath(new URL('../../lib/__fixtures__/permission-copilot.txt', import.meta.url)), 'utf8')
+
+  it('names what is being approved, not just "allow this access?"', async () => {
+    const { parseEngineQuestionPane } = await import('../../lib/askQuestion.js')
+    const view = parseEngineQuestionPane('copilot', capture())
+    const question = view as Extract<typeof view, { kind: 'question' }>
+    expect(question.question).toContain('Do you want to allow this access?')
+    // Row 1 is a bare "Yes": without the subject the device offers a choice nobody can judge.
+    expect(question.question).toContain('https://example.com')
+  })
+
+  it('keeps a way to say NO', async () => {
+    const { parseEngineQuestionPane } = await import('../../lib/askQuestion.js')
+    const view = parseEngineQuestionPane('copilot', capture())
+    const question = view as Extract<typeof view, { kind: 'question' }>
+    // Three ways to approve and none to refuse means the prompt cannot be answered at all.
+    expect(question.rows.some((r) => /^No\b/i.test(r.label))).toBe(true)
+    expect(question.rows).toHaveLength(4)
+  })
+})
