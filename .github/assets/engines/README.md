@@ -35,11 +35,35 @@ a retina display.
 
 Open items, recorded rather than left implicit:
 
-- **`copilot.png` is a monochrome icon, not a logo.** GitHub publishes the Copilot mark as an
-  octicon whose paths inherit `currentColor`, so it ships with no colour at all and cannot be
-  vendored as-is. It is rendered at `fill="#ffffff"` — a choice of ink for a shape that has none,
-  the same call Kilo's `oklch()` rewrite documents, not a recolour of a coloured mark. Being an SVG
-  it rasterises at any size, so this one has no resolution caveat.
+- **`copilot.png` is a monochrome icon, not a logo, and it needs the same tile Grok needed.** GitHub
+  publishes the Copilot mark as an octicon whose paths inherit `currentColor`, so it ships with no
+  colour at all. It is rendered at `fill="#ffffff"` — a choice of ink for a shape that has none, the
+  same call Kilo's `oklch()` rewrite documents, not a recolour of a coloured mark — and then
+  composited onto the 448px black tile, because white on transparent is INVISIBLE on the light theme.
+  It shipped without the tile first and the row showed an empty gap; the check below now exists so the
+  next one is caught before a person has to notice it. Being an SVG it rasterises at any size, so this
+  one has no resolution caveat.
+
+- **Check contrast on BOTH grounds before adding a mark.** A mark that is mostly transparent with
+  near-white ink vanishes on the light theme, which is how this README is most often read from a
+  browser that is not signed in. Run this over the directory:
+
+  ```python
+  # flags any mark that is >40% transparent with ink brighter than rgb(200,200,200)
+  from PIL import Image; from collections import Counter; import glob
+  for f in sorted(glob.glob('*.png')):
+      im = Image.open(f).convert('RGBA'); c = Counter(); tr = 0
+      for px in im.getdata():
+          if px[3] < 20: tr += 1
+          elif px[3] > 200: c[px[:3]] += 1
+      trp, ink = tr * 100 // (im.width * im.height), c.most_common(1)[0][0]
+      if trp > 40 and sum(ink) / 3 > 200: print(f, trp, ink)
+  ```
+
+  As of 2026-08-19 it flags `cursor.png` (63% transparent, ink `(237,236,236)`) and `opencode.png`
+  (44%, `(241,236,236)`). Neither is invisible — both still read on a white page, just faintly — so
+  they are recorded here rather than changed: giving a vendor's mark a ground it did not ship with is
+  a decision, and it was only forced for Grok and Copilot, where the mark disappeared outright.
 - **`agy.png` is a 200px source.** Antigravity publishes the bare mark only at 200×184; the 512px
   `icon.icns` inside the macOS app is an app TILE (a white rounded square with a small glyph),
   not the same class of asset as the marks here. The site logo was taken and recorded rather
