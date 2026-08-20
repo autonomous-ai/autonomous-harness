@@ -11,6 +11,13 @@
  * The relay never sees plaintext user content: only ciphertext envelopes + public PAKE messages.
  */
 import * as C from './core.js'
+import {
+  deriveTerminalBinaryKey,
+  openTerminalBinary,
+  parseTerminalBinaryEnvelope,
+  sealTerminalBinary,
+  type TerminalBinaryClear,
+} from '../terminalBinary.js'
 import { E2eeStore } from './store.js'
 
 type Frame = Record<string, unknown>
@@ -53,6 +60,10 @@ interface Session {
   s2c: Uint8Array        // adapter → web (welcome + targeted RPC replies)
   s2cCounter: number     // next send counter (0 was the welcome)
   c2sRecv: number        // highest counter seen (replay guard)
+  terminalC2s: Uint8Array
+  terminalS2c: Uint8Array
+  terminalS2cCounter: number
+  terminalC2sRecv: number
 }
 
 const PAIR_TTL_MS = 60_000
@@ -255,6 +266,29 @@ export class E2eeManager {
     if (!s) return null
     const wrapped = C.wrapPayload(s.s2c, 'p', s.s2cCounter++, type, undefined, payload)
     return { type, payload: wrapped }
+  }
+
+  /** Pairwise-encrypt binary terminal data in a domain-separated counter space. */
+  wrapTerminalBinary(connId: string, clear: TerminalBinaryClear): Uint8Array | null {
+    const session = this.sessions.get(connId)
+    if (!session) return null
+    const sealed = sealTerminalBinary(session.terminalS2c, session.terminalS2cCounter, clear)
+    if (!sealed) return null
+    session.terminalS2cCounter++
+    return sealed
+  }
+
+  /** Open one client→adapter binary terminal frame with the existing pairwise
+   * replay guard. Authenticated but stale/reordered frames are dropped. */
+  unwrapTerminalBinary(connId: string, raw: Uint8Array): TerminalBinaryClear | null {
+    const session = this.sessions.get(connId)
+    if (!session) return null
+    const envelope = parseTerminalBinaryEnvelope(raw)
+    if (!envelope || (session.terminalC2sRecv !== -1 && envelope.counter <= session.terminalC2sRecv)) return null
+    const opened = openTerminalBinary(session.terminalC2s, raw)
+    if (!opened) return null
+    session.terminalC2sRecv = opened.counter
+    return opened.frame
   }
 
   // ── inbound down `message` decryption ────────────────────────────────────────────────────────────
@@ -518,7 +552,18 @@ export class E2eeManager {
       return true
     }
     this.evictIfFull()
-    this.sessions.set(connId, { webIdentityPub: identityPub, role, c2s: keys.c2s, s2c: keys.s2c, s2cCounter: 1, c2sRecv: -1 })
+    this.sessions.set(connId, {
+      webIdentityPub: identityPub,
+      role,
+      c2s: keys.c2s,
+      s2c: keys.s2c,
+      s2cCounter: 1,
+      c2sRecv: -1,
+      terminalC2s: deriveTerminalBinaryKey(keys.c2s),
+      terminalS2c: deriveTerminalBinaryKey(keys.s2c),
+      terminalS2cCounter: 0,
+      terminalC2sRecv: -1,
+    })
     const id = this.store.getIdentity()
     const enc = C.aeadSeal(keys.s2c, 0, C.utf8('e2e-welcome'), C.utf8(JSON.stringify({ groupKey: C.b64e(this.groupKey), epoch: this.epoch })))
     this.deps.sendTo(connId, {

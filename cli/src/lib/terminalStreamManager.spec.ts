@@ -4,6 +4,7 @@ import type { RegisteredSession } from './registry.js'
 import { TerminalStreamManager, terminalEngineCapabilities } from './terminalStreamManager.js'
 import { TERMINAL_ACTION_SUCCEEDED, type TerminalStreamHandle, type TerminalStreamSink } from './terminalTypes.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
+import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
 
 class FakeStream implements TerminalStreamHandle {
   readonly runtime = { backend: 'tmux' as const, paneId: '%1' }
@@ -13,14 +14,20 @@ class FakeStream implements TerminalStreamHandle {
   snapshots = 0
   snapshotHistory: number[] = []
   snapshotBytes = Buffer.from('\u001bcfixture')
+  onSnapshot: ((count: number) => void) | null = null
+  pauses = 0
+  resumes = 0
 
   async snapshot(historyLines: number): Promise<{ state: 'succeeded'; value: { bytes: Uint8Array; cols: number; rows: number } }> {
     this.snapshots++
     this.snapshotHistory.push(historyLines)
+    this.onSnapshot?.(this.snapshots)
     return { state: 'succeeded', value: { bytes: this.snapshotBytes, cols: 120, rows: 40 } }
   }
   async writeRaw(bytes: Uint8Array) { this.writes.push(bytes); return TERMINAL_ACTION_SUCCEEDED }
   async resize(size: { cols: number; rows: number }) { this.sizes.push(size); return TERMINAL_ACTION_SUCCEEDED }
+  async pauseOutput() { this.pauses++; return TERMINAL_ACTION_SUCCEEDED }
+  async resumeOutput() { this.resumes++; return TERMINAL_ACTION_SUCCEEDED }
   async close(): Promise<void> { this.closed = true }
 }
 
@@ -36,18 +43,23 @@ describe('TerminalStreamManager', () => {
   let sink: TerminalStreamSink | null
   let stream: FakeStream
   let sent: Array<{ connId: string; type: string; payload: Record<string, unknown> }>
+  let binarySent: Array<{ connId: string; frame: TerminalBinaryClear }>
   let manager: TerminalStreamManager
   let agents: Map<string, RegisteredSession>
+  let outputBeforeOpen: Uint8Array | null
 
   beforeEach(() => {
     vi.useFakeTimers()
     sink = null
     stream = new FakeStream()
     sent = []
+    binarySent = []
+    outputBeforeOpen = null
     agents = new Map([['agent-1', session()]])
     const terminals = {
       openStream: async (_session: RegisteredSession, _size: unknown, nextSink: TerminalStreamSink) => {
         sink = nextSink
+        if (outputBeforeOpen) nextSink.onData(outputBeforeOpen)
         return { state: 'succeeded' as const, value: stream }
       },
     } as unknown as TerminalBackendCoordinator
@@ -55,6 +67,7 @@ describe('TerminalStreamManager', () => {
       terminals,
       resolveAgent: (id) => agents.get(id),
       sendTarget: (connId, type, payload) => { sent.push({ connId, type, payload }); return true },
+      sendBinaryTarget: (connId, frame) => { binarySent.push({ connId, frame }); return true },
       streamingAvailable: true,
       now: () => Date.now(),
     })
@@ -77,7 +90,7 @@ describe('TerminalStreamManager', () => {
       const agentId = `agent-generic-${index}`
       agents.set(agentId, session(engine, agentId))
       await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: `open-${index}`, protocolVersion: 1, agentId, cols: 100, rows: 30,
+        requestId: `open-${index}`, protocolVersion: 2, agentId, cols: 100, rows: 30,
       })
       const ready = sent.findLast((frame) => frame.type === 'terminal_ready')
       expect(ready?.payload.agentId).toBe(agentId)
@@ -95,43 +108,44 @@ describe('TerminalStreamManager', () => {
     unsafe.engine = 'hostile-unregistered-engine'
     agents.set('agent-1', unsafe as unknown as RegisteredSession)
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'unsupported', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'unsupported', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_ENGINE_UNSUPPORTED')
   })
 
   it('rejects an unknown agent without opening a stream', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'missing', protocolVersion: 1, agentId: 'does-not-exist', cols: 100, rows: 30,
+      requestId: 'missing', protocolVersion: 2, agentId: 'does-not-exist', cols: 100, rows: 30,
     })
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_AGENT_NOT_FOUND')
   })
 
   it('opens with a keyframe, streams coalesced output, and writes ordered raw input', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'open-1', protocolVersion: 1, agentId: 'agent-1', cols: 120, rows: 40, compression: ['zlib'],
+      requestId: 'open-1', protocolVersion: 2, agentId: 'agent-1', cols: 120, rows: 40, compression: ['zlib'],
     })
-    expect(sent.map((frame) => frame.type)).toEqual(['terminal_ready', 'terminal_keyframe'])
+    expect(sent.map((frame) => frame.type)).toEqual(['terminal_ready'])
+    expect(binarySent.map(({ frame }) => frame.kind)).toEqual([TerminalBinaryKind.keyframe])
     const streamId = sent[0].payload.streamId as string
 
     sink!.onData(Buffer.from('hello'))
     await vi.advanceTimersByTimeAsync(8)
-    expect(sent.at(-1)?.type).toBe('terminal_output')
-    expect(sent.at(-1)?.payload.seq).toBe(1)
+    expect(binarySent.at(-1)?.frame.kind).toBe(TerminalBinaryKind.output)
+    expect(binarySent.at(-1)?.frame.seq).toBe(1)
 
-    await manager.handleFrame('web-1', 'terminal_input', {
-      streamId, inputSeq: 0, data: Buffer.from('abc').toString('base64'),
+    await manager.handleBinary('web-1', {
+      kind: TerminalBinaryKind.input, streamId, seq: 0, compressed: false, bytes: Buffer.from('abc'),
     })
     expect(Buffer.from(stream.writes[0]).toString()).toBe('abc')
-    await manager.handleFrame('web-1', 'terminal_input', {
-      streamId, inputSeq: 2, data: Buffer.from('out-of-order').toString('base64'),
+    await manager.handleBinary('web-1', {
+      kind: TerminalBinaryKind.input, streamId, seq: 2, compressed: false, bytes: Buffer.from('out-of-order'),
     })
     expect(stream.writes).toHaveLength(1)
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_INPUT_INVALID')
 
     const mouse = Buffer.from('\u001b[<0;12;8M')
-    await manager.handleFrame('web-1', 'terminal_input', {
-      streamId, inputSeq: 1, data: mouse.toString('base64'),
+    await manager.handleBinary('web-1', {
+      kind: TerminalBinaryKind.input, streamId, seq: 1, compressed: false, bytes: mouse,
     })
     expect(Buffer.from(stream.writes.at(-1)!).equals(mouse)).toBe(true)
 
@@ -141,12 +155,43 @@ describe('TerminalStreamManager', () => {
     expect(stream.sizes.at(-1)).toEqual({ cols: 140, rows: 50 })
   })
 
+  it('does not replay pre-snapshot repaint bytes after the authoritative keyframe', async () => {
+    outputBeforeOpen = Buffer.from('\u001b[2Jstale repaint')
+    stream.snapshotBytes = Buffer.from('\u001bcnew prompt text')
+
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-snapshot', protocolVersion: 2, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(sent.map((frame) => frame.type)).toEqual(['terminal_ready'])
+    expect(binarySent.map(({ frame }) => frame.kind)).toEqual([TerminalBinaryKind.keyframe])
+    expect(binarySent[0].frame.seq).toBe(0)
+  })
+
+  it('recaptures and discards a TUI repaint that arrives during snapshot', async () => {
+    stream.snapshotBytes = Buffer.from('\u001bcnew prompt text')
+    stream.onSnapshot = (count) => {
+      if (count === 1) sink!.onData(Buffer.from('\u001b[2Jin-flight stale repaint'))
+    }
+
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-racing-snapshot', protocolVersion: 2, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(stream.snapshots).toBe(2)
+    expect(sent.map((frame) => frame.type)).toEqual(['terminal_ready'])
+    expect(binarySent.map(({ frame }) => frame.kind)).toEqual([TerminalBinaryKind.keyframe])
+    expect(binarySent[0].frame.seq).toBe(0)
+  })
+
   it('rejects a second controller and expires the first lease after heartbeat timeout', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'open-1', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-1', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     await manager.handleFrame('web-2', 'terminal_open', {
-      requestId: 'open-2', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-2', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     expect(sent.at(-1)?.payload.code).toBe('CONTROL_LEASE_HELD')
 
@@ -158,45 +203,70 @@ describe('TerminalStreamManager', () => {
   it('rejects a second agent alias that resolves to the same tmux pane', async () => {
     agents.set('agent-alias', session('claude', 'agent-alias'))
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'open-1', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-1', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     await manager.handleFrame('web-2', 'terminal_open', {
-      requestId: 'open-2', protocolVersion: 1, agentId: 'agent-alias', cols: 100, rows: 30,
+      requestId: 'open-2', protocolVersion: 2, agentId: 'agent-alias', cols: 100, rows: 30,
     })
     expect(sent.at(-1)?.payload.code).toBe('CONTROL_LEASE_HELD')
   })
 
   it('uses frequent ACKs rather than the five-second heartbeat for output backpressure', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'open-1', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-1', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     const streamId = sent[0].payload.streamId as string
+    await manager.handleFrame('web-1', 'terminal_ack', { streamId, lastSeq: binarySent[0].frame.seq })
     for (let i = 0; i < 40; i++) {
       sink!.onData(Buffer.alloc(32 * 1024, i))
-      const output = sent.at(-1)!
-      expect(output.type).toBe('terminal_output')
-      await manager.handleFrame('web-1', 'terminal_ack', { streamId, lastSeq: output.payload.seq })
+      const output = binarySent.at(-1)!.frame
+      expect(output.kind).toBe(TerminalBinaryKind.output)
+      await manager.handleFrame('web-1', 'terminal_ack', { streamId, lastSeq: output.seq })
     }
-    expect(sent.filter((frame) => frame.type === 'terminal_keyframe')).toHaveLength(1)
+    expect(binarySent.filter(({ frame }) => frame.kind === TerminalBinaryKind.keyframe)).toHaveLength(1)
+    expect(stream.pauses).toBe(0)
   })
 
-  it('bounds unacked output by replacing the backlog with a keyframe', async () => {
+  it('pauses PTY output above the high watermark and resumes below the low watermark', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'open-1', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-1', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
-    for (let i = 0; i < 33; i++) sink!.onData(Buffer.alloc(32 * 1024, i))
+    const streamId = sent[0].payload.streamId as string
+    await manager.handleFrame('web-1', 'terminal_ack', { streamId, lastSeq: binarySent[0].frame.seq })
+    for (let i = 0; i < 13; i++) sink!.onData(Buffer.alloc(32 * 1024, i))
     await vi.advanceTimersByTimeAsync(1)
-    expect(stream.snapshots).toBeGreaterThanOrEqual(2)
-    expect(sent.filter((frame) => frame.type === 'terminal_keyframe').length).toBeGreaterThanOrEqual(2)
+    expect(stream.pauses).toBe(1)
+    expect(stream.resumes).toBe(0)
+    const outputs = binarySent.filter(({ frame }) => frame.kind === TerminalBinaryKind.output)
+    await manager.handleFrame('web-1', 'terminal_ack', { streamId, lastSeq: outputs[9].frame.seq })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(stream.resumes).toBe(1)
+    expect(binarySent.filter(({ frame }) => frame.kind === TerminalBinaryKind.keyframe)).toHaveLength(1)
   })
 
-  it('fails closed instead of emitting an oversized doubly-base64 keyframe', async () => {
-    stream.snapshotBytes = Buffer.alloc(241 * 1024, 0x61)
+  it('closes a stream whose renderer stays stalled after tmux is paused', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'oversized', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-stall', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
+    })
+    const streamId = sent[0].payload.streamId as string
+    await manager.handleFrame('web-1', 'terminal_ack', { streamId, lastSeq: binarySent[0].frame.seq })
+    for (let i = 0; i < 13; i++) sink!.onData(Buffer.alloc(32 * 1024, i))
+    expect(stream.pauses).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(sent.findLast((frame) => frame.type === 'terminal_error')?.payload.code)
+      .toBe('TERMINAL_RENDER_STALLED')
+    expect(stream.closed).toBe(true)
+  })
+
+  it('fails closed instead of emitting an oversized binary keyframe', async () => {
+    stream.snapshotBytes = Buffer.alloc(481 * 1024, 0x61)
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'oversized', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     expect(stream.snapshotHistory).toEqual([1_000, 500, 250, 100, 0])
-    expect(sent.some((frame) => frame.type === 'terminal_keyframe')).toBe(false)
+    expect(binarySent.some(({ frame }) => frame.kind === TerminalBinaryKind.keyframe)).toBe(false)
     expect(sent.findLast((frame) => frame.type === 'terminal_error')?.payload.code)
       .toBe('TERMINAL_SNAPSHOT_TOO_LARGE')
     expect(stream.closed).toBe(true)
@@ -204,15 +274,16 @@ describe('TerminalStreamManager', () => {
 
   it('disconnect cleanup closes the stream and releases the controller', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
-      requestId: 'open-1', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-1', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
     await manager.closeConnection('web-1')
     expect(stream.closed).toBe(true)
     const replacement = new FakeStream()
     stream = replacement
     await manager.handleFrame('web-2', 'terminal_open', {
-      requestId: 'open-2', protocolVersion: 1, agentId: 'agent-1', cols: 100, rows: 30,
+      requestId: 'open-2', protocolVersion: 2, agentId: 'agent-1', cols: 100, rows: 30,
     })
-    expect(sent.at(-2)?.type).toBe('terminal_ready')
+    expect(sent.at(-1)?.type).toBe('terminal_ready')
+    expect(binarySent.at(-1)?.frame.kind).toBe(TerminalBinaryKind.keyframe)
   })
 })

@@ -6,6 +6,7 @@ import type { RegisteredSession } from './registry.js'
 import { TerminalStreamManager } from './terminalStreamManager.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { TmuxControlStream } from './tmuxStream.js'
+import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
 
 const run = process.env.RUN_REAL_TMUX_STREAM === '1' ? describe : describe.skip
 
@@ -78,6 +79,7 @@ run('TmuxControlStream real tmux', () => {
         primaryRuntimeKey: `tmux:default:${paneId}`,
       } as unknown as RegisteredSession
       const frames: Array<{ type: string; payload: Record<string, unknown> }> = []
+      const binaryFrames: TerminalBinaryClear[] = []
       const terminals = {
         openStream: async (_session: RegisteredSession, size: { cols: number; rows: number }, sink: Parameters<typeof TmuxControlStream.open>[2]) =>
           TmuxControlStream.open(paneId, size, sink),
@@ -86,13 +88,14 @@ run('TmuxControlStream real tmux', () => {
         terminals,
         resolveAgent: (candidate) => candidate === agentId ? registered : undefined,
         sendTarget: (_connId, type, payload) => { frames.push({ type, payload }); return true },
+        sendBinaryTarget: (_connId, frame) => { binaryFrames.push(frame); return true },
         streamingAvailable: true,
       })
 
       try {
         await manager.handleFrame('matrix-client', 'terminal_open', {
           requestId: `open-${engine}`,
-          protocolVersion: 1,
+          protocolVersion: 2,
           agentId,
           cols: 90 + index,
           rows: 24,
@@ -104,14 +107,16 @@ run('TmuxControlStream real tmux', () => {
         expect(typeof streamId).toBe('string')
 
         const marker = `HARNESS_ENGINE_STREAM_${engine.toUpperCase()}`
-        await manager.handleFrame('matrix-client', 'terminal_input', {
-          streamId,
-          inputSeq: 0,
-          data: Buffer.from(`printf '${marker}\\n'\r`).toString('base64'),
+        await manager.handleBinary('matrix-client', {
+          kind: TerminalBinaryKind.input,
+          streamId: streamId as string,
+          seq: 0,
+          compressed: false,
+          bytes: Buffer.from(`printf '${marker}\\n'\r`),
         })
-        await eventually(() => frames.some((frame) => {
-          if (frame.type !== 'terminal_output' || frame.payload.encoding !== 'none') return false
-          return Buffer.from(String(frame.payload.data), 'base64').includes(Buffer.from(marker))
+        await eventually(() => binaryFrames.some((frame) => {
+          if (frame.kind !== TerminalBinaryKind.output || frame.compressed) return false
+          return Buffer.from(frame.bytes).includes(Buffer.from(marker))
         }))
 
         await manager.handleFrame('matrix-client', 'terminal_resize', {

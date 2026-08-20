@@ -45,6 +45,12 @@ import { readOpencodeMessages } from './engines/opencode/reader.js'
 import { readKiloMessages } from './engines/kilo/reader.js'
 import { E2eeManager, type PairResult } from './lib/e2ee/manager.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
+import {
+  decodeTerminalHop,
+  encodeTerminalHop,
+  TerminalHopDirection,
+  type TerminalBinaryClear,
+} from './lib/terminalBinary.js'
 import { ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
 import { shouldReplayCommander } from './lib/commanderReplay.js'
@@ -412,7 +418,12 @@ export class BackendSocket {
       this.appPing = setInterval(() => this.sendBestEffort({ t: 'ping' }), APP_PING_MS)
     })
 
-    ws.on('message', (raw) => {
+    ws.on('message', (raw, isBinary) => {
+      if (isBinary) {
+        const hop = decodeTerminalHop(new Uint8Array(raw as Buffer))
+        if (hop?.direction === TerminalHopDirection.down) this.enqueueTerminalBinary(hop.connId, hop.clientFrame)
+        return
+      }
       let env_: DownEnvelope
       try { env_ = JSON.parse(raw.toString()) as DownEnvelope } catch { return }
       if (env_.t === 'down' && env_.frame) {
@@ -497,6 +508,16 @@ export class BackendSocket {
     })
   }
 
+  /** Pairwise-encrypted binary terminal output/keyframe. The hop prefix exposes
+   * only connId and direction to the opaque backend relay. */
+  sendTerminalBinaryTo(connId: string, clear: TerminalBinaryClear): boolean {
+    const clientFrame = this.e2ee.wrapTerminalBinary(connId, clear)
+    if (!clientFrame) return false
+    const packet = encodeTerminalHop(TerminalHopDirection.up, connId, clientFrame)
+    if (!packet || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false
+    try { this.ws.send(packet); return true } catch { return false }
+  }
+
   /** Send a user-level notification to every logged-in browser that owns this machine. */
   sendUser(frame: Frame): void {
     this.enqueue({ t: 'up', userEligible: true, webEligible: false, frame })
@@ -537,6 +558,24 @@ export class BackendSocket {
       .then(() => this.dispatchDown(frame, connId))
       .catch((err) => {
         console.error('[backend] down-frame dispatch failed:', err instanceof Error ? err.message : err)
+      })
+      .finally(() => {
+        if (this.downChains.get(key) === next) this.downChains.delete(key)
+      })
+    this.downChains.set(key, next)
+  }
+
+  private enqueueTerminalBinary(connId: string, raw: Uint8Array): void {
+    const key = connId || '__backend__'
+    const previous = this.downChains.get(key) ?? Promise.resolve()
+    const next = previous
+      .catch(() => { /* prior failure is already logged */ })
+      .then(async () => {
+        const clear = this.e2ee.unwrapTerminalBinary(connId, raw)
+        if (clear) await this.terminalStreams?.handleBinary(connId, clear)
+      })
+      .catch((err) => {
+        console.error('[backend] binary terminal dispatch failed:', err instanceof Error ? err.message : err)
       })
       .finally(() => {
         if (this.downChains.get(key) === next) this.downChains.delete(key)

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { decodeTmuxControlData } from './tmuxStream.js'
+import {
+  decodeTmuxControlData,
+  normalizeTmuxCaptureLines,
+  parseTmuxControlOutput,
+} from './tmuxStream.js'
 
 describe('tmux control-mode output decoding', () => {
   it('decodes octal bytes without corrupting adjacent UTF-8', () => {
@@ -9,5 +13,39 @@ describe('tmux control-mode output decoding', () => {
 
   it('preserves ordinary backslashes that are not octal escapes', () => {
     expect(Buffer.from(decodeTmuxControlData('C:\\Users\\name')).toString()).toBe('C:\\Users\\name')
+  })
+
+  it('preserves a UTF-8 scalar split across separate output records', () => {
+    const first = parseTmuxControlOutput(Buffer.concat([
+      Buffer.from('%output %7 '),
+      Buffer.from([0xe2, 0x94]),
+    ]))
+    const second = parseTmuxControlOutput(Buffer.concat([
+      Buffer.from('%output %7 '),
+      Buffer.from([0x80]),
+    ]))
+
+    expect(first?.paneId).toBe('%7')
+    expect(second?.paneId).toBe('%7')
+    expect(Buffer.concat([
+      Buffer.from(first!.data),
+      Buffer.from(second!.data),
+    ])).toEqual(Buffer.from('─'))
+  })
+})
+
+describe('tmux snapshot row normalization', () => {
+  it('turns capture-pane LF rows into VT CRLF and drops its final output delimiter', () => {
+    const capture = Buffer.from('first\n\u001b[31m世界\nlast\r\n')
+    expect(Buffer.from(normalizeTmuxCaptureLines(capture))).toEqual(
+      Buffer.from('first\u001b[0m\r\n\u001b[31m世界\u001b[0m\r\nlast\u001b[0m'),
+    )
+  })
+
+  it('stops a styled trailing background from bleeding into the next blank row', () => {
+    const capture = Buffer.from('\u001b[48;5;237mprompt   \n\n\u001b[49mreply\n')
+    expect(Buffer.from(normalizeTmuxCaptureLines(capture)).toString()).toBe(
+      '\u001b[48;5;237mprompt   \u001b[0m\r\n\u001b[0m\r\n\u001b[49mreply\u001b[0m',
+    )
   })
 })

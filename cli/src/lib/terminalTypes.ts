@@ -139,6 +139,8 @@ export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalR
   snapshot(historyLines: number): Promise<TerminalReadResult<TerminalStreamSnapshot>>
   writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>
   resize(size: TerminalStreamSize): Promise<TerminalActionResult>
+  pauseOutput(): Promise<TerminalActionResult>
+  resumeOutput(): Promise<TerminalActionResult>
   close(): Promise<void>
 }
 

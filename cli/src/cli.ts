@@ -771,6 +771,7 @@ async function runForeground(token: string): Promise<void> {
     terminals,
     resolveAgent: (agentId) => registry.resolve(agentId),
     sendTarget: (connId, type, payload) => backend.sendTerminalTo(connId, type, payload),
+    sendBinaryTarget: (connId, frame) => backend.sendTerminalBinaryTo(connId, frame),
     streamingAvailable: tmuxBackend != null,
   })
   backend.setTerminalStreamManager(terminalStreams)
