@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
+import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -301,6 +302,37 @@ describe('BackendSocket outbound queue', () => {
     expect(drop).toHaveBeenCalledWith('device')
 
     await socket.stop()
+  })
+
+  it('releases E2EE and terminal state for the exact disconnected web connId', async () => {
+    const socket = new BackendSocket('token')
+    const closeConnection = vi.fn(async () => undefined)
+    const stop = vi.fn(async () => undefined)
+    socket.setTerminalStreamManager({
+      closeConnection,
+      stop,
+    } as unknown as TerminalStreamManager)
+    const dropSession = vi.spyOn(socket.e2ee, 'dropSession')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    ws.message({
+      t: 'down',
+      connId: 'web-terminal-1',
+      frame: { type: '__client_disconnected', payload: {} },
+    })
+
+    await vi.waitFor(() => {
+      expect(dropSession).toHaveBeenCalledWith('web-terminal-1')
+      expect(closeConnection).toHaveBeenCalledWith(
+        'web-terminal-1',
+        'client connection closed',
+        false,
+      )
+    })
+    await socket.stop()
+    expect(stop).toHaveBeenCalledOnce()
   })
 })
 

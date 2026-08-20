@@ -677,6 +677,18 @@ export class BackendSocket {
       }
       return
     }
+    if (type === '__client_disconnected') {
+      // The backend is authoritative for the outer connId. Drop both kinds of
+      // connection-scoped state immediately; otherwise a dead Desktop keeps a
+      // terminal controller lease until the 30-second heartbeat timeout.
+      this.e2ee.dropSession(connId)
+      await this.terminalStreams?.closeConnection(
+        connId,
+        'client connection closed',
+        false,
+      )
+      return
+    }
     // Other backend-hub internal control frames (__clients_dirty) — not for us; drop silently.
     if (type.startsWith('__')) return
 
