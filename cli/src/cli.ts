@@ -42,6 +42,7 @@ import {
 } from './lib/herdrSessions.js'
 import { ALL_TERMINAL_BACKENDS } from './config/terminalConfig.js'
 import { TerminalBackendCoordinator } from './lib/terminalBackendCoordinator.js'
+import { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
@@ -766,6 +767,13 @@ async function runForeground(token: string): Promise<void> {
     })
   }, computerId())
   backendRef = backend
+  const terminalStreams = new TerminalStreamManager({
+    terminals,
+    resolveAgent: (agentId) => registry.resolve(agentId),
+    sendTarget: (connId, type, payload) => backend.sendTerminalTo(connId, type, payload),
+    streamingAvailable: tmuxBackend != null,
+  })
+  backend.setTerminalStreamManager(terminalStreams)
 
   // Per-session web turn-lifecycle state; the device mirror keeps its own state + recap.
   const turnStates = new Map<string, TurnState>()

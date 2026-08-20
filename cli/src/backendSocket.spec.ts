@@ -120,6 +120,26 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('routes e2e control frames to the handshake manager instead of the RPC fallback', async () => {
+    const socket = new BackendSocket('token')
+    const handle = vi.spyOn(socket.e2ee, 'handleFrame').mockReturnValue(true)
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    const frame = {
+      type: 'e2e_setup_claim',
+      payload: { requestId: 'setup-1', token: 'signed-setup-token' },
+    }
+    ws.message({ t: 'down', connId: 'web-1', frame })
+
+    await vi.waitFor(() => expect(handle).toHaveBeenCalledWith('web-1', frame))
+    expect(parseSent(ws).some((item) =>
+      (item.frame as { type?: string } | undefined)?.type === 'e2e_setup_claim_result',
+    )).toBe(false)
+    await socket.stop()
+  })
+
   it('serves the opaque runtime catalog through the existing models_list RPC', async () => {
     const socket = new BackendSocket('token')
     socket.runtimeModelsProvider = async () => [
@@ -239,7 +259,7 @@ describe('BackendSocket outbound queue', () => {
     clients(0)
     clients(0)
     clients(1)
-    expect(changes).toEqual([true, false, true])
+    await vi.waitFor(() => expect(changes).toEqual([true, false, true]))
 
     await socket.stop()
     expect(changes).toEqual([true, false, true, false])
@@ -260,7 +280,7 @@ describe('BackendSocket outbound queue', () => {
     expect(drop).not.toHaveBeenCalled()
 
     ws.message({ t: 'down', connId: '', frame: { type: '__clients', payload: { commander: 0 } } })
-    expect(drop).toHaveBeenCalledWith('device')
+    await vi.waitFor(() => expect(drop).toHaveBeenCalledWith('device'))
 
     await socket.stop()
   })

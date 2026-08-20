@@ -9,6 +9,9 @@ import type {
   TerminalProcessExpectation,
   TerminalReadResult,
   TerminalRuntimeRef,
+  TerminalStreamHandle,
+  TerminalStreamSink,
+  TerminalStreamSize,
   RuntimeValidation,
 } from './terminalTypes.js'
 
@@ -29,4 +32,12 @@ export interface TerminalBackend<Ref extends TerminalRuntimeRef = TerminalRuntim
   sendKey(runtime: Ref, key: TerminalLogicalKey): Promise<TerminalActionResult>
   setTitle(runtime: Ref, title: string): Promise<TerminalActionResult>
   notify(runtime: Ref, title: string, body: string): Promise<TerminalActionResult>
+
+  /** Byte streaming is optional per backend. MVP is implemented by tmux; Herdr remains capture-only. */
+  openStream?(
+    runtime: Ref,
+    expected: TerminalProcessExpectation,
+    size: TerminalStreamSize,
+    sink: TerminalStreamSink,
+  ): Promise<TerminalReadResult<TerminalStreamHandle<Ref>>>
 }

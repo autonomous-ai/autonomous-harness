@@ -363,6 +363,10 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   'agent_create', 'agent_delete', 'agent_recent', 'agent_update', 'agent_files', 'agent_read_file',
   'device_e2ee_pair', 'e2ee_pairings_list', 'e2ee_pairing_unpair',
   'e2ee_pairings_unpair_all', 'e2ee_browser_link_create',
+  // Remote terminal control is always pairwise E2EE. The relay may route by outer type/connId but must
+  // never see agent ids, terminal bytes, dimensions, sequence numbers, or capability metadata.
+  'terminal_capabilities', 'terminal_open', 'terminal_alive', 'terminal_ack', 'terminal_input',
+  'terminal_resize', 'terminal_resync', 'terminal_close',
 ])
 export function isEncryptedUpType(t: string): boolean { return ENCRYPTED_UP_TYPES.has(t) }
 export function isEncryptedRpcResultType(t: string): boolean { return ENCRYPTED_RPC_RESULT_TYPES.has(t) }

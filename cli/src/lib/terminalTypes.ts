@@ -117,6 +117,31 @@ export interface TerminalProcessExpectation {
   processIdentity?: ProcessIdentity
 }
 
+export interface TerminalStreamSize {
+  cols: number
+  rows: number
+}
+
+export interface TerminalStreamSnapshot {
+  bytes: Uint8Array
+  cols: number
+  rows: number
+}
+
+export interface TerminalStreamSink {
+  onData: (bytes: Uint8Array) => void
+  onClose: (reason: string) => void
+}
+
+/** A live byte-oriented terminal stream. Implementations must preserve input/output order. */
+export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalRuntimeRef> {
+  readonly runtime: Ref
+  snapshot(historyLines: number): Promise<TerminalReadResult<TerminalStreamSnapshot>>
+  writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>
+  resize(size: TerminalStreamSize): Promise<TerminalActionResult>
+  close(): Promise<void>
+}
+
 export const TERMINAL_ACTION_SUCCEEDED: TerminalActionResult = {
   state: 'succeeded',
   dispatch: 'executed',

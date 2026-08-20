@@ -9,6 +9,9 @@ import {
   type TerminalLogicalKey,
   type TerminalReadResult,
   type TerminalRuntimeRef,
+  type TerminalStreamHandle,
+  type TerminalStreamSink,
+  type TerminalStreamSize,
 } from './terminalTypes.js'
 
 export interface TerminalControlLease {
@@ -179,6 +182,27 @@ export class TerminalBackendCoordinator {
   async captureLease(lease: TerminalControlLease, options?: TerminalCaptureOptions): Promise<TerminalReadResult<string>> {
     const backend = this.backendFor(lease.runtime)
     return backend ? backend.capture(lease.runtime, options) : { state: 'failed', reason: 'leased terminal backend is disabled' }
+  }
+
+  /** Open a byte stream on the first validated streaming-capable runtime. MVP deliberately skips Herdr. */
+  async openStream(
+    session: RegisteredSession,
+    size: TerminalStreamSize,
+    sink: TerminalStreamSink,
+  ): Promise<TerminalReadResult<TerminalStreamHandle>> {
+    if (!session.active) return { state: 'failed', reason: 'terminal agent is dormant' }
+    let reason = 'TERMINAL_RUNTIME_UNAVAILABLE'
+    for (const runtime of this.orderedRuntimes(session)) {
+      const backend = this.backendFor(runtime)
+      if (!backend?.openStream) continue
+      const result = await backend.openStream(runtime, {
+        engine: session.engine,
+        processIdentity: session.processIdentity ?? undefined,
+      }, size, sink)
+      if (result.state === 'succeeded') return result as TerminalReadResult<TerminalStreamHandle>
+      reason = result.reason
+    }
+    return { state: 'failed', reason }
   }
 
   typeLiteralLease(lease: TerminalControlLease, text: string): Promise<TerminalActionResult> {

@@ -12,9 +12,13 @@ import {
   type TerminalLogicalKey,
   type TerminalProcessExpectation,
   type TerminalReadResult,
+  type TerminalStreamHandle,
+  type TerminalStreamSink,
+  type TerminalStreamSize,
   type TmuxRuntimeRef,
   type RuntimeValidation,
 } from './terminalTypes.js'
+import { TmuxControlStream } from './tmuxStream.js'
 import {
   captureTmuxPane,
   listPaneTitles,
@@ -177,5 +181,19 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
       })
     })
     return legacyActionResult(ok, 'tmux notification')
+  }
+
+  async openStream(
+    runtime: TmuxRuntimeRef,
+    expected: TerminalProcessExpectation,
+    size: TerminalStreamSize,
+    sink: TerminalStreamSink,
+  ): Promise<TerminalReadResult<TerminalStreamHandle<TmuxRuntimeRef>>> {
+    const validation = await this.validate(runtime, expected)
+    if (validation.state !== 'alive') return {
+      state: 'failed',
+      reason: validation.state === 'gone' ? validation.reason : 'tmux runtime validation failed',
+    }
+    return TmuxControlStream.open(runtime.paneId, size, sink)
   }
 }

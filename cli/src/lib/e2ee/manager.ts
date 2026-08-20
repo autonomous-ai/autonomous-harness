@@ -249,7 +249,8 @@ export class E2eeManager {
     return Buffer.byteLength(JSON.stringify({ type: resultType, payload: wrapped }), 'utf8')
   }
 
-  private wrapTarget(connId: string, type: string, payload: Record<string, unknown>): Frame | null {
+  /** Pairwise-encrypt a connection-targeted non-RPC frame (terminal ready/output/keyframe/error). */
+  wrapTarget(connId: string, type: string, payload: Record<string, unknown>): Frame | null {
     const s = this.sessions.get(connId)
     if (!s) return null
     const wrapped = C.wrapPayload(s.s2c, 'p', s.s2cCounter++, type, undefined, payload)

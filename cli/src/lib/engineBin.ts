@@ -8,13 +8,11 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
 import { delimiter, isAbsolute, join, normalize, sep } from 'node:path'
 import { env } from '../config/env.js'
-import type { AgentEngine } from '../engines/types.js'
+import { ENGINES, type AgentEngine } from '../engines/types.js'
 
-/** Every engine the adapter can discover and drive. */
-export const ENGINES: readonly AgentEngine[] = [
-  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
-  'agy', 'copilot',
-] as const
+// Keep this historical import surface for callers, but never duplicate the
+// catalog here. `engines/types.ts` is the one iterable source of truth.
+export { ENGINES }
 
 /** Public vendor command shown to users and matched by the real-binary smoke matrix. */
 export const ENGINE_CLI_COMMANDS: Readonly<Record<AgentEngine, string>> = {

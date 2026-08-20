@@ -44,6 +44,7 @@ import { readDevinMessages } from './engines/devin/reader.js'
 import { readOpencodeMessages } from './engines/opencode/reader.js'
 import { readKiloMessages } from './engines/kilo/reader.js'
 import { E2eeManager, type PairResult } from './lib/e2ee/manager.js'
+import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
 import { shouldReplayCommander } from './lib/commanderReplay.js'
@@ -247,6 +248,8 @@ export class BackendSocket {
   private droppedSinceLog = 0
   private heartbeat: NodeJS.Timeout | null = null
   private appPing: NodeJS.Timeout | null = null
+  private readonly downChains = new Map<string, Promise<void>>()
+  private terminalStreams: TerminalStreamManager | null = null
   private isAlive = true
   private onStatus: (connected: boolean) => void
   /** Cross-instance commander (device) client count, from backend `__clients` frames. */
@@ -356,6 +359,10 @@ export class BackendSocket {
     })
   }
 
+  setTerminalStreamManager(manager: TerminalStreamManager): void {
+    this.terminalStreams = manager
+  }
+
   /** Run CPace pairing for a code entered via `harness pair <code>` (delegated to the manager). */
   pair(code: string): Promise<PairResult> {
     return this.e2ee.onPair(code)
@@ -412,8 +419,7 @@ export class BackendSocket {
         // A malformed/hostile down-frame (bad __e2e envelope, bad ephemeral key) can throw in the
         // pre-`try` part of dispatchDown; without this .catch that becomes an unhandledRejection and the
         // daemon exits. Contain it: log, drop the frame, keep the socket alive.
-        void this.dispatchDown(env_.frame, env_.connId ?? '').catch((err) =>
-          console.error('[backend] down-frame dispatch failed:', err instanceof Error ? err.message : err))
+        this.enqueueDown(env_.frame, env_.connId ?? '')
       }
     })
 
@@ -428,6 +434,7 @@ export class BackendSocket {
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
+      void this.terminalStreams?.closeAll('backend disconnected')
       this.replayCommanderOnNextSnapshot = true
       this.onStatus(false)
       if (this.closed) return
@@ -460,6 +467,7 @@ export class BackendSocket {
     this.closed = true
     if (this.heartbeat) clearInterval(this.heartbeat)
     if (this.appPing) clearInterval(this.appPing)
+    await this.terminalStreams?.stop()
     try { this.ws?.close() } catch { /* ignore */ }
     this.ws = null
   }
@@ -474,6 +482,19 @@ export class BackendSocket {
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
   sendTo(connId: string, frame: Frame): void {
     this.enqueue({ t: 'up', targetConnId: connId, frame })
+  }
+
+  /** Pairwise terminal output is never queued across reconnect: the stream/lease is closed on link loss. */
+  sendTerminalTo(connId: string, type: string, payload: Record<string, unknown>): boolean {
+    const frame = this.e2ee.wrapTarget(connId, type, payload)
+    if (!frame) return false
+    return this.sendBestEffort({
+      t: 'up',
+      targetConnId: connId,
+      webEligible: true,
+      commanderEligible: false,
+      frame,
+    })
   }
 
   /** Send a user-level notification to every logged-in browser that owns this machine. */
@@ -500,11 +521,27 @@ export class BackendSocket {
     this.drainQueue()
   }
 
-  private sendBestEffort(msg: OutboundEnvelope): void {
+  private sendBestEffort(msg: OutboundEnvelope): boolean {
     const data = JSON.stringify(msg)
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try { this.ws.send(data) } catch { /* ignore */ }
+      try { this.ws.send(data); return true } catch { /* ignore */ }
     }
+    return false
+  }
+
+  private enqueueDown(frame: Frame, connId: string): void {
+    const key = connId || '__backend__'
+    const previous = this.downChains.get(key) ?? Promise.resolve()
+    const next = previous
+      .catch(() => { /* prior failure is already logged */ })
+      .then(() => this.dispatchDown(frame, connId))
+      .catch((err) => {
+        console.error('[backend] down-frame dispatch failed:', err instanceof Error ? err.message : err)
+      })
+      .finally(() => {
+        if (this.downChains.get(key) === next) this.downChains.delete(key)
+      })
+    this.downChains.set(key, next)
   }
 
   private drainQueue(): void {
@@ -610,7 +647,11 @@ export class BackendSocket {
     }
     // Logged AFTER the unwrap above, so a down-frame reads as what the client actually asked for rather
     // than as an opaque __e2e envelope.
-    if (env.LOG_FRAMES) logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
+    // Terminal frames contain raw keystrokes, paste text and screen bytes after
+    // unwrap. Never pass them to the frame logger, even in diagnostic mode.
+    if (env.LOG_FRAMES && !type.startsWith('terminal_')) {
+      logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
+    }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
     // Cross-instance client snapshot. Generation detects leave/join cycles that coalesce to the same
     // count; count rise remains the compatibility fallback for older backends.
@@ -652,6 +693,11 @@ export class BackendSocket {
 
     const payload = (frame.payload ?? {}) as Record<string, unknown>
     const requestId = payload.requestId
+
+    if (type.startsWith('terminal_')) {
+      if (this.terminalStreams) await this.terminalStreams.handleFrame(connId, type, payload)
+      return
+    }
 
     try {
       switch (type) {

@@ -137,6 +137,7 @@ describe('e2ee core — codes + fingerprint + classification', () => {
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('agent_update_result')).toBe(true)
     expect(C.isEncryptedDownType('models_list')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('models_list_result')).toBe(true)
+    expect(C.isEncryptedDownType('terminal_input')).toBe(true)
   })
 
   it('gates question_response, which the device encrypts', () => {
@@ -186,6 +187,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('ef9c3f25f41bc4ccece8d082aa9c366037399de9b462d5106c165ce25d0f9bb0')
+    expect(actual).toBe('e08eafcdd0a820992fee2ba5e598b94db9877d4e16c8bea8cba49a2690071db7')
   })
 })

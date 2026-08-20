@@ -35,7 +35,7 @@ import { join, basename, dirname, relative } from 'path'
 import { uptime } from 'os'
 import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
-import type { AgentEngine } from '../engines/types.js'
+import { ENGINES, type AgentEngine } from '../engines/types.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
@@ -144,10 +144,13 @@ const NAME_OVERRIDES = new Map<string, string>()
 
 const PANE_RE = /^%\d+$/
 const GROK_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const AGENT_ENGINES = new Set<AgentEngine>([
-  'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes', 'commandcode', 'devin', 'muse', 'amp', 'kilo', 'grok',
-  'agy', 'copilot',
-])
+const AGENT_ENGINES: ReadonlySet<string> = new Set(ENGINES)
+
+function normalizedAgentEngine(value: unknown): AgentEngine {
+  return typeof value === 'string' && AGENT_ENGINES.has(value)
+    ? value as AgentEngine
+    : 'claude'
+}
 const LOCK_WAIT_MS = 20
 const LOCK_ATTEMPTS = 100
 
@@ -632,7 +635,7 @@ class Registry {
       }
       let changed = false
       for (const raw of Array.isArray(arr) ? arr : []) {
-        const engine: AgentEngine = raw?.engine === 'codex' || raw?.engine === 'cursor' || raw?.engine === 'opencode' || raw?.engine === 'pi' || raw?.engine === 'hermes' || raw?.engine === 'commandcode' || raw?.engine === 'devin' || raw?.engine === 'muse' || raw?.engine === 'amp' || raw?.engine === 'kilo' || raw?.engine === 'grok' || raw?.engine === 'agy' || raw?.engine === 'copilot' ? raw.engine : 'claude'
+        const engine = normalizedAgentEngine(raw?.engine)
         const runtimes = normalizedRuntimes(raw?.runtimes, raw?.tmuxPane)
         const pane = tmuxProjection(runtimes)
         let transcriptPath =
@@ -867,8 +870,7 @@ class Registry {
     const transcriptPath = input.transcriptPath
     const sessionId =
       input.sessionId || (transcriptPath ? basename(transcriptPath).replace(/\.jsonl$/, '') : '')
-    const engine: AgentEngine =
-      input.engine === 'codex' || input.engine === 'cursor' || input.engine === 'opencode' || input.engine === 'pi' || input.engine === 'hermes' || input.engine === 'commandcode' || input.engine === 'devin' || input.engine === 'muse' || input.engine === 'amp' || input.engine === 'kilo' || input.engine === 'grok' || input.engine === 'agy' || input.engine === 'copilot' ? input.engine : 'claude'
+    const engine = normalizedAgentEngine(input.engine)
     const pane = input.tmuxPane
     // Hooks carry process metadata, not ownership. The already-discovered pane+engine process chooses the
     // agent; an optional legacy launcherId is intentionally ignored.
