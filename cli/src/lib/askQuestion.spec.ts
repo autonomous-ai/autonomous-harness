@@ -438,6 +438,11 @@ describe('permission prompts, per engine', () => {
       rows: ['Yes', 'Yes, allow all edits during this session (shift+tab)', 'No'],
     },
     {
+      engine: 'claude', fixture: 'claude-plan',
+      question: 'Approve Claude has written up a plan and is ready to execute. Would you like to proceed?',
+      rows: ['Yes, and use auto mode', 'Yes, manually approve edits', 'Tell Claude what to change'],
+    },
+    {
       engine: 'commandcode', fixture: 'commandcode',
       question: 'Approve Execute Shell Command: Command Code needs to execute curl -s https://api.coingecko.com/api/v3/simple/price?ids=bitcoin.',
       rows: ['Yes', "Yes, don't ask again for this exact command in this project", 'No, tell Command Code what to do differently'],
@@ -502,7 +507,7 @@ describe('permission prompts, per engine', () => {
         // ways to approve and none to decline cannot answer the prompt at all. The word varies more than
         // it looks — cursor says "Skip", hermes says "Deny" — which is why the shared REJECT_RE lists all
         // of them rather than assuming "no".
-        expect(view().rows.some((row) => /^(no|reject|deny|skip|cancel)\b/i.test(row.label))).toBe(true)
+        expect(view().rows.some((row) => /^(no|reject|deny|skip|cancel)\b|^tell\b.*\bwhat to change\b/i.test(row.label))).toBe(true)
       })
 
       it('is single-select with nothing to type into', () => {

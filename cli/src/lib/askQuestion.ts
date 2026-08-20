@@ -335,11 +335,16 @@ const APPROVE_RE = /^(yes|allow|approve|accept|proceed|run|continue)\b/i
 // `skip` is here because cursor's decline row is "Skip & tell the agent what to do instead" — an engine
 // whose only way to refuse says neither "no" nor "reject" would otherwise fail the yes/no guard and its
 // whole prompt would go unread.
-const REJECT_RE = /^(no|reject|deny|decline|cancel|skip|don'?t|stop)\b/i
+// Claude's plan review does not use a negative verb at all: its only refusal
+// row is "Tell Claude what to change". Keep `tell ... what to change` narrow so
+// an ordinary numbered list beginning with "Tell" cannot become an approval.
+const REJECT_RE = /^(no|reject|deny|decline|cancel|skip|don'?t|stop)\b|^tell\b.*\bwhat to change\b/i
 /** The key hints a permission dialog prints under its rows: claude `Esc to cancel \u00b7 Tab to amend`,
  *  Command Code `\u2191/\u2193 navigate \u00b7 enter select \u00b7 ctrl+e explain`. Proximity to the rows is what makes this
  *  a guard and not a search \u2014 it must sit within a few lines UNDER them. */
-const PERMISSION_FOOTER_RE = /\besc\b|enter\s+select|ctrl\+e/i
+// Claude's plan review footer changed from Esc/Tab hints to
+// "shift+tab to approve with this feedback" plus ctrl+g.
+const PERMISSION_FOOTER_RE = /\besc\b|enter\s+select|ctrl\+e|shift\+tab\s+to\s+approve/i
 /** The solid rule that opens the frame. Deliberately NOT the dashed one (`\u254c`) that brackets an edit diff,
  *  which sits BELOW the header and would cost the title. */
 const FRAME_RULE_RE = /^\s*[\u2500\u2501\u2550]{6,}\s*$/
