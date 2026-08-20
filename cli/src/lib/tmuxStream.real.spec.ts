@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { ENGINES } from '../engines/types.js'
+import type { RegisteredSession } from './registry.js'
+import { TerminalStreamManager } from './terminalStreamManager.js'
+import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { TmuxControlStream } from './tmuxStream.js'
 
 const run = process.env.RUN_REAL_TMUX_STREAM === '1' ? describe : describe.skip
@@ -9,6 +13,12 @@ function tmux(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('tmux', args, { timeout: 3_000 }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()))
   })
+}
+
+async function eventually(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(predicate()).toBe(true)
 }
 
 run('TmuxControlStream real tmux', () => {
@@ -53,4 +63,69 @@ run('TmuxControlStream real tmux', () => {
     await opened.value.close()
     expect(closedReason === '' || closedReason === 'closed').toBe(true)
   })
+
+  it('runs every catalog engine through the same manager and real tmux stream', async () => {
+    for (const [index, engine] of ENGINES.entries()) {
+      const agentId = `real-tmux-${engine}`
+      const registered = {
+        agentId,
+        sessionId: `session-${engine}`,
+        engine,
+        active: true,
+        registeredAt: Date.now(),
+        updatedAt: Date.now(),
+        runtimes: [{ backend: 'tmux', paneId }],
+        primaryRuntimeKey: `tmux:default:${paneId}`,
+      } as unknown as RegisteredSession
+      const frames: Array<{ type: string; payload: Record<string, unknown> }> = []
+      const terminals = {
+        openStream: async (_session: RegisteredSession, size: { cols: number; rows: number }, sink: Parameters<typeof TmuxControlStream.open>[2]) =>
+          TmuxControlStream.open(paneId, size, sink),
+      } as unknown as TerminalBackendCoordinator
+      const manager = new TerminalStreamManager({
+        terminals,
+        resolveAgent: (candidate) => candidate === agentId ? registered : undefined,
+        sendTarget: (_connId, type, payload) => { frames.push({ type, payload }); return true },
+        streamingAvailable: true,
+      })
+
+      try {
+        await manager.handleFrame('matrix-client', 'terminal_open', {
+          requestId: `open-${engine}`,
+          protocolVersion: 1,
+          agentId,
+          cols: 90 + index,
+          rows: 24,
+          compression: ['none'],
+        })
+        const ready = frames.find((frame) => frame.type === 'terminal_ready')
+        expect(ready?.payload).toMatchObject({ agentId, engineId: engine })
+        const streamId = ready?.payload.streamId
+        expect(typeof streamId).toBe('string')
+
+        const marker = `HARNESS_ENGINE_STREAM_${engine.toUpperCase()}`
+        await manager.handleFrame('matrix-client', 'terminal_input', {
+          streamId,
+          inputSeq: 0,
+          data: Buffer.from(`printf '${marker}\\n'\r`).toString('base64'),
+        })
+        await eventually(() => frames.some((frame) => {
+          if (frame.type !== 'terminal_output' || frame.payload.encoding !== 'none') return false
+          return Buffer.from(String(frame.payload.data), 'base64').includes(Buffer.from(marker))
+        }))
+
+        await manager.handleFrame('matrix-client', 'terminal_resize', {
+          streamId,
+          resizeSeq: 0,
+          cols: 100 + index,
+          rows: 30,
+        })
+        expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}']))
+          .toBe(`${100 + index}x30`)
+        await manager.handleFrame('matrix-client', 'terminal_close', { streamId })
+      } finally {
+        await manager.stop()
+      }
+    }
+  }, 60_000)
 })
