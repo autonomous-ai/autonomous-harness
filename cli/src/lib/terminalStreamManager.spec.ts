@@ -190,21 +190,37 @@ describe('TerminalStreamManager', () => {
     expect(binarySent[0].frame.seq).toBe(0)
   })
 
-  it('rejects a second controller and expires the first lease after heartbeat timeout', async () => {
+  it('takes over the first controller and expires the replacement lease after heartbeat timeout', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
     })
+    const firstStream = stream
+    const firstStreamId = sent.findLast((frame) => frame.type === 'terminal_ready')?.payload.streamId as string
     await manager.handleFrame('web-2', 'terminal_open', {
       requestId: 'open-2', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
     })
-    expect(sent.at(-1)?.payload.code).toBe('CONTROL_LEASE_HELD')
+    expect(firstStream.closed).toBe(true)
+    expect(sent.some((frame) => frame.connId === 'web-1'
+      && frame.type === 'terminal_closed'
+      && frame.payload.code === 'TERMINAL_TAKEN_OVER')).toBe(true)
+    expect(sent.findLast((frame) => frame.type === 'terminal_ready')?.connId).toBe('web-2')
+    await manager.handleBinary('web-1', {
+      kind: TerminalBinaryKind.input,
+      streamId: firstStreamId,
+      seq: 0,
+      compressed: false,
+      bytes: Buffer.from('stale input'),
+    })
+    expect(stream.writes).toHaveLength(0)
 
     await vi.advanceTimersByTimeAsync(30_000)
     expect(stream.closed).toBe(true)
-    expect(sent.some((frame) => frame.type === 'terminal_closed' && frame.payload.reason === 'heartbeat timeout')).toBe(true)
+    expect(sent.some((frame) => frame.connId === 'web-2'
+      && frame.type === 'terminal_closed'
+      && frame.payload.reason === 'heartbeat timeout')).toBe(true)
   })
 
-  it('rejects a second agent alias that resolves to the same tmux pane', async () => {
+  it('takes over a second agent alias that resolves to the same tmux pane', async () => {
     agents.set('agent-alias', session('claude', 'agent-alias'))
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
@@ -212,7 +228,10 @@ describe('TerminalStreamManager', () => {
     await manager.handleFrame('web-2', 'terminal_open', {
       requestId: 'open-2', protocolVersion: 3, agentId: 'agent-alias', cols: 100, rows: 30,
     })
-    expect(sent.at(-1)?.payload.code).toBe('CONTROL_LEASE_HELD')
+    expect(sent.some((frame) => frame.connId === 'web-1'
+      && frame.type === 'terminal_closed'
+      && frame.payload.code === 'TERMINAL_TAKEN_OVER')).toBe(true)
+    expect(sent.findLast((frame) => frame.type === 'terminal_ready')?.connId).toBe('web-2')
   })
 
   it('uses frequent ACKs rather than the five-second heartbeat for output backpressure', async () => {

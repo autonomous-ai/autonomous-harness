@@ -14,12 +14,14 @@
 
 import { WebSocket } from 'ws'
 import { stat, readFile } from 'fs/promises'
-import { join } from 'path'
+import { isAbsolute, join } from 'path'
 import { hostname } from 'os'
 import { createHash } from 'crypto'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
+import { ENGINES, type AgentEngine } from './engines/types.js'
+import { listDir } from './lib/fsBrowse.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -274,6 +276,10 @@ export class BackendSocket {
   /** Called when the web deletes an agent (`agent_delete`) — cli.ts signals only the validated engine
    *  process and forgets the session. Keeps recap + agent name. */
   onDeleteAgent: ((sessionId: string) => void) | null = null
+  /** Called on `agent_create` — cli.ts spawns a fresh tmux session running the requested engine in the
+   *  requested folder and returns the registered session once discovery has picked it up. */
+  onCreateAgent: ((input: { engine: AgentEngine; cwd: string; bypassPermission: boolean }) =>
+    Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string }>) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -1130,10 +1136,17 @@ export class BackendSocket {
           return
         }
 
-        // A project is backed by an existing local terminal agent; the web/device cannot create one remotely.
-        case 'agent_create':
-          reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' })
+        case 'agent_create': {
+          const engine = payload.engine as AgentEngine | undefined
+          const cwd = payload.cwd as string | undefined
+          if (!engine || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
+          if (!cwd || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const result = await this.onCreateAgent({ engine, cwd, bypassPermission: payload.bypassPermission === true })
+          if (!result.ok) { reply(type, requestId, { error: result.error }); return }
+          reply(type, requestId, { agent: await this.toProject(result.session) })
           return
+        }
 
         // Delete an agent: signal its validated engine process and drop it from the list. Idempotent — an already
         // gone target still acks + re-emits agent_deleted so the web/device converge. E2EE-gated (the
@@ -1154,6 +1167,15 @@ export class BackendSocket {
           if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
           try { reply(type, requestId, { files: listFileTree(s.cwd) }) }
           catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'FILE_TREE_ERROR' }) }
+          return
+        }
+
+        case 'fs_list_dir': {
+          // One-level remote directory listing for the New Agent folder browser.
+          const path = typeof payload.path === 'string' ? payload.path : ''
+          const result = listDir(path)
+          if ('error' in result) { reply(type, requestId, { error: result.error }); return }
+          reply(type, requestId, { ...result })
           return
         }
 

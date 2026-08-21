@@ -75,6 +75,9 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     const args = ['new-session', '-d', '-P', '-F', '#{pane_id}']
     if (request.cwd) args.push('-c', request.cwd)
     if (request.label) args.push('-s', request.label)
+    // Trailing args after this point become the session's shell-command. tmux execs them directly
+    // (no shell interposed) when given as separate argv elements, so no quoting/escaping is needed.
+    if (request.command?.length) args.push(...request.command)
     const result = await new Promise<{ error: NodeJS.ErrnoException | null; stdout: string }>((resolve) => {
       execFile('tmux', args, { timeout: 5_000 }, (error, stdout) => resolve({
         error: error as NodeJS.ErrnoException | null,

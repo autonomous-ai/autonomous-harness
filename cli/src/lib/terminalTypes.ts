@@ -62,6 +62,8 @@ export type TerminalActionResult =
 export interface TerminalCreateRequest {
   cwd?: string
   label?: string
+  /** argv (binary first) to run instead of the backend's default shell, e.g. an engine CLI launch. */
+  command?: string[]
 }
 
 export type TerminalCreateResult<Ref extends TerminalRuntimeRef = TerminalRuntimeRef> =

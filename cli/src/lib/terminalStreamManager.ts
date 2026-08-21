@@ -103,6 +103,9 @@ export class TerminalStreamManager {
   private readonly streams = new Map<string, ActiveStream>()
   private readonly controllerByAgent = new Map<string, string>()
   private readonly controllerByPlacement = new Map<string, string>()
+  // Terminal opens from different backend connections can arrive concurrently. Serialize opens for
+  // the same tmux placement so takeover is deterministic and never leaves two live controllers.
+  private readonly leaseLocks = new Map<string, Promise<void>>()
   private readonly now: () => number
   private readonly expiryTimer: ReturnType<typeof setInterval>
 
@@ -110,6 +113,20 @@ export class TerminalStreamManager {
     this.now = deps.now ?? (() => Date.now())
     this.expiryTimer = setInterval(() => this.expireLeases(), 5_000)
     this.expiryTimer.unref?.()
+  }
+
+  private async withLeaseLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.leaseLocks.get(key) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => { release = resolve })
+    this.leaseLocks.set(key, current)
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+      if (this.leaseLocks.get(key) === current) this.leaseLocks.delete(key)
+    }
   }
 
   async handleFrame(connId: string, type: string, payload: FramePayload): Promise<boolean> {
@@ -201,11 +218,6 @@ export class TerminalStreamManager {
       this.sendError(connId, 'TERMINAL_ENGINE_UNSUPPORTED', { requestId })
       return
     }
-    const controller = this.controllerByAgent.get(session.agentId)
-    if (controller && controller !== connId) {
-      this.sendError(connId, 'CONTROL_LEASE_HELD', { requestId })
-      return
-    }
     const streamRuntime = session.runtimes.find((runtime) => runtime.backend === 'tmux'
       && terminalRouteKey(runtime) === session.primaryRuntimeKey)
       ?? session.runtimes.find((runtime) => runtime.backend === 'tmux')
@@ -214,104 +226,103 @@ export class TerminalStreamManager {
       return
     }
     const reservedPlacement = terminalPlacementKey(streamRuntime)
-    const placementController = this.controllerByPlacement.get(reservedPlacement)
-    if (placementController && placementController !== connId) {
-      this.sendError(connId, 'CONTROL_LEASE_HELD', { requestId })
-      return
-    }
+    await this.withLeaseLock(reservedPlacement, async () => {
+      // A terminal is single-controller. A later client explicitly wins the lease and the incumbent
+      // receives a targeted close notification; it must not be broadcast to other clients.
+      await this.closeStreamsForTakeover(session.agentId, reservedPlacement, connId)
+      await this.closeConnection(connId, 'replaced', false)
+      this.controllerByAgent.set(session.agentId, connId)
+      this.controllerByPlacement.set(reservedPlacement, connId)
+      const streamId = randomUUID()
+      const buffered: Buffer[] = []
+      let state: ActiveStream | null = null
+      let opened: Awaited<ReturnType<TerminalBackendCoordinator['openStream']>>
+      try {
+        opened = await this.deps.terminals.openStream(session, size, {
+          onData: (bytes) => {
+            if (state) this.onOutput(state, bytes)
+            else buffered.push(Buffer.from(bytes))
+          },
+          onClose: (reason) => {
+            if (state) void this.closeStream(state, reason, true)
+          },
+        })
+      } catch {
+        if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
+        if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
+        this.sendError(connId, 'TERMINAL_OPEN_FAILED', { requestId })
+        return
+      }
+      if (opened.state !== 'succeeded') {
+        if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
+        if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
+        this.sendError(connId, opened.reason, { requestId })
+        return
+      }
 
-    await this.closeConnection(connId, 'replaced', false)
-    this.controllerByAgent.set(session.agentId, connId)
-    this.controllerByPlacement.set(reservedPlacement, connId)
-    const streamId = randomUUID()
-    const buffered: Buffer[] = []
-    let state: ActiveStream | null = null
-    let opened: Awaited<ReturnType<TerminalBackendCoordinator['openStream']>>
-    try {
-      opened = await this.deps.terminals.openStream(session, size, {
-        onData: (bytes) => {
-          if (state) this.onOutput(state, bytes)
-          else buffered.push(Buffer.from(bytes))
-        },
-        onClose: (reason) => {
-          if (state) void this.closeStream(state, reason, true)
-        },
-      })
-    } catch {
-      if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
-      if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
-      this.sendError(connId, 'TERMINAL_OPEN_FAILED', { requestId })
-      return
-    }
-    if (opened.state !== 'succeeded') {
-      if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
-      if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
-      this.sendError(connId, opened.reason, { requestId })
-      return
-    }
+      const placementKey = terminalPlacementKey(opened.value.runtime)
+      const actualController = this.controllerByPlacement.get(placementKey)
+      if (actualController && actualController !== connId) {
+        if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
+        if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
+        await opened.value.close().catch(() => { /* best effort */ })
+        this.sendError(connId, 'CONTROL_LEASE_HELD', { requestId })
+        return
+      }
+      if (reservedPlacement !== placementKey && this.controllerByPlacement.get(reservedPlacement) === connId) {
+        this.controllerByPlacement.delete(reservedPlacement)
+      }
+      this.controllerByPlacement.set(placementKey, connId)
 
-    const placementKey = terminalPlacementKey(opened.value.runtime)
-    const actualController = this.controllerByPlacement.get(placementKey)
-    if (actualController && actualController !== connId) {
-      if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
-      if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
-      await opened.value.close().catch(() => { /* best effort */ })
-      this.sendError(connId, 'CONTROL_LEASE_HELD', { requestId })
-      return
-    }
-    if (reservedPlacement !== placementKey && this.controllerByPlacement.get(reservedPlacement) === connId) {
-      this.controllerByPlacement.delete(reservedPlacement)
-    }
-    this.controllerByPlacement.set(placementKey, connId)
-
-    const requestedCompression = Array.isArray(payload.compression) ? payload.compression : []
-    state = {
-      connId,
-      streamId,
-      agentId: session.agentId,
-      engineId: session.engine,
-      placementKey,
-      handle: opened.value,
-      compression: requestedCompression.includes('zlib') ? 'zlib' : 'none',
-      expiresAt: this.now() + HEARTBEAT_TIMEOUT_MS,
-      lastSyncAt: this.now(),
-      nextSeq: 0,
-      lastInputSeq: -1,
-      lastResizeSeq: -1,
-      pending: [],
-      pendingBytes: 0,
-      output: buffered,
-      outputBytes: buffered.reduce((sum, chunk) => sum + chunk.length, 0),
-      flushTimer: null,
-      snapshotting: false,
-      resyncing: false,
-      closing: false,
-      outputPaused: false,
-      stallTimer: null,
-      openedAt: this.now(),
-      outputFrames: 0,
-      outputPlainBytes: 0,
-      keyframes: 0,
-      syncFrames: 0,
-      resyncs: 0,
-      peakBufferedBytes: 0,
-      pausedAt: null,
-      pausedMs: 0,
-    }
-    this.streams.set(streamId, state)
-    if (!this.deps.sendTarget(connId, 'terminal_ready', {
-      requestId,
-      protocolVersion: PROTOCOL_VERSION,
-      streamId,
-      agentId: session.agentId,
-      engineId: session.engine,
-      backend: 'tmux',
-    })) {
-      await this.closeStream(state, 'backend disconnected', false)
-      return
-    }
-    this.diagnostic(state, 'opened', { cols: size.cols, rows: size.rows, compression: state.compression })
-    await this.sendKeyframe(state)
+      const requestedCompression = Array.isArray(payload.compression) ? payload.compression : []
+      state = {
+        connId,
+        streamId,
+        agentId: session.agentId,
+        engineId: session.engine,
+        placementKey,
+        handle: opened.value,
+        compression: requestedCompression.includes('zlib') ? 'zlib' : 'none',
+        expiresAt: this.now() + HEARTBEAT_TIMEOUT_MS,
+        lastSyncAt: this.now(),
+        nextSeq: 0,
+        lastInputSeq: -1,
+        lastResizeSeq: -1,
+        pending: [],
+        pendingBytes: 0,
+        output: buffered,
+        outputBytes: buffered.reduce((sum, chunk) => sum + chunk.length, 0),
+        flushTimer: null,
+        snapshotting: false,
+        resyncing: false,
+        closing: false,
+        outputPaused: false,
+        stallTimer: null,
+        openedAt: this.now(),
+        outputFrames: 0,
+        outputPlainBytes: 0,
+        keyframes: 0,
+        syncFrames: 0,
+        resyncs: 0,
+        peakBufferedBytes: 0,
+        pausedAt: null,
+        pausedMs: 0,
+      }
+      this.streams.set(streamId, state)
+      if (!this.deps.sendTarget(connId, 'terminal_ready', {
+        requestId,
+        protocolVersion: PROTOCOL_VERSION,
+        streamId,
+        agentId: session.agentId,
+        engineId: session.engine,
+        backend: 'tmux',
+      })) {
+        await this.closeStream(state, 'backend disconnected', false)
+        return
+      }
+      this.diagnostic(state, 'opened', { cols: size.cols, rows: size.rows, compression: state.compression })
+      await this.sendKeyframe(state)
+    })
   }
 
   private streamFor(connId: string, payload: FramePayload): ActiveStream | null {
@@ -613,7 +624,24 @@ export class TerminalStreamManager {
     })
   }
 
-  private async closeStream(state: ActiveStream, reason: string, notify: boolean): Promise<void> {
+  private async closeStreamsForTakeover(agentId: string, placementKey: string, nextConnId: string): Promise<void> {
+    const incumbents = [...this.streams.values()].filter((state) =>
+      !state.closing && state.connId !== nextConnId
+        && (state.agentId === agentId || state.placementKey === placementKey))
+    await Promise.all(incumbents.map((state) => this.closeStream(
+      state,
+      'another client connected',
+      true,
+      'TERMINAL_TAKEN_OVER',
+    )))
+  }
+
+  private async closeStream(
+    state: ActiveStream,
+    reason: string,
+    notify: boolean,
+    code?: string,
+  ): Promise<void> {
     if (state.closing) return
     state.closing = true
     if (state.pausedAt != null) state.pausedMs += Math.max(0, this.now() - state.pausedAt)
@@ -641,6 +669,7 @@ export class TerminalStreamManager {
       protocolVersion: PROTOCOL_VERSION,
       streamId: state.streamId,
       reason,
+      ...(code ? { code } : {}),
     })
   }
 

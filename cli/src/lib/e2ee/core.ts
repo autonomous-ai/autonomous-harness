@@ -350,6 +350,8 @@ export const ENCRYPTED_RPC_RESULT_TYPES = new Set<string>([
   // Device RPC replies that carry adapter content (recap headline/body, new agent name). Must be
   // ciphertext so the backend relay can't read them — device↔adapter E2EE parity with web.
   'agent_recent_result', 'agent_create_result',
+  // A remote-machine directory listing (New Agent folder browser) — leaks filesystem layout if plaintext.
+  'fs_list_dir_result',
 ])
 /** Client→adapter frames that carry or can trigger adapter-local user data. */
 export const ENCRYPTED_DOWN_TYPES = new Set<string>([
@@ -361,6 +363,7 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   'question_response',
   'agents_list', 'sessions_list', 'session_get', 'models_list',
   'agent_create', 'agent_delete', 'agent_recent', 'agent_update', 'agent_files', 'agent_read_file',
+  'fs_list_dir',
   'device_e2ee_pair', 'e2ee_pairings_list', 'e2ee_pairing_unpair',
   'e2ee_pairings_unpair_all', 'e2ee_browser_link_create',
   // Remote terminal control is always pairwise E2EE. The relay may route by outer type/connId but must

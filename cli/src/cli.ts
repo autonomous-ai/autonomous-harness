@@ -28,6 +28,7 @@ import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCu
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
+import { buildEngineLaunchArgv } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
@@ -2305,6 +2306,38 @@ async function runForeground(token: string): Promise<void> {
     stopHeartbeat(sessionId)
     questionWatcher.stop(sessionId)
     mirror.cancel(sessionId) // close the device's "Working…" tile (bare done, no recap) — a cancel emits no turn_ended
+  }
+
+  /**
+   * Web requested a new agent (`agent_create`): spawn a fresh tmux session running the chosen engine in
+   * the chosen folder, then hand it to the SAME discovery path organic sessions go through
+   * (`agentReconciler.triggerHint` → `onDiscovered` → registry + `announceSession`) rather than
+   * duplicating registration here.
+   *
+   * The freshly-exec'd engine process may not be visible to `ps` the instant tmux returns, so one probe
+   * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
+   */
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission }) => {
+    if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
+    try {
+      if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
+    } catch {
+      return { ok: false, error: 'CWD_NOT_FOUND' }
+    }
+    const label = `${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    const spawned = await tmuxBackend.create({
+      cwd,
+      label,
+      command: buildEngineLaunchArgv(engine, { bypassPermission }),
+    })
+    if (spawned.state !== 'succeeded') return { ok: false, error: 'SPAWN_FAILED' }
+    for (const delayMs of [150, 400, 800]) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      await agentReconciler.triggerHint(spawned.runtime, engine)
+      const session = registry.byRuntimeEngine(spawned.runtime, engine)
+      if (session) return { ok: true, session }
+    }
+    return { ok: false, error: 'ENGINE_DID_NOT_START' }
   }
 
   /**
