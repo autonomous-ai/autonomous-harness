@@ -3,6 +3,7 @@ import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
+import { registry, type RegisteredSession } from './lib/registry.js'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -171,6 +172,56 @@ describe('BackendSocket outbound queue', () => {
     })
     expect(wrapReply).toHaveBeenCalledWith('web-1', 'models_list_result', 'models-1', {
       models: [{ id: 'runtime-v1:s1:codex:gpt-5.6-sol@high', displayName: 'GPT-5.6 Sol / High' }],
+    })
+    await socket.stop()
+  })
+
+  it('includes engine session correlation in the web agent list', async () => {
+    const session: RegisteredSession = {
+      schemaVersion: 2,
+      active: true,
+      agentId: 'agent-1',
+      sessionId: 'session-1',
+      boundAt: 1,
+      engine: 'codex',
+      transcriptPath: null,
+      projectDir: 'workspace',
+      cwd: '/tmp/workspace',
+      runtimes: [],
+      primaryRuntimeKey: '',
+      tmuxPane: '',
+      source: null,
+      title: 'Agent one',
+      model: null,
+      cliVersion: null,
+      processIdentity: null,
+      registeredAt: 1,
+      updatedAt: 1,
+      lastHookAt: 1,
+      lastTranscriptAt: 1,
+    }
+    vi.spyOn(registry, 'active').mockReturnValue([session])
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    vi.spyOn(socket.e2ee, 'unwrapDown').mockReturnValue({
+      type: 'agents_list', payload: { requestId: 'agents-1' },
+    })
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'agents_list_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
+    })
+    ws.message({
+      t: 'down',
+      connId: 'web-1',
+      frame: { type: 'agents_list', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } } },
+    })
+
+    await vi.waitFor(() => {
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'agents_list_result', 'agents-1', {
+        agents: [expect.objectContaining({ id: 'agent-1', sessionId: 'session-1', engine: 'codex' })],
+      })
     })
     await socket.stop()
   })

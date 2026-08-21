@@ -107,6 +107,7 @@ import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager } from './lib/runtimeProfile.js'
 import { RuntimeProfileController } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
+import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
 import {
   installTimestampedConsole, sid, preview,
   prepareLogFile, trimLogFile, LOG_CHECK_INTERVAL_MS,
@@ -1370,12 +1371,7 @@ async function runForeground(token: string): Promise<void> {
       // Web: unchanged — heartbeat only while the turn itself is open (summarizing uses turn_summary_pending).
       if (turnOpen) {
         const agentId = agentIdFor(sessionId)
-        backend.send({
-          type: 'turn_heartbeat',
-          agentId,
-          dbSessionId: sessionId,
-          payload: { agentId, sessionId },
-        })
+        backend.send(turnHeartbeatFrame(sessionId, agentId))
       }
       // Self-cancel only once the turn is closed AND the summarize is done (no more device heartbeat needed).
       if (!turnOpen && !deviceBusy) stopHeartbeat(sessionId)
@@ -1387,12 +1383,7 @@ async function runForeground(token: string): Promise<void> {
     if (!events.length || !registry.bySession(sessionId)?.active) return
     for (const event of events) {
       const agentId = agentIdFor(sessionId)
-      backend.send({
-        ...event,
-        agentId,
-        dbSessionId: sessionId,
-        payload: { ...event.payload, agentId, sessionId },
-      })
+      backend.send(correlateAgentEvent(event, sessionId, agentId))
       if (event.type === 'turn_started') {
         turnStartedAt.set(sessionId, Date.now())
         // Analytics: count HERE, inside the one funnel every engine's normalizer feeds and BEFORE
