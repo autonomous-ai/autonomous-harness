@@ -16,10 +16,10 @@ function tmux(args: string[]): Promise<string> {
   })
 }
 
-async function eventually(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+async function eventually(predicate: () => boolean | Promise<boolean>, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
-  expect(predicate()).toBe(true)
+  while (!await predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(await predicate()).toBe(true)
 }
 
 run('TmuxControlStream real tmux', () => {
@@ -44,13 +44,25 @@ run('TmuxControlStream real tmux', () => {
     expect(opened.state).toBe('succeeded')
     if (opened.state !== 'succeeded') return
 
+    const snapshotMarker = 'HARNESS_SNAPSHOT_OK'
+    await opened.value.writeRaw(Buffer.from(`printf '${snapshotMarker}\\n'\r`))
+    await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes(snapshotMarker))
+    opened.value.beginSnapshot()
     const snapshot = await opened.value.snapshot(100)
     expect(snapshot.state).toBe('succeeded')
     if (snapshot.state === 'succeeded') {
       expect(snapshot.value.cols).toBe(96)
       expect(snapshot.value.rows).toBe(28)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from('\u001bc'))).toBe(true)
+      expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(snapshotMarker))).toBe(true)
     }
+
+    const postCutMarker = 'HARNESS_POST_CUT_OK'
+    await opened.value.writeRaw(Buffer.from(`printf '${postCutMarker}\\n'\r`))
+    await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes(postCutMarker))
+    expect(Buffer.concat(chunks).includes(Buffer.from(postCutMarker))).toBe(false)
+    opened.value.endSnapshot()
+    await eventually(() => Buffer.concat(chunks).includes(Buffer.from(postCutMarker)))
 
     await opened.value.writeRaw(Buffer.from("printf 'HARNESS_STREAM_OK\\n'\r"))
     const deadline = Date.now() + 3_000
@@ -95,7 +107,7 @@ run('TmuxControlStream real tmux', () => {
       try {
         await manager.handleFrame('matrix-client', 'terminal_open', {
           requestId: `open-${engine}`,
-          protocolVersion: 2,
+          protocolVersion: 3,
           agentId,
           cols: 90 + index,
           rows: 24,

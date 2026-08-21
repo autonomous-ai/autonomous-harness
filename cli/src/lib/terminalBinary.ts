@@ -2,7 +2,7 @@ import { aeadOpen, aeadSeal, utf8 } from './e2ee/core.js'
 import { hkdf } from '@noble/hashes/hkdf'
 import { sha256 } from '@noble/hashes/sha2'
 
-export const TERMINAL_BINARY_VERSION = 2
+export const TERMINAL_BINARY_VERSION = 3
 export const TERMINAL_BINARY_HEADER_BYTES = 20
 export const TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES = 512 * 1024
 export const TERMINAL_HOP_HEADER_BYTES = 24
@@ -11,6 +11,7 @@ export const enum TerminalBinaryKind {
   input = 1,
   output = 2,
   keyframe = 3,
+  sync = 4,
 }
 
 export interface TerminalBinaryClear {
@@ -34,7 +35,7 @@ export interface TerminalBinaryEnvelope {
 const MAGIC = Uint8Array.of(0x48, 0x54, 0x52, 0x4d) // HTRM
 const HOP_MAGIC = Uint8Array.of(0x48, 0x54, 0x52, 0x48) // HTRH
 const FLAG_ZLIB = 1
-const TERMINAL_KEY_INFO = utf8('harness-terminal-binary-v2')
+const TERMINAL_KEY_INFO = utf8('harness-terminal-binary-v3')
 
 /** Keep binary terminal nonces independent from JSON control-frame nonces. */
 export function deriveTerminalBinaryKey(sessionKey: Uint8Array): Uint8Array {
@@ -58,19 +59,24 @@ function uuidString(bytes: Uint8Array): string {
 }
 
 function validKind(value: number): value is TerminalBinaryKind {
-  return value === TerminalBinaryKind.input || value === TerminalBinaryKind.output || value === TerminalBinaryKind.keyframe
+  return value === TerminalBinaryKind.input
+    || value === TerminalBinaryKind.output
+    || value === TerminalBinaryKind.keyframe
+    || value === TerminalBinaryKind.sync
 }
 
 export function terminalBinaryType(kind: TerminalBinaryKind): string {
   if (kind === TerminalBinaryKind.input) return 'terminal_input'
   if (kind === TerminalBinaryKind.output) return 'terminal_output'
-  return 'terminal_keyframe'
+  if (kind === TerminalBinaryKind.keyframe) return 'terminal_keyframe'
+  return 'terminal_sync'
 }
 
 export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | null {
   const id = uuidBytes(frame.streamId)
   if (!id || !Number.isSafeInteger(frame.seq) || frame.seq < 0) return null
-  if (frame.kind === TerminalBinaryKind.input && frame.compressed) return null
+  if ((frame.kind === TerminalBinaryKind.input || frame.kind === TerminalBinaryKind.sync) && frame.compressed) return null
+  if (frame.kind === TerminalBinaryKind.sync && frame.bytes.length !== 0) return null
   const metaBytes = frame.kind === TerminalBinaryKind.keyframe ? 28 : 24
   const out = new Uint8Array(metaBytes + frame.bytes.length)
   out.set(id, 0)
@@ -87,9 +93,10 @@ export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | nu
 }
 
 export function decodeTerminalPlain(kind: TerminalBinaryKind, flags: number, plaintext: Uint8Array): TerminalBinaryClear | null {
-  if ((flags & ~FLAG_ZLIB) !== 0 || (kind === TerminalBinaryKind.input && flags !== 0)) return null
+  if ((flags & ~FLAG_ZLIB) !== 0
+    || ((kind === TerminalBinaryKind.input || kind === TerminalBinaryKind.sync) && flags !== 0)) return null
   const metaBytes = kind === TerminalBinaryKind.keyframe ? 28 : 24
-  if (plaintext.length < metaBytes) return null
+  if (plaintext.length < metaBytes || (kind === TerminalBinaryKind.sync && plaintext.length !== metaBytes)) return null
   const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)
   const seq = safeU64(view, 16)
   if (seq == null) return null

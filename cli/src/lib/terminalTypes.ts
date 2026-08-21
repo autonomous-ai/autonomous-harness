@@ -136,7 +136,11 @@ export interface TerminalStreamSink {
 /** A live byte-oriented terminal stream. Implementations must preserve input/output order. */
 export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalRuntimeRef> {
   readonly runtime: Ref
+  /** Gate live output before taking an ordered snapshot. */
+  beginSnapshot(): void
   snapshot(historyLines: number): Promise<TerminalReadResult<TerminalStreamSnapshot>>
+  /** Release output produced strictly after the snapshot cut. */
+  endSnapshot(): void
   writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>
   resize(size: TerminalStreamSize): Promise<TerminalActionResult>
   pauseOutput(): Promise<TerminalActionResult>

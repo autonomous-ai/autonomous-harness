@@ -10,10 +10,10 @@ import {
 const key = Uint8Array.from({ length: 32 }, (_, index) => index)
 const streamId = '00112233-4455-6677-8899-aabbccddeeff'
 
-describe('terminal binary protocol v2', () => {
+describe('terminal binary protocol v3', () => {
   it('derives the cross-platform terminal key in its own nonce domain', () => {
     expect(Buffer.from(deriveTerminalBinaryKey(key)).toString('hex')).toBe(
-      '319355ec420991f1458c3a0fb5e4b38a6475f227ec166cd8754e721ab827a733',
+      'f15a4e3a9c616916c38980baf864db0c65e282ebe7cd64a18aa0f723a6e254f5',
     )
   })
 
@@ -56,6 +56,30 @@ describe('terminal binary protocol v2', () => {
       rows: 43,
       compressed: true,
     })
+  })
+
+  it('round-trips an empty uncompressed sync frame', () => {
+    const sealed = sealTerminalBinary(key, 10, {
+      kind: TerminalBinaryKind.sync,
+      streamId,
+      seq: 13,
+      bytes: new Uint8Array(),
+      compressed: false,
+    })!
+    expect(openTerminalBinary(key, sealed)?.frame).toEqual({
+      kind: TerminalBinaryKind.sync,
+      streamId,
+      seq: 13,
+      bytes: new Uint8Array(),
+      compressed: false,
+    })
+    expect(sealTerminalBinary(key, 11, {
+      kind: TerminalBinaryKind.sync,
+      streamId,
+      seq: 14,
+      bytes: Uint8Array.of(1),
+      compressed: false,
+    })).toBeNull()
   })
 
   it('rejects tamper, truncation and unsupported flags', () => {

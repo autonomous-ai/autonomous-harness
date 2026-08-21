@@ -18,7 +18,13 @@ const MAX_COLS = 300
 const MIN_ROWS = 12
 const MAX_ROWS = 120
 const SMALL_INPUT_BYTES = 4 * 1024
-const CONTROL_OUTPUT_SETTLE_MS = 24
+const CONTROL_COMMAND_TIMEOUT_MS = 3_000
+const SNAPSHOT_BUFFER_MAX_BYTES = 2 * 1024 * 1024
+const PANE_META_FORMAT = [
+  '#{session_id}', '#{window_id}', '#{window_panes}', '#{window_width}', '#{window_height}',
+  '#{pane_width}', '#{pane_height}', '#{alternate_on}', '#{cursor_x}', '#{cursor_y}',
+  '#{mouse_standard_flag}', '#{mouse_button_flag}', '#{mouse_all_flag}', '#{mouse_utf8_flag}', '#{mouse_sgr_flag}',
+].join('|')
 
 interface PaneMeta {
   sessionId: string
@@ -38,6 +44,15 @@ interface PaneMeta {
   mouseSgr: boolean
 }
 
+interface PendingControlCommand {
+  command: string
+  lines: Buffer[]
+  commandNumber: string | null
+  timer: ReturnType<typeof setTimeout> | null
+  onEnd?: () => void
+  resolve: (result: { ok: boolean; stdout: Buffer }) => void
+}
+
 function boundedSize(size: TerminalStreamSize): TerminalStreamSize {
   return {
     cols: Math.max(MIN_COLS, Math.min(MAX_COLS, Math.floor(size.cols))),
@@ -54,14 +69,13 @@ function execTmux(args: string[], timeout = 2_000): Promise<{ ok: boolean; stdou
 }
 
 async function paneMeta(paneId: string): Promise<PaneMeta | null> {
-  const format = [
-    '#{session_id}', '#{window_id}', '#{window_panes}', '#{window_width}', '#{window_height}',
-    '#{pane_width}', '#{pane_height}', '#{alternate_on}', '#{cursor_x}', '#{cursor_y}',
-    '#{mouse_standard_flag}', '#{mouse_button_flag}', '#{mouse_all_flag}', '#{mouse_utf8_flag}', '#{mouse_sgr_flag}',
-  ].join('|')
-  const result = await execTmux(['display-message', '-p', '-t', paneId, format])
+  const result = await execTmux(['display-message', '-p', '-t', paneId, PANE_META_FORMAT])
   if (!result.ok) return null
-  const fields = result.stdout.toString('utf8').trim().split('|')
+  return parsePaneMeta(result.stdout)
+}
+
+function parsePaneMeta(bytes: Uint8Array): PaneMeta | null {
+  const fields = Buffer.from(bytes).toString('utf8').trim().split('|')
   if (fields.length !== 15 || !/^\$\d+$/.test(fields[0]) || !/^@\d+$/.test(fields[1])) return null
   const nums = fields.slice(2).map(Number)
   if (nums.some((value) => !Number.isFinite(value))) return null
@@ -226,9 +240,14 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private lineBuffer = Buffer.alloc(0)
   private closed = false
   private closeNotified = false
-  private outputPaused = false
   private original: PaneMeta
   private lastApplied: TerminalStreamSize | null = null
+  private commandActive: PendingControlCommand | null = null
+  private readonly commandQueue: PendingControlCommand[] = []
+  private operationTail: Promise<void> = Promise.resolve()
+  private snapshotGated = false
+  private snapshotPostCut: Buffer[] = []
+  private snapshotPostCutBytes = 0
 
   private constructor(
     paneId: string,
@@ -281,53 +300,175 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private onControlLine(line: Buffer): void {
     const output = parseTmuxControlOutput(line)
     if (output) {
-      if (output.paneId === this.runtime.paneId) this.sink.onData(output.data)
+      if (output.paneId === this.runtime.paneId) this.routeOutput(output.data)
       return
     }
     const text = line.toString('ascii')
-    const paused = /^%pause\s+(%\d+)$/.exec(text)
-    if (paused?.[1] === this.runtime.paneId && !this.closed && !this.outputPaused) {
-      this.child.stdin.write(`refresh-client -A ${this.runtime.paneId}:continue\n`)
+    const begin = /^%begin\s+\d+\s+(\d+)\s+\d+$/.exec(text)
+    if (begin) {
+      if (this.commandActive && this.commandActive.commandNumber == null) {
+        this.commandActive.commandNumber = begin[1]
+      }
       return
     }
-    if (text.startsWith('%exit')) this.notifyClose(this.closed ? 'closed' : 'tmux pane/control client closed')
+    const completed = /^%(end|error)\s+\d+\s+(\d+)\s+\d+$/.exec(text)
+    if (completed) {
+      const active = this.commandActive
+      if (active?.commandNumber === completed[2]) {
+        if (completed[1] === 'end') active.onEnd?.()
+        this.finishControlCommand(active, completed[1] === 'end')
+      }
+      return
+    }
+    const paused = /^%pause\s+(%\d+)$/.exec(text)
+    if (paused?.[1] === this.runtime.paneId && !this.closed) {
+      // Manual tmux pause drops pane bytes rather than replaying them. Never
+      // use it for app backpressure; recover an unexpected pause immediately.
+      void this.runControlCommand(`refresh-client -A '${this.runtime.paneId}:continue'`)
+      return
+    }
+    if (text.startsWith('%exit')) {
+      this.failControlCommands()
+      this.notifyClose(this.closed ? 'closed' : 'tmux pane/control client closed')
+      return
+    }
+    // tmux escapes command output that starts with `%` as `%%`. Every other
+    // leading-percent line is an asynchronous control-mode notification and
+    // must not be mixed into a command response.
+    if (text.startsWith('%') && !text.startsWith('%%')) return
+    if (this.commandActive?.commandNumber != null) this.commandActive.lines.push(Buffer.from(line))
+  }
+
+  private routeOutput(bytes: Uint8Array): void {
+    if (!this.snapshotGated) {
+      this.sink.onData(bytes)
+      return
+    }
+    const chunk = Buffer.from(bytes)
+    this.snapshotPostCut.push(chunk)
+    this.snapshotPostCutBytes += chunk.length
+    if (this.snapshotPostCutBytes > SNAPSHOT_BUFFER_MAX_BYTES) {
+      this.failControlCommands()
+      this.notifyClose('tmux snapshot output exceeded safe buffer limit')
+      void this.close()
+    }
+  }
+
+  private runControlCommand(command: string, onEnd?: () => void): Promise<{ ok: boolean; stdout: Buffer }> {
+    if (this.closed || !this.child.stdin.writable) return Promise.resolve({ ok: false, stdout: Buffer.alloc(0) })
+    return new Promise((resolve) => {
+      this.commandQueue.push({ command, lines: [], commandNumber: null, timer: null, onEnd, resolve })
+      this.pumpControlCommand()
+    })
+  }
+
+  private serializeOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation, operation)
+    this.operationTail = result.then(() => undefined, () => undefined)
+    return result
+  }
+
+  private pumpControlCommand(): void {
+    if (this.commandActive || this.closed) return
+    const next = this.commandQueue.shift()
+    if (!next) return
+    this.commandActive = next
+    next.timer = setTimeout(() => {
+      if (this.commandActive !== next) return
+      this.notifyClose('tmux control command timed out')
+      void this.close()
+    }, CONTROL_COMMAND_TIMEOUT_MS)
+    try {
+      this.child.stdin.write(`${next.command}\n`)
+    } catch {
+      this.finishControlCommand(next, false)
+    }
+  }
+
+  private finishControlCommand(command: PendingControlCommand, ok: boolean): void {
+    if (this.commandActive !== command) return
+    if (command.timer) clearTimeout(command.timer)
+    command.timer = null
+    this.commandActive = null
+    const chunks: Buffer[] = []
+    for (const line of command.lines) {
+      const escaped = line.subarray(0, 2).equals(Buffer.from('%%')) ? line.subarray(1) : line
+      chunks.push(Buffer.from(decodeTmuxControlBytes(escaped)), Buffer.from('\n'))
+    }
+    command.resolve({ ok, stdout: Buffer.concat(chunks) })
+    this.pumpControlCommand()
+  }
+
+  private failControlCommands(): void {
+    const active = this.commandActive
+    this.commandActive = null
+    const queuedCommands = this.commandQueue.splice(0)
+    if (active) {
+      if (active.timer) clearTimeout(active.timer)
+      active.timer = null
+      active.resolve({ ok: false, stdout: Buffer.alloc(0) })
+    }
+    for (const queued of queuedCommands) {
+      queued.resolve({ ok: false, stdout: Buffer.alloc(0) })
+    }
   }
 
   private notifyClose(reason: string): void {
     if (this.closeNotified) return
     this.closeNotified = true
+    this.failControlCommands()
     this.sink.onClose(reason)
   }
 
+  beginSnapshot(): void {
+    if (this.snapshotGated) return
+    this.snapshotGated = true
+    this.snapshotPostCut = []
+    this.snapshotPostCutBytes = 0
+  }
+
   async snapshot(historyLines: number): Promise<TerminalReadResult<TerminalStreamSnapshot>> {
-    const meta = await paneMeta(this.runtime.paneId)
-    if (!meta) return { state: 'failed', reason: 'tmux pane disappeared' }
-    const boundedHistory = Math.max(0, Math.min(1_000, Math.floor(historyLines)))
-    // -N is required for TUI fidelity: styled blank cells (for example the
-    // Codex input box background) live in trailing spaces that tmux otherwise
-    // trims from each captured row.
-    const args = ['capture-pane', '-p', '-e', '-N', '-t', this.runtime.paneId]
-    if (!meta.alternateOn && boundedHistory > 0) args.push('-S', `-${boundedHistory}`)
-    // Give resize-triggered TUI output a short window to enter the manager's
-    // snapshot buffer before capture, then drain notifications queued just
-    // behind capture-pane's callback. The manager recaptures when either side
-    // of this window observed a repaint.
-    await new Promise((resolve) => setTimeout(resolve, CONTROL_OUTPUT_SETTLE_MS))
-    const capture = await execTmux(args, 3_000)
-    if (!capture.ok) return { state: 'failed', reason: 'tmux snapshot failed' }
-    // capture-pane runs in a separate tmux client. Its exec callback can win
-    // the event-loop race against repaint notifications already queued for the
-    // control client. Keep the manager in snapshotting mode long enough to
-    // observe those late deltas; it will then discard them and recapture.
-    await new Promise((resolve) => setTimeout(resolve, CONTROL_OUTPUT_SETTLE_MS))
-    return {
-      state: 'succeeded',
-      value: {
-        bytes: synthesizeTmuxSnapshot(capture.stdout, meta),
-        cols: meta.paneWidth,
-        rows: meta.paneHeight,
-      },
-    }
+    return this.serializeOperation(async () => {
+      if (!this.snapshotGated) return { state: 'failed', reason: 'tmux snapshot gate is not active' }
+      const boundedHistory = Math.max(0, Math.min(1_000, Math.floor(historyLines)))
+      // -N is required for TUI fidelity: styled blank cells (for example the
+      // Codex input box background) live in trailing spaces that tmux otherwise
+      // trims from each captured row.
+      const baseCapture = `capture-pane -p -e -N -t ${this.runtime.paneId}`
+      const metadata = await this.runControlCommand(
+        `display-message -p -t ${this.runtime.paneId} '${PANE_META_FORMAT}'`,
+      )
+      if (!metadata.ok) return { state: 'failed', reason: 'tmux snapshot metadata is unavailable' }
+      const meta = parsePaneMeta(metadata.stdout)
+      if (!meta || meta.windowPanes !== 1) return { state: 'failed', reason: 'tmux snapshot metadata is invalid' }
+      const captureCommand = !meta.alternateOn && boundedHistory > 0
+        ? `${baseCapture} -S -${boundedHistory}`
+        : baseCapture
+      const capture = await this.runControlCommand(captureCommand, () => {
+        // `%end` is the ordered cut. Notifications observed before it are
+        // represented by capture-pane; only later output may follow the keyframe.
+        this.snapshotPostCut = []
+        this.snapshotPostCutBytes = 0
+      })
+      if (!capture.ok) return { state: 'failed', reason: 'tmux snapshot failed' }
+      return {
+        state: 'succeeded',
+        value: {
+          bytes: synthesizeTmuxSnapshot(capture.stdout, meta),
+          cols: meta.paneWidth,
+          rows: meta.paneHeight,
+        },
+      }
+    })
+  }
+
+  endSnapshot(): void {
+    if (!this.snapshotGated) return
+    this.snapshotGated = false
+    const postCut = this.snapshotPostCut
+    this.snapshotPostCut = []
+    this.snapshotPostCutBytes = 0
+    for (const chunk of postCut) this.sink.onData(chunk)
   }
 
   async writeRaw(bytes: Uint8Array): Promise<TerminalActionResult> {
@@ -339,39 +480,30 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   }
 
   async resize(requested: TerminalStreamSize): Promise<TerminalActionResult> {
-    if (this.closed) return terminalActionNotStarted('terminal stream is closed')
-    const meta = await paneMeta(this.runtime.paneId)
-    if (!meta) return terminalActionNotStarted('tmux pane disappeared')
-    if (meta.windowPanes !== 1) return terminalActionNotStarted('TERMINAL_MULTI_PANE_UNSUPPORTED')
-    const size = boundedSize(requested)
-    const result = await execTmux(['resize-window', '-t', meta.windowId, '-x', String(size.cols), '-y', String(size.rows)])
-    if (!result.ok) return terminalActionPossiblyExecuted('tmux resize did not complete')
-    this.lastApplied = size
-    return TERMINAL_ACTION_SUCCEEDED
+    return this.serializeOperation(async () => {
+      if (this.closed) return terminalActionNotStarted('terminal stream is closed')
+      const meta = await paneMeta(this.runtime.paneId)
+      if (!meta) return terminalActionNotStarted('tmux pane disappeared')
+      if (meta.windowPanes !== 1) return terminalActionNotStarted('TERMINAL_MULTI_PANE_UNSUPPORTED')
+      const size = boundedSize(requested)
+      const result = await execTmux(['resize-window', '-t', meta.windowId, '-x', String(size.cols), '-y', String(size.rows)])
+      if (!result.ok) return terminalActionPossiblyExecuted('tmux resize did not complete')
+      this.lastApplied = size
+      return TERMINAL_ACTION_SUCCEEDED
+    })
   }
 
   async pauseOutput(): Promise<TerminalActionResult> {
     if (this.closed || !this.child.stdin.writable) return terminalActionNotStarted('terminal stream is closed')
-    try {
-      this.outputPaused = true
-      this.child.stdin.write(`refresh-client -A ${this.runtime.paneId}:pause\n`)
-      return TERMINAL_ACTION_SUCCEEDED
-    } catch {
-      this.outputPaused = false
-      return terminalActionPossiblyExecuted('tmux output pause did not complete')
-    }
+    // TerminalStreamManager pauses downstream delivery while continuing to
+    // drain exact tmux bytes into its bounded FIFO. tmux's manual `pause`
+    // state is deliberately not used because it does not replay missed bytes.
+    return TERMINAL_ACTION_SUCCEEDED
   }
 
   async resumeOutput(): Promise<TerminalActionResult> {
     if (this.closed || !this.child.stdin.writable) return terminalActionNotStarted('terminal stream is closed')
-    try {
-      this.outputPaused = false
-      this.child.stdin.write(`refresh-client -A ${this.runtime.paneId}:continue\n`)
-      return TERMINAL_ACTION_SUCCEEDED
-    } catch {
-      this.outputPaused = true
-      return terminalActionPossiblyExecuted('tmux output resume did not complete')
-    }
+    return TERMINAL_ACTION_SUCCEEDED
   }
 
   async close(): Promise<void> {

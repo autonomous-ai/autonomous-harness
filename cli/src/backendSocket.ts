@@ -1238,12 +1238,13 @@ export class BackendSocket {
 
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */
   private async toProject(s: RegisteredSession): Promise<{
-    id: string; userId: string; name: string; status: string
+    id: string; sessionId: string; userId: string; name: string; status: string
     createdAt: string; updatedAt: string; tmuxPane: string | null; terminal: { primary: string; runtimes: RegisteredSession['runtimes'] }; engine: RegisteredSession['engine']; selectedModel: string | null
   }> {
     const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
     return {
       id: s.agentId,
+      sessionId: s.sessionId,
       userId: '',
       name: projectDisplayName(s),
       status: s.active ? 'active' : 'offline',

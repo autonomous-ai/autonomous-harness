@@ -9,17 +9,18 @@ import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.j
 
 type FramePayload = Record<string, unknown>
 
-const PROTOCOL_VERSION = 2
+const PROTOCOL_VERSION = 3
 const HEARTBEAT_TIMEOUT_MS = 30_000
+const SYNC_INTERVAL_MS = 5_000
 const OUTPUT_FLUSH_MS = 8
 const OUTPUT_CHUNK_BYTES = 32 * 1024
 const INPUT_MAX_BYTES = 64 * 1024
 const PAUSE_HIGH_WATERMARK_BYTES = 384 * 1024
 const RESUME_LOW_WATERMARK_BYTES = 128 * 1024
 const RENDER_STALL_TIMEOUT_MS = 10_000
+const MAX_TOTAL_BUFFERED_BYTES = 2 * 1024 * 1024
 const KEYFRAME_MAX_BYTES = 480 * 1024
 const KEYFRAME_HISTORY_ATTEMPTS = [1_000, 500, 250, 100, 0] as const
-const KEYFRAME_SETTLE_ATTEMPTS = 3
 const TERMINAL_ENGINES: ReadonlySet<string> = new Set(ENGINES)
 
 interface PendingOutput {
@@ -36,6 +37,7 @@ interface ActiveStream {
   handle: TerminalStreamHandle
   compression: 'none' | 'zlib'
   expiresAt: number
+  lastSyncAt: number
   nextSeq: number
   lastInputSeq: number
   lastResizeSeq: number
@@ -49,6 +51,15 @@ interface ActiveStream {
   closing: boolean
   outputPaused: boolean
   stallTimer: ReturnType<typeof setTimeout> | null
+  openedAt: number
+  outputFrames: number
+  outputPlainBytes: number
+  keyframes: number
+  syncFrames: number
+  resyncs: number
+  peakBufferedBytes: number
+  pausedAt: number | null
+  pausedMs: number
 }
 
 export interface TerminalStreamManagerDeps {
@@ -58,6 +69,7 @@ export interface TerminalStreamManagerDeps {
   sendBinaryTarget: (connId: string, frame: TerminalBinaryClear) => boolean
   streamingAvailable: boolean
   now?: () => number
+  diagnostic?: (event: string, fields: Record<string, unknown>) => void
 }
 
 function sizeFrom(payload: FramePayload): TerminalStreamSize | null {
@@ -149,6 +161,7 @@ export class TerminalStreamManager {
         resize: true,
         mouse: true,
         keyframe: true,
+        sync: true,
         compression: ['none', 'zlib'],
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
@@ -261,6 +274,7 @@ export class TerminalStreamManager {
       handle: opened.value,
       compression: requestedCompression.includes('zlib') ? 'zlib' : 'none',
       expiresAt: this.now() + HEARTBEAT_TIMEOUT_MS,
+      lastSyncAt: this.now(),
       nextSeq: 0,
       lastInputSeq: -1,
       lastResizeSeq: -1,
@@ -274,6 +288,15 @@ export class TerminalStreamManager {
       closing: false,
       outputPaused: false,
       stallTimer: null,
+      openedAt: this.now(),
+      outputFrames: 0,
+      outputPlainBytes: 0,
+      keyframes: 0,
+      syncFrames: 0,
+      resyncs: 0,
+      peakBufferedBytes: 0,
+      pausedAt: null,
+      pausedMs: 0,
     }
     this.streams.set(streamId, state)
     if (!this.deps.sendTarget(connId, 'terminal_ready', {
@@ -287,6 +310,7 @@ export class TerminalStreamManager {
       await this.closeStream(state, 'backend disconnected', false)
       return
     }
+    this.diagnostic(state, 'opened', { cols: size.cols, rows: size.rows, compression: state.compression })
     await this.sendKeyframe(state)
   }
 
@@ -349,7 +373,11 @@ export class TerminalStreamManager {
 
   private async resyncRequested(connId: string, payload: FramePayload): Promise<void> {
     const state = this.streamFor(connId, payload)
-    if (state) await this.sendKeyframe(state)
+    if (state) {
+      state.resyncs++
+      this.diagnostic(state, 'resync_requested', { attempt: payload.attempt })
+      await this.sendKeyframe(state)
+    }
   }
 
   private async closeRequested(connId: string, payload: FramePayload): Promise<void> {
@@ -359,6 +387,14 @@ export class TerminalStreamManager {
 
   private onOutput(state: ActiveStream, bytes: Uint8Array): void {
     if (state.closing || bytes.length === 0) return
+    const nextBuffered = state.pendingBytes + state.outputBytes + bytes.length
+    state.peakBufferedBytes = Math.max(state.peakBufferedBytes, nextBuffered)
+    if (nextBuffered > MAX_TOTAL_BUFFERED_BYTES) {
+      this.sendError(state.connId, 'TERMINAL_OUTPUT_OVERFLOW', { streamId: state.streamId })
+      this.diagnostic(state, 'output_overflow', { bufferedBytes: nextBuffered })
+      void this.closeStream(state, 'terminal output exceeded safe buffer limit', true)
+      return
+    }
     state.output.push(Buffer.from(bytes))
     state.outputBytes += bytes.length
     if (state.snapshotting || state.outputPaused) return
@@ -391,6 +427,8 @@ export class TerminalStreamManager {
       }
       state.pending.push({ seq, bytes: body.plainBytes })
       state.pendingBytes += body.plainBytes
+      state.outputFrames++
+      state.outputPlainBytes += body.plainBytes
     }
     if (state.pendingBytes > PAUSE_HIGH_WATERMARK_BYTES && !state.outputPaused) void this.pauseOutput(state)
   }
@@ -409,18 +447,22 @@ export class TerminalStreamManager {
   private async pauseOutput(state: ActiveStream): Promise<void> {
     if (state.closing || state.outputPaused) return
     state.outputPaused = true
+    state.pausedAt = this.now()
     const result = await state.handle.pauseOutput()
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_BACKPRESSURE_FAILED', { streamId: state.streamId, message: result.reason })
       await this.closeStream(state, result.reason, true)
       return
     }
+    this.diagnostic(state, 'output_paused', { pendingBytes: state.pendingBytes })
     this.armStallTimer(state)
   }
 
   private async resumeOutput(state: ActiveStream): Promise<void> {
     if (state.closing || !state.outputPaused) return
     state.outputPaused = false
+    if (state.pausedAt != null) state.pausedMs += Math.max(0, this.now() - state.pausedAt)
+    state.pausedAt = null
     if (state.stallTimer) clearTimeout(state.stallTimer)
     state.stallTimer = null
     const result = await state.handle.resumeOutput()
@@ -429,54 +471,68 @@ export class TerminalStreamManager {
       await this.closeStream(state, result.reason, true)
       return
     }
+    this.diagnostic(state, 'output_resumed', { pendingBytes: state.pendingBytes })
     this.flushOutput(state)
   }
 
   private async sendKeyframe(state: ActiveStream): Promise<void> {
     if (state.closing || state.resyncing) return
+    const startedAt = this.now()
     state.resyncing = true
     state.snapshotting = true
+    state.handle.beginSnapshot()
+    state.output = []
+    state.outputBytes = 0
     if (state.outputPaused) {
       state.outputPaused = false
+      if (state.pausedAt != null) state.pausedMs += Math.max(0, this.now() - state.pausedAt)
+      state.pausedAt = null
       if (state.stallTimer) clearTimeout(state.stallTimer)
       state.stallTimer = null
-      await state.handle.resumeOutput().catch(() => ({ state: 'failed' as const, dispatch: 'not_started' as const, reason: 'resume failed' }))
+      const resumed = await state.handle.resumeOutput().catch(() => ({
+        state: 'failed' as const,
+        dispatch: 'not_started' as const,
+        reason: 'resume failed',
+      }))
+      if (resumed.state !== 'succeeded') {
+        state.handle.endSnapshot()
+        state.snapshotting = false
+        state.resyncing = false
+        this.sendError(state.connId, 'TERMINAL_BACKPRESSURE_FAILED', {
+          streamId: state.streamId,
+          message: resumed.reason,
+        })
+        await this.closeStream(state, resumed.reason, true)
+        return
+      }
     }
     if (state.flushTimer) { clearTimeout(state.flushTimer); state.flushTimer = null }
     let snapshot: Awaited<ReturnType<TerminalStreamHandle['snapshot']>> = {
       state: 'failed',
       reason: 'tmux snapshot did not run',
     }
-    for (const historyLines of KEYFRAME_HISTORY_ATTEMPTS) {
-      for (let settleAttempt = 0; settleAttempt < KEYFRAME_SETTLE_ATTEMPTS; settleAttempt++) {
-        // A resize makes Codex/Claude repaint while capture-pane is running.
-        // Deltas queued before or during that capture are already reflected in
-        // the snapshot and must never be replayed after it: doing so erased the
-        // Codex prompt while leaving its background and cursor behind.
-        state.output = []
-        state.outputBytes = 0
+    try {
+      for (const historyLines of KEYFRAME_HISTORY_ATTEMPTS) {
         snapshot = await state.handle.snapshot(historyLines)
-        const repaintedDuringCapture = state.outputBytes > 0
-        state.output = []
-        state.outputBytes = 0
-        if (snapshot.state !== 'succeeded'
-          || snapshot.value.bytes.length > KEYFRAME_MAX_BYTES
-          || !repaintedDuringCapture) break
-        // Capture again after the repaint so the keyframe contains its final
-        // state. Three attempts bound latency for continuously animated TUIs.
+        if (snapshot.state !== 'succeeded' || snapshot.value.bytes.length <= KEYFRAME_MAX_BYTES) break
       }
-      if (snapshot.state !== 'succeeded' || snapshot.value.bytes.length <= KEYFRAME_MAX_BYTES) break
+    } catch (error) {
+      snapshot = { state: 'failed', reason: error instanceof Error ? error.message : 'tmux snapshot failed' }
     }
     if (snapshot.state !== 'succeeded') {
+      state.handle.endSnapshot()
       state.snapshotting = false
       state.resyncing = false
+      this.diagnostic(state, 'snapshot_failed', { reason: snapshot.reason })
       this.sendError(state.connId, 'TERMINAL_SNAPSHOT_FAILED', { streamId: state.streamId, message: snapshot.reason })
       await this.closeStream(state, snapshot.reason, false)
       return
     }
     if (snapshot.value.bytes.length > KEYFRAME_MAX_BYTES) {
+      state.handle.endSnapshot()
       state.snapshotting = false
       state.resyncing = false
+      this.diagnostic(state, 'snapshot_too_large', { plainBytes: snapshot.value.bytes.length })
       this.sendError(state.connId, 'TERMINAL_SNAPSHOT_TOO_LARGE', { streamId: state.streamId })
       await this.closeStream(state, 'terminal snapshot exceeds safe envelope size', false)
       return
@@ -496,6 +552,7 @@ export class TerminalStreamManager {
       bytes: body.bytes,
     })
     if (!sent) {
+      state.handle.endSnapshot()
       state.snapshotting = false
       state.resyncing = false
       await this.closeStream(state, 'backend disconnected', false)
@@ -503,21 +560,74 @@ export class TerminalStreamManager {
     }
     state.pending.push({ seq, bytes: body.plainBytes })
     state.pendingBytes = body.plainBytes
+    state.keyframes++
+    state.lastSyncAt = this.now()
+    state.peakBufferedBytes = Math.max(state.peakBufferedBytes, state.pendingBytes)
+    this.diagnostic(state, 'keyframe_sent', {
+      seq,
+      plainBytes: body.plainBytes,
+      compressedBytes: body.bytes.length,
+      snapshotMs: Math.max(0, this.now() - startedAt),
+    })
+    state.handle.endSnapshot()
     state.snapshotting = false
     state.resyncing = false
     this.flushOutput(state)
+    if (state.pendingBytes > PAUSE_HIGH_WATERMARK_BYTES && !state.outputPaused) void this.pauseOutput(state)
+  }
+
+  private sendSync(state: ActiveStream, now: number): void {
+    if (state.closing || state.snapshotting || state.resyncing || state.outputPaused) return
+    this.flushOutput(state)
+    if (state.closing || state.outputPaused) return
+    const seq = state.nextSeq++
+    if (!this.deps.sendBinaryTarget(state.connId, {
+      kind: TerminalBinaryKind.sync,
+      streamId: state.streamId,
+      seq,
+      compressed: false,
+      bytes: new Uint8Array(),
+    })) {
+      void this.closeStream(state, 'backend disconnected', false)
+      return
+    }
+    state.pending.push({ seq, bytes: 0 })
+    state.syncFrames++
+    state.lastSyncAt = now
   }
 
   private expireLeases(): void {
     const now = this.now()
     for (const state of [...this.streams.values()]) {
       if (!state.closing && state.expiresAt <= now) void this.closeStream(state, 'heartbeat timeout', true)
+      else if (!state.closing && now - state.lastSyncAt >= SYNC_INTERVAL_MS) this.sendSync(state, now)
     }
+  }
+
+  private diagnostic(state: ActiveStream, event: string, fields: Record<string, unknown> = {}): void {
+    this.deps.diagnostic?.(event, {
+      streamId: state.streamId.slice(0, 8),
+      agentId: state.agentId.slice(0, 8),
+      engineId: state.engineId,
+      ...fields,
+    })
   }
 
   private async closeStream(state: ActiveStream, reason: string, notify: boolean): Promise<void> {
     if (state.closing) return
     state.closing = true
+    if (state.pausedAt != null) state.pausedMs += Math.max(0, this.now() - state.pausedAt)
+    this.diagnostic(state, 'closed', {
+      reason,
+      lifetimeMs: Math.max(0, this.now() - state.openedAt),
+      outputFrames: state.outputFrames,
+      outputPlainBytes: state.outputPlainBytes,
+      keyframes: state.keyframes,
+      syncFrames: state.syncFrames,
+      resyncs: state.resyncs,
+      peakBufferedBytes: state.peakBufferedBytes,
+      pausedMs: state.pausedMs,
+    })
     if (state.flushTimer) clearTimeout(state.flushTimer)
     if (state.stallTimer) clearTimeout(state.stallTimer)
     state.flushTimer = null

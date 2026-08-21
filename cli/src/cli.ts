@@ -412,6 +412,7 @@ async function projectFrame(s: RegisteredSession, selectedModel: string | null):
   const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
   return {
     id: s.agentId,
+    sessionId: s.sessionId,
     userId: '',
     name: projectDisplayName(s),
     status: s.active ? 'active' : 'offline',
@@ -773,6 +774,7 @@ async function runForeground(token: string): Promise<void> {
     sendTarget: (connId, type, payload) => backend.sendTerminalTo(connId, type, payload),
     sendBinaryTarget: (connId, frame) => backend.sendTerminalBinaryTo(connId, frame),
     streamingAvailable: tmuxBackend != null,
+    diagnostic: (event, fields) => console.log(`[terminal-stream] ${event}`, fields),
   })
   backend.setTerminalStreamManager(terminalStreams)
 
@@ -1366,7 +1368,15 @@ async function runForeground(token: string): Promise<void> {
       // Device: keep the busy tile alive through the turn AND the summarize window. Returns false when idle.
       const deviceBusy = mirror.heartbeat(sessionId)
       // Web: unchanged — heartbeat only while the turn itself is open (summarizing uses turn_summary_pending).
-      if (turnOpen) backend.send({ type: 'turn_heartbeat', dbSessionId: sessionId, payload: { sessionId } })
+      if (turnOpen) {
+        const agentId = agentIdFor(sessionId)
+        backend.send({
+          type: 'turn_heartbeat',
+          agentId,
+          dbSessionId: sessionId,
+          payload: { agentId, sessionId },
+        })
+      }
       // Self-cancel only once the turn is closed AND the summarize is done (no more device heartbeat needed).
       if (!turnOpen && !deviceBusy) stopHeartbeat(sessionId)
     }, TURN_HEARTBEAT_MS)
@@ -1376,7 +1386,13 @@ async function runForeground(token: string): Promise<void> {
   emitSessionEvents = (sessionId: string, events: ReturnType<CursorNormalizer['ingest']>): void => {
     if (!events.length || !registry.bySession(sessionId)?.active) return
     for (const event of events) {
-      backend.send({ ...event, dbSessionId: sessionId })
+      const agentId = agentIdFor(sessionId)
+      backend.send({
+        ...event,
+        agentId,
+        dbSessionId: sessionId,
+        payload: { ...event.payload, agentId, sessionId },
+      })
       if (event.type === 'turn_started') {
         turnStartedAt.set(sessionId, Date.now())
         // Analytics: count HERE, inside the one funnel every engine's normalizer feeds and BEFORE
