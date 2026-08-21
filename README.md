@@ -61,9 +61,14 @@ Two ways to integrate. We support both **CLI** and **API**.
 To get started, run this:
 
 ```bash
-curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
-harness join
+curl -fsSL https://harness.autonomous.ai/install.sh | bash
+harness auth device
 ```
+
+`harness auth device` prints a six-character code and a link. Approve it in a browser where you are
+signed in and this computer is connected — there is no token to copy, and re-running it on the same
+computer reconnects it to the same machine rather than making a new one. If you already have a
+machine's token, `harness join <token>` still works.
 
 Runs on **macOS and Linux** (Ubuntu 22.04+ verified). Node ≥ 20 and tmux and/or Herdr are the
 prerequisites — see [`cli/README.md`](cli/README.md#supported-platforms).

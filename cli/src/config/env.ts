@@ -4,11 +4,19 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
 import { parseHerdrSessions, parseTerminalBackends } from './terminalConfig.js'
+import { adoptComputerId } from '../lib/computerIdentity.js'
 
 // Packaged files (cli.js/notify.mjs) live in ~/.harness/cli; mutable state in ~/.harness/cli/data.
 // `~/.harness` is the PRODUCT data root and does not move — see the naming discipline in CLAUDE.md.
-const adapterCliDir = join(homedir(), '.harness', 'cli')
+const adapterRootDir = join(homedir(), '.harness')
+const adapterCliDir = join(adapterRootDir, 'cli')
 const adapterDataDir = join(adapterCliDir, 'data')
+// The computer id lives at the PRODUCT root, one level ABOVE `cli/`, and deliberately not in the data
+// dir: `harness reset` wipes that dir, the ~/.machine adoption below force-replaces entries in it, and
+// a custom ADAPTER_DATA_DIR moves it. A computer's identity must outlive all three — the backend binds
+// a machine to it, so a regenerated id silently mints a SECOND machine for a box that already had one.
+// Nothing in the CLI writes above `~/.harness/cli`, which is exactly why it sits here.
+const computerIdFile = join(adapterRootDir, 'computer-id')
 
 // ── One-time adoption of adapter state written under an older name ────────────────────────────────
 //
@@ -50,11 +58,27 @@ function forceMove(current: string, legacy: string): boolean {
 }
 
 function migrateLegacyAdapterState(): void {
-  // Only for the default location. An explicit ADAPTER_DATA_DIR (tests, custom installs) is the
-  // caller's business and must not be reshaped underneath them.
+  // The computer id is lifted UNCONDITIONALLY, before the custom-dir bail-out below. It is the one
+  // piece of state whose location is not the caller's to choose: it is this box's identity, the
+  // backend binds a machine to it, and an install that kept it in a custom data dir must have it
+  // carried across rather than silently re-minted at the root. Point ADAPTER_COMPUTER_ID_FILE (or
+  // ADAPTER_COMPUTER_ID) somewhere else if you genuinely want a separate identity.
+  // Runs BEFORE the ~/.machine force-move below so that tree can no longer REPLACE an id we already
+  // adopted — see lib/computerIdentity.ts for why replacing one is a data-loss bug, not a refresh.
+  const adopted = adoptComputerId(computerIdFile, [
+    join(process.env.ADAPTER_DATA_DIR || adapterDataDir, 'computer-id'),
+    join(process.env.ADAPTER_DATA_DIR || adapterDataDir, 'machine-id'),
+    join(adapterDataDir, 'computer-id'),
+    join(adapterDataDir, 'machine-id'),
+    join(homedir(), '.machine', 'cli', 'data', 'computer-id'),
+    join(homedir(), '.machine', 'cli', 'data', 'machine-id'),
+  ])
+
+  // Everything past here only applies to the default location. An explicit ADAPTER_DATA_DIR (tests,
+  // custom installs) is the caller's business and must not be reshaped underneath them.
   if (process.env.ADAPTER_DATA_DIR) return
 
-  let moved = 0
+  let moved = adopted
 
   // In-tree renames first, so a machine that never saw the ~/.machine build still lands on the new
   // names. The force-move below overrides these where both exist.
@@ -192,6 +216,13 @@ const envSchema = z.object({
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'devin', 'config.json')),
   // Where the tmux-session registry + connect token are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
+  // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
+  // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on
+  // every boot would otherwise look like a NEW computer each time and collect a machine per start.
+  // Setting this is a pin, not a regeneration: it is never written to disk, so unsetting it returns
+  // you to the file's id. Any 16-64 hex (dashes allowed, the backend de-dashes).
+  ADAPTER_COMPUTER_ID: z.string().optional(),
+  ADAPTER_COMPUTER_ID_FILE: z.string().default(computerIdFile),
   // ---- Harness Analytics (see autonomous-code docs/design/harness-analytics.md) ----
   // Collection is ON by default, but this computer uploads NOTHING until the account owner has
   // acknowledged the field list — the backend answers `consent: "unacknowledged"` until then. This

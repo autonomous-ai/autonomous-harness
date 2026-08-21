@@ -19,15 +19,18 @@ import { readFileSync, writeFileSync, mkdirSync, openSync, existsSync, rmSync, s
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
-import { createHash, randomUUID } from 'crypto'
-import { homedir } from 'os'
+import { createHash } from 'crypto'
+import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
+import { ensureUtf8Locale } from './lib/childLocale.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
+import { readOrMintComputerId } from './lib/computerIdentity.js'
+import { startDeviceAuth, awaitApproval, type DeviceAuthStart } from './lib/deviceAuth.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineLaunchArgv } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -110,6 +113,10 @@ import { RuntimeProfileManager } from './lib/runtimeProfile.js'
 import { RuntimeProfileController } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
+
+// Before ANY child is spawned: on Linux an absent locale makes tmux and ps mangle their output,
+// which silently costs the daemon every pane it would have discovered. See lib/childLocale.ts.
+ensureUtf8Locale()
 import {
   installTimestampedConsole, sid, preview,
   prepareLogFile, trimLogFile, LOG_CHECK_INTERVAL_MS,
@@ -130,7 +137,9 @@ const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'harness.log')
 // earlier and elsewhere — by the table in config/env.ts, which runs at module load, before any daemon
 // opens this file. Two mechanisms, one ancestor each, in the right order.
 const LEGACY_LOG_FILE = join(env.ADAPTER_DATA_DIR, 'adapter.log')
-const COMPUTER_ID_FILE = join(env.ADAPTER_DATA_DIR, 'computer-id')
+// NOT under ADAPTER_DATA_DIR — see config/env.ts. `reset` wipes that dir, so an id kept there
+// regenerates and the next `harness auth device` mints a SECOND machine for a box that already has one.
+const COMPUTER_ID_FILE = env.ADAPTER_COMPUTER_ID_FILE
 // The machine's display name, mirrored from the backend (`machine_meta` on connect + web renames) by the
 // daemon so the separate `harness status` process can print it. Absent = unnamed machine.
 const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
@@ -165,6 +174,7 @@ ${ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')}
 A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
+  harness auth device          connect this computer by approving a code in your browser (no token to copy)
   harness join <token>         connect this computer to an existing machine using the token from its machine page
   harness join                 reconnect with the saved credential
   harness join -f              run in the FOREGROUND (for a supervisor; logs to stdout)
@@ -186,7 +196,13 @@ Browser end-to-end encryption:
 
   harness --help
 
-Env: BACKEND_WS_URL (${env.BACKEND_WS_URL}), WEB_URL (${env.WEB_URL}), ADAPTER_DATA_DIR, CLAUDE_PROJECTS_DIR, PORT`)
+This computer's id lives at ${tildify(env.ADAPTER_COMPUTER_ID_FILE)} and is created once. Nothing here
+regenerates it — that is what keeps "harness auth device" reconnecting to the same machine instead of
+making a new one. Deleting it (or ~/.harness) makes this look like a brand-new computer. On a box with
+no durable home, a container or CI job, pin ADAPTER_COMPUTER_ID instead.
+
+Env: BACKEND_WS_URL (${env.BACKEND_WS_URL}), WEB_URL (${env.WEB_URL}), ADAPTER_DATA_DIR,
+     ADAPTER_COMPUTER_ID, CLAUDE_PROJECTS_DIR, PORT`)
   process.exit(0)
 }
 
@@ -223,18 +239,11 @@ function saveToken(token: string): void {
   writeFileSync(TOKEN_FILE, token + '\n', { mode: 0o600 })
 }
 
-/** Stable per-computer id (persisted in ${ADAPTER_DATA_DIR}/computer-id, created once). Sent on connect
- *  so the backend can enforce one machine per machine — and tell a same-machine reconnect (its 30s
- *  presence may still be alive) apart from a genuine second machine. Survives `unjoin`. */
+/** This computer's identity — see lib/computerIdentity.ts. Sent on connect so the backend can enforce
+ *  one machine per computer, and used by `harness auth device` to reconnect to the machine already
+ *  bound to this box instead of minting a second one. */
 function computerId(): string {
-  try {
-    const saved = readFileSync(COMPUTER_ID_FILE, 'utf-8').trim()
-    if (saved) return saved
-  } catch { /* create below */ }
-  const id = randomUUID()
-  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(COMPUTER_ID_FILE, id + '\n', { mode: 0o600 })
-  return id
+  return readOrMintComputerId(COMPUTER_ID_FILE, env.ADAPTER_COMPUTER_ID)
 }
 
 // ── join ───────────────────────────────────────────────────────────────────────────────────────
@@ -270,11 +279,75 @@ async function postJson<T>(path: string, body: unknown, headers: Record<string, 
   return json.data as T
 }
 
-function printJoinTokenRequired(): never {
-  console.error('\n✗ This computer is not connected to a machine yet.')
-  console.error('  Create or open a remote machine in the web UI, copy its connect token, then run:')
-  console.error('\n    harness join <token>\n')
-  process.exit(1)
+/**
+ * `harness auth device` — connect this computer without ever handling a token.
+ *
+ * Prints a six-character code, the user approves it in a browser where they are already signed in, and
+ * we poll until a machine key comes back. The server answers with the machine already bound to THIS
+ * computer, or makes one if it has none — so re-running this on the same box reconnects it rather than
+ * collecting machines. Nothing is purchased; connecting a computer is free.
+ */
+async function authDeviceCommand(foreground: boolean, force: boolean): Promise<void> {
+  const existing = readSavedToken()
+  if (existing && !force) {
+    console.log('\n  This computer is already connected.')
+    console.log(`    machine  ${webBase()}/machine/${agentIdFromToken(existing)}`)
+    console.log('\n  Run `harness join` to reconnect, or `harness auth device --force` to connect it')
+    console.log('  to a different account.\n')
+    process.exit(0)
+  }
+
+  let start: DeviceAuthStart
+  try {
+    start = await startDeviceAuth(backendHttpBase(), computerId(), hostname())
+  } catch (e) {
+    console.error(`\n  ✗ Could not reach the backend: ${e instanceof Error ? e.message : e}\n`)
+    process.exit(1)
+  }
+
+  const url = `${webBase()}/connect?code=${encodeURIComponent(start.userCode)}`
+  console.log('\n  Approve this computer in your browser:\n')
+  console.log(`    ${url}`)
+  console.log(`\n    code   ${start.userCode}\n`)
+  openInBrowser(url)
+
+  // A heartbeat, because ten minutes of nothing reads as a hang.
+  let waited = 0
+  const outcome = await awaitApproval(backendHttpBase(), start.deviceCode, {
+    intervalSec: start.interval,
+    expiresInSec: start.expiresIn,
+    onTick: () => {
+      waited += Math.max(2, start.interval)
+      if (waited % 30 === 0) console.log(`  …waiting for approval (${waited}s)`)
+    },
+  })
+
+  if (outcome.status === 'denied') {
+    console.error(`\n  ✗ That request was declined${outcome.error ? ` (${outcome.error})` : ''}.\n`)
+    process.exit(1)
+  }
+  if (outcome.status === 'expired') {
+    console.error('\n  ✗ The code expired before it was approved. Run `harness auth device` again.\n')
+    process.exit(1)
+  }
+
+  saveToken(outcome.apiKey)
+  console.log('\n  ✓ Connected.\n')
+  // Same tail as `join <token>`: one command gets you a running daemon.
+  if ((await launch(outcome.apiKey, foreground)) === 'deauth') {
+    console.error('\n✗ The machine rejected that key straight away — try `harness auth device` again.\n')
+    process.exit(1)
+  }
+}
+
+/** Best-effort: a failed open is not a failed connect, the URL is printed above either way. */
+function openInBrowser(url: string): void {
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+  try {
+    const child = spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' })
+    child.on('error', () => { /* no browser here (headless/ssh) — the printed URL is the fallback */ })
+    child.unref()
+  } catch { /* ignore */ }
 }
 
 /**
@@ -306,12 +379,15 @@ async function joinCommand(foreground: boolean, argToken?: string): Promise<void
     return
   }
   const token = readSavedToken()
-  if (!token) printJoinTokenRequired()
+  // Nothing saved: rather than telling the user to go find a token, run the grant that gets one. This
+  // is the first-run path, so it is the one that should cost the fewest steps.
+  if (!token) { await authDeviceCommand(foreground, false); return }
   // If the saved token was rejected (machine deleted/revoked → 401/403), launch wipes it and returns
   // 'deauth'; do not create a new machine from the CLI.
   if ((await launch(token, foreground)) === 'deauth') {
     console.error('\n✗ This computer is no longer connected to a valid machine.')
-    console.error('  Open the machine page, copy a fresh connect token, then run: harness join <token>')
+    console.error('  Reconnect with: harness auth device')
+    console.error('  (or copy a fresh token from the machine page and run: harness join <token>)')
     process.exit(1)
   }
 }
@@ -2831,7 +2907,10 @@ function clearAdapterState(): void {
       'harness.log',
       'machine.log', // pre-rename names — still cleared so a reset leaves nothing behind
       'adapter.log',
-      'computer-id',
+      // NOT 'computer-id' — it no longer lives here (config/env.ts keeps it at the product root,
+      // above everything this function reaches) and it must not be cleared anyway. A reset that
+      // changed this computer's identity would orphan its machine and mint a fresh one on the next
+      // `harness auth device`, which is the opposite of "start over on the same box".
       'machine-name',
       'registry.json',
       'registry-boot',
@@ -3001,6 +3080,15 @@ const onError = (err: unknown): never => {
 }
 
 switch (cmd) {
+  case 'auth':
+    // `device` is the only grant there is; accepting a bare `harness auth` keeps the common case short
+    // without closing the door on a second one later.
+    if (args[0] && args[0] !== 'device') {
+      console.error(`Unknown auth subcommand: ${args[0]}\nUsage: harness auth device`)
+      process.exit(1)
+    }
+    authDeviceCommand(foreground, flags.includes('--force')).catch(onError)
+    break
   case 'join':
     joinCommand(foreground, args[0]).catch(onError)
     break

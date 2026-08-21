@@ -378,7 +378,19 @@ function execFileText(cmd, args, timeout, env) {
  * comm and args, which kills both halves of the Command Code marker in processMatchScore. macOS never
  * substitutes, so this is Linux-only and cannot regress it.
  */
-const PS_ENV = process.platform === 'linux' ? { ...process.env, LC_ALL: 'C.UTF-8' } : undefined
+/**
+ * Mirrors lib/childLocale.ts. This process is spawned by the ENGINE, not by the daemon, so it inherits
+ * the engine's environment and has to set its own — it shells out to both `tmux` and `ps`, and Linux
+ * mangles both without a UTF-8 locale (tmux turns the -F TAB separator into `_`; ps turns `⌘` into
+ * `???`). Only when nothing usable is configured.
+ */
+function ensureUtf8Locale(env = process.env) {
+  if (process.platform !== 'linux') return
+  const configured = env.LC_ALL || env.LC_CTYPE || env.LANG
+  if (configured && /utf-?8/i.test(configured)) return
+  env.LC_ALL = 'C.UTF-8'
+}
+ensureUtf8Locale()
 
 /** Second line of defence: /proc is raw bytes, so a glibc without C.UTF-8 still resolves correctly. */
 function repairMangledRows(rows) {
@@ -548,7 +560,7 @@ function processMatchScore(row, engine, ownership, allowAgentHint = false) {
 }
 
 async function processRows() {
-  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000, PS_ENV)
+  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000)
   if (stdout === null) return null
   const rows = []
   for (const line of stdout.split('\n')) {
