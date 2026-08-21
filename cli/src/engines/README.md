@@ -300,6 +300,24 @@ conversation reports the last turn as still open and nothing is ever coming to c
 `turn_heartbeat` every second, indefinitely). Its pane knows — `? for shortcuts` when idle,
 `esc to cancel` while busy — so attach reads the pane once and closes the folded turn.
 
+**When the engine tells you nothing, use the signal you own.** Command Code writes its transcript
+ONCE, at the end of the turn — measured by watching the file: 1 line at t=0, then 3 lines in a single
+step at t=4.3s of a 5s turn. There is nothing to stream, and nothing announces the start either: its
+`PreToolUse` hook only fires if the turn uses a TOOL, so a plain question opened and closed a turn 1ms
+apart and neither web nor device ever showed it working.
+
+Harness's own paste is the missing signal — it is the one moment a turn is known to have begun, and
+unlike a hook it also knows the TEXT. Two traps came with it:
+
+- the id `SessionInput` hands its callbacks is the AGENT id, while the normalizer map is keyed by
+  SESSION id: the wrong key made the fix a silent no-op that logged exactly like the bug;
+- the flushed user line then arrives late and the shared rule ("a user line starts a turn") closed the
+  live turn and opened a second that died 1ms later. Remember what the turn was opened with and
+  recognise that line as the same turn.
+
+A turn the user types directly into the pane still has no signal until it calls a tool. That limit is
+the engine's, and it is better stated than papered over.
+
 **A dialog you can read is not a dialog you can judge.** Copilot names the SUBJECT of a permission
 prompt above the question, not in it: "Copilot is attempting to access the following URL:" over a
 boxed value, then "Do you want to allow this access?" with a bare "Yes" as option 1. The shared parser

@@ -82,6 +82,12 @@ export interface SessionInputDeps {
   sendKey: (terminalTarget: string, key: string) => Promise<boolean | TerminalActionResult>
   capture?: (terminalTarget: string) => Promise<string | null>
   onError: (sessionId: string, message: string) => void
+  /**
+   * A message was accepted by the pane. Not every engine needs this — most announce the turn
+   * themselves — but an engine that only writes its transcript once the turn is OVER has no other
+   * moment at which a turn is known to have started, and this one is exact: we sent it.
+   */
+  onSubmitted?: (sessionId: string, content: string) => void
 }
 
 function fingerprint(content: string): string {
@@ -304,6 +310,7 @@ export class SessionInputController {
     state.retries = 0
     state.observes = 0
     state.ambiguousDispatch = typeof delivery !== 'boolean' && delivery.dispatch === 'possibly_executed'
+    this.deps.onSubmitted?.(sessionId, content)
     this.armSubmitCheck(sessionId, session, state)
   }
 

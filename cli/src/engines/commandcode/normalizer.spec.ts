@@ -185,3 +185,53 @@ describe('Command Code normalizer — run-error records', () => {
     expect(commandCodeRunErrorSummary('Insufficient credits')).toBe('Insufficient credits')
   })
 })
+
+describe('opening a turn that calls no tool', () => {
+  it('carries the text we pasted, so the prompt renders at once', () => {
+    // PreToolUse only fires when the turn uses a tool. Measured on 1.28.4, "hi" calls nothing, the
+    // transcript is flushed only at the end, and the turn opened and closed 1ms apart with no working
+    // state anywhere. Our own injection is the other opener — and it knows the text.
+    const normalizer = new CommandCodeNormalizer('live')
+    const opened = normalizer.openTurn('hi')
+    expect(opened).toEqual([{ type: 'turn_started', payload: { userMessage: 'hi' } }])
+    expect(normalizer.turnOpen).toBe(true)
+  })
+
+  it('is idempotent: a tool call after the paste must not open a second turn', () => {
+    const normalizer = new CommandCodeNormalizer('live')
+    expect(normalizer.openTurn('hi')).toHaveLength(1)
+    expect(normalizer.openTurn()).toEqual([])
+  })
+})
+
+describe('the flush that arrives after we opened the turn', () => {
+  // The real shape, copied from a live transcript: `meta.source` is what separates a typed prompt from
+  // a tool_result echo, and a line without it is not recognised as a prompt at all.
+  const userLine = (text: string) => JSON.stringify({
+    type: 'message', id: '26fbb7e5', parentId: null, timestamp: '2026-08-20T15:20:13.675Z',
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text }],
+      meta: { source: 'user', createdAt: 1787239210783, messageId: '8195243f-836a-4562-9421-72833e10e9df' },
+    },
+  })
+
+  it('does not rotate the turn we already opened with the same prompt', () => {
+    // Command Code writes the user AND assistant lines together at the END of the turn. The shared rule
+    // "a user line starts a turn" then closed the live turn and opened a second one that died 1ms later
+    // — measured as turn_ended 2050ms followed by turn_started/turn_ended 1ms apart.
+    const normalizer = new CommandCodeNormalizer('live')
+    expect(normalizer.openTurn('say hello in five words')).toHaveLength(1)
+    const events = normalizer.ingest(userLine('say hello in five words'))
+    expect(events.some((e) => e.type === 'turn_started')).toBe(false)
+    expect(events.some((e) => e.type === 'turn_ended')).toBe(false)
+    expect(normalizer.turnOpen).toBe(true)
+  })
+
+  it('still opens a turn for a prompt we did NOT send', () => {
+    const normalizer = new CommandCodeNormalizer('live')
+    normalizer.openTurn('say hello in five words')
+    const events = normalizer.ingest(userLine('something the user typed instead'))
+    expect(events.some((e) => e.type === 'turn_started')).toBe(true)
+  })
+})

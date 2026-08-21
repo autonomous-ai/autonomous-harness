@@ -1147,6 +1147,19 @@ async function runForeground(token: string): Promise<void> {
       const engine = registry.resolve(sessionId)?.engine
       backend.sendCommander({ type: 'commander_event', agentId: agentIdFor(sessionId), dbSessionId: sessionId, payload: { kind: 'error', text: deviceErrorText(message, engine) } })
     },
+    // Command Code writes its transcript only once the turn is OVER, so a turn that calls no tool has
+    // nothing to announce it: measured on 1.28.4, "hi" produced turn_started and turn_ended 1ms apart
+    // and neither web nor device ever showed the agent working. Our own paste is the one moment a turn
+    // is known to have started — and the only one that also knows the text.
+    onSubmitted: (id, content) => {
+      // `id` is whatever the caller addressed the agent by — in the inject path it is the AGENT id, not
+      // the session id, and the normalizer map is keyed by session. Resolve before looking anything up.
+      const session = registry.resolve(id)
+      if (session?.engine !== 'commandcode' || !session.sessionId) return
+      const normalizer = commandcodeNormalizers.get(session.sessionId)
+      if (!normalizer) return
+      emitSessionEvents(session.sessionId, normalizer.openTurn(content))
+    },
   })
   /**
    * agy only: close a turn whose final `Stop` never came.

@@ -186,13 +186,19 @@ function reshapeAll(rawLines: string[]): string[] {
 }
 
 export class CommandCodeNormalizer implements EngineNormalizer {
+  /** The prompt `openTurn` was called with, until the transcript catches up with it. */
+  private openedWith: string | null = null
   private readonly state: TurnState = newTurnState()
 
   constructor(private readonly mode: 'live' | 'replay' = 'live') {}
 
   get turnOpen(): boolean { return this.state.turnOpen }
 
-  closeTurn(): void { this.state.turnOpen = false; this.state.pendingTools.clear() }
+  closeTurn(): void {
+    this.openedWith = null
+    this.state.turnOpen = false
+    this.state.pendingTools.clear()
+  }
 
   /**
    * Open a turn from OUTSIDE the transcript, driven by the PreToolUse hook.
@@ -203,15 +209,26 @@ export class CommandCodeNormalizer implements EngineNormalizer {
    * by the time anything is readable the turn is already over, and the device went idle → recap with no
    * "working" in between.
    *
-   * Idempotent because PreToolUse fires per tool call: only the first one in a turn opens it. The user
-   * text is not available yet — the transcript has not been written — so the ask arrives later with the
-   * recap, which is where the device reads it from anyway.
+   * Idempotent because PreToolUse fires per tool call: only the first one in a turn opens it.
+   *
+   * PreToolUse is not enough on its own, though: it only fires when the turn USES A TOOL. Measured on
+   * 1.28.4, a plain question ("hi") calls nothing, so nothing opened the turn and the flush at the end
+   * emitted turn_started and turn_ended 1ms apart — the device jumped from idle to recap and the web
+   * pane showed no working state at all.
+   *
+   * The other opener is our own injection: when Harness pastes a message into the pane it knows a turn
+   * has begun, and unlike PreToolUse it also knows the TEXT, so the prompt renders immediately instead
+   * of arriving later with the recap. A turn the user types directly into the pane still has neither
+   * signal until it calls a tool — Command Code offers nothing else to read.
    */
-  openTurn(): LiveEvent[] {
+  openTurn(userMessage = ''): LiveEvent[] {
     if (this.state.turnOpen) return []
     this.state.turnOpen = true
     this.state.pendingTools.clear()
-    return [{ type: 'turn_started', payload: { userMessage: '' } }]
+    // Remember the text so the flush that arrives minutes later is recognised as THIS turn rather than
+    // a new one — see `ingest`.
+    this.openedWith = userMessage || null
+    return [{ type: 'turn_started', payload: { userMessage } }]
   }
 
   ingest(line: string): LiveEvent[] {
@@ -224,7 +241,21 @@ export class CommandCodeNormalizer implements EngineNormalizer {
       return [{ type: 'turn_ended', payload: {} }]
     }
     const reshaped = reshapeLine(line)
-    return reshaped ? lineToEvents(reshaped, this.state) : []
+    if (!reshaped) return []
+    const events = lineToEvents(reshaped, this.state)
+    // Command Code flushes the user AND assistant lines together when the turn ENDS. If we already
+    // opened this turn from the paste, that flushed user line is the same prompt arriving late — and
+    // the shared rule ("a user line rotates the turn") would close the live turn and open a second one
+    // that dies 1ms later. Measured: turn_started, turn_ended 2050ms, then turn_started/turn_ended 1ms.
+    if (this.openedWith !== null) {
+      const started = events.find((event) => event.type === 'turn_started')
+      const text = started?.type === 'turn_started' ? started.payload.userMessage : null
+      if (text !== null && text.trim() === this.openedWith.trim()) {
+        this.openedWith = null
+        return events.filter((event) => event.type !== 'turn_started' && event.type !== 'turn_ended')
+      }
+    }
+    return events
   }
 
   finishReplay(): LiveEvent[] {
