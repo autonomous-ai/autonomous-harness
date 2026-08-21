@@ -43,7 +43,7 @@ const MAX_INPUT_CHARS = 50_000
 const SUMMARY_SCRATCH = join(env.ADAPTER_DATA_DIR, 'summary-scratch')
 
 function ensureSummaryScratch(): string {
-  if (!existsSync(SUMMARY_SCRATCH)) mkdirSync(SUMMARY_SCRATCH, { recursive: true })
+  if (!existsSync(SUMMARY_SCRATCH)) mkdirSync(SUMMARY_SCRATCH, { recursive: true, mode: 0o700 })
   return SUMMARY_SCRATCH
 }
 

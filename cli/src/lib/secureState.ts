@@ -32,7 +32,17 @@ export function secureStateDirectory(directory: string, create = true): void {
       throw new Error('state directory has unsafe owner or type')
     }
     const mode = stat.mode & 0o777
-    if ((mode & 0o022) !== 0) throw new Error('state directory is group/world writable')
+    // Refuse — deliberately do NOT chmod and carry on. If another account could write here, it could
+    // already have planted the registry, the token or the hook credential, and tightening afterwards
+    // would leave us trusting whatever it left behind. Three tests pin this (registry.spec.ts,
+    // hookAuth.spec.ts, terminalConfigSnapshot.spec.ts); the fix belongs at creation time, and every
+    // site that makes a directory under ADAPTER_DATA_DIR now passes mode 0o700 so Ubuntu's default
+    // umask 0002 can no longer produce a 0775 one. This branch is what a PRE-EXISTING 0775 directory
+    // (made by an older build on Ubuntu) lands in, so the message has to say what to do about it.
+    if ((mode & 0o022) !== 0) {
+      throw new Error(`state directory ${directory} is group/world writable, so its contents cannot be`
+        + ` trusted. If you did not set that mode yourself, delete it; otherwise: chmod 700 ${directory}`)
+    }
     if (mode !== PRIVATE_DIRECTORY_MODE) {
       fchmodSync(fd, PRIVATE_DIRECTORY_MODE)
       if ((fstatSync(fd).mode & 0o777) !== PRIVATE_DIRECTORY_MODE) {
@@ -52,6 +62,8 @@ function inspectPrivateStateFile(fd: number, maxBytes: number): void {
   }
   if (stat.size > maxBytes) throw new Error('state file exceeds its size limit')
   const mode = stat.mode & 0o777
+  // Same reasoning as secureStateDirectory: a file another account could have rewritten is not made
+  // trustworthy by tightening it now. Every writer under ADAPTER_DATA_DIR already passes mode 0o600.
   if ((mode & 0o022) !== 0) throw new Error('state file is group/world writable')
   if (mode !== PRIVATE_FILE_MODE) {
     fchmodSync(fd, PRIVATE_FILE_MODE)

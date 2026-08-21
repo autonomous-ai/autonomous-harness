@@ -656,7 +656,7 @@ export class CommanderMirror {
 
   private save(): void {
     try {
-      mkdirSync(this.opts.dataDir, { recursive: true })
+      mkdirSync(this.opts.dataDir, { recursive: true, mode: 0o700 })
       writeFileSync(this.file, JSON.stringify(Object.fromEntries(this.summaries), null, 2))
     } catch (err) {
       console.error('[commander] save summaries failed:', err)

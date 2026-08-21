@@ -12,7 +12,7 @@
  * from every message this module can produce.
  */
 
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { env } from '../config/env.js'
 import type { GatewayRuntime } from './gatewayRuntime.js'
 
@@ -35,26 +35,28 @@ interface OriCredentials {
   key?: unknown
 }
 
-let fileCache: { path: string; mtimeMs: number; key: string | null } | null = null
-
 /** Strip anything that looks like a key from text that may be logged. */
 export function redactKeys(text: string): string {
   return text.replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-…')
 }
 
+/**
+ * Read `ori login`'s credentials, every time.
+ *
+ * This used to cache the parsed key and re-read only when `mtimeMs` changed. That is safe on APFS,
+ * whose mtime has nanosecond resolution — 8 rapid rewrites produce 8 distinct stamps — and unsafe
+ * everywhere else: the same probe on overlayfs yields 4 distinct stamps out of 8, and on tmpfs exactly
+ * 1. So on Linux a key rotation written within the filesystem's timestamp granularity was invisible,
+ * and the daemon went on spending a revoked key until something else touched the file. There is nothing
+ * to trade away by dropping the cache: both callers follow this with an HTTPS request whose timeout is
+ * 60 SECONDS, so re-reading a ~100-byte file costs nothing measurable.
+ */
 async function keyFromCredentialsFile(): Promise<string | null> {
-  const path = env.ORI_CREDENTIALS_PATH
   try {
-    const { mtimeMs } = await stat(path)
-    // Re-read on change so `ori login` (or a key rotation) is picked up without restarting the daemon.
-    if (fileCache && fileCache.path === path && fileCache.mtimeMs === mtimeMs) return fileCache.key
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as OriCredentials
-    const key = typeof parsed.key === 'string' && parsed.key.trim() ? parsed.key.trim() : null
-    fileCache = { path, mtimeMs, key }
-    return key
+    const parsed = JSON.parse(await readFile(env.ORI_CREDENTIALS_PATH, 'utf8')) as OriCredentials
+    return typeof parsed.key === 'string' && parsed.key.trim() ? parsed.key.trim() : null
   } catch {
     // Absent, unreadable or corrupt is a normal state (no ori installed) — not an error worth logging.
-    fileCache = null
     return null
   }
 }

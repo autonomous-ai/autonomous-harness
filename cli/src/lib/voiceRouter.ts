@@ -74,7 +74,7 @@ let routerEngine: RouterEngine | null = null
 
 // With --no-session-persistence the one-shot writes nothing here; the dir just has to exist as the cwd.
 function ensureRouteScratch(): string {
-  if (!existsSync(ROUTE_SCRATCH)) mkdirSync(ROUTE_SCRATCH, { recursive: true })
+  if (!existsSync(ROUTE_SCRATCH)) mkdirSync(ROUTE_SCRATCH, { recursive: true, mode: 0o700 })
   return ROUTE_SCRATCH
 }
 

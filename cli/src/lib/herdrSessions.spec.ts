@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   discoverRunningHerdrSessions,
   herdrBinaryAvailable,
@@ -6,6 +9,9 @@ import {
   parseHerdrSessionList,
   resolveConfiguredHerdrSessions,
 } from './herdrSessions.js'
+
+const stubDirs: string[] = []
+afterAll(() => { for (const dir of stubDirs) rmSync(dir, { recursive: true, force: true }) })
 
 describe('configured Herdr session bootstrap', () => {
   it('parses bounded session-list output without treating pane content as CLI data', () => {
@@ -63,11 +69,27 @@ describe('Herdr auto-discovery (no configuration)', () => {
     sessionName, socketPath, endpointId: `id:${socketPath}`, generation: { device: 1, inode: 1 },
   })
 
+  /**
+   * `discoverRunningHerdrSessions` short-circuits to [] unless the binary really exists, so passing the
+   * bare name `'herdr'` made these cases depend on whether the DEVELOPER happened to have Herdr
+   * installed. On this machine (`~/.local/bin/herdr`) they passed; on any clean one they returned [] —
+   * which the adoption case fails on and the two negative cases pass VACUOUSLY, proving nothing. Caught
+   * on Ubuntu; a fresh macOS behaves identically. Point them at an executable we create instead.
+   */
+  const herdrBin = (() => {
+    const dir = mkdtempSync(join(tmpdir(), 'herdr-bin-'))
+    stubDirs.push(dir)
+    const bin = join(dir, 'herdr')
+    writeFileSync(bin, '#!/bin/sh\nexit 0\n')
+    chmodSync(bin, 0o755)
+    return bin
+  })()
+
   it('adopts every RUNNING session, whatever it is called', async () => {
     // The point of auto-detection: the user starts a session with a name we were never told about, and
     // its panes are watched on the next pass. A stopped session is not a target.
     const result = await discoverRunningHerdrSessions(
-      'herdr',
+      herdrBin,
       async () => [
         { name: 'scratch', running: true, session_dir: '/a', socket_path: '/a/herdr.sock' },
         { name: 'default', running: true, session_dir: '/b', socket_path: '/b/herdr.sock' },
@@ -91,15 +113,15 @@ describe('Herdr auto-discovery (no configuration)', () => {
   it('stays quiet when an installed Herdr cannot answer', async () => {
     // Installed but broken, or a build whose `session list --json` shape moved. Nobody asked for Herdr,
     // so there is nothing to report and nothing to adopt — never a startup failure.
-    await expect(discoverRunningHerdrSessions('herdr', async () => { throw new Error('exit 1') }, endpoint))
+    await expect(discoverRunningHerdrSessions(herdrBin, async () => { throw new Error('exit 1') }, endpoint))
       .resolves.toEqual([])
-    await expect(discoverRunningHerdrSessions('herdr', async () => [], endpoint)).resolves.toEqual([])
+    await expect(discoverRunningHerdrSessions(herdrBin, async () => [], endpoint)).resolves.toEqual([])
   })
 
   it('still refuses two discovered sessions that alias one endpoint', async () => {
     // Discovery must not become a way around the alias rule the configured path enforces.
     const result = await discoverRunningHerdrSessions(
-      'herdr',
+      herdrBin,
       async () => [
         { name: 'one', running: true, session_dir: '/same', socket_path: '/same/herdr.sock' },
         { name: 'two', running: true, session_dir: '/same', socket_path: '/same/herdr.sock' },

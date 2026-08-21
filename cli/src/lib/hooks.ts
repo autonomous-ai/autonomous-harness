@@ -817,7 +817,7 @@ export default function (amp: any) {
 
   const line = (record: any) => {
     try {
-      mkdirSync(SESSIONS_DIR, { recursive: true })
+      mkdirSync(SESSIONS_DIR, { recursive: true, mode: 0o700 })
       appendFileSync(file, JSON.stringify(record) + '\\n')
     } catch {}
   }
@@ -1007,7 +1007,7 @@ export function installAmpPlugin(port: number): void {
   } catch { /* unreadable — rewrite it */ }
   try {
     mkdirSync(dirname(AMP_PLUGIN_PATH), { recursive: true })
-    mkdirSync(env.AMP_SESSIONS_DIR, { recursive: true })
+    mkdirSync(env.AMP_SESSIONS_DIR, { recursive: true, mode: 0o700 })
     const tmp = `${AMP_PLUGIN_PATH}.${process.pid}.tmp`
     writeFileSync(tmp, source)
     renameSync(tmp, AMP_PLUGIN_PATH)

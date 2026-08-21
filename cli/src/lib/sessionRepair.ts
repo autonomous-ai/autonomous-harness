@@ -24,6 +24,7 @@ import type { AgentEngine } from '../engines/types.js'
 import { readCodexRolloutMeta } from '../engines/codex/rollout.js'
 import { agyConversationForPid, findAgyTranscript } from '../engines/agy/session.js'
 import { copilotSessionCwd, copilotSessionForPid, findCopilotTranscript } from '../engines/copilot/session.js'
+import { sqlitePreflightMessage } from './sqliteAvailability.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -172,6 +173,15 @@ async function fileEngineSession(
   return wrote.length === 1 ? wrote[0] : null
 }
 
+let missingSqliteReported = false
+
+/** The store-backed repair branch cannot work without the `sqlite3` CLI; warn on the first miss only. */
+function reportMissingSqliteOnce(): void {
+  if (missingSqliteReported) return
+  missingSqliteReported = true
+  console.warn(sqlitePreflightMessage() ?? '[preflight] sqlite3 CLI not found on PATH')
+}
+
 async function dbEngineSession(dbPath: string, sql: string): Promise<RepairedSession | null> {
   let stdout: string
   try {
@@ -182,7 +192,12 @@ async function dbEngineSession(dbPath: string, sql: string): Promise<RepairedSes
       ['-json', '-cmd', '.timeout 3000', '-cmd', 'PRAGMA query_only=1', dbPath, sql],
       { maxBuffer: 1024 * 1024 },
     ))
-  } catch { return null }
+  } catch (err) {
+    // A missing binary is not a transient DB lock, and repair returning null forever with no signal is
+    // how "my opencode agents never appear on Ubuntu" looks from the outside. Say it once.
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') reportMissingSqliteOnce()
+    return null
+  }
   const trimmed = stdout.trim()
   if (!trimmed) return null
   let rows: Array<Record<string, unknown>>

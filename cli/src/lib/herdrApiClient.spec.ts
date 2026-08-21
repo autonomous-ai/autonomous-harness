@@ -3,6 +3,8 @@ import { chmod, lstat, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
 import {
   HERDR_API_PROTOCOL,
   HERDR_API_SCHEMA_VERSION,
@@ -172,7 +174,14 @@ describe('HerdrApiClient', () => {
     expect(requests).toBe(0)
   })
 
-  it('accepts an owner-owned 0775 socket parent under the local account-owner trust model', async () => {
+  /**
+   * Skipped when the suite itself runs as root (common in a container). `checkedSocket` rejects a
+   * root-OWNED directory that is group-writable — `(stat.uid === 0 && permissions & 0o020)` — because
+   * under root ownership the group bit really does let another account plant a socket. The rule is
+   * correct; it is this case's premise ("the owner is a normal account") that does not hold as root.
+   * Same precedent as the getuid()===0 guard in lib/fsBrowse.spec.ts.
+   */
+  it.skipIf(isRoot)('accepts an owner-owned 0775 socket parent under the local account-owner trust model', async () => {
     const root = await tempDir()
     const parent = join(root, 'herdr')
     await mkdir(parent, { mode: 0o775 })

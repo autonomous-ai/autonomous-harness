@@ -21,7 +21,7 @@ export interface PairedClient {
   role: PairRole      // old records without this field are treated as web
 }
 function writeSecure(file: string, data: unknown): void {
-  mkdirSync(DIR, { recursive: true })
+  mkdirSync(DIR, { recursive: true, mode: 0o700 })
   writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 })
 }
 

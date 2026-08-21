@@ -14,6 +14,20 @@ folder per agent, and yours can join them.
 - The browser channel is end-to-end encrypted (see `src/lib/e2ee/`).
 - One self-contained bundle with no Node native dependencies. Node ≥ 20 plus tmux and/or Herdr 0.8.x is required.
 
+## Supported platforms
+
+**macOS** and **Linux** (Ubuntu 22.04+ verified, bare metal and containers alike). The published
+artifact is one pure-JS bundle run by your own Node, so there is no per-OS build to pick and no
+native module to compile — the same `cli.js` runs everywhere.
+
+| Requirement | Notes |
+|---|---|
+| **Node ≥ 20** | On Ubuntu the distro `nodejs` package is too old (24.04 ships 18.19, 22.04 ships 12.22). Install from [NodeSource](https://github.com/nodesource/distributions) or `nvm install 20`. |
+| **tmux and/or Herdr 0.8.x** | How agents are discovered. Neither is preinstalled on Ubuntu Server: `sudo apt install tmux`. |
+| **`sqlite3` CLI** | Only for the store-backed engines (`opencode`, `kilo`, `hermes`, `devin`), which keep conversations in SQLite instead of a transcript file. Present by default on macOS, **not** on Ubuntu: `sudo apt install sqlite3`. Every other engine works without it, and the daemon says so at startup if it is missing. |
+
+Windows is not supported.
+
 ## Install & run (`harness`)
 
 Prerequisite: **Node ≥ 20**. Create or open a remote machine in the web UI first, then copy its connect

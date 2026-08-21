@@ -65,6 +65,9 @@ curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
 harness join
 ```
 
+Runs on **macOS and Linux** (Ubuntu 22.04+ verified). Node ≥ 20 and tmux and/or Herdr are the
+prerequisites — see [`cli/README.md`](cli/README.md#supported-platforms).
+
 In the code these are named `engine` (CLI) and `provider` (API) — the folder names you'll see:
 
 ```bash

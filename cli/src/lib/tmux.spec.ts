@@ -33,6 +33,51 @@ describe('tmux process primitives', () => {
     })
   })
 
+  /**
+   * Real `ps -axo pid=,ppid=,comm=,lstart=,args=` output captured on Ubuntu 24.04 (procps-ng 4.0.4),
+   * not a macOS-shaped invention. Two things differ from macOS and both are load-bearing:
+   *   - `comm` is a bare name, never a path (`/sbin/docker-init` reads back as `docker-init`);
+   *   - `comm` is hard-capped at 15 bytes by TASK_COMM_LEN, so the binary really named
+   *     `a-very-long-engine-name-binary` reads back as `a-very-long-eng`.
+   * `tmux: server` also proves comm can still carry a space on Linux, which is why the parser anchors
+   * on lstart rather than splitting comm as one token.
+   */
+  it('parses real Linux procps rows, including a 15-byte-truncated comm', () => {
+    expect(parseProcessRow('    1     0 docker-init     Fri Aug 21 09:28:14 2026 /sbin/docker-init -- bash -lc')).toEqual({
+      pid: 1,
+      parentPid: 0,
+      executable: 'docker-init',
+      startMarker: 'Fri Aug 21 09:28:14 2026',
+      args: '/sbin/docker-init -- bash -lc',
+    })
+    expect(parseProcessRow('   15     1 tmux: server    Fri Aug 21 09:28:14 2026 tmux new-session -d -s probe sleep 400')).toEqual({
+      pid: 15,
+      parentPid: 1,
+      executable: 'tmux: server',
+      startMarker: 'Fri Aug 21 09:28:14 2026',
+      args: 'tmux new-session -d -s probe sleep 400',
+    })
+    const truncated = parseProcessRow(
+      '   12     7 a-very-long-eng Fri Aug 21 09:28:14 2026 /tmp/a-very-long-engine-name-binary -e x')
+    expect(truncated?.executable).toBe('a-very-long-eng')
+    expect(Buffer.byteLength(truncated!.executable)).toBe(15)
+  })
+
+  /**
+   * Linux procps substitutes `?` for any byte it cannot print in the current locale, and a daemon under
+   * systemd/docker/ssh usually has no locale at all. Measured on Ubuntu 24.04: a Command Code pane reads
+   * back as `??? <title>` in BOTH comm and args, so both halves of its marker fail and the reaper evicts
+   * the live pane. processRows() now reads ps under LC_ALL=C.UTF-8 and repairs any surviving `?` row from
+   * /proc, which is raw bytes. These two cases pin the before and the after.
+   */
+  it('scores Command Code from the real bytes, and cannot from the mangled ones', () => {
+    const mangled = parseProcessRow('  185   178 ??? harness-cli Fri Aug 21 09:34:20 2026 ??? harness-cli ubuntu probe')
+    expect(engineProcessMatchScore(mangled!, 'commandcode')).toBe(0)
+
+    const repaired = parseProcessRow('  185   178 ⌘ harness-cli Fri Aug 21 09:34:20 2026 ⌘ harness-cli ubuntu probe')
+    expect(engineProcessMatchScore(repaired!, 'commandcode')).toBe(3)
+  })
+
   it('recognises stable installed binary forms', () => {
     expect(engineProcessMatchScore({ executable: 'devin', args: 'devin' }, 'devin')).toBe(3)
     expect(engineProcessMatchScore({ executable: 'muse-bin-0.1.0-R708.1', args: 'muse-bin-0.1.0-R708.1' }, 'muse')).toBe(3)

@@ -361,14 +361,38 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function execFileText(cmd, args, timeout) {
+function execFileText(cmd, args, timeout, env) {
   return new Promise((resolve) => {
     const budget = Math.min(timeout, remainingBudget())
     if (budget < 50) { resolve(null); return }
-    execFile(cmd, args, { timeout: budget }, (err, stdout) => {
+    execFile(cmd, args, { timeout: budget, ...(env && { env }) }, (err, stdout) => {
       resolve(err ? null : stdout)
     })
   })
+}
+
+/**
+ * Mirrors PS_ENV in src/lib/tmux.ts. Linux procps substitutes `?` for every byte it cannot print in the
+ * current locale, and a hook child launched by an engine under systemd/docker/ssh usually has no locale
+ * at all. Measured on Ubuntu 24.04 + procps-ng 4.0.4: `⌘ <title>` reads back as `??? <title>` in BOTH
+ * comm and args, which kills both halves of the Command Code marker in processMatchScore. macOS never
+ * substitutes, so this is Linux-only and cannot regress it.
+ */
+const PS_ENV = process.platform === 'linux' ? { ...process.env, LC_ALL: 'C.UTF-8' } : undefined
+
+/** Second line of defence: /proc is raw bytes, so a glibc without C.UTF-8 still resolves correctly. */
+function repairMangledRows(rows) {
+  if (process.platform !== 'linux') return rows
+  return rows.map((row) => {
+    if (!row.executable.includes('?') && !row.args.includes('?')) return row
+    const args = readProcField(row.pid, 'cmdline')?.replace(/\0/g, ' ').trimEnd()
+    const executable = readProcField(row.pid, 'comm')?.trimEnd()
+    return { ...row, ...(executable && { executable }), ...(args && { args }) }
+  })
+}
+
+function readProcField(pid, field) {
+  try { return readFileSync(`/proc/${pid}/${field}`, 'utf8') } catch { return null }
 }
 
 async function panePid(pane) {
@@ -467,6 +491,12 @@ function hookFileOwner(fileKey, ownership) {
   return 'unknown'
 }
 
+/** Mirrors commTruncatedPrefixOf in src/lib/tmux.ts: Linux caps `comm` at 15 bytes (TASK_COMM_LEN). */
+function commTruncatedPrefixOf(seen, want) {
+  if (process.platform !== 'linux' || !seen || !want) return false
+  return Buffer.byteLength(seen) === 15 && want.length > seen.length && want.startsWith(seen)
+}
+
 function processMatchScore(row, engine, ownership, allowAgentHint = false) {
   const executable = basename(row.executable).toLowerCase()
   const entrypoint = processEntrypoint(row.args).toLowerCase()
@@ -475,7 +505,8 @@ function processMatchScore(row, engine, ownership, allowAgentHint = false) {
   const configured = String(explicit || ENGINE_COMMANDS[engine] || '').toLowerCase()
   const configuredBase = basename(configured).toLowerCase()
   if (configuredBase && configuredBase !== 'agent' && (row.executable.toLowerCase() === configured
-    || entrypoint === configured || executable === configuredBase || entrybase === configuredBase)) return 4
+    || entrypoint === configured || executable === configuredBase || entrybase === configuredBase
+    || commTruncatedPrefixOf(executable, configuredBase))) return 4
   if (engine === 'codex') return /@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/.test(entrypoint) ? 2 : 0
   if (engine === 'cursor') {
     if (executable === 'cursor-agent' || entrybase === 'cursor-agent') return 3
@@ -517,7 +548,7 @@ function processMatchScore(row, engine, ownership, allowAgentHint = false) {
 }
 
 async function processRows() {
-  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000)
+  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000, PS_ENV)
   if (stdout === null) return null
   const rows = []
   for (const line of stdout.split('\n')) {
@@ -531,7 +562,7 @@ async function processRows() {
       args: match[5],
     })
   }
-  return rows
+  return repairMangledRows(rows)
 }
 
 function aliasRows(rows) {

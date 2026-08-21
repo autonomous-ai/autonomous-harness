@@ -1,6 +1,7 @@
 /** tmux process matching, runtime validation, pane capture, and input injection. */
 
 import { execFile, spawn } from 'child_process'
+import { readFileSync } from 'node:fs'
 import { readlink } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { basename } from 'path'
@@ -142,10 +143,51 @@ export function parseProcessRow(line: string): ProcessRow | null {
   }
 }
 
+/**
+ * Second line of defence for the locale substitution described on PS_ENV: a glibc build with no
+ * `C.UTF-8` locale falls back to POSIX and `ps` mangles again. `/proc` is raw bytes and cannot be
+ * mangled by anything, so re-read the two fields from there — but only for the rows that actually show
+ * a `?`, which under a working locale is none. Measured cost of reading every `/proc/<pid>/cmdline` on
+ * a 63-process container: 0.48ms, so even the degenerate "every row" case is free.
+ *
+ * No-op off Linux: macOS has no /proc and does not substitute in the first place.
+ */
+function repairMangledRows(rows: ProcessRow[]): ProcessRow[] {
+  if (process.platform !== 'linux') return rows
+  return rows.map((row) => {
+    if (!row.executable.includes('?') && !row.args.includes('?')) return row
+    // cmdline is NUL-separated; node's process.title rewrite space-pads the tail of the argv region.
+    const args = readProcField(row.pid, 'cmdline')?.replace(/\0/g, ' ').trimEnd()
+    const executable = readProcField(row.pid, 'comm')?.trimEnd()
+    return { ...row, ...(executable && { executable }), ...(args && { args }) }
+  })
+}
+
+function readProcField(pid: number, field: 'cmdline' | 'comm'): string | null {
+  try { return readFileSync(`/proc/${pid}/${field}`, 'utf8') } catch { return null }
+}
+
+/**
+ * The environment `ps` is read under.
+ *
+ * Linux procps replaces every byte it cannot print in the current locale with `?`, and a daemon
+ * frequently has NO locale at all — `LANG` is unset under systemd, under `docker run`, and in an ssh
+ * session that forwards nothing, which makes `LC_CTYPE` fall back to POSIX. Measured on Ubuntu 24.04
+ * (procps-ng 4.0.4): a process whose argv is `⌘ <session title>` prints as `??? <session title>` in
+ * BOTH `comm` and `args`, so both halves of the Command Code marker below fail and every live cmd pane
+ * is evicted by the reaper. Under `LC_ALL=C.UTF-8` the same read returns the real bytes.
+ *
+ * macOS never substitutes (verified: default, C.UTF-8 and POSIX all pass ⌘ through), so this is applied
+ * only where it is needed and cannot regress the platform that already works.
+ */
+const PS_ENV = process.platform === 'linux'
+  ? { ...process.env, LC_ALL: 'C.UTF-8' }
+  : process.env
+
 /** The process table, or null when `ps` itself failed — "we could not look" is not "nothing is there". */
 export async function processRows(): Promise<ProcessRow[] | null> {
   const rows = await new Promise<ProcessRow[] | null>((resolve) => {
-    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000 }, (err, stdout) => {
+    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000, env: PS_ENV }, (err, stdout) => {
       if (err) { resolve(null); return }
       const rows: ProcessRow[] = []
       for (const line of stdout.split('\n')) {
@@ -155,7 +197,7 @@ export async function processRows(): Promise<ProcessRow[] | null> {
       resolve(rows)
     })
   })
-  return rows ? enrichProcessRows(rows) : null
+  return rows ? enrichProcessRows(repairMangledRows(rows)) : null
 }
 
 function execText(command: string, args: string[], timeout: number): Promise<string | null> {
@@ -232,6 +274,18 @@ function panePid(pane: string): Promise<number | null> {
   })
 }
 
+/**
+ * Linux caps `comm` at 15 bytes (TASK_COMM_LEN) and never prints a path there, while macOS prints the
+ * full executable path. Measured on Ubuntu 24.04: a binary named `a-very-long-engine-name-binary` reads
+ * back as `a-very-long-eng`. So on Linux the full-path clause can never fire, and an override whose
+ * basename is longer than the cap can only ever be seen truncated — accept that prefix as evidence.
+ * No supported engine's own basename reaches the cap; this covers a user-set `*_PATH` override.
+ */
+function commTruncatedPrefixOf(seen: string, want: string): boolean {
+  if (process.platform !== 'linux' || !seen || !want) return false
+  return Buffer.byteLength(seen) === 15 && want.length > seen.length && want.startsWith(seen)
+}
+
 export function engineProcessMatchScore(
   row: Pick<ProcessRow, 'executable' | 'args' | 'imageFileKey' | 'entrypointFileKey'>,
   engine: RegisteredSession['engine'],
@@ -245,7 +299,8 @@ export function engineProcessMatchScore(
   const configured = enginePathOverride(engine)?.toLowerCase()
   const configuredBase = basename(configured ?? '').toLowerCase()
   if (configured && configuredBase !== 'agent' && (row.executable.toLowerCase() === configured
-    || entrypoint === configured || executable === configuredBase || entrybase === configuredBase)) return 4
+    || entrypoint === configured || executable === configuredBase || entrybase === configuredBase
+    || commTruncatedPrefixOf(executable, configuredBase))) return 4
   if (engine === 'codex') {
     if (executable === 'codex' || entrybase === 'codex') return 3
     // npm/pnpm/bun global installs may leave node as `comm`; match the package entrypoint without

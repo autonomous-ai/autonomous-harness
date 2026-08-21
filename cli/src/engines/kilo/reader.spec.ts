@@ -62,7 +62,15 @@ const finished = {
   parts: [{ type: 'text', text: 'done' }, { type: 'step-finish', reason: 'stop' }],
 }
 
-describe('KiloReader attaching mid-turn', () => {
+// macOS ships the sqlite3 CLI in the base system; Ubuntu (and most slim images) do not. These cases
+// drive a REAL database on purpose, so skip rather than fail where the binary is genuinely absent —
+// the same guard opencode/reader.spec.ts and hermes/reader.spec.ts already use.
+const hasSqlite = (() => {
+  try { execFileSync('sqlite3', ['-version'], { stdio: 'ignore' }); return true } catch { return false }
+})()
+const d = hasSqlite ? describe : describe.skip
+
+d('KiloReader attaching mid-turn', () => {
   /**
    * The shape that broke a first message. The plugin posts the moment the user row lands, which is
    * BEFORE kilo has written any assistant row — so the old check ("is the tail an unfinished

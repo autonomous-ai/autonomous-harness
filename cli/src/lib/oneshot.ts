@@ -498,7 +498,7 @@ class OpencodeWorker extends ProcessWorker {
     // `opencode run` reads the prompt from stdin (pipe → EOF), so the worker can be pre-warmed and fed
     // the prompt later. `--pure` skips external plugins (so the machine discovery plugin never
     // self-registers this ephemeral recap session). `--format json` streams `{type:'text',part:{text}}`.
-    mkdirSync(OPENCODE_RECAP_DATA_DIR, { recursive: true })
+    mkdirSync(OPENCODE_RECAP_DATA_DIR, { recursive: true, mode: 0o700 })
     const args = ['run', '--pure', '--format', 'json', ...(model ? ['--model', model] : [])]
     const processEnv = scrubTerminalContext({ ...process.env })
     processEnv.OPENCODE_DATA_DIR = OPENCODE_RECAP_DATA_DIR
@@ -643,7 +643,7 @@ class KiloWorker extends ProcessWorker {
     // recap that returns nothing is the failure this flag prevents. Note the asymmetry that makes this
     // easy to get wrong: `--auto` is a valid flag of the `run` SUBCOMMAND, while the bare TUI rejects it
     // — the interactive TUI remains entirely under the user's own permission configuration.
-    mkdirSync(KILO_RECAP_DATA_DIR, { recursive: true })
+    mkdirSync(KILO_RECAP_DATA_DIR, { recursive: true, mode: 0o700 })
     // `--dir` pins the workspace explicitly. Do NOT rely on the spawn `cwd` alone: kilo resolves its
     // project from `$PWD`, and `spawn({cwd})` does not rewrite that variable — the child inherits the
     // DAEMON's `PWD`. Measured in production: the worker logged

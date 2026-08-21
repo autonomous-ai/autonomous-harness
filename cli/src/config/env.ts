@@ -68,7 +68,7 @@ function migrateLegacyAdapterState(): void {
 
   const strayDataDir = join(homedir(), '.machine', 'cli', 'data')
   if (existsSync(strayDataDir)) {
-    mkdirSync(adapterDataDir, { recursive: true })
+    mkdirSync(adapterDataDir, { recursive: true, mode: 0o700 })
     for (const entry of readdirSync(strayDataDir)) {
       if (forceMove(join(adapterDataDir, entry), join(strayDataDir, entry))) moved++
     }
@@ -153,13 +153,19 @@ const envSchema = z.object({
   COMMANDCODE_HOME: z.string().default(join(homedir(), '.commandcode')),
   // Devin CLI state root — history is the SQLite store <DEVIN_HOME>/sessions.db (WAL, no transcript file
   // unless the user passes --export) and <DEVIN_HOME>/session_locks/<id>.lock holds the owning PID.
-  DEVIN_HOME: z.string().default(join(homedir(), '.local', 'share', 'devin', 'cli')),
+  DEVIN_HOME: z
+    .string()
+    .default(join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'devin', 'cli')),
   // Muse Code state root. Transcripts are JSONL but the layout is DATE-SHARDED, not hashed by project
   // path: <MUSE_HOME>/sessions/YYYY/MM/DD/<session-uuid>/session.jsonl, with sub-agents one level deeper
   // under `subagent/<child-uuid>/`. The only link back to a project is `workspace_root`, carried in the
   // FIRST record of each file — which is why this engine is discovered by scanning rather than by a hook.
-  MUSE_HOME: z.string().default(join(homedir(), '.local', 'share', 'muse')),
-  MUSE_CONFIG_DIR: z.string().default(join(homedir(), '.config', 'muse')),
+  MUSE_HOME: z
+    .string()
+    .default(join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'muse')),
+  MUSE_CONFIG_DIR: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'muse')),
   // Amp plugin dir the adapter drops its discovery plugin into (honors XDG_CONFIG_HOME). Amp calls these
   // "system plugins" and loads every `*.ts` there for EVERY thread, which is what makes one install cover
   // all projects — the project-local `.amp/plugins/` alternative would need one copy per repo.
@@ -181,7 +187,9 @@ const envSchema = z.object({
     .default(join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'amp')),
   // Devin's user-level config, where the adapter merges its hooks under a "hooks" key. Devin reads
   // Claude's hook schema verbatim, so the installed block is shaped exactly like ~/.claude/settings.json.
-  DEVIN_CONFIG_PATH: z.string().default(join(homedir(), '.config', 'devin', 'config.json')),
+  DEVIN_CONFIG_PATH: z
+    .string()
+    .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'devin', 'config.json')),
   // Where the tmux-session registry + connect token are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
   // ---- Harness Analytics (see autonomous-code docs/design/harness-analytics.md) ----

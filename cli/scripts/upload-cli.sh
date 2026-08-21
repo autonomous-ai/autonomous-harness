@@ -96,8 +96,15 @@ CLI_GCS="harness/cli/${VER}/cli.js"
 NOTIFY_GCS="harness/cli/${VER}/notify.mjs"
 CLI_URL="${GCS_PUBLIC_BASE_URL%/}/${CLI_GCS}"
 NOTIFY_URL="${GCS_PUBLIC_BASE_URL%/}/${NOTIFY_GCS}"
-CLI_SHA="$(shasum -a 256 "$CLI" | awk '{print $1}')";     CLI_SIZE="$(wc -c < "$CLI" | tr -d ' ')"
-NOTIFY_SHA="$(shasum -a 256 "$NOTIFY" | awk '{print $1}')"; NOTIFY_SIZE="$(wc -c < "$NOTIFY" | tr -d ' ')"
+# `shasum` is a Perl script and is absent from minimal Linux images (only perl-base is installed);
+# `sha256sum` is coreutils and is always there. Prefer it so a release can also be cut from Ubuntu.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+CLI_SHA="$(sha256_of "$CLI")";     CLI_SIZE="$(wc -c < "$CLI" | tr -d ' ')"
+NOTIFY_SHA="$(sha256_of "$NOTIFY")"; NOTIFY_SIZE="$(wc -c < "$NOTIFY" | tr -d ' ')"
 
 echo ">> uploading cli.js ($CLI_SIZE bytes) + notify.mjs ($NOTIFY_SIZE bytes)"
 gsutil -h "Cache-Control:no-cache, no-store, must-revalidate" cp "$CLI"    "gs://${GCS_BUCKET}/${CLI_GCS}"

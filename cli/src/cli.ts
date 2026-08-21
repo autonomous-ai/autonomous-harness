@@ -23,6 +23,7 @@ import { createHash, randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
+import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
@@ -218,7 +219,7 @@ function readSavedToken(): string | null {
 }
 
 function saveToken(token: string): void {
-  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true })
+  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true, mode: 0o700 })
   writeFileSync(TOKEN_FILE, token + '\n', { mode: 0o600 })
 }
 
@@ -231,7 +232,7 @@ function computerId(): string {
     if (saved) return saved
   } catch { /* create below */ }
   const id = randomUUID()
-  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true })
+  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true, mode: 0o700 })
   writeFileSync(COMPUTER_ID_FILE, id + '\n', { mode: 0o600 })
   return id
 }
@@ -603,6 +604,8 @@ async function runForeground(token: string): Promise<void> {
       ? '[terminal] tmux: available'
       : `[terminal] tmux: ${tmuxStartup.state} (${tmuxStartup.reason})`)
   }
+  const sqliteWarning = sqlitePreflightMessage()
+  if (sqliteWarning) console.warn(sqliteWarning)
   for (const target of herdrStartup) {
     console.log(target.state === 'available'
       ? `[terminal] Herdr session ${target.sessionName}: available`
@@ -2714,7 +2717,7 @@ async function launch(token: string, foreground: boolean): Promise<'deauth' | vo
     process.exit(0)
   }
 
-  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true })
+  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true, mode: 0o700 })
   prepareLogFile(LOG_FILE, LEGACY_LOG_FILE) // adopt an older name + enforce the cap before we tail from here
   const logOffset = existsSync(LOG_FILE) ? readFileSync(LOG_FILE).length : 0
   const logFd = openSync(LOG_FILE, 'a')

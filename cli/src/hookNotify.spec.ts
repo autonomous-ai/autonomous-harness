@@ -7,6 +7,8 @@ import { join } from 'path'
 import { fileURLToPath } from 'url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
+
 // Every case here spawns the real hook as a child process, and several spawn shell shims for tmux, ps
 // and sqlite3 on top of that. On a loaded machine — this file runs alongside 88 others — that chain
 // takes well over vitest's 5s default, and the failure looks like a product bug rather than what it is.
@@ -512,7 +514,14 @@ describe('hook notify terminal scope', () => {
     expect(registry).toMatchObject([{ sessionId: 'codex-session', engine: 'codex', tmuxPane: '%8' }])
   })
 
-  it('uses only a configured, validated Herdr endpoint for daemon-down registration', async () => {
+  /**
+   * Skipped when the suite itself runs as root (common in a container). `checkedSocket` rejects a
+   * root-OWNED directory that is group-writable — `(stat.uid === 0 && permissions & 0o020)` — because
+   * under root ownership the group bit really does let another account plant a socket. The rule is
+   * correct; it is this case's premise ("the owner is a normal account") that does not hold as root.
+   * Same precedent as the getuid()===0 guard in lib/fsBrowse.spec.ts.
+   */
+  it.skipIf(isRoot)('uses only a configured, validated Herdr endpoint for daemon-down registration', async () => {
     const dir = mkdtempSync(join(homedir(), '.adapter-hook-herdr-'))
     tmpDirs.push(dir)
     chmodSync(dir, 0o775)

@@ -51,7 +51,15 @@ const userRow = (id: string, text: string, at = '2026-07-28T06:38:21.000000Z') =
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-describe('DevinReader turn close', () => {
+// macOS ships the sqlite3 CLI in the base system; Ubuntu (and most slim images) do not. These cases
+// drive a REAL database on purpose, so skip rather than fail where the binary is genuinely absent —
+// the same guard opencode/reader.spec.ts and hermes/reader.spec.ts already use.
+const hasSqlite = (() => {
+  try { execFileSync('sqlite3', ['-version'], { stdio: 'ignore' }); return true } catch { return false }
+})()
+const d = hasSqlite ? describe : describe.skip
+
+d('DevinReader turn close', () => {
   it('deduplicates the repeated rows Devin writes per inference', async () => {
     const f = fixture()
     const user = userRow('m-user', 'hi')
