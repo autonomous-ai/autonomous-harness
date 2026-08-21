@@ -359,7 +359,14 @@ export class TerminalStreamManager {
     }
     state.lastInputSeq = inputSeq
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
-    const result = await state.handle.writeRaw(bytes)
+    // Ctrl+C (0x03) is never forwarded to the pane: the engine there has no
+    // local job-control fallback, so an uncaught SIGINT kills it outright
+    // and drops tmux back to a bare shell instead of just interrupting the
+    // current turn. Enforced here too (not just client-side) so it holds
+    // regardless of which client is attached.
+    const filtered = bytes.includes(0x03) ? bytes.filter((b) => b !== 0x03) : bytes
+    if (filtered.length === 0) return
+    const result = await state.handle.writeRaw(filtered)
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_INPUT_FAILED', { streamId: state.streamId, message: result.reason })
       if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
