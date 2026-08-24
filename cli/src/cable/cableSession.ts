@@ -124,6 +124,9 @@ export class CableSession {
   private lastRx = 0
   private stopped = false
 
+  /** What the dial was last told the agent list is. Empty = it has been told nothing. */
+  private lastAgentsKey = ''
+
   /** A firmware transfer in flight, and the versions already tried this session. */
   private transfer: FirmwareTransfer | null = null
   private offered = new Set<string>()
@@ -177,6 +180,12 @@ export class CableSession {
       this.lastPing = Date.now()
       await this.send({ t: 'ping' })
     }
+
+    // "Say nothing when nothing changed" has to be paired with "say something when something did".
+    // Without this the list was sent ONCE per session and never corrected — and a daemon that has just
+    // restarted greets the dial before its registry has finished loading, so the one thing it ever said
+    // was "no agents". The dial removed both tiles and sat empty while the daemon knew about two.
+    if (this.greetedMac !== null) await this.syncAgents()
   }
 
   private openAt = 0
@@ -203,6 +212,7 @@ export class CableSession {
     // half-frame in front of the first real frame of the new one.
     this.decoder.reset()
     this.greetedMac = null
+    this.lastAgentsKey = ''   // a new port is a new dial until proven otherwise; tell it everything
     this.lastRx = Date.now()
     this.host.log(`cable: open on ${opened.path}`)
   }
@@ -211,6 +221,7 @@ export class CableSession {
     this.host.log(`cable: closed (${why})`)
     this.link = null
     this.greetedMac = null
+    this.lastAgentsKey = ''
     this.voice = null
     // The dial keeps its running image; the half-written slot is erased again by the next accepted offer.
     this.transfer?.finish('interrupted by the port closing')
@@ -454,22 +465,46 @@ export class CableSession {
    * arithmetic on either side and bounds the message length by construction rather than by hoping the
    * names stay short.
    */
-  async pushAgents(): Promise<void> {
+  /** What the dial has been told, as one comparable string. */
+  private static agentsKey(agents: CableAgent[]): string {
+    return agents.map((a) => `${a.id}:${a.name}:${a.engine ?? ''}:${a.model ?? ''}:${a.effort ?? ''}`).join('|')
+  }
+
+  /**
+   * Send the agent list IF it differs from what the dial was last told.
+   *
+   * Called on attach and on every tick. The tick is not belt-and-braces: the list can be wrong through no
+   * fault of the dial — a daemon restarting answers `hello` before its registry has finished loading, and
+   * the honest answer at that instant is "no agents". Something has to say the true one a second later.
+   */
+  async syncAgents(force = false): Promise<void> {
     const agents = await this.host.listAgents()
+    const key = CableSession.agentsKey(agents)
+    if (!force && key === this.lastAgentsKey) return
+    this.lastAgentsKey = key
+
     await this.send({ t: 'agents.begin' })
     for (const a of agents) {
       await this.send({ t: 'agent', id: a.id, name: a.name, engine: a.engine ?? '', model: a.model ?? '', effort: a.effort ?? '' })
     }
     await this.send({ t: 'agents.end' })
+  }
 
-    // Then what each of them was last doing. A tile with a name and no recap is a tile that has forgotten
-    // the work it belongs to, and that is what a dial shows every time it is replugged or the daemon
-    // restarts — the summaries were on disk the whole time, nobody had sent them.
-    //
-    // `restore: true` is the load-bearing part. It tells the dial this is history, not news: no beep, no
-    // notification, no busy state. Without it, plugging the cable in announces every turn that finished
-    // while it was unplugged.
-    for (const a of agents) {
+  /**
+   * What each agent was last doing.
+   *
+   * A tile with a name and no recap has forgotten the work it belongs to, and that is what a dial shows
+   * every time it is replugged or the daemon restarts — the summaries were on disk the whole time, nobody
+   * had sent them.
+   *
+   * `restore: true` is the load-bearing part: history, not news. No beep, no notification, no busy state.
+   * Without it, plugging the cable in announces every turn that finished while it was unplugged.
+   *
+   * Sent on attach only. The list is re-sent whenever it changes; the history behind it does not, or every
+   * rename would replay a week of recaps.
+   */
+  async pushRestores(): Promise<void> {
+    for (const a of await this.host.listAgents()) {
       const past = this.host.recentSummaries(a.id)
       // Oldest first, so the newest ends up on top of the tile's stack.
       for (const s of [...past].reverse()) {
@@ -477,6 +512,12 @@ export class CableSession {
         await this.send({ t: 'summary', agentId: a.id, recap: s.recap, text: s.text, restore: true })
       }
     }
+  }
+
+  /** Attach: tell the dial everything, whether or not any of it looks unchanged from here. */
+  async pushAgents(): Promise<void> {
+    await this.syncAgents(true)
+    await this.pushRestores()
   }
 
   // Turn state is UNSOLICITED: the daemon reports every turn in every agent, including ones started at the

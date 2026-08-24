@@ -224,6 +224,36 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('corrects a list it sent before the registry was ready', async () => {
+    // THE BUG THIS EXISTS FOR: a daemon that has just restarted answers `hello` before its registry has
+    // finished loading, so the honest answer at that instant is "no agents" — and under a rule that only
+    // speaks when something changed, that one answer stood forever. The dial removed every tile and sat
+    // empty while the daemon knew about two.
+    let agents: CableAgent[] = []
+    const { session, port } = await connect(makeHost({ listAgents: async () => agents }))
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    expect(port.sent.filter((m) => m.t === 'agent')).toHaveLength(0)
+
+    port.sent.length = 0
+    agents = AGENTS                                    // the registry finishes loading
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'), { timeout: 3000 })
+    expect(port.sent.filter((m) => m.t === 'agent')).toHaveLength(2)
+    await session.stop()
+  })
+
+  it('stays quiet while the list is unchanged', async () => {
+    // The other half of the same rule. A push per tick would re-send the whole board every second and
+    // undo the thing that keeps an idle link idle.
+    const { session, port } = await connect()
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    port.sent.length = 0
+    await new Promise((r) => setTimeout(r, 2500))      // two ticks
+    expect(port.types().filter((t) => t.startsWith('agents'))).toEqual([])
+    await session.stop()
+  })
+
   it('redraws a reattached dial with what each agent was last doing', async () => {
     // The summaries were on disk the whole time; a tile with a name and no recap has forgotten the work
     // it belongs to. Newest LAST on the wire so it ends up on top of the tile's stack.
