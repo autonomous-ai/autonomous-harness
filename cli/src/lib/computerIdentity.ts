@@ -5,7 +5,7 @@ import { randomUUID } from 'crypto'
 /**
  * This computer's identity: minted ONCE, then never regenerated.
  *
- * The backend BINDS a machine to this value — `harness auth device` reuses the machine already bound
+ * The backend BINDS a machine to this value — `harness login` reuses the machine already bound
  * to it, and creates one only when there is none. So regenerating it is not a cosmetic reset: it
  * orphans the machine this box was using and mints a replacement. Every path here is therefore
  * write-once, and the file itself lives at the product root (`~/.harness/computer-id`), above

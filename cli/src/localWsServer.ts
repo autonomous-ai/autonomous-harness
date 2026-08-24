@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type http from 'node:http'
 import type { Socket } from 'node:net'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
@@ -19,7 +19,6 @@ export interface LocalWsBackend {
 }
 
 export interface LocalWsServerOptions {
-  token: string
   machineId: string
   backend: LocalWsBackend
 }
@@ -30,17 +29,6 @@ export interface LocalWsServer {
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
-}
-
-function secureEqual(left: string, right: string): boolean {
-  const a = Buffer.from(left)
-  const b = Buffer.from(right)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
-function offeredProtocols(value: string | string[] | undefined): string[] {
-  const raw = Array.isArray(value) ? value.join(',') : value ?? ''
-  return raw.split(',').map((part) => part.trim()).filter(Boolean)
 }
 
 function rejectUpgrade(socket: Socket, status: number, reason: string): void {
@@ -80,15 +68,17 @@ function binaryBytes(raw: RawData): Uint8Array {
 }
 
 /**
- * Add an authenticated loopback WebSocket endpoint to the CLI's existing HTTP server.
- * The machine API key is accepted only as a WebSocket subprotocol and is never returned by /api/status.
+ * Add an internal loopback WebSocket endpoint to the CLI's existing HTTP server. It intentionally has
+ * no credential: loopback-only, no Origin header, and the desktop computer-id validation identify the
+ * local process without placing SSO credentials on this transport.
  */
 export function attachLocalWsServer(server: http.Server, options: LocalWsServerOptions): LocalWsServer {
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: MAX_JSON_BYTES,
-    handleProtocols: (protocols) =>
-      [...protocols].find((protocol) => secureEqual(protocol, options.token)) ?? false,
+    // The loopback endpoint deliberately has no credential. Echo a protocol only for generic WS
+    // clients that insist on proposing one; it carries no authority and is never inspected.
+    handleProtocols: (protocols) => [...protocols][0] ?? false,
   })
 
   const onUpgrade = (req: http.IncomingMessage, socket: Socket, head: Buffer): void => {
@@ -100,11 +90,6 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
     }
     if (req.headers.origin) {
       rejectUpgrade(socket, 403, 'Forbidden')
-      return
-    }
-    const protocols = offeredProtocols(req.headers['sec-websocket-protocol'])
-    if (!protocols.some((protocol) => secureEqual(protocol, options.token))) {
-      rejectUpgrade(socket, 401, 'Unauthorized')
       return
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))

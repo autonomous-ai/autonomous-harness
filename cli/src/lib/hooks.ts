@@ -146,7 +146,7 @@ export function installCodexHooks(port: number): void {
       settings = JSON.parse(readFileSync(CODEX_HOOKS_PATH, 'utf-8')) as Settings
     } catch (err) {
       console.error(`[hooks] Codex hooks file is invalid JSON; leaving it unchanged: ${CODEX_HOOKS_PATH}`)
-      console.error('[hooks] fix the file, then restart harness join')
+      console.error('[hooks] fix the file, then restart harness login')
       return
     }
   }
@@ -194,7 +194,7 @@ export function installGrokHooks(port: number): void {
       settings = JSON.parse(readFileSync(GROK_HOOKS_PATH, 'utf-8')) as Settings
     } catch {
       console.error(`[hooks] Grok hooks file is invalid JSON; leaving it unchanged: ${GROK_HOOKS_PATH}`)
-      console.error('[hooks] fix the file, then restart harness join')
+      console.error('[hooks] fix the file, then restart harness login')
       return
     }
   }
@@ -252,7 +252,7 @@ export function installAgyHooks(port: number): void {
       file = JSON.parse(readFileSync(AGY_HOOKS_PATH, 'utf-8')) as AgyHookFile
     } catch {
       console.error(`[hooks] agy hooks file is invalid JSON; leaving it unchanged: ${AGY_HOOKS_PATH}`)
-      console.error('[hooks] fix the file, then restart harness join')
+      console.error('[hooks] fix the file, then restart harness login')
       return
     }
   }

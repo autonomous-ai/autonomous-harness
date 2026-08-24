@@ -15,7 +15,8 @@ const adapterDataDir = join(adapterCliDir, 'data')
 // dir: `harness reset` wipes that dir, the ~/.machine adoption below force-replaces entries in it, and
 // a custom ADAPTER_DATA_DIR moves it. A computer's identity must outlive all three — the backend binds
 // a machine to it, so a regenerated id silently mints a SECOND machine for a box that already had one.
-// Nothing in the CLI writes above `~/.harness/cli`, which is exactly why it sits here.
+// The SSO session is the only other product-root state (`~/.harness/auth/session.json`); both it and
+// this id intentionally survive an adapter-data reset.
 const computerIdFile = join(adapterRootDir, 'computer-id')
 
 // ── One-time adoption of adapter state written under an older name ────────────────────────────────
@@ -117,11 +118,10 @@ const envSchema = z.object({
   PORT: z.string().default('18473').transform(Number),
   // The backend the CLI dials (`/api/adapter-ws`). Local dev: ws://localhost:8090.
   BACKEND_WS_URL: z.string().default('wss://harness-api.autonomous.ai'),
+  // SSO account plane used by native-loopback login and the adapter WebSocket.
+  AUTONOMOUS_ENV: z.enum(['prod', 'stag']).default('prod'),
   // Web app base URL — used to print the agent's chat link on `adapter start`. Local: http://localhost:3000.
   WEB_URL: z.string().default('https://harness.autonomous.ai'),
-  // Connect token (the agent apiKey). Usually passed as `adapter start <token>` and persisted to
-  // ${ADAPTER_DATA_DIR}/token; this env var overrides both.
-  ADAPTER_TOKEN: z.string().optional(),
   // Set to '1' to let the New Agent folder browser (fs_list_dir) list directories outside $HOME.
   // Off by default so a fat-fingered path or a compromised relay hop can't walk the whole filesystem.
   HARNESS_FS_BROWSE_UNRESTRICTED: z.string().optional(),
@@ -214,7 +214,7 @@ const envSchema = z.object({
   DEVIN_CONFIG_PATH: z
     .string()
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'devin', 'config.json')),
-  // Where the tmux-session registry + connect token are persisted.
+  // Where the tmux-session registry and daemon-local state are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
   // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
   // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on

@@ -19,7 +19,7 @@
 # It used to default to OFF, which pinned the computer silently: a new release would land in the manifest
 # and simply never arrive, and the only clue was `harness update` working by hand while nothing happened
 # on its own. `--no-updates` still gives you that, deliberately — it exports ADAPTER_UPDATE_DISABLE=true
-# in the launcher, switching off both the 60s poll and `harness join`'s update-before-connect (cli.ts
+# in the launcher, switching off both the 60s poll and `harness start`'s update-before-connect (cli.ts
 # `stageLatestBundle`). To rejoin the release train from a pinned install, re-run this without the flag,
 # or the public installer:
 #   curl -fsSL https://harness.autonomous.ai/install.sh | bash
@@ -169,11 +169,11 @@ echo "    launcher: $LAUNCHER$([ "$KEEP_UPDATES" -eq 1 ] && echo '  (self-update
 if [ "$WAS_RUNNING" -eq 1 ] && [ "$DO_RESTART" -eq 1 ]; then
   echo ">> reconnecting on the new build…"
   sleep 1                       # grace for the backend to release the one-machine claim (as `harness update` does)
-  "$LAUNCHER" join
+  "$LAUNCHER" start
 elif [ "$WAS_RUNNING" -eq 1 ]; then
-  echo "  (daemon stopped and NOT restarted — run: harness join)"
+  echo "  (daemon stopped and NOT restarted — run: harness start)"
 else
-  echo "  (no daemon was running — run \`harness join\` to connect, or \`harness join <token>\` on a fresh machine)"
+  echo "  (no daemon was running — run \`harness login\` if needed, then \`harness start\`)"
 fi
 
 # --- Step 7: PATH hint (this script deliberately does not edit your shell rc) ---

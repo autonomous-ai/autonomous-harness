@@ -9,15 +9,15 @@
  * WS ping/pong keep-alive + a 15s app-level `{t:'ping'}` that refreshes the backend presence
  * key, and a bounded FIFO queue for client-facing outbound frames.
  *
- * Auth: the connect token (agent apiKey) rides as the first WS subprotocol.
+ * Auth: the SSO access token rides as the first WS subprotocol.
  */
 
 import { WebSocket } from 'ws'
 import { stat, readFile } from 'fs/promises'
 import { isAbsolute, join } from 'path'
 import { hostname } from 'os'
-import { createHash } from 'crypto'
 import { env } from './config/env.js'
+import { AuthSessionManager, AuthSessionError } from './lib/authSession.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { ENGINES, type AgentEngine } from './engines/types.js'
@@ -256,7 +256,11 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
 
 export class BackendSocket {
   private ws: WebSocket | null = null
-  private token: string
+  private connecting = false
+  private retryingAuth = false
+  private readonly auth: AuthSessionManager
+  /** Constructor-without-auth is retained for isolated unit tests only. */
+  private readonly testToken?: string
   private url: string
   private attempts = 0
   private closed = false
@@ -300,13 +304,13 @@ export class BackendSocket {
    *  programmatic answer channel the way the hosted runtime’s brain does. */
   onQuestionAnswer: ((payload: { requestId?: string; sessionId?: string; agentId?: string; answers?: Record<string, string> }) => void) | null = null
   /** Called when this machine was deleted/revoked (a `machine_revoked` down-frame, or a 401/403 on the
-   *  upgrade) — cli clears the saved token and shuts the adapter down instead of retrying forever. */
+   *  upgrade) — CLI clears the saved SSO session and shuts down instead of retrying forever. */
   onRevoked: (() => void) | null = null
   /** Called with the machine's display name (`machine_meta` down-frame: seeded on connect, pushed on a
    *  web rename; null = unnamed) — cli mirrors it to a local file for `harness status`. */
   onMachineMeta: ((name: string | null) => void) | null = null
-  /** Called when this machine is already connected from ANOTHER machine (HTTP 409 on the upgrade) — the
-   *  credential is valid, just in use elsewhere, so cli keeps the token and stops (no retry loop). */
+  /** Called when this machine is already connected from ANOTHER computer (HTTP 409 on the upgrade) — the
+   *  SSO session is valid, so CLI keeps it and stops without a retry loop. */
   onBusy: (() => void) | null = null
   /** Answers the device `project_recent` RPC (cli.ts wires this to CommanderMirror.recent). */
   recentProvider: RecentProvider | null = null
@@ -316,7 +320,7 @@ export class BackendSocket {
   onRuntimeProfileUpdate: ((sessionId: string, selectedModel: string) => Promise<void>) | null = null
   /** Web↔adapter E2EE: group-encrypts user events, runs the CPace pairing, holds per-conn sessions. */
   readonly e2ee: E2eeManager
-  /** agentId = sha256(token)[:32] — exposed for the local dashboard status. */
+  /** Backend-resolved machine id, persisted by the SSO login preflight. */
   readonly machineId: string
 
   /** The ONE place commander presence changes. Both callers — the `__clients` snapshot and `onGone` (our
@@ -364,16 +368,17 @@ export class BackendSocket {
     this.e2ee.dashboardPort = port
   }
 
-  constructor(token: string, onStatus: (connected: boolean) => void = () => {}, computerId = '') {
-    this.token = token
+  constructor(machineId: string, auth?: AuthSessionManager, onStatus: (connected: boolean) => void = () => {}, computerId = '', autonomousEnv = 'prod') {
+    this.auth = auth ?? new AuthSessionManager(env.BACKEND_WS_URL.replace(/\/$/, '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:'))
+    this.testToken = auth ? undefined : machineId
     // `?label=<hostname>` lets the backend record which machine connected (shown on the machine card);
     // `?computer=<stable id>` enforces one-computer-per-computer (a 2nd computer is rejected with HTTP 409);
     // `?v=<VERSION>` is our own version, which the backend stores on the machine at every connect (the
     // analytics report also carries it, but that path is opt-in, so this is the reliable one).
-    const base = `${env.BACKEND_WS_URL.replace(/\/$/, '')}/api/adapter-ws?label=${encodeURIComponent(hostname())}&v=${encodeURIComponent(VERSION)}`
+    const base = `${env.BACKEND_WS_URL.replace(/\/$/, '')}/api/adapter-ws?label=${encodeURIComponent(hostname())}&v=${encodeURIComponent(VERSION)}&autonomousEnv=${encodeURIComponent(autonomousEnv)}`
     this.url = computerId ? `${base}&computer=${encodeURIComponent(computerId)}` : base
     this.onStatus = onStatus
-    this.machineId = createHash('sha256').update(token).digest('hex').slice(0, 32)
+    this.machineId = machineId
     this.e2ee = new E2eeManager({
       machineId: this.machineId,
       sendTo: (connId, frame) => this.sendTo(connId, frame),
@@ -410,9 +415,26 @@ export class BackendSocket {
   }
 
   connect(): void {
-    if (this.closed || this.ws) return
-    const ws = new WebSocket(this.url, [this.token])
+    if (this.closed || this.ws || this.connecting) return
+    this.connecting = true
+    void this.connectWithSession()
+  }
+
+  private async connectWithSession(): Promise<void> {
+    let token: string
+    try {
+      token = this.testToken ?? await this.auth.accessToken()
+    } catch (err) {
+      this.connecting = false
+      this.onStatus(false)
+      const delay = err instanceof AuthSessionError && err.code === 'INVALID_REFRESH' ? MAX_DELAY_MS : BASE_DELAY_MS
+      if (!this.closed) setTimeout(() => this.connect(), delay)
+      return
+    }
+    if (this.closed) { this.connecting = false; return }
+    const ws = new WebSocket(this.url, [token])
     this.ws = ws
+    this.connecting = false
 
     ws.on('open', () => {
       this.attempts = 0
@@ -480,12 +502,18 @@ export class BackendSocket {
       const msg = e.message || e.code || String(err)
       console.error('[backend] socket error:', msg)
       // 401/403 on the upgrade = this machine is gone/invalid (deleted while we were offline, or a bad
-      // token). Retrying can't help → stop for good and let the CLI clear the saved token + shut down.
-      if (/Unexpected server response: 40[13]\b/.test(msg)) {
+      // token). Retrying cannot help → stop for good and let CLI clear the saved SSO session.
+      if (/Unexpected server response: 401\b/.test(msg) && !this.retryingAuth) {
+        this.retryingAuth = true
+        this.ws = null
+        void this.auth.accessToken({ force: true, failedToken: token })
+          .then(() => { this.retryingAuth = false; this.connect() })
+          .catch(() => { this.retryingAuth = false; this.closed = true; this.onRevoked?.() })
+      } else if (/Unexpected server response: 40[13]\b/.test(msg)) {
         this.closed = true
         this.onRevoked?.()
       }
-      // 409 = one machine per machine: another computer already holds this machine. Keep the token; stop
+      // 409 = another computer already holds this machine. Keep the SSO session; stop
       // retrying (the 40[13] regex above deliberately excludes 409, so without this it would loop).
       else if (/Unexpected server response: 409\b/.test(msg)) {
         this.closed = true

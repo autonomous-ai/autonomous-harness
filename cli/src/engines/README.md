@@ -1,7 +1,7 @@
 # Adding an agent framework to Harness
 
 **This is the CLI path.** Your agent is a command — run on a laptop, a server, a cloud VM, anywhere
-`harness join` runs — and Harness reads the transcript it writes. The code calls that an **engine**,
+`harness login` runs — and Harness reads the transcript it writes. The code calls that an **engine**,
 and this directory holds one folder per engine. If your agent is a service reached over HTTP instead,
 you want the API path — [`provider/`](../../../provider/README.md).
 

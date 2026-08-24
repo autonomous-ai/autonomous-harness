@@ -30,29 +30,32 @@ Windows is not supported.
 
 ## Install & run (`harness`)
 
-Prerequisite: **Node ≥ 20**. Create or open a remote machine in the web UI first, then copy its connect
-token into the installer:
+Prerequisite: **Node ≥ 20**. Install the CLI, then sign in once with the same SSO account used by
+Harness:
 
 ```bash
-curl -fsSL https://harness.autonomous.ai/install.sh | bash -s -- <token>
+curl -fsSL https://harness.autonomous.ai/install.sh | bash
 ```
 
 (The installer is a first-party hosted script; it downloads the published bundle and writes the
 `~/.local/bin/harness` command.)
 
 ```bash
-harness join <token>  # connect this computer to an existing machine
-harness join          # reconnects with the saved credential
+harness login         # opens browser SSO and saves this computer's session
+harness login --force # stop the daemon and sign in as a different SSO account
+harness start         # starts the adapter from the saved SSO session
+harness start -f      # foreground mode for a supervisor; logs to stdout
 harness status     # is it running? shows pid + the chat link
 harness stop       # stop the background adapter
 harness version    # print the installed version
-harness unjoin     # leave the machine (also removes it on the web) + clear the saved credential
-harness join -f    # reconnect in the FOREGROUND (for a supervisor: pm2/systemd), logs to stdout
+harness logout     # stop the adapter and clear this computer's SSO session
 ```
 
-`join` prints a uniform info block (status, backend, pid, logs, and the **web chat link**
-`WEB_URL/machine/<agentId>`) then detaches; raw logs go to `${ADAPTER_DATA_DIR}/harness.log`. The
-credential is persisted to `${ADAPTER_DATA_DIR}/token`, so later runs are just `harness join`.
+`login` uses the browser's native loopback SSO flow. Its access token, refresh token, expiry and
+backend-resolved machine id are stored atomically with owner-only permissions in
+`~/.harness/auth/session.json`; the immutable computer id lives separately at
+`~/.harness/computer-id`. Later `harness start` invocations reuse and refresh that session as needed.
+Raw daemon logs go to `${ADAPTER_DATA_DIR}/harness.log`.
 
 The log is **capped at 10 MB**: the daemon checks the size every minute and, over the cap, rewrites the
 file with the newest half (the oldest lines are dropped, marked by a `[log] trimmed` line at the top).
@@ -69,8 +72,8 @@ Custom Herdr-capable builds must keep self-update disabled or use a fork-owned s
 `ADAPTER_UPDATE_URL` until that build is available in the configured upstream manifest. Otherwise the
 updater can legitimately replace the custom bundle with a release that lacks its terminal support.
 
-**From source (dev):** `cd this package && npm install && npm run build && node dist/cli.js join <token>`
-(or `npm run dev -- join` via tsx — always foreground; self-update is off in dev). `npm run bundle`
+**From source (dev):** `cd this package && npm install && npm run build && node dist/cli.js login`
+(or `npm run dev -- login` via tsx — always foreground; self-update is off in dev). `npm run bundle`
 produces the single-file release artifact.
 
 **Install your build as `harness` (no release):** `bash scripts/install-cli.sh` bundles this
@@ -79,7 +82,7 @@ daemon on it, so `harness` on this computer means your code without publishing a
 turned **off** in the command shim it writes (otherwise the published release overwrites your build within
 the minute). See [`RELEASE.md`](RELEASE.md#local-install-no-upload).
 
-After joining, start each agent yourself in tmux or Herdr with its normal vendor command. Harness
+After signing in, start each agent yourself in tmux or Herdr with its normal vendor command. Harness
 observes the process; it does not launch the CLI or choose its permission/trust flags:
 
 ```bash
@@ -185,10 +188,11 @@ reported as such, not described as exercised.
 | var | default | meaning |
 |-----|---------|---------|
 | `BACKEND_WS_URL` | `wss://harness-api.autonomous.ai` | backend to dial (`/api/adapter-ws`) |
-| `ADAPTER_TOKEN` | *(unset)* | pair token override (else CLI arg / saved file) |
+| `AUTONOMOUS_ENV` | `prod` | SSO environment: `prod` or `stag` |
+| `ADAPTER_COMPUTER_ID` | *(unset)* | pin the stable local computer id for an ephemeral host; never written to disk |
 | `PORT` | `18473` | localhost port for the hook callbacks (FIXED — if taken, the adapter reports it rather than picking a random port) |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | where Claude writes session JSONL |
-| `ADAPTER_DATA_DIR` | `~/.harness/cli/data` | registry + token persistence |
+| `ADAPTER_DATA_DIR` | `~/.harness/cli/data` | registry and daemon-local state (SSO session is always `~/.harness/auth/session.json`) |
 | `DISABLE_HOOK_INSTALL` | `false` | skip auto-installing the claude hooks |
 | `TERMINAL_BACKENDS` | *(auto)* | pin the set: `tmux`, `herdr`, or `tmux,herdr`. Unset = every usable backend |
 | `HERDR_SESSIONS` | *(auto)* | pin an allowlist. Unset = every running Herdr session is adopted |

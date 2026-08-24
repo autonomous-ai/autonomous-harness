@@ -14,7 +14,7 @@
  *  - **Collection starts immediately; uploading waits for acknowledgement.** Aggregates are
  *    snapshots, so holding them costs nothing and loses nothing. That is what lets the product be on
  *    by default while still being able to say, truthfully, that no byte left this computer before
- *    its owner read the field list. The CLI runs headless on servers and under `harness join`, where
+ *    its owner read the field list. The CLI runs headless on servers and under `harness login`, where
  *    there is no screen to show a preview on, so the hold is the only honest mechanism available.
  *  - **The upload response is the control channel.** A daemon has no other way to learn the owner
  *    turned collection off or deleted the history.

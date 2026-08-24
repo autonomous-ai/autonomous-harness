@@ -62,13 +62,13 @@ To get started, run this:
 
 ```bash
 curl -fsSL https://harness.autonomous.ai/install.sh | bash
-harness auth device
+harness login
+harness start
 ```
 
-`harness auth device` prints a six-character code and a link. Approve it in a browser where you are
-signed in and this computer is connected — there is no token to copy, and re-running it on the same
-computer reconnects it to the same machine rather than making a new one. If you already have a
-machine's token, `harness join <token>` still works.
+`harness login` opens your browser for SSO and stores this computer's session. `harness start` refreshes
+that session when needed and connects the local adapter. There is no token to copy; the durable computer
+id keeps later starts attached to the same machine.
 
 Runs on **macOS and Linux** (Ubuntu 22.04+ verified). Node ≥ 20 and tmux and/or Herdr are the
 prerequisites — see [`cli/README.md`](cli/README.md#supported-platforms).
@@ -97,7 +97,8 @@ Your agents stay your processes, on your hardware, with your credentials.
           ┌───────────────────────┼───────────────────────┐
           │                       │                       │
      your laptop             your server            your platform
-    `harness join`          `harness join`          your HTTP API
+   `harness login` +       `harness login` +        your HTTP API
+   `harness start`         `harness start`
           │                       │                       │
      claude · codex          hermes · muse           agents running on
      cursor · amp · …        opencode · kilo ·       your own servers

@@ -119,10 +119,10 @@ describe.skipIf(!runCursorE2e)('Cursor local HTTP/WS/tmux E2E', () => {
 
     const temp = await mkdtemp(join(tmpdir(), 'machine-cursor-e2e-'))
     const dataDir = join(temp, 'adapter-data')
+    const authDir = join(temp, 'auth')
     const registryPath = join(dataDir, 'registry.json')
     const tmuxSession = `machine-cursor-e2e-${process.pid}`
     const hookPort = await freePort()
-    const token = 'a'.repeat(64)
     const frames: Envelope[] = []
     const logs: string[] = []
     const originalHooks = existsSync(cursorHooksPath) ? await readFile(cursorHooksPath) : null
@@ -142,12 +142,24 @@ describe.skipIf(!runCursorE2e)('Cursor local HTTP/WS/tmux E2E', () => {
     let adapter: ChildProcess | null = null
     try {
       await installTemporaryCursorHooks(hookPort, dataDir)
+      await mkdir(authDir, { recursive: true, mode: 0o700 })
+      await writeFile(join(authDir, 'session.json'), JSON.stringify({
+        version: 1,
+        accessToken: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Date.now() + 3_600_000,
+        autonomousEnv: 'prod',
+        computerId: 'cursor-e2e-computer',
+        machineId: 'cursor-e2e-machine',
+        updatedAt: Date.now(),
+      }) + '\n', { mode: 0o600 })
       adapter = spawn(tsxBin, ['src/cli.ts', '__run'], {
         cwd: adapterRoot,
         env: {
           ...process.env,
           NODE_ENV: 'test',
-          ADAPTER_TOKEN: token,
+          HARNESS_AUTH_DIR: authDir,
+          ADAPTER_COMPUTER_ID: 'cursor-e2e-computer',
           ADAPTER_DATA_DIR: dataDir,
           BACKEND_WS_URL: `ws://127.0.0.1:${address.port}`,
           WEB_URL: 'http://127.0.0.1:3000',

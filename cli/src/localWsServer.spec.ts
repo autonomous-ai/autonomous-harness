@@ -6,7 +6,6 @@ import type { Frame, LocalClientSink } from './backendSocket.js'
 import { attachLocalWsServer, type LocalWsBackend, type LocalWsServer } from './localWsServer.js'
 import { encodeTerminalLocal, TerminalBinaryKind, type TerminalBinaryClear } from './lib/terminalBinary.js'
 
-const token = 'machine-api-key'
 const machineId = 'machine-123'
 const streamId = '00112233-4455-6677-8899-aabbccddeeff'
 
@@ -62,16 +61,16 @@ describe('local CLI WebSocket', () => {
 
   async function start(backend: FakeBackend): Promise<string> {
     server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
-    local = attachLocalWsServer(server, { token, machineId, backend })
+    local = attachLocalWsServer(server, { machineId, backend })
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
     const port = (server.address() as AddressInfo).port
     return `ws://127.0.0.1:${port}/api/local-ws`
   }
 
-  it('authenticates, selects the exact machine, and routes JSON plus HTRL binary', async () => {
+  it('accepts loopback, selects the exact machine, and routes JSON plus HTRL binary', async () => {
     const backend = new FakeBackend()
     const url = await start(backend)
-    const ws = new WebSocket(url, [token])
+    const ws = new WebSocket(url)
     await onceOpen(ws)
     const connected = onceMessage(ws)
     ws.send(JSON.stringify({
@@ -106,20 +105,20 @@ describe('local CLI WebSocket', () => {
     ws.close()
   })
 
-  it('rejects the wrong API key before WebSocket upgrade', async () => {
+  it('does not require a credential on the loopback transport', async () => {
     const url = await start(new FakeBackend())
-    const ws = new WebSocket(url, ['wrong-key'])
-    const error = await new Promise<Error>((resolve) => ws.once('error', resolve))
-    expect(error.message).toContain('401')
+    const ws = new WebSocket(url, ['legacy-client-label'])
+    await onceOpen(ws)
+    ws.close()
   })
 
   it('rejects browser origins and machine-id mismatches', async () => {
     const url = await start(new FakeBackend())
-    const browser = new WebSocket(url, [token], { origin: 'https://example.com' })
+    const browser = new WebSocket(url, { origin: 'https://example.com' })
     const error = await new Promise<Error>((resolve) => browser.once('error', resolve))
     expect(error.message).toContain('403')
 
-    const ws = new WebSocket(url, [token])
+    const ws = new WebSocket(url)
     await onceOpen(ws)
     const closed = new Promise<number>((resolve) => ws.once('close', resolve))
     ws.send(JSON.stringify({

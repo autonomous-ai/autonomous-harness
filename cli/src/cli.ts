@@ -2,12 +2,12 @@
 /**
  * machine-adapter CLI (the `harness` command) — connect this computer to a "remote" agent.
  *
- * Terminology: the MACHINE *joins* a machine (`join <token>` → saved apiKey); a BROWSER
+ * Terminology: the MACHINE signs in with SSO (`harness login` → durable session); a BROWSER
  * *pairs* with the computer for end-to-end encryption (`pair`/`unpair`/`pairings`, code + fingerprint).
  * Keeping "pair" for the browser relationship only avoids overloading the word across two trust relations.
  *
- *   harness join <token>    connect this computer to an existing remote machine. Later `harness join`
- *                           reconnects with the saved credential. `adapter unjoin` leaves + clears it.
+ *   harness login           opens native loopback SSO and saves this computer's session.
+ *   harness start           refreshes that session, resolves the machine, and starts the adapter.
  *
  * What runs: engine hooks/plugins (session metadata → localhost hook server → process registry),
  * transcript/store readers, tmux process discovery,
@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, mkdirSync, openSync, existsSync, rmSync, s
 import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
-import { createHash } from 'crypto'
+import { createServer } from 'http'
 import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
@@ -28,10 +28,10 @@ import { ensureUtf8Locale } from './lib/childLocale.js'
 import { binaryOnPath } from './lib/binaryOnPath.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
-import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
+import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
-import { startDeviceAuth, awaitApproval, type DeviceAuthStart } from './lib/deviceAuth.js'
+import { AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineLaunchArgv } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -141,7 +141,7 @@ const LOG_FILE = join(env.ADAPTER_DATA_DIR, 'harness.log')
 // opens this file. Two mechanisms, one ancestor each, in the right order.
 const LEGACY_LOG_FILE = join(env.ADAPTER_DATA_DIR, 'adapter.log')
 // NOT under ADAPTER_DATA_DIR — see config/env.ts. `reset` wipes that dir, so an id kept there
-// regenerates and the next `harness auth device` mints a SECOND machine for a box that already has one.
+// regenerates and the next `harness login` mints a SECOND machine for a box that already has one.
 const COMPUTER_ID_FILE = env.ADAPTER_COMPUTER_ID_FILE
 // The machine's display name, mirrored from the backend (`machine_meta` on connect + web renames) by the
 // daemon so the separate `harness status` process can print it. Absent = unnamed machine.
@@ -168,21 +168,21 @@ const REPAIR_RETRY_MS = 60_000
  *  then settle into the slow rhythm for processes that will never resolve. */
 const REPAIR_EAGER_ATTEMPTS = 24   // ≈2 min at the 5s sweep
 
-function usage(): never {
+function usage(exitCode = 0): never {
   console.log(`harness v${VERSION} — connect this computer to your machine
 
-Agents — after "harness join", run the vendor CLI directly inside tmux. Harness discovers supported
+Agents — after "harness start", run the vendor CLI directly inside tmux. Harness discovers supported
 top-level processes automatically; it does not launch them or change their permission flags:
 ${ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')}
 A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
-  harness auth device          connect this computer by approving a code in your browser (no token to copy)
-  harness join <token>         connect this computer to an existing machine using the token from its machine page
-  harness join                 reconnect with the saved credential
-  harness join -f              run in the FOREGROUND (for a supervisor; logs to stdout)
-  harness unjoin               leave the machine (removes it on the web too) + clear the saved credential
-  harness stop                 stop the background adapter (keeps the credential)
+  harness login                sign in with SSO and save this computer's session
+  harness login --force        stop the daemon and sign in with a different SSO account
+  harness start                start the adapter using the saved SSO session
+  harness start -f             run the adapter in the FOREGROUND (for a supervisor; logs to stdout)
+  harness logout               stop the adapter and clear this computer's SSO session
+  harness stop                 stop the background adapter (keeps the SSO session)
   harness reset                stop the adapter and clear local CLI state
   harness status               show whether it's running (+ version)
   harness version              print the installed version (v${VERSION})
@@ -200,18 +200,13 @@ Browser end-to-end encryption:
   harness --help
 
 This computer's id lives at ${tildify(env.ADAPTER_COMPUTER_ID_FILE)} and is created once. Nothing here
-regenerates it — that is what keeps "harness auth device" reconnecting to the same machine instead of
+regenerates it — that is what keeps "harness start" reconnecting to the same machine instead of
 making a new one. Deleting it (or ~/.harness) makes this look like a brand-new computer. On a box with
 no durable home, a container or CI job, pin ADAPTER_COMPUTER_ID instead.
 
 Env: BACKEND_WS_URL (${env.BACKEND_WS_URL}), WEB_URL (${env.WEB_URL}), ADAPTER_DATA_DIR,
      ADAPTER_COMPUTER_ID, CLAUDE_PROJECTS_DIR, PORT`)
-  process.exit(0)
-}
-
-/** agentId = sha256(token)[:32] — same derivation as the backend (agentIdFromKey). */
-function agentIdFromToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex').slice(0, 32)
+  process.exit(exitCode)
 }
 
 /** Compact a home-relative path with `~` for display. */
@@ -223,33 +218,14 @@ function tildify(p: string): string {
 /** The currently-running script — dist/cli.js when built, src/cli.ts under tsx. */
 const SCRIPT_PATH = fileURLToPath(import.meta.url)
 
-// The saved credential IS the agent apiKey — 32 random bytes as hex (64 chars).
-const TOKEN_RE = /^[0-9a-f]{64}$/i
-
-/** The saved credential (env override, else the token file), or null if this computer hasn't joined. */
-function readSavedToken(): string | null {
-  const fromEnv = env.ADAPTER_TOKEN
-  if (fromEnv && TOKEN_RE.test(fromEnv)) return fromEnv
-  try {
-    const saved = readFileSync(TOKEN_FILE, 'utf-8').trim()
-    if (saved && TOKEN_RE.test(saved)) return saved
-  } catch { /* none */ }
-  return null
-}
-
-function saveToken(token: string): void {
-  mkdirSync(env.ADAPTER_DATA_DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(TOKEN_FILE, token + '\n', { mode: 0o600 })
-}
-
 /** This computer's identity — see lib/computerIdentity.ts. Sent on connect so the backend can enforce
- *  one machine per computer, and used by `harness auth device` to reconnect to the machine already
+ *  one machine per computer, and used by `harness start` to reconnect to the machine already
  *  bound to this box instead of minting a second one. */
 function computerId(): string {
   return readOrMintComputerId(COMPUTER_ID_FILE, env.ADAPTER_COMPUTER_ID)
 }
 
-// ── join ───────────────────────────────────────────────────────────────────────────────────────
+// ── login ──────────────────────────────────────────────────────────────────────────────────────
 // The REST base for control endpoints, derived from the WS URL (wss→https, ws→http).
 function backendHttpBase(): string {
   return env.BACKEND_WS_URL.replace(/\/$/, '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')
@@ -282,64 +258,95 @@ async function postJson<T>(path: string, body: unknown, headers: Record<string, 
   return json.data as T
 }
 
-/**
- * `harness auth device` — connect this computer without ever handling a token.
- *
- * Prints a six-character code, the user approves it in a browser where they are already signed in, and
- * we poll until a machine key comes back. The server answers with the machine already bound to THIS
- * computer, or makes one if it has none — so re-running this on the same box reconnects it rather than
- * collecting machines. Nothing is purchased; connecting a computer is free.
- */
-async function authDeviceCommand(foreground: boolean, force: boolean): Promise<void> {
-  const existing = readSavedToken()
-  if (existing && !force) {
-    console.log('\n  This computer is already connected.')
-    console.log(`    machine  ${webBase()}/machine/${agentIdFromToken(existing)}`)
-    console.log('\n  Run `harness join` to reconnect, or `harness auth device --force` to connect it')
-    console.log('  to a different account.\n')
-    process.exit(0)
-  }
-
-  let start: DeviceAuthStart
-  try {
-    start = await startDeviceAuth(backendHttpBase(), computerId(), hostname())
-  } catch (e) {
-    console.error(`\n  ✗ Could not reach the backend: ${e instanceof Error ? e.message : e}\n`)
-    process.exit(1)
-  }
-
-  const url = `${webBase()}/connect?code=${encodeURIComponent(start.userCode)}`
-  console.log('\n  Approve this computer in your browser:\n')
-  console.log(`    ${url}`)
-  console.log(`\n    code   ${start.userCode}\n`)
-  openInBrowser(url)
-
-  // A heartbeat, because ten minutes of nothing reads as a hang.
-  let waited = 0
-  const outcome = await awaitApproval(backendHttpBase(), start.deviceCode, {
-    intervalSec: start.interval,
-    expiresInSec: start.expiresIn,
-    onTick: () => {
-      waited += Math.max(2, start.interval)
-      if (waited % 30 === 0) console.log(`  …waiting for approval (${waited}s)`)
-    },
+/** Resolve the canonical machine for the durable computer id without ever using a machine API key. */
+async function resolveComputerMachine(): Promise<AuthSession> {
+  const current = readAuthSession()
+  if (!current) throw new Error('Not signed in. Run `harness login`.')
+  const auth = new AuthSessionManager(backendHttpBase())
+  const accessToken = await auth.accessToken()
+  const result = await postJson<{ machine?: { machineId?: string } }>('/api/machines/resolve-computer', {
+    computerId: current.computerId,
+    label: hostname(),
+  }, {
+    authorization: `Bearer ${accessToken}`,
+    'x-autonomous-env': current.autonomousEnv,
   })
+  const machineId = result.machine?.machineId
+  if (!machineId) throw new Error('Backend did not return a machine id for this computer')
+  // Refresh can atomically replace the session while this request is in flight. Always merge the
+  // machine id into the newest file so a stale caller never rolls its rotated refresh token back.
+  const latest = readAuthSession()
+  if (!latest) throw new Error('SSO session disappeared while resolving this computer')
+  const next = latest.machineId === machineId
+    ? latest
+    : { ...latest, machineId, updatedAt: Date.now() }
+  if (next !== latest) writeAuthSession(next)
+  return next
+}
 
-  if (outcome.status === 'denied') {
-    console.error(`\n  ✗ That request was declined${outcome.error ? ` (${outcome.error})` : ''}.\n`)
-    process.exit(1)
+async function loginCommand(foreground: boolean, force: boolean): Promise<void> {
+  if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
+  if (readAuthSession() && !force) {
+    await resolveComputerMachine()
+    console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
+    return
   }
-  if (outcome.status === 'expired') {
-    console.error('\n  ✗ The code expired before it was approved. Run `harness auth device` again.\n')
-    process.exit(1)
-  }
-
-  saveToken(outcome.apiKey)
-  console.log('\n  ✓ Connected.\n')
-  // Same tail as `join <token>`: one command gets you a running daemon.
-  if ((await launch(outcome.apiKey, foreground)) === 'deauth') {
-    console.error('\n✗ The machine rejected that key straight away — try `harness auth device` again.\n')
-    process.exit(1)
+  // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
+  // under its existing socket while this process replaces the durable session.
+  if (force) await stopDaemonProcess()
+  const callback = createServer()
+  await new Promise<void>((resolve, reject) => {
+    callback.once('error', reject)
+    callback.listen(0, '127.0.0.1', () => resolve())
+  })
+  const address = callback.address()
+  if (!address || typeof address === 'string') throw new Error('Could not start the SSO callback server')
+  const redirectUri = `http://127.0.0.1:${address.port}/callback`
+  try {
+    const start = await postJson<{ authorizeUrl?: string; tx?: string }>('/api/auth/authorize-native', {
+      redirectUri,
+      autonomousEnv: env.AUTONOMOUS_ENV,
+    })
+    if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
+    console.log('\n  Sign in to Harness in your browser:\n')
+    console.log(`    ${start.authorizeUrl}\n`)
+    openInBrowser(start.authorizeUrl)
+    const callbackResult = await new Promise<{ code: string; state: string }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('SSO login timed out')), 5 * 60_000)
+      callback.on('request', (req, res) => {
+        const url = new URL(req.url ?? '/', redirectUri)
+        const code = url.searchParams.get('code')
+        const state = url.searchParams.get('state')
+        const error = url.searchParams.get('error')
+        res.writeHead(error || !code || !state ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end(error || !code || !state
+          ? '<h1>Harness login failed</h1><p>You can close this window.</p>'
+          : '<h1>Harness login complete</h1><p>You can close this window and return to the terminal.</p>')
+        clearTimeout(timeout)
+        if (error) reject(new Error(`SSO login failed: ${error}`))
+        else if (code && state) resolve({ code, state })
+      })
+    })
+    const exchanged = await postJson<{ token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }>('/api/auth/exchange', {
+      ...callbackResult,
+      tx: start.tx,
+    })
+    if (!exchanged.token) throw new Error('SSO exchange returned no access token')
+    const id = computerId()
+    const session: AuthSession = {
+      version: 1,
+      accessToken: exchanged.token,
+      ...(exchanged.refreshToken ? { refreshToken: exchanged.refreshToken } : {}),
+      ...(exchanged.expiresIn ? { expiresAt: Date.now() + exchanged.expiresIn * 1000 } : {}),
+      autonomousEnv: exchanged.autonomousEnv ?? env.AUTONOMOUS_ENV,
+      computerId: id,
+      updatedAt: Date.now(),
+    }
+    writeAuthSession(session)
+    await resolveComputerMachine()
+    console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+  } finally {
+    await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
 }
 
@@ -353,46 +360,22 @@ function openInBrowser(url: string): void {
   } catch { /* ignore */ }
 }
 
-/**
- * `harness join [token]` — the single connect command.
- *  - `join <token>`: connect a machine to an existing machine using the token shown on its machine page.
- *  - `join` (no token): reconnect with the saved credential. Fresh machines must pass a token.
- */
-async function joinCommand(foreground: boolean, argToken?: string): Promise<void> {
+/** Start the adapter from a saved SSO session. Missing credentials never open a browser implicitly. */
+async function startCommand(foreground: boolean): Promise<void> {
+  if (!readAuthSession()) {
+    console.error('\n  ✗ Not signed in. Run: harness login\n')
+    process.exit(1)
+  }
   // Update-before-connect: pull the newest bundle FIRST so a machine always reconnects on the latest
-  // build. Staging swaps ~/.harness/cli/cli.js, and the daemon join spawns below (`node cli.js __run`)
+  // build. Staging swaps ~/.harness/cli/cli.js, and the daemon start spawns below (`node cli.js __run`)
   // executes those fresh bytes. Skipped in the foreground (THIS process becomes the long-lived daemon
-  // and self-updates on its own) and on a dev/repo build; never blocks the join if the check fails.
+  // and self-updates on its own) and on a dev/repo build; never blocks start if the check fails.
   if (!foreground) {
     const v = await stageLatestBundle((m) => console.log(m))
     if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
   }
-  if (argToken) {
-    if (!TOKEN_RE.test(argToken)) {
-      console.error('Invalid token — expected the 64-char hex key shown on the machine page ("Connect this computer").')
-      process.exit(1)
-    }
-    saveToken(argToken)
-    // Explicit token = the user chose a SPECIFIC machine → on deauth do NOT create a new one; say so.
-    if ((await launch(argToken, foreground)) === 'deauth') {
-      console.error("\n✗ That token isn't valid for any machine (it may have been deleted).")
-      console.error('  Copy the current token from the machine page, then run: harness join <token>')
-      process.exit(1)
-    }
-    return
-  }
-  const token = readSavedToken()
-  // Nothing saved: rather than telling the user to go find a token, run the grant that gets one. This
-  // is the first-run path, so it is the one that should cost the fewest steps.
-  if (!token) { await authDeviceCommand(foreground, false); return }
-  // If the saved token was rejected (machine deleted/revoked → 401/403), launch wipes it and returns
-  // 'deauth'; do not create a new machine from the CLI.
-  if ((await launch(token, foreground)) === 'deauth') {
-    console.error('\n✗ This computer is no longer connected to a valid machine.')
-    console.error('  Reconnect with: harness auth device')
-    console.error('  (or copy a fresh token from the machine page and run: harness join <token>)')
-    process.exit(1)
-  }
+  await resolveComputerMachine()
+  await launch(foreground)
 }
 
 /** Download + sha256-verify + canary the manifest's cli.js/notify.mjs, then atomically swap them into
@@ -410,7 +393,7 @@ async function downloadCanaryStage(entry: UpdateEntry, dir: string, log: (m: str
 
 /** Fetch the manifest and, if a strictly-newer build exists, stage it (see downloadCanaryStage). Returns
  *  the staged version, or null when nothing was staged — already current, a dev/repo or update-disabled
- *  build, or ANY fetch/verify/canary failure (all swallowed: an update hiccup must never block `join`). */
+ *  build, or ANY fetch/verify/canary failure (all swallowed: an update hiccup must never block `start`). */
 async function stageLatestBundle(log: (m: string) => void): Promise<string | null> {
   if (SCRIPT_PATH.endsWith('.ts') || env.ADAPTER_UPDATE_DISABLE) return null // dev/repo run never touches the installed bundle
   const dir = resolve(env.ADAPTER_CLI_DIR)
@@ -448,10 +431,9 @@ async function updateCommand(): Promise<void> {
   const running = readPid()
   const wasRunning = !!(running && isAlive(running))
   const relaunch = async (): Promise<void> => {
-    const t = readSavedToken()
-    if (!t) { console.log('  (no saved credential — run `harness join <token>` to connect on the new build.)'); process.exit(0) }
+  if (!readAuthSession()) { console.log('  (not signed in — run `harness login`, then `harness start`.)'); process.exit(0) }
     await new Promise((r) => setTimeout(r, 1000)) // grace for the backend to release the one-machine claim
-    await launch(t, false) // spawns a fresh daemon on the new bytes, prints status, and exits
+    await launch(false) // spawns a fresh daemon on the new bytes, prints status, and exits
   }
   if (wasRunning) { console.log('  stopping the running adapter…'); await stopDaemonProcess() }
 
@@ -465,28 +447,18 @@ async function updateCommand(): Promise<void> {
   }
   console.log(`  ✓ installed v${entry.version}`)
   if (wasRunning) { await relaunch(); return }
-  console.log(`✓ Updated to v${entry.version}. Run \`harness join <token>\` to connect.`)
+  console.log(`✓ Updated to v${entry.version}. Run \`harness start\` to connect.`)
   process.exit(0)
 }
 
-/** `adapter unjoin` — leave the machine: delete the binding on the backend (self-authorized by the
- *  agent's own key) and clear local creds; stop the daemon if it's running. */
-async function unjoin(): Promise<void> {
-  const token = readSavedToken()
-  if (!token) { console.log('This computer has not joined (no saved credential).'); process.exit(0) }
-  try {
-    await postJson('/api/machines/leave', {}, { 'x-api-key': token })
-    console.log('Left the machine on the backend.')
-  } catch (e) {
-    // Best-effort: even if the binding was already gone (or the backend is down), clear locally.
-    console.warn(`(backend leave failed: ${e instanceof Error ? e.message : e} — clearing locally anyway)`)
-  }
+/** Stop the local adapter and discard this computer's SSO session. */
+async function logout(): Promise<void> {
   const pid = readPid()
   if (pid && isAlive(pid)) { try { process.kill(pid, 'SIGTERM') } catch { /* ignore */ } }
   rmSync(PID_FILE, { force: true })
-  rmSync(TOKEN_FILE, { force: true })
+  clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
-  console.log('This computer left the machine. Copy a token from the machine page, then run `harness join <token>` to connect again.')
+  console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
   process.exit(0)
 }
 
@@ -521,7 +493,7 @@ async function statBirthMs(path: string): Promise<number> {
 }
 
 /** The daemon body: hooks + watcher + process discovery + backend socket. */
-async function runForeground(token: string): Promise<void> {
+async function runForeground(session: AuthSession): Promise<void> {
   installTimestampedConsole() // daemon-only: every harness.log line gets a wall-clock timestamp
   const startedAt = Date.now()
 
@@ -843,7 +815,8 @@ async function runForeground(token: string): Promise<void> {
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
 
-  const backend = new BackendSocket(token, (connected) => {
+  const auth = new AuthSessionManager(backendHttpBase())
+  const backend = new BackendSocket(session.machineId ?? session.computerId, auth, (connected) => {
     if (!connected) return
     const sessions = registry.active()
     console.log(`[cli] connected · ${sessions.length} agent(s) registered`)
@@ -909,7 +882,7 @@ async function runForeground(token: string): Promise<void> {
    * to show a preview on.
    */
   const analytics = new AnalyticsCollector({
-    token: () => readSavedToken(),
+    token: () => readAuthSession()?.accessToken ?? null,
     enginesPresent: () => [...new Set(registry.list().map((entry) => entry.engine))],
     collectorVersion: VERSION,
   })
@@ -2105,6 +2078,7 @@ async function runForeground(token: string): Promise<void> {
     // deliberately does NOT expose chat/transcripts — those live in the cloud web (WEB_URL/commander).
     onStatus: () => ({
       machineId: backend.machineId,
+      computerId: session.computerId,
       version: VERSION,
       localWs: {
         path: LOCAL_WS_PATH,
@@ -2158,7 +2132,6 @@ async function runForeground(token: string): Promise<void> {
     onStop: () => { setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50) }, // let the 200 flush first
   })
   const localWsServer = attachLocalWsServer(hookServer, {
-    token,
     machineId: backend.machineId,
     backend,
   })
@@ -2569,7 +2542,7 @@ async function runForeground(token: string): Promise<void> {
       prepareLogFile(LOG_FILE, LEGACY_LOG_FILE) // before the fd + the sinceOffset below, so both see one size
       const fd = openSync(LOG_FILE, 'a')
       const c = spawn(process.execPath, [SCRIPT_PATH, '__run'], {
-        detached: true, env: { ...process.env, ADAPTER_TOKEN: token, ...extraEnv }, stdio: ['ignore', fd, fd],
+        detached: true, env: { ...process.env, ...extraEnv }, stdio: ['ignore', fd, fd],
       })
       // A spawn failure (e.g. EMFILE) emits 'error' on the child; with no listener that is an
       // uncaughtException. Catch it so a failed update-restart can't take the old daemon down.
@@ -2661,11 +2634,10 @@ async function runForeground(token: string): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
   process.on('exit', () => { shutdownSummaryPool(); shutdownVoiceRouter() })
 
-  // This machine was deleted/revoked (from the web, or a 401 on reconnect) → clear the saved credential
-  // and shut down. The user reconnects by copying a fresh token from the machine page.
+  // A machine revocation or invalid SSO refresh ends this adapter session permanently.
   backend.onRevoked = () => {
     console.log('[cli] this computer was removed from the machine — clearing credentials and stopping')
-    try { rmSync(TOKEN_FILE, { force: true }) } catch { /* ignore */ }
+    clearAuthSession()
     void shutdown('revoked')
   }
 
@@ -2715,9 +2687,9 @@ async function runningDaemonVersion(): Promise<string> {
 // `status` is a definitive state — `launch` only prints this after "[backend] connected" (so it's
 // "● connected", never a one-shot never-updating "connecting…"); `status` prints running/stopped.
 function printInfoBlock(opts: {
-  status: string; pid: number; token: string; sessions: number; version: string
+  status: string; pid: number; machineId?: string; sessions: number; version: string
 }): void {
-  const link = `${env.WEB_URL.replace(/\/$/, '')}/machine/${agentIdFromToken(opts.token)}`
+  const link = opts.machineId ? `${env.WEB_URL.replace(/\/$/, '')}/machine/${opts.machineId}` : env.WEB_URL
   const row = (k: string, v: string): string => `   ${k.padEnd(10)} ${v}`
   const rule = '  ' + '─'.repeat(37)
   console.log('')
@@ -2807,14 +2779,14 @@ async function waitForReady(sinceOffset: number, timeoutMs = 8000): Promise<Read
 
 // ── daemon start / stop / status ───────────────────────────────────────────────────────────────
 
-/** Daemonize (or run inline) + print the info block. Returns 'deauth' when the saved credential was
- *  rejected (401/403) so the caller (`joinCommand`) can ask for a fresh token; otherwise it exits. */
-async function launch(token: string, foreground: boolean): Promise<'deauth' | void> {
-  // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline. A 401/403
-  // there is handled by backendSocket.onRevoked (clears token + shuts down); no token prompt inline.
+/** Daemonize (or run inline) with the saved SSO session. */
+async function launch(foreground: boolean): Promise<void> {
+  const session = readAuthSession()
+  if (!session) throw new Error('Not signed in. Run `harness login`.')
+  // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {
     if (!foreground) console.log('[cli] dev mode — running in the foreground (Ctrl-C to stop)')
-    await runForeground(token)
+    await runForeground(session)
     return
   }
 
@@ -2831,7 +2803,7 @@ async function launch(token: string, foreground: boolean): Promise<'deauth' | vo
   const logFd = openSync(LOG_FILE, 'a')
   const child = spawn(process.execPath, [SCRIPT_PATH, '__run'], {
     detached: true,
-    env: { ...process.env, ADAPTER_TOKEN: token },
+    env: { ...process.env },
     stdio: ['ignore', logFd, logFd],
   })
   writeFileSync(PID_FILE, String(child.pid) + '\n')
@@ -2844,20 +2816,19 @@ async function launch(token: string, foreground: boolean): Promise<'deauth' | vo
   if (ready.state === 'deauth') {
     try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
     rmSync(PID_FILE, { force: true })
-    rmSync(TOKEN_FILE, { force: true })
-    return 'deauth' // caller decides what to say (saved-token vs. explicit-token error)
+    clearAuthSession()
+    return
   }
 
   // BUSY (409): one machine per machine — this machine is already connected from another computer. The
   // credential is valid, just in use elsewhere, so KEEP the token; stop the daemon and inform (not a
-  // failure, not a retry loop). The user stops the other machine first, then runs `harness join` here.
+  // failure, not a retry loop). The user stops the other machine first, then runs `harness start` here.
   if (ready.state === 'busy') {
     try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
     rmSync(PID_FILE, { force: true })
-    // NB: TOKEN_FILE is intentionally NOT removed — the credential is valid.
     console.log('\n  ℹ This machine is already connected from another computer.')
     console.log('    Only one machine per machine — stop the adapter on that machine first,')
-    console.log('    then run `harness join` here again.')
+    console.log('    then run `harness start` here again.')
     process.exit(0)
   }
 
@@ -2874,14 +2845,14 @@ async function launch(token: string, foreground: boolean): Promise<'deauth' | vo
       console.error(`\n✗ Could not connect to the backend: ${ready.detail}`)
       console.error(`  backend   ${env.BACKEND_WS_URL}`)
       console.error(`  logs      ${tildify(LOG_FILE)}`)
-      console.error('  If this computer was removed from your machine, copy a fresh token and run: harness join <token>')
+      console.error('  If this computer was removed from your machine, run: harness login')
     }
     process.exit(1)
   }
 
   // Not connected YET, but transient (backend deploying / 5xx / slow / not up). The daemon is alive and
   // retries with backoff — it will connect on its own — so leave it running and say so plainly (never a
-  // meaningless one-shot "connecting…"). The user runs `harness join` once, not on a babysitting loop.
+  // meaningless one-shot "connecting…"). The user runs `harness start` once, not on a babysitting loop.
   if (ready.state === 'unreachable') {
     // Lead with the RUNNING state (+ pid), not the error — the daemon IS started and self-retrying, so
     // seeing a pid / "harness stop" later isn't a surprise. This is not a failure; it reconnects itself.
@@ -2897,7 +2868,7 @@ async function launch(token: string, foreground: boolean): Promise<'deauth' | vo
   printInfoBlock({
     status: '● connected',
     pid: child.pid ?? 0,
-    token,
+    machineId: session.machineId,
     sessions: registry.list().length,
     version: await runningDaemonVersion(),
   })
@@ -2942,7 +2913,7 @@ function clearAdapterState(): void {
       // NOT 'computer-id' — it no longer lives here (config/env.ts keeps it at the product root,
       // above everything this function reaches) and it must not be cleared anyway. A reset that
       // changed this computer's identity would orphan its machine and mint a fresh one on the next
-      // `harness auth device`, which is the opposite of "start over on the same box".
+      // `harness login`, which is the opposite of "start over on the same box".
       'machine-name',
       'registry.json',
       'registry-boot',
@@ -2959,14 +2930,14 @@ function clearAdapterState(): void {
   rmStateFiles(cliDir)
 }
 
-/** `adapter reset` — stop the daemon and clear local state so the next join starts fresh. */
+/** Stop the daemon and clear local state so the next login starts fresh. */
 async function resetCommand(): Promise<void> {
   const r = await stopDaemonProcess()
   clearAdapterState()
   console.log(`\n  ✓ Cleared local machine CLI state at ${tildify(env.ADAPTER_DATA_DIR)}.`)
   if (r.pid) console.log(`    Stopped adapter process ${r.pid}.`)
-  if (env.ADAPTER_TOKEN) console.log('    Note: ADAPTER_TOKEN is still set in the environment and will override disk state.')
-  console.log('\n  Start again with: harness join <token>\n')
+  clearAuthSession()
+  console.log('\n  Start again with: harness login, then harness start\n')
   process.exit(0)
 }
 
@@ -2980,7 +2951,7 @@ async function daemonCall(method: 'GET' | 'POST', path: string, body?: unknown):
     res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined })
   } catch {
     console.error('\n  ✗ The adapter is not running on this computer.')
-    console.error('    Start it first:  harness join\n')
+    console.error('    Start it first:  harness start\n')
     process.exit(1)
   }
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
@@ -3014,9 +2985,9 @@ async function pairCommand(code: string | undefined): Promise<void> {
 
 /** `harness browser-link` — print a reusable 7-day browser setup link for the current machine. */
 async function browserLinkCommand(): Promise<void> {
-  const token = readSavedToken()
-  if (!token) { console.error('\n  ✗ This computer is not joined. Run: harness join <token>\n'); process.exit(1) }
-  const agentId = agentIdFromToken(token)
+  const session = readAuthSession()
+  if (!session?.machineId) { console.error('\n  ✗ This computer is not signed in. Run: harness login\n'); process.exit(1) }
+  const agentId = session.machineId
   let url = ''
   try {
     const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/e2ee/setup-link`, {
@@ -3035,7 +3006,7 @@ async function browserLinkCommand(): Promise<void> {
   console.log('\n  Reusable browser setup link (valid for 7 days):\n')
   console.log(`    ${url}\n`)
   console.log('  Anyone with this link can pair a browser until it expires. Keep it private.\n')
-  if (!readPid()) console.log('  Start the adapter with `harness join` if the browser cannot connect.\n')
+  if (!readPid()) console.log('  Start the adapter with `harness start` if the browser cannot connect.\n')
   process.exit(0)
 }
 
@@ -3082,14 +3053,13 @@ async function unpairCommand(id: string | undefined, all: boolean): Promise<void
 async function status(): Promise<void> {
   const pid = readPid()
   const alive = pid != null && isAlive(pid)
-  let token = env.ADAPTER_TOKEN ?? ''
-  if (!token) { try { token = readFileSync(TOKEN_FILE, 'utf-8').trim() } catch { /* none */ } }
-  if (!token) { console.log('machine: not joined. Run: harness join <token>'); process.exit(0) }
+  const session = readAuthSession()
+  if (!session) { console.log('machine: not signed in. Run: harness login'); process.exit(0) }
   registry.load()
   printInfoBlock({
     status: alive ? '● running' : '○ stopped',
     pid: pid ?? 0,
-    token,
+    machineId: session.machineId,
     sessions: registry.list().length,
     // A stopped daemon answers nothing, so this falls back to the local build — which is what will run.
     version: alive ? await runningDaemonVersion() : VERSION,
@@ -3112,31 +3082,22 @@ const onError = (err: unknown): never => {
 }
 
 switch (cmd) {
-  case 'auth':
-    // `device` is the only grant there is; accepting a bare `harness auth` keeps the common case short
-    // without closing the door on a second one later.
-    if (args[0] && args[0] !== 'device') {
-      console.error(`Unknown auth subcommand: ${args[0]}\nUsage: harness auth device`)
-      process.exit(1)
-    }
-    authDeviceCommand(foreground, flags.includes('--force')).catch(onError)
+  case 'login':
+    loginCommand(foreground, flags.includes('--force')).catch(onError)
+    break
+  case 'logout':
+    logout().catch(onError)
+    break
+  case 'start':
+    startCommand(foreground).catch(onError)
     break
   case 'join':
-    joinCommand(foreground, args[0]).catch(onError)
-    break
-  case 'unjoin':
-    unjoin().catch(onError)
-    break
-  // `start` is superseded by `join` (saved reconnect / `join <token>`). Kept as a deprecated
-  // alias so muscle memory / old scripts don't break — including the old `start <token>` form.
-  case 'start':
-    console.error('(note: "harness start" is now "harness join")')
-    joinCommand(foreground, args[0]).catch(onError)
-    break
-  case '__run': { // internal: the detached daemon child runs the adapter inline (token via env)
-    const t = readSavedToken()
-    if (!t) onError(new Error('no credential for __run'))
-    else runForeground(t).catch(onError)
+    console.error('`harness join` has been removed. Run `harness login`, then `harness start`.')
+    process.exit(1)
+  case '__run': { // internal: detached daemon child reads the durable SSO session
+    const session = readAuthSession()
+    if (!session) onError(new Error('no SSO session for __run'))
+    else runForeground(session).catch(onError)
     break
   }
   case 'pair':
@@ -3196,5 +3157,5 @@ switch (cmd) {
     break
   default:
     console.error(`Unknown command: ${cmd}`)
-    usage()
+    usage(1)
 }

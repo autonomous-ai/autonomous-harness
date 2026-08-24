@@ -6,15 +6,12 @@
  * which would execute the command dispatcher.
  */
 
-import { existsSync, readFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { join } from 'path'
 import { env } from '../config/env.js'
+import { hasAuthSession } from './authSession.js'
 
-export const TOKEN_FILE = join(env.ADAPTER_DATA_DIR, 'token')
 export const PID_FILE = join(env.ADAPTER_DATA_DIR, 'adapter.pid')
-
-// The saved credential IS the agent apiKey — 32 random bytes as hex (64 chars).
-const TOKEN_RE = /^[0-9a-f]{64}$/i
 
 /** The daemon's localhost control port — FIXED at env.PORT (no fallback), so pair/status/stop always
  *  reach it and a leftover is findable with `lsof :<PORT>`. */
@@ -33,14 +30,8 @@ export function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
-/** Has this computer ever joined? (env override, else a well-formed token file.) Deliberately returns a
- *  boolean, not the token — callers here only need to pick the right "how to fix it" message. */
-export function hasSavedToken(): boolean {
-  const fromEnv = env.ADAPTER_TOKEN
-  if (fromEnv && TOKEN_RE.test(fromEnv.trim())) return true
-  if (!existsSync(TOKEN_FILE)) return false
-  try { return TOKEN_RE.test(readFileSync(TOKEN_FILE, 'utf-8').trim()) } catch { return false }
-}
+/** Whether a durable SSO session exists for this computer. */
+export function hasSavedAuthSession(): boolean { return hasAuthSession() }
 
 /** Is the background daemon process alive right now? (pid file present AND that pid still exists) */
 export function isDaemonRunning(): boolean {
