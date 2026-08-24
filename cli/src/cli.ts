@@ -2716,8 +2716,14 @@ async function runForeground(session: AuthSession): Promise<void> {
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.
   backend.onOutboundCommander = (frame) => {
     const event = cableEventFor(frame as { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string } })
+    // Logged at the fork, not at the send: this is the one place that can answer "did the daemon even
+    // decide to tell the dial", which is a different question from "did the wire carry it" and was the
+    // question nobody could answer when the tile stayed idle through a whole turn.
+    if (env.LOG_FRAMES && frame?.type === 'commander_event') {
+      console.log(`[cable] tee ${(frame as { payload?: { kind?: string } }).payload?.kind ?? '?'} → ${event ? 'sent' : 'ignored'}`)
+    }
     if (!event) return
-    if (event.kind === 'processing') void cable.turnStarted(event.agentId)
+    if (event.kind === 'processing') void cable.turnStarted(event.agentId, event.text)
     else if (event.kind === 'done') void cable.turnDone(event.agentId)
     else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)
     else void cable.turnError(event.agentId, event.text)

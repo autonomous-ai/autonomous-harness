@@ -482,8 +482,13 @@ export class CableSession {
   // Turn state is UNSOLICITED: the daemon reports every turn in every agent, including ones started at the
   // keyboard. A dial that only saw answers to its own sends would sit idle through most of what the
   // machine actually does.
-  async turnStarted(agentId: string): Promise<void> {
-    await this.send({ t: 'turn.started', agentId })
+  /**
+   * `text` is the status line the tile draws — "Working…", the tool that is running, what it is waiting on.
+   * It travels because without it the dial gets a card with a state and nothing to render: the tile knows
+   * a turn is live and shows the user nothing that says so.
+   */
+  async turnStarted(agentId: string, text = ''): Promise<void> {
+    await this.send({ t: 'turn.started', agentId, text })
   }
   async turnDone(agentId: string): Promise<void> {
     await this.send({ t: 'turn.done', agentId })

@@ -5,7 +5,7 @@
 // a per-platform release matrix into a distribution that is currently a download. A tty is a file, `stty`
 // puts it in raw mode, and that is the whole of what this needs.
 import { exec } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { constants, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 import { promisify } from 'node:util'
 
@@ -132,10 +132,24 @@ export class SerialLink {
     // Raw mode is not optional. Left in the default line discipline the tty maps CR to NL, strips the
     // eighth bit on some paths and echoes what we write back at us — and a mangled frame is
     // indistinguishable from a bad cable at the far end.
+    //
+    // `clocal` belongs with it: it tells the line discipline to ignore modem control lines, so losing
+    // carrier — which is what unplugging a USB serial device looks like — does not hang the port up
+    // underneath us.
     const flag = process.platform === 'darwin' ? '-f' : '-F'
-    await execFile(`stty ${flag} ${JSON.stringify(path)} raw -echo -echoe -echok -echoctl -echoke`)
+    await execFile(`stty ${flag} ${JSON.stringify(path)} raw clocal -echo -echoe -echok -echoctl -echoke`)
 
-    const handle = await open(path, 'r+')
+    // O_NOCTTY IS LOAD-BEARING, AND ITS ABSENCE KILLED THE DAEMON.
+    //
+    // The daemon is spawned detached, which makes it a session leader. A session leader that opens a tty
+    // without this flag ACQUIRES it as its controlling terminal — and when the USB device is unplugged the
+    // kernel sends SIGHUP to that terminal's process group. Default disposition for SIGHUP is terminate,
+    // so pulling the cable killed the process outright: no exception, no stack, nothing for the
+    // unhandledRejection guard to catch, and a log that simply stops mid-second.
+    //
+    // Measured 2026-08-24: the daemon died at the exact second the cable came out, every time, and the
+    // dial then greeted an empty room until it timed out and showed no agents.
+    const handle = await open(path, constants.O_RDWR | constants.O_NOCTTY)
     const link = new SerialLink(path, handle, onData, onClosed)
     void link.readLoop()
     return link
