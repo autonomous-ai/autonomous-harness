@@ -161,6 +161,11 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             close(4403, 'machine mismatch')
             return
           }
+          // The local client observed a live RPC time out against an otherwise-"connected" machine —
+          // its pooled entry is suspect (most commonly the relayed machine's own Harness process
+          // restarted, dropping its E2EE session without the transport itself ever closing). Drop it
+          // so this select dials fresh instead of handing back the same dead session again.
+          if (payload?.forceReconnect === true) options.relayPool.invalidate(requestedMachineId)
           try {
             relay = await options.relayPool.acquire(requestedMachineId, options.autonomousEnv, frame, sink, close)
             selected = true

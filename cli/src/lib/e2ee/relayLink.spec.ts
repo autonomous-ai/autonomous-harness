@@ -267,4 +267,89 @@ describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
       await new Promise<void>((resolve) => wss.close(() => resolve()))
     }
   })
+
+  it('invalidate() drops a pooled entry so the next acquire() dials fresh, without firing its old onClosed', async () => {
+    let selects = 0
+    const wss = new WebSocketServer({ port: 0 })
+    const manager = new E2eeManagerCtor({
+      machineId: MACHINE_ID,
+      sendTo: (_connId, frame) => {
+        // Unlike the other fixtures in this file, this test leaves a terminated (invalidated) client
+        // behind mid-test — only broadcast to sockets still actually open.
+        for (const client of wss.clients) {
+          if (client.readyState === client.OPEN) client.send(JSON.stringify(frame))
+        }
+      },
+      isConnected: () => true,
+    })
+    wss.on('connection', (ws) => {
+      let selected = false
+      ws.on('message', (raw) => {
+        let frame: Frame
+        try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
+        if (!selected) {
+          if (frame.type === 'machine_select') {
+            selected = true
+            selects++
+            ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+          }
+          return
+        }
+        const type = frame.type as string
+        if (type.startsWith('e2e_')) manager.handleFrame(`fake-conn-${selects}`, frame)
+      })
+    })
+
+    try {
+      const port = (wss.address() as AddressInfo).port
+      const clientIdentity = C.newIdentity()
+      const token = manager.createSetupToken(MACHINE_ID).token
+      const claim = await claimSetupToken({
+        token,
+        targetMachineId: MACHINE_ID,
+        selfIdentity: clientIdentity,
+        accessToken: 'unused-in-this-fake',
+        backendWsBase: `ws://127.0.0.1:${port}`,
+        autonomousEnv: 'prod',
+        timeoutMs: 2_000,
+      })
+      expect(claim.ok).toBe(true)
+      if (!claim.ok) return
+
+      const peers = new MachinePeerStore()
+      peers.pin(MACHINE_ID, C.b64e(claim.peerPub), 'harness link')
+      const pool = new RemoteRelayPool(fakeAuth, `ws://127.0.0.1:${port}`, clientIdentity, peers)
+
+      const staleSink = { sendFrame: () => true, sendBinary: () => true }
+      let staleOnClosedFired = false
+      await pool.acquire(
+        MACHINE_ID,
+        'prod',
+        { type: 'machine_select', payload: { machineId: MACHINE_ID } },
+        staleSink,
+        () => { staleOnClosedFired = true },
+      )
+      expect(selects).toBe(2) // 1 for claimSetupToken's own connection, 1 for the acquire() dial
+
+      pool.invalidate(MACHINE_ID)
+      // onClosed is a stand-in for the LOCAL app socket's own close() — invalidate() must never call
+      // it, since a real caller invalidates right before reusing that same local connection for a
+      // fresh acquire(); firing it here would self-destruct the very connection driving the retry.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(staleOnClosedFired).toBe(false)
+
+      const freshSink = { sendFrame: () => true, sendBinary: () => true }
+      await pool.acquire(
+        MACHINE_ID,
+        'prod',
+        { type: 'machine_select', payload: { machineId: MACHINE_ID } },
+        freshSink,
+        () => {},
+      )
+      expect(selects).toBe(3) // invalidate() forced a brand new dial instead of reusing the old entry
+      pool.invalidate(MACHINE_ID) // drop the still-open final entry so wss.close() below can settle
+    } finally {
+      await new Promise<void>((resolve) => wss.close(() => resolve()))
+    }
+  })
 })

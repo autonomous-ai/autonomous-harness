@@ -21,6 +21,12 @@ import { encodeTerminalLocal, type TerminalBinaryClear } from './terminalBinary.
 
 const CONNECT_TIMEOUT_MS = 15_000
 const LINGER_MS = 30_000
+// Same convention/value as localWsServer.ts's app<->daemon heartbeat. Without this, a machine-node
+// cycling (e.g. `harness start` on the OTHER end after a crash/restart) can leave this daemon holding
+// an upstream socket the backend silently dropped with no close frame — every RPC sent through it then
+// times out client-side forever, since nothing ever removes the dead entry to let the next select
+// redial. `ws.terminate()` on a missed pong forces the existing `close` handler to run cleanup.
+const HEARTBEAT_MS = 20_000
 
 export class RelayConnectError extends Error {
   constructor(message: string, readonly closeCode?: number) {
@@ -42,6 +48,8 @@ interface Entry {
   sink: LocalClientSink | null
   onClosed: ((code: number, reason: string) => void) | null
   lingerTimer: ReturnType<typeof setTimeout> | null
+  alive: boolean
+  heartbeatTimer: ReturnType<typeof setInterval> | null
 }
 
 export interface RelaySession {
@@ -60,6 +68,26 @@ export class RemoteRelayPool {
     private readonly selfIdentity: Identity,
     private readonly peers: MachinePeerStore,
   ) {}
+
+  /** Force-drops a pooled entry so the next `acquire()` dials fresh instead of reusing it. For when
+   *  the transport itself never closed but the app-level session behind it is known dead anyway — e.g.
+   *  the relayed machine's own Harness process restarted, dropping its in-memory E2EE session state
+   *  without ever touching this socket (nothing else — not even the heartbeat, since backend itself
+   *  keeps answering pings fine — would ever notice on its own). Signalled by the local client sending
+   *  `forceReconnect: true` on a fresh `machine_select` after observing a live RPC time out. */
+  invalidate(machineId: string): void {
+    const entry = this.entries.get(machineId)
+    if (!entry) return
+    this.entries.delete(machineId)
+    if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
+    if (entry.lingerTimer) clearTimeout(entry.lingerTimer)
+    // The caller is invalidating so it can immediately acquire() a fresh entry on the SAME local
+    // connection (it just got a forceReconnect select) — null this out first so the generic
+    // `ws.on('close', ...)` cleanup below doesn't turn around and close that same local socket via a
+    // now-stale onClosed callback.
+    entry.onClosed = null
+    try { entry.ws.terminate() } catch { /* already gone */ }
+  }
 
   /** Attach `sink` to the (possibly newly-created, possibly reused) upstream connection for
    *  `machineId`. `selectFrame` is the local client's own `machine_select` frame, forwarded upstream
@@ -118,7 +146,15 @@ export class RemoteRelayPool {
     const url = `${this.backendWsBase}/api/web-ws?autonomousEnv=${encodeURIComponent(autonomousEnv)}`
     const ws = new WebSocket(url, [token])
     const crypto = new RelaySessionCrypto({ machineId, selfIdentity: this.selfIdentity, peerPub: b64d(peer.pub) })
-    const entry: Entry = { ws, crypto, sink: null, onClosed: null, lingerTimer: null }
+    const entry: Entry = {
+      ws,
+      crypto,
+      sink: null,
+      onClosed: null,
+      lingerTimer: null,
+      alive: true,
+      heartbeatTimer: null,
+    }
     // Two phases before this connection is usable: (1) machine_select ack, (2) this daemon's own
     // e2e_hello/e2e_welcome as the "client" role — see lib/e2ee/relayClient.ts. Only once BOTH are done
     // does the app's onOutgoing/sink start receiving anything, so it never sees a half-encrypted stream.
@@ -214,9 +250,17 @@ export class RemoteRelayPool {
     })
     // Handshake done — from here on, a close is the entry's real end-of-life, not a handshake failure.
     ws.on('close', (code, reasonBuf) => {
+      if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
       this.entries.delete(machineId)
       entry.onClosed?.(code, reasonBuf?.toString() ?? '')
     })
+    ws.on('pong', () => { entry.alive = true })
+    entry.heartbeatTimer = setInterval(() => {
+      if (!entry.alive) { ws.terminate(); return }
+      entry.alive = false
+      try { ws.ping() } catch { ws.terminate() }
+    }, HEARTBEAT_MS)
+    entry.heartbeatTimer.unref?.()
     this.entries.set(machineId, entry)
     return entry
   }
