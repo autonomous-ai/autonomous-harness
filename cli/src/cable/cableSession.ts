@@ -482,6 +482,9 @@ export class CableSession {
     const key = CableSession.agentsKey(agents)
     if (!force && key === this.lastAgentsKey) return
     this.lastAgentsKey = key
+    // Every push, and only pushes. The dial showing a different number from the daemon is a question this
+    // line answers in one look: either the daemon never said it, or it said it and the dial disagreed.
+    this.host.log(`cable: agents → ${agents.length}${force ? ' (attach)' : ''}`)
 
     await this.send({ t: 'agents.begin' })
     for (const a of agents) {
