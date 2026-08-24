@@ -77,6 +77,8 @@ export interface CableHost {
   route(transcript: string, agents: CableAgent[]): Promise<RouteDecision>
   /** The runtime model/effort catalog for one agent, as opaque profile ids the dial groups and shows. */
   listModels(agentId: string): Promise<string[]>
+  /** One agent's last turn summaries, newest first — what a reattached dial needs to redraw its tiles. */
+  recentSummaries(agentId: string): Array<{ recap: string; text: string }>
   /**
    * The image to offer a dial running `runningVersion`, or null for "nothing to do" — which covers a
    * dial that is current, a dev build that must not be touched, and an unreachable manifest.
@@ -459,6 +461,22 @@ export class CableSession {
       await this.send({ t: 'agent', id: a.id, name: a.name, engine: a.engine ?? '', model: a.model ?? '', effort: a.effort ?? '' })
     }
     await this.send({ t: 'agents.end' })
+
+    // Then what each of them was last doing. A tile with a name and no recap is a tile that has forgotten
+    // the work it belongs to, and that is what a dial shows every time it is replugged or the daemon
+    // restarts — the summaries were on disk the whole time, nobody had sent them.
+    //
+    // `restore: true` is the load-bearing part. It tells the dial this is history, not news: no beep, no
+    // notification, no busy state. Without it, plugging the cable in announces every turn that finished
+    // while it was unplugged.
+    for (const a of agents) {
+      const past = this.host.recentSummaries(a.id)
+      // Oldest first, so the newest ends up on top of the tile's stack.
+      for (const s of [...past].reverse()) {
+        if (!s.recap && !s.text) continue
+        await this.send({ t: 'summary', agentId: a.id, recap: s.recap, text: s.text, restore: true })
+      }
+    }
   }
 
   // Turn state is UNSOLICITED: the daemon reports every turn in every agent, including ones started at the

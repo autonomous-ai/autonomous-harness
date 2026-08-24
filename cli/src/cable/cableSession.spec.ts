@@ -76,6 +76,7 @@ function makeHost(over: Partial<CableHost> = {}) {
     focus: vi.fn(),
     updateAgent: vi.fn(),
     listModels: async () => ['runtime-v1:s1:claude:opus@high', 'runtime-v1:s1:claude:sonnet@low'],
+    recentSummaries: () => [],
     transcribe: async () => 'fix the login screen',
     route: async () => ({ agentId: 'a1', confidence: 0.9, reason: 'name matched' }),
     log: () => {},
@@ -220,6 +221,25 @@ describe('cable session', () => {
 
     expect(port.sent.at(-1)).toMatchObject({ t: 'voice.error', message: 'Voice needs CABLE_STT_API_KEY' })
     expect(host.sendTurn).not.toHaveBeenCalled()
+    await session.stop()
+  })
+
+  it('redraws a reattached dial with what each agent was last doing', async () => {
+    // The summaries were on disk the whole time; a tile with a name and no recap has forgotten the work
+    // it belongs to. Newest LAST on the wire so it ends up on top of the tile's stack.
+    const host = makeHost({
+      recentSummaries: (id) =>
+        id === 'a1' ? [{ recap: 'newest', text: 'b2' }, { recap: 'older', text: 'b1' }] : [],
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types().filter((t) => t === 'summary')).toHaveLength(2))
+
+    const restores = port.sent.filter((m) => m.t === 'summary')
+    expect(restores.map((m) => m.recap)).toEqual(['older', 'newest'])
+    // Every one is marked history. Without this, plugging the cable in announces every turn that
+    // finished while it was unplugged — a beep and a notification each.
+    expect(restores.every((m) => m.restore === true)).toBe(true)
     await session.stop()
   })
 

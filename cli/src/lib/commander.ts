@@ -191,14 +191,30 @@ function splitSummary(summary: string): { recap: string; body: string } {
   return { recap, body }
 }
 
+/** How many turn summaries are kept per session. Three is what the voice router reads: enough to tell one
+ *  agent's subject from another's, few enough that one chatty agent cannot crowd the others out. */
+const RECENT_TURNS = 3
+
 export class CommanderMirror {
   private states = new Map<string, SessionState>()
-  private summaries = new Map<string, string>() // sessionId → "recap\n\nbody"
+  private summaries = new Map<string, string>() // sessionId → "recap\n\nbody" (the LATEST turn)
+  /**
+   * The last few turns, newest first — what a router reads to tell one agent from another.
+   *
+   * A SECOND file rather than widening the first, and the reason is rollback: this daemon self-updates,
+   * and a published build that predates this change reads summaries.json with `typeof v === 'string'`.
+   * Handed an array it keeps nothing and then rewrites the file — every stored recap gone, silently, on a
+   * downgrade nobody asked for. The old file therefore keeps its exact old shape and meaning, and the
+   * history lives beside it where an older reader simply never looks.
+   */
+  private history = new Map<string, string[]>()
   private file: string
+  private historyFile: string
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private opts: CommanderMirrorOpts) {
     this.file = join(opts.dataDir, 'summaries.json')
+    this.historyFile = join(opts.dataDir, 'summaries-history.json')
     this.load()
   }
 
@@ -527,6 +543,7 @@ export class CommanderMirror {
         st.summarizing = false
         if (summary) {
           this.summaries.set(sessionId, summary)
+          this.remember(sessionId, summary)
           this.saveSoon()
           const { recap, body } = splitSummary(summary)
           this.trace(sessionId, `${sid} done in ${ms}ms · recap="${recap}" · bodyLen=${body.length}`)
@@ -586,12 +603,36 @@ export class CommanderMirror {
     return false
   }
 
-  /** Device tile restore at boot (project_recent): the stored last summary, split for the tile. */
-  recent(sessionId: string, _n = 2): Array<{ kind: string; text: string; recap?: string }> {
-    const summary = this.summaries.get(sessionId)
-    if (!summary || !summary.trim()) return []
-    const { recap, body } = splitSummary(summary)
-    return [{ kind: 'summary', text: body || recap, recap }]
+  /**
+   * The session's last `n` turn summaries, newest first — for a device restoring its tile at boot and for
+   * the voice router deciding which agent a spoken sentence belongs to.
+   *
+   * `n` is honoured now. It used to be ignored and this always returned one, which made every caller
+   * asking for more a promise nobody kept: the router in particular was told it had three turns of
+   * context and was given one.
+   *
+   * Falls back to the single latest summary when the history is empty, so the recaps already on disk from
+   * before this existed are usable on the first run rather than after three more turns.
+   */
+  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string }> {
+    const want = Math.max(1, n)
+    const stored = this.history.get(sessionId) ?? []
+    const latest = this.summaries.get(sessionId)
+    // The latest lives in both places once a turn has run under this build; dedupe so it is not read twice.
+    const all = stored.length ? stored : latest ? [latest] : []
+    return all
+      .slice(0, want)
+      .filter((summary) => summary && summary.trim())
+      .map((summary) => {
+        const { recap, body } = splitSummary(summary)
+        return { kind: 'summary', text: body || recap, recap }
+      })
+  }
+
+  /** Keep the last few turns for this session, newest first. */
+  private remember(sessionId: string, summary: string): void {
+    const kept = [summary, ...(this.history.get(sessionId) ?? [])].slice(0, RECENT_TURNS)
+    this.history.set(sessionId, kept)
   }
 
   /** Turn cancelled (web/device C-c). The claude turn is killed with no end_turn line, so no turn_ended
@@ -624,6 +665,10 @@ export class CommanderMirror {
     const summary = this.summaries.get(fromSessionId)
     if (!summary || this.summaries.get(toSessionId)) return
     this.summaries.set(toSessionId, summary)
+    // The history moves with it. A rotation is the same agent in the same pane — losing what it was doing
+    // is exactly what this method exists to prevent, and the router reads the history, not the latest.
+    const past = this.history.get(fromSessionId)
+    if (past?.length && !this.history.get(toSessionId)?.length) this.history.set(toSessionId, past)
     this.save()
   }
 
@@ -647,6 +692,12 @@ export class CommanderMirror {
       const obj = JSON.parse(readFileSync(this.file, 'utf-8')) as Record<string, string>
       for (const [k, v] of Object.entries(obj)) if (typeof v === 'string') this.summaries.set(k, v)
     } catch { /* no file yet */ }
+    try {
+      const obj = JSON.parse(readFileSync(this.historyFile, 'utf-8')) as Record<string, unknown>
+      for (const [k, v] of Object.entries(obj)) {
+        if (Array.isArray(v)) this.history.set(k, v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_TURNS))
+      }
+    } catch { /* no history yet — recent() falls back to the latest summary */ }
   }
 
   private saveSoon(): void {
@@ -658,6 +709,7 @@ export class CommanderMirror {
     try {
       mkdirSync(this.opts.dataDir, { recursive: true, mode: 0o700 })
       writeFileSync(this.file, JSON.stringify(Object.fromEntries(this.summaries), null, 2))
+      writeFileSync(this.historyFile, JSON.stringify(Object.fromEntries(this.history), null, 2))
     } catch (err) {
       console.error('[commander] save summaries failed:', err)
     }

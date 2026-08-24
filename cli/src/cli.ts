@@ -152,6 +152,7 @@ const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
 // The dial's session, held at module scope for the same reason `backendRef` is: shutdown() is defined
 // before the wiring that creates it, and the port has to be released on the way out.
 let cableRef: CableSession | null = null
+
 // OpenCode's SQLite store — polled per session by OpencodeReader (no per-session transcript file).
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
 // Kilo's SQLite store — same shape, its own file and its own reader (see engines/kilo/).
@@ -831,6 +832,19 @@ async function runForeground(session: AuthSession): Promise<void> {
     })
   }, computerId())
   backendRef = backend
+
+  /**
+   * Is ANY device surface watching this machine?
+   *
+   * Two answers, both real: a device connected through the backend (`hasCommander`), and the dial on the
+   * USB cable, which reaches this daemon directly over serial and is invisible to the socket that counts
+   * the others.
+   *
+   * This gates the whole device mirror — the "Working…" card and the LLM recap. Reading it as
+   * backend-only meant a dial plugged into a machine with no WiFi device saw a turn start in its tmux
+   * pane and then nothing at all: the daemon skipped GENERATING the cards, so there was nothing to send.
+   */
+  const deviceIsWatching = (): boolean => backend.hasCommander() || cableRef?.isConnected === true
   const terminalStreams = new TerminalStreamManager({
     terminals,
     resolveAgent: (agentId) => registry.resolve(agentId),
@@ -1317,7 +1331,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const questionWatcher = new QuestionWatcher({
     getSession: (id) => registry.resolve(id),
     capture: captureTerminal,
-    hasDevice: () => backend.hasCommander(),
+    hasDevice: () => deviceIsWatching(),
     isDriving: (sessionId) => questions.isDriving(sessionId),
     onQuestion: (sessionId, requestId, shaped) => {
       questions.remember(requestId, sessionId)
@@ -1335,8 +1349,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   const mirror = new CommanderMirror({
     send: (frame) => backend.sendCommander(frame),
     sendWeb: (frame) => backend.send(frame), // turn_summary_pending / turn_summary → web indicator
-    hasDevice: () => backend.hasCommander(), // device-gate the LLM recap (mirror node)
-    active: () => backend.hasActiveCommander(), // stream live cards only to the actively-rendered machine
+    hasDevice: () => deviceIsWatching(),        // device-gate the LLM recap (mirror node)
+    // Live cards stream to whatever is actually rendering. The dial has one screen and it is always the
+    // one in front of the user, so a cable session counts as active by construction.
+    active: () => backend.hasActiveCommander() || cableRef?.isConnected === true,
     summarize: async (text, signal, userMessage, sessionId) => {
       const session = sessionId ? registry.bySession(sessionId) : undefined
       // Gateway agents recap through OpenRouter directly (no vendor credential to spend). The probe is

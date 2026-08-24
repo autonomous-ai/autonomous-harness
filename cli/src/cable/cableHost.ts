@@ -30,7 +30,7 @@ export interface CableHostWiring {
   sendTurn: (agentId: string, text: string) => void
   stopTurn: (agentId: string) => void
   answer: (agentId: string, id: string, optionId: string) => void
-  /** Recaps of an agent's last `n` completed turns, for routing. */
+  /** Recaps of an agent's last `n` completed turns — for routing, and for redrawing a reattached dial. */
   recent: (agentId: string, n: number) => RecentTurn[]
   /** The opaque runtime-v1 profile, which is where the dial's Model/Effort chips come from. */
   runtimeProfile?: (session: RegisteredSession) => string | null
@@ -100,6 +100,14 @@ export class DaemonCableHost implements CableHost {
 
   updateAgent(agentId: string, model?: string, effort?: string): void {
     this.wiring.updateAgent?.(agentId, model, effort)
+  }
+
+  /** The last few turns, newest first, in the shape the dial's tile draws: a headline and a body. */
+  recentSummaries(agentId: string): Array<{ recap: string; text: string }> {
+    return this.wiring
+      .recent(agentId, 3)
+      .map((r) => ({ recap: r?.recap ?? '', text: r?.text ?? '' }))
+      .filter((s) => s.recap || s.text)
   }
 
   async listModels(agentId: string): Promise<string[]> {
