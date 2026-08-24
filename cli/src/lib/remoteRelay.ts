@@ -102,7 +102,12 @@ export class RemoteRelayPool {
       throw err
     })
     this.pending.set(machineId, promise)
-    void promise.finally(() => { if (this.pending.get(machineId) === promise) this.pending.delete(machineId) })
+    // `.finally()` re-throws on rejection, producing a SECOND promise distinct from the one returned
+    // below (which callers already await/catch) — left un-caught, every failed dial (e.g. NO_PEER_LINK
+    // on an unlinked machine) becomes an unhandledRejection, one per attempt.
+    void promise
+      .finally(() => { if (this.pending.get(machineId) === promise) this.pending.delete(machineId) })
+      .catch(() => {})
     return promise
   }
 
