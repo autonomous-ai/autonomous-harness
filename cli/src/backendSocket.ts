@@ -589,7 +589,21 @@ export class BackendSocket {
 
   /** Send a DEVICE-audience frame (commanderEligible, not web). User/data frames are group-encrypted
    *  (E2EE) here so the backend relays only ciphertext; system/presence frames pass through. */
+  /**
+   * A tap on everything bound for a device, taken BEFORE E2EE wrapping.
+   *
+   * The dial on the USB cable is a second device audience, and it wants exactly what this one gets — the
+   * same `commander_event` cards, in the same order, with the same recaps. Teeing here rather than adding
+   * a parallel emit at each of the two dozen call sites is what keeps the two surfaces from drifting: a
+   * new event kind reaches the cable the day it reaches the socket, without anyone remembering to add it.
+   *
+   * Plaintext on purpose: E2EE exists because the backend relays those frames. The cable relays nothing —
+   * it is a wire the user physically owns, running to a process on their own computer.
+   */
+  onOutboundCommander?: (frame: Frame) => void
+
   sendCommander(frame: Frame): void {
+    this.onOutboundCommander?.(frame)
     if (env.LOG_FRAMES) logFrame('→', 'device', frame)
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
   }

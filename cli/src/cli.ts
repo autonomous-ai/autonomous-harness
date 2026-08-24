@@ -26,6 +26,8 @@ import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
 import { binaryOnPath } from './lib/binaryOnPath.js'
+import { CableSession } from './cable/cableSession.js'
+import { DaemonCableHost, cableEventFor } from './cable/cableHost.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
@@ -146,6 +148,10 @@ const COMPUTER_ID_FILE = env.ADAPTER_COMPUTER_ID_FILE
 // The machine's display name, mirrored from the backend (`machine_meta` on connect + web renames) by the
 // daemon so the separate `harness status` process can print it. Absent = unnamed machine.
 const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
+
+// The dial's session, held at module scope for the same reason `backendRef` is: shutdown() is defined
+// before the wiring that creates it, and the port has to be released on the way out.
+let cableRef: CableSession | null = null
 // OpenCode's SQLite store — polled per session by OpencodeReader (no per-session transcript file).
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
 // Kilo's SQLite store — same shape, its own file and its own reader (see engines/kilo/).
@@ -2608,6 +2614,9 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`\n[cli] ${signal} — shutting down`)
+    // Release the serial port first. It is exclusive, and a daemon that exits still holding it makes
+    // esptool fail in a way that reads exactly like dead hardware.
+    void cableRef?.stop()
     updater?.stop()
     agentReconciler.stop()
     clearInterval(logTrimTimer)
@@ -2656,6 +2665,50 @@ async function runForeground(session: AuthSession): Promise<void> {
     console.log('[backend] machine busy — this machine is already connected from another computer; stopping')
     void shutdown('busy')
   }
+
+  // ── the dial on the USB cable ────────────────────────────────────────────────────────────────────
+  //
+  // A second device surface, served entirely over a wire the user physically owns: no backend, no
+  // pairing, no E2EE, no credential on the device. Everything it can ask for is answered by the machinery
+  // above — the same registry, the same delivery path, the same router — because a second implementation
+  // of any of those is a second set of bugs.
+  //
+  // Deliberately not fatal and not blocking: an unplugged cable is this daemon's ordinary state.
+  const cableHost = new DaemonCableHost({
+    machineName: () => { try { return readFileSync(MACHINE_NAME_FILE, 'utf8').trim() || 'This machine' } catch { return 'This machine' } },
+    // The SAME handlers the backend socket drives, called directly rather than reimplemented: the
+    // slash-command adaptation, the turn bookkeeping and the question plumbing all live in them.
+    sendTurn: (agentId, text) => backend.onMessage?.(agentId, text),
+    stopTurn: (agentId) => backend.onCancel?.(agentId),
+    answer: (agentId, id, optionId) => backend.onQuestionAnswer?.({ agentId, requestId: id, answers: { [id]: optionId } }),
+    recent: (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n),
+    runtimeProfile: (session) => runtimeProfiles.selectedModel(session),
+    updateAgent: (agentId, model, effort) => {
+      const s = registry.resolve(agentId)
+      if (!s || !model) return
+      backend.onRuntimeProfileUpdate?.(s.sessionId || agentId, `runtime-v1:${s.sessionId || agentId}:${s.engine}:${model}@${effort || 'auto'}`)
+    },
+    // The same provider the web and the WiFi device read, so the dial's picker cannot show a different
+    // catalog from the one the machine will actually honour.
+    listModels: async (agentId) => (await backend.runtimeModelsProvider?.(agentId)) ?? [],
+    log: (line) => console.log(`[cable] ${line}`),
+  })
+  const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
+  cableRef = cable
+
+  // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
+  // again at each call site: a new event kind reaches the dial the day it reaches the socket.
+  backend.onOutboundCommander = (frame) => {
+    const event = cableEventFor(frame as { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string } })
+    if (!event) return
+    if (event.kind === 'processing') void cable.turnStarted(event.agentId)
+    else if (event.kind === 'done') void cable.turnDone(event.agentId)
+    else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)
+    else void cable.turnError(event.agentId, event.text)
+  }
+
+  if (env.CABLE_DISABLE) console.log('[cable] disabled (CABLE_DISABLE=true) — the serial port is left alone')
+  else cable.start()
 }
 
 // ── info block ───────────────────────────────────────────────────────────────────────────────────

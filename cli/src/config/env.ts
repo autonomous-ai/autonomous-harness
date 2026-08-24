@@ -356,6 +356,22 @@ const envSchema = z.object({
   ADAPTER_UPDATE_DISABLE: z.string().default('false').transform((v) => v === 'true'),
   // Install dir holding the packaged cli.js + notify.mjs that the self-updater swaps in place.
   ADAPTER_CLI_DIR: z.string().default(adapterCliDir),
+
+  // ── the dial on the USB cable ──────────────────────────────────────────────────────────────────
+  // Set 'true' to leave the serial port alone entirely. The port is exclusive, so this is what a
+  // developer flips before running esptool or a serial monitor against the dial.
+  CABLE_DISABLE: z.string().default('false').transform((v) => v === 'true'),
+  // Transcription for voice captured on the dial. The device holds no cloud credential and never talks to
+  // one; the daemon has an account, and this call is authenticated by the SSO session `harness login`
+  // leaves behind — no shared secret, because this repository is public. Path only: the host comes from
+  // BACKEND_WS_URL, so a daemon pointed at a local backend transcribes against that one too.
+  CABLE_STT_PATH: z.string().default('/api/voice/stt'),
+  // Firmware for the dial: the SAME published manifest the device used to poll before it lost WiFi, so
+  // `make upload-circle` remains the only way a release happens — this only changes who downloads.
+  CABLE_FW_MANIFEST_URL: z
+    .string()
+    .default('https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/esp32/ota/metadata.json'),
+  CABLE_FW_DISABLE: z.string().default('false').transform((v) => v === 'true'),
 })
 
 export type Env = z.infer<typeof envSchema>
