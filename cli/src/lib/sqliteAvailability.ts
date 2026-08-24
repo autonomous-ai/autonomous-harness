@@ -10,8 +10,7 @@
  * Resolved from PATH directly rather than by spawning: this runs on the startup path and the answer is
  * only used for one advisory log line.
  */
-import { accessSync, constants } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { binaryOnPath } from './binaryOnPath.js'
 
 /** Engines that cannot be mirrored without the CLI. Keep in sync with the readers listed above. */
 export const SQLITE_BACKED_ENGINES = ['opencode', 'kilo', 'hermes', 'devin'] as const
@@ -20,13 +19,7 @@ let cached: boolean | null = null
 
 export function hasSqliteCli(): boolean {
   if (cached !== null) return cached
-  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']
-  cached = (process.env.PATH ?? '').split(delimiter).some((dir) => {
-    if (!dir) return false
-    return exts.some((ext) => {
-      try { accessSync(join(dir, `sqlite3${ext}`), constants.X_OK); return true } catch { return false }
-    })
-  })
+  cached = binaryOnPath('sqlite3')
   return cached
 }
 

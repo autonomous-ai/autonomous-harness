@@ -25,6 +25,7 @@ import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
+import { binaryOnPath } from './lib/binaryOnPath.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, TOKEN_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
@@ -2417,18 +2418,34 @@ async function runForeground(token: string): Promise<void> {
       return { ok: false, error: 'CWD_NOT_FOUND' }
     }
     const label = `${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
-    const spawned = await tmuxBackend.create({
-      cwd,
-      label,
-      command: buildEngineLaunchArgv(engine, { bypassPermission }),
-    })
-    if (spawned.state !== 'succeeded') return { ok: false, error: 'SPAWN_FAILED' }
+    const argv = buildEngineLaunchArgv(engine, { bypassPermission })
+    const spawned = await tmuxBackend.create({ cwd, label, command: argv })
+    if (spawned.state !== 'succeeded') {
+      console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
+      return { ok: false, error: 'SPAWN_FAILED' }
+    }
     for (const delayMs of [150, 400, 800]) {
       await new Promise((resolve) => setTimeout(resolve, delayMs))
       await agentReconciler.triggerHint(spawned.runtime, engine)
       const session = registry.byRuntimeEngine(spawned.runtime, engine)
       if (session) return { ok: true, session }
     }
+    // `tmux new-session` reports success for a command that does not exist — it opens the pane, the
+    // shell says "<engine>: command not found", and the session is gone a moment later. Discovery then
+    // finds nothing and the user is told ENGINE_DID_NOT_START, which on a fresh machine is almost
+    // always "that CLI is not installed" and reads like a Harness bug instead. Measured on a container
+    // with only claude present: `tmux new-session -d "codex …"` exits 0 and leaves no session.
+    //
+    // The check is done HERE rather than before spawning on purpose: the tmux server may carry a
+    // different PATH than this daemon (it inherits from whoever started it), so a binary we cannot see
+    // might still launch. Refusing up front would turn that into a false negative; explaining a failure
+    // that already happened cannot.
+    const bin = argv[0]
+    if (!binaryOnPath(bin)) {
+      console.warn(`[agent] create ${engine} failed · "${bin}" is not installed or not on PATH`)
+      return { ok: false, error: 'ENGINE_NOT_INSTALLED' }
+    }
+    console.warn(`[agent] create ${engine} failed · "${bin}" started but no engine process appeared in the pane`)
     return { ok: false, error: 'ENGINE_DID_NOT_START' }
   }
 
