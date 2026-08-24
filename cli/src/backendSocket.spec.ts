@@ -3,6 +3,7 @@ import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
+import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js'
 import { registry, type RegisteredSession } from './lib/registry.js'
 
 const wsMock = vi.hoisted(() => {
@@ -292,6 +293,80 @@ describe('BackendSocket outbound queue', () => {
       })
     })
     expect(provider).not.toHaveBeenCalled()
+    await socket.stop()
+  })
+
+  it('serves authenticated local RPCs in cleartext without weakening cloud E2EE', async () => {
+    const socket = new BackendSocket('token')
+    socket.runtimeModelsProvider = async () => [
+      { id: 'runtime-v1:s1:codex:gpt-5.6-sol@high', displayName: 'Sol / High' },
+    ]
+    const frames: Array<Record<string, unknown>> = []
+    expect(socket.registerLocalClient('local:test', {
+      sendFrame: (frame) => { frames.push(frame); return true },
+      sendBinary: () => true,
+    })).toBe(true)
+
+    socket.handleLocalFrame('local:test', {
+      type: 'models_list', payload: { requestId: 'local-models' },
+    })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'models_list_result',
+      payload: {
+        requestId: 'local-models',
+        models: [{ id: 'runtime-v1:s1:codex:gpt-5.6-sol@high', displayName: 'Sol / High' }],
+      },
+    }))
+
+    await socket.unregisterLocalClient('local:test')
+    await socket.stop()
+  })
+
+  it('routes local terminal binary directly and preserves local streams when cloud disconnects', async () => {
+    vi.useFakeTimers()
+    const socket = new BackendSocket('token')
+    const handleBinary = vi.fn(async () => undefined)
+    const closeConnection = vi.fn(async () => undefined)
+    const closeConnectionsWhere = vi.fn(async (
+      _predicate: (connId: string) => boolean,
+      _reason: string,
+      _notify?: boolean,
+    ) => undefined)
+    const stop = vi.fn(async () => undefined)
+    socket.setTerminalStreamManager({
+      handleBinary,
+      closeConnection,
+      closeConnectionsWhere,
+      stop,
+    } as unknown as TerminalStreamManager)
+    const binary: Uint8Array[] = []
+    socket.registerLocalClient('local:terminal', {
+      sendFrame: () => true,
+      sendBinary: (frame) => { binary.push(frame); return true },
+    })
+    const clear = {
+      kind: TerminalBinaryKind.input,
+      streamId: '00112233-4455-6677-8899-aabbccddeeff',
+      seq: 1,
+      bytes: Uint8Array.of(1, 2),
+      compressed: false,
+    }
+    await socket.handleLocalBinary('local:terminal', clear)
+    expect(handleBinary).toHaveBeenCalledWith('local:terminal', clear)
+    expect(socket.sendTerminalBinaryTo('local:terminal', clear)).toBe(true)
+    expect(decodeTerminalLocal(binary[0])).toEqual(clear)
+
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.close()
+    expect(closeConnectionsWhere).toHaveBeenCalledOnce()
+    const predicate = closeConnectionsWhere.mock.calls[0][0] as (connId: string) => boolean
+    expect(predicate('web-1')).toBe(true)
+    expect(predicate('local:terminal')).toBe(false)
+
+    await socket.unregisterLocalClient('local:terminal')
+    expect(closeConnection).toHaveBeenCalledWith('local:terminal', 'local client disconnected', false)
     await socket.stop()
   })
 

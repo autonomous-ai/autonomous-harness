@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   deriveTerminalBinaryKey,
+  decodeTerminalLocal,
+  encodeTerminalLocal,
   openTerminalBinary,
   parseTerminalBinaryEnvelope,
   sealTerminalBinary,
@@ -95,5 +97,45 @@ describe('terminal binary protocol v3', () => {
     expect(parseTerminalBinaryEnvelope(sealed.subarray(0, sealed.length - 1))).toBeNull()
     const badFlags = sealed.slice(); badFlags[6] = 0x80
     expect(openTerminalBinary(key, badFlags)).toBeNull()
+  })
+})
+
+describe('authenticated loopback terminal framing v1', () => {
+  it('matches the cross-language HTRL golden frame', () => {
+    const encoded = encodeTerminalLocal({
+      kind: TerminalBinaryKind.input,
+      streamId,
+      seq: 3,
+      bytes: new TextEncoder().encode('xin chào\r'),
+      compressed: false,
+    })!
+    expect(Buffer.from(encoded).toString('hex')).toBe(
+      '4854524c0101000000000022' +
+      '00112233445566778899aabbccddeeff' +
+      '0000000000000003' +
+      '78696e206368c3a06f0d',
+    )
+    expect(decodeTerminalLocal(encoded)).toEqual({
+      kind: TerminalBinaryKind.input,
+      streamId,
+      seq: 3,
+      bytes: new TextEncoder().encode('xin chào\r'),
+      compressed: false,
+    })
+  })
+
+  it('rejects malformed local frames', () => {
+    const encoded = encodeTerminalLocal({
+      kind: TerminalBinaryKind.sync,
+      streamId,
+      seq: 4,
+      bytes: new Uint8Array(),
+      compressed: false,
+    })!
+    expect(decodeTerminalLocal(encoded.subarray(0, encoded.length - 1))).toBeNull()
+    const badReserved = encoded.slice(); badReserved[7] = 1
+    expect(decodeTerminalLocal(badReserved)).toBeNull()
+    const badMagic = encoded.slice(); badMagic[0] = 0
+    expect(decodeTerminalLocal(badMagic)).toBeNull()
   })
 })

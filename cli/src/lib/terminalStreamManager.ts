@@ -685,6 +685,16 @@ export class TerminalStreamManager {
     await Promise.all(states.map((state) => this.closeStream(state, reason, notify)))
   }
 
+  /** Close one transport class without disturbing streams owned by another transport. */
+  async closeConnectionsWhere(
+    predicate: (connId: string) => boolean,
+    reason: string,
+    notify = false,
+  ): Promise<void> {
+    const states = [...this.streams.values()].filter((state) => predicate(state.connId))
+    await Promise.all(states.map((state) => this.closeStream(state, reason, notify)))
+  }
+
   async closeAll(reason = 'backend disconnected'): Promise<void> {
     await Promise.all([...this.streams.values()].map((state) => this.closeStream(state, reason, false)))
   }

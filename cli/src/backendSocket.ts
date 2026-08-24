@@ -49,6 +49,7 @@ import { E2eeManager, type PairResult } from './lib/e2ee/manager.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import {
   decodeTerminalHop,
+  encodeTerminalLocal,
   encodeTerminalHop,
   TerminalHopDirection,
   type TerminalBinaryClear,
@@ -82,8 +83,17 @@ const DEVICE_AGENT_NAME_MAX_CODEPOINTS = 15
 const DEVICE_AGENT_NAME_MAX_BYTES = 39 // device project_t.name[40], including trailing NUL on-device.
 const DEVICE_ELLIPSIS = '…'
 
-type Frame = Record<string, unknown>
+export type Frame = Record<string, unknown>
 type OutboundEnvelope = Record<string, unknown>
+
+export interface LocalClientSink {
+  sendFrame: (frame: Frame) => boolean
+  sendBinary: (frame: Uint8Array) => boolean
+}
+
+function isLocalClientId(connId: string): boolean {
+  return connId.startsWith('local:')
+}
 
 interface QueueItem {
   id: number
@@ -257,6 +267,7 @@ export class BackendSocket {
   private heartbeat: NodeJS.Timeout | null = null
   private appPing: NodeJS.Timeout | null = null
   private readonly downChains = new Map<string, Promise<void>>()
+  private readonly localClients = new Map<string, LocalClientSink>()
   private terminalStreams: TerminalStreamManager | null = null
   private isAlive = true
   private onStatus: (connected: boolean) => void
@@ -451,7 +462,11 @@ export class BackendSocket {
       // completing during the gap burns a `claude -p` recap that goes nowhere. attachAdapter always
       // re-pushes the true count via recomputeAndSendClients on reconnect (and 0→N re-fires the replay).
       this.setCommanderCount(0, null) // active count is unknown until the next __clients snapshot
-      void this.terminalStreams?.closeAll('backend disconnected')
+      void this.terminalStreams?.closeConnectionsWhere(
+        (connId) => !isLocalClientId(connId),
+        'backend disconnected',
+        false,
+      )
       this.replayCommanderOnNextSnapshot = true
       this.onStatus(false)
       if (this.closed) return
@@ -493,16 +508,26 @@ export class BackendSocket {
    *  User-content events are group-encrypted (E2EE) here; system frames pass through as plaintext. */
   send(frame: Frame): void {
     if (env.LOG_FRAMES) logFrame('→', 'web', frame)
+    for (const [connId, sink] of this.localClients) {
+      if (!sink.sendFrame(frame)) void this.unregisterLocalClient(connId)
+    }
     this.enqueue({ t: 'up', frame: this.e2ee.wrapUp(frame) })
   }
 
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
   sendTo(connId: string, frame: Frame): void {
+    const local = this.localClients.get(connId)
+    if (local) {
+      if (!local.sendFrame(frame)) void this.unregisterLocalClient(connId)
+      return
+    }
     this.enqueue({ t: 'up', targetConnId: connId, frame })
   }
 
   /** Pairwise terminal output is never queued across reconnect: the stream/lease is closed on link loss. */
   sendTerminalTo(connId: string, type: string, payload: Record<string, unknown>): boolean {
+    const local = this.localClients.get(connId)
+    if (local) return local.sendFrame({ type, payload })
     const frame = this.e2ee.wrapTarget(connId, type, payload)
     if (!frame) return false
     return this.sendBestEffort({
@@ -517,6 +542,11 @@ export class BackendSocket {
   /** Pairwise-encrypted binary terminal output/keyframe. The hop prefix exposes
    * only connId and direction to the opaque backend relay. */
   sendTerminalBinaryTo(connId: string, clear: TerminalBinaryClear): boolean {
+    const local = this.localClients.get(connId)
+    if (local) {
+      const frame = encodeTerminalLocal(clear)
+      return frame ? local.sendBinary(frame) : false
+    }
     const clientFrame = this.e2ee.wrapTerminalBinary(connId, clear)
     if (!clientFrame) return false
     const packet = encodeTerminalHop(TerminalHopDirection.up, connId, clientFrame)
@@ -534,6 +564,32 @@ export class BackendSocket {
   sendCommander(frame: Frame): void {
     if (env.LOG_FRAMES) logFrame('→', 'device', frame)
     this.enqueue({ t: 'up', webEligible: false, commanderEligible: true, frame: this.e2ee.wrapCommander(frame) })
+  }
+
+  /** Attach one authenticated loopback desktop client to the same RPC and event plane as cloud web. */
+  registerLocalClient(connId: string, sink: LocalClientSink): boolean {
+    if (!isLocalClientId(connId) || this.localClients.has(connId)) return false
+    this.localClients.set(connId, sink)
+    return true
+  }
+
+  /** Release all connection-scoped state when the loopback WebSocket closes. */
+  async unregisterLocalClient(connId: string): Promise<void> {
+    if (!this.localClients.delete(connId)) return
+    this.downChains.delete(connId)
+    await this.terminalStreams?.closeConnection(connId, 'local client disconnected', false)
+  }
+
+  /** Route an authenticated local JSON frame through the existing per-client FIFO. */
+  handleLocalFrame(connId: string, frame: Frame): void {
+    if (!this.localClients.has(connId)) return
+    this.enqueueDown(frame, connId)
+  }
+
+  /** Route an authenticated local terminal frame without applying cloud E2EE. */
+  async handleLocalBinary(connId: string, frame: TerminalBinaryClear): Promise<void> {
+    if (!this.localClients.has(connId)) return
+    await this.terminalStreams?.handleBinary(connId, frame)
   }
 
   private enqueue(msg: OutboundEnvelope): void {
@@ -641,6 +697,10 @@ export class BackendSocket {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
     if (env.LOG_FRAMES) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (this.localClients.has(connId)) {
+      this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
+      return
+    }
     if (connId && this.e2ee.hasSession(connId) && ENCRYPTED_RPC_RESULT_TYPES.has(resultType)) {
       let replyPayload = payload
       if (resultType === 'agent_recent_result') {
@@ -676,11 +736,19 @@ export class BackendSocket {
   private async dispatchDown(frame: Frame, connId: string): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
+    const local = this.localClients.has(connId)
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
-    if (type.startsWith('e2e_')) { this.e2ee.handleFrame(connId, frame); return }
+    if (type.startsWith('e2e_')) {
+      if (local) {
+        this.sendTo(connId, { type: 'local_protocol_error', payload: { error: 'LOCAL_E2EE_UNSUPPORTED' } })
+        return
+      }
+      this.e2ee.handleFrame(connId, frame)
+      return
+    }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (isEncryptedDownType(type)) {
+    if (!local && isEncryptedDownType(type)) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })

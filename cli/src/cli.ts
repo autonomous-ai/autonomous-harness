@@ -56,6 +56,8 @@ import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/t
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
+import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
+import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
 import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
 import { AnalyticsCollector } from './lib/analytics/collector.js'
 import { runAnalyticsCommand } from './lib/analytics/command.js'
@@ -2103,6 +2105,12 @@ async function runForeground(token: string): Promise<void> {
     onStatus: () => ({
       machineId: backend.machineId,
       version: VERSION,
+      localWs: {
+        path: LOCAL_WS_PATH,
+        protocolVersion: LOCAL_WS_PROTOCOL_VERSION,
+        terminalProtocolVersion: TERMINAL_BINARY_VERSION,
+        e2ee: false,
+      },
       backendUrl: env.BACKEND_WS_URL,
       webUrl: env.WEB_URL,
       connected: backend.isConnected(),
@@ -2147,6 +2155,11 @@ async function runForeground(token: string): Promise<void> {
       try { return readFileSync(LOG_FILE, 'utf-8').split('\n').slice(-120).join('\n') } catch { return '' }
     },
     onStop: () => { setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50) }, // let the 200 flush first
+  })
+  const localWsServer = attachLocalWsServer(hookServer, {
+    token,
+    machineId: backend.machineId,
+    backend,
   })
   // Install both CLI hooks with the port the local server actually bound.
   if (!env.DISABLE_HOOK_INSTALL) {
@@ -2528,6 +2541,7 @@ async function runForeground(token: string): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
+    await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
@@ -2618,6 +2632,7 @@ async function runForeground(token: string): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
+    await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()

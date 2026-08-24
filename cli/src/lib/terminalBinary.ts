@@ -6,6 +6,9 @@ export const TERMINAL_BINARY_VERSION = 3
 export const TERMINAL_BINARY_HEADER_BYTES = 20
 export const TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES = 512 * 1024
 export const TERMINAL_HOP_HEADER_BYTES = 24
+export const TERMINAL_LOCAL_VERSION = 1
+export const TERMINAL_LOCAL_HEADER_BYTES = 12
+export const TERMINAL_LOCAL_MAX_PAYLOAD_BYTES = 512 * 1024
 
 export const enum TerminalBinaryKind {
   input = 1,
@@ -34,6 +37,7 @@ export interface TerminalBinaryEnvelope {
 
 const MAGIC = Uint8Array.of(0x48, 0x54, 0x52, 0x4d) // HTRM
 const HOP_MAGIC = Uint8Array.of(0x48, 0x54, 0x52, 0x48) // HTRH
+const LOCAL_MAGIC = Uint8Array.of(0x48, 0x54, 0x52, 0x4c) // HTRL
 const FLAG_ZLIB = 1
 const TERMINAL_KEY_INFO = utf8('harness-terminal-binary-v3')
 
@@ -157,6 +161,38 @@ export function openTerminalBinary(key: Uint8Array, raw: Uint8Array): { counter:
   if (!plaintext) return null
   const frame = decodeTerminalPlain(envelope.kind, envelope.flags, plaintext)
   return frame ? { counter: envelope.counter, frame } : null
+}
+
+/** Plain terminal framing for the authenticated loopback desktop transport. */
+export function encodeTerminalLocal(frame: TerminalBinaryClear): Uint8Array | null {
+  const payload = encodeTerminalPlain(frame)
+  if (!payload || payload.length > TERMINAL_LOCAL_MAX_PAYLOAD_BYTES) return null
+  const flags = frame.compressed ? FLAG_ZLIB : 0
+  const header = new Uint8Array(TERMINAL_LOCAL_HEADER_BYTES)
+  header.set(LOCAL_MAGIC, 0)
+  header[4] = TERMINAL_LOCAL_VERSION
+  header[5] = frame.kind
+  header[6] = flags
+  const view = new DataView(header.buffer)
+  view.setUint32(8, payload.length, false)
+  const out = new Uint8Array(header.length + payload.length)
+  out.set(header)
+  out.set(payload, header.length)
+  return out
+}
+
+/** Decode a terminal frame only after the WebSocket peer passed loopback API-key authentication. */
+export function decodeTerminalLocal(raw: Uint8Array): TerminalBinaryClear | null {
+  const bytes = Uint8Array.from(raw)
+  if (bytes.length < TERMINAL_LOCAL_HEADER_BYTES) return null
+  for (let index = 0; index < LOCAL_MAGIC.length; index++) if (bytes[index] !== LOCAL_MAGIC[index]) return null
+  const kind = bytes[5]
+  const flags = bytes[6]
+  if (bytes[4] !== TERMINAL_LOCAL_VERSION || !validKind(kind) || bytes[7] !== 0) return null
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const length = view.getUint32(8, false)
+  if (length > TERMINAL_LOCAL_MAX_PAYLOAD_BYTES || bytes.length !== TERMINAL_LOCAL_HEADER_BYTES + length) return null
+  return decodeTerminalPlain(kind, flags, bytes.slice(TERMINAL_LOCAL_HEADER_BYTES))
 }
 
 export const enum TerminalHopDirection {
