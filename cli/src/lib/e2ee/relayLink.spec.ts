@@ -13,6 +13,7 @@ let E2eeManagerCtor: typeof import('./manager.js')['E2eeManager']
 let RelaySessionCrypto: typeof import('./relayClient.js')['RelaySessionCrypto']
 let claimSetupToken: typeof import('./relayClient.js')['claimSetupToken']
 let MachinePeerStore: typeof import('./machinePeers.js')['MachinePeerStore']
+let RemoteRelayPool: typeof import('../remoteRelay.js')['RemoteRelayPool']
 
 const MACHINE_ID = 'f2e0383771b734e4fc00f0bc8ccf060f'
 
@@ -24,6 +25,7 @@ beforeAll(async () => {
   RelaySessionCrypto = relayClient.RelaySessionCrypto
   claimSetupToken = relayClient.claimSetupToken
   MachinePeerStore = (await import('./machinePeers.js')).MachinePeerStore
+  RemoteRelayPool = (await import('../remoteRelay.js')).RemoteRelayPool
 })
 
 beforeEach(() => {
@@ -154,5 +156,115 @@ describe('link create/import + relay session crypto (interop with the real E2eeM
       autonomousEnv: 'prod',
     })
     expect(result).toEqual({ ok: false, error: 'BAD_TOKEN' })
+  })
+})
+
+describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
+  // A fake AuthSessionManager — RemoteRelayPool only ever calls .accessToken({force}).
+  const fakeAuth = { accessToken: async () => 'unused-in-this-fake' } as unknown as import('../authSession.js').AuthSessionManager
+
+  it('e2e_denied during the handshake unlinks the peer and surfaces NO_PEER_LINK', async () => {
+    const wss = new WebSocketServer({ port: 0 })
+    wss.on('connection', (ws) => {
+      let selected = false
+      ws.on('message', (raw) => {
+        let frame: Frame
+        try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
+        if (!selected && frame.type === 'machine_select') {
+          selected = true
+          ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+          return
+        }
+        if (frame.type === 'e2e_hello') {
+          // Simulate a responder that has since `harness unpair`ed this identity.
+          ws.send(JSON.stringify({ type: 'e2e_denied', payload: { reason: 'revoked' } }))
+        }
+      })
+    })
+
+    try {
+      const port = (wss.address() as AddressInfo).port
+      const peers = new MachinePeerStore()
+      peers.pin(MACHINE_ID, C.b64e(C.newIdentity().pub), 'harness link')
+      const pool = new RemoteRelayPool(fakeAuth, `ws://127.0.0.1:${port}`, C.newIdentity(), peers)
+
+      const sink = { sendFrame: () => true, sendBinary: () => true }
+      await expect(
+        pool.acquire(MACHINE_ID, 'prod', { type: 'machine_select', payload: { machineId: MACHINE_ID } }, sink, () => {}),
+      ).rejects.toThrow('NO_PEER_LINK')
+      expect(peers.get(MACHINE_ID)).toBeNull()
+    } finally {
+      await new Promise<void>((resolve) => wss.close(() => resolve()))
+    }
+  })
+
+  it('a mid-session e2e_denied unlinks the peer and closes the local session with 4404', async () => {
+    const inbox: Frame[] = []
+    const wss = new WebSocketServer({ port: 0 })
+    const manager = new E2eeManagerCtor({
+      machineId: MACHINE_ID,
+      sendTo: (_connId, frame) => {
+        inbox.push(frame)
+        for (const client of wss.clients) client.send(JSON.stringify(frame))
+      },
+      isConnected: () => true,
+    })
+    let serverWs: import('ws').WebSocket | null = null
+    wss.on('connection', (ws) => {
+      serverWs = ws
+      let selected = false
+      ws.on('message', (raw) => {
+        let frame: Frame
+        try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
+        if (!selected) {
+          if (frame.type === 'machine_select') {
+            selected = true
+            ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+          }
+          return
+        }
+        const type = frame.type as string
+        if (type.startsWith('e2e_')) manager.handleFrame('fake-conn', frame)
+      })
+    })
+
+    try {
+      const port = (wss.address() as AddressInfo).port
+      const clientIdentity = C.newIdentity()
+      const token = manager.createSetupToken(MACHINE_ID).token
+      const claim = await claimSetupToken({
+        token,
+        targetMachineId: MACHINE_ID,
+        selfIdentity: clientIdentity,
+        accessToken: 'unused-in-this-fake',
+        backendWsBase: `ws://127.0.0.1:${port}`,
+        autonomousEnv: 'prod',
+        timeoutMs: 2_000,
+      })
+      expect(claim.ok).toBe(true)
+      if (!claim.ok) return
+
+      const peers = new MachinePeerStore()
+      peers.pin(MACHINE_ID, C.b64e(claim.peerPub), 'harness link')
+      const pool = new RemoteRelayPool(fakeAuth, `ws://127.0.0.1:${port}`, clientIdentity, peers)
+
+      const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+        const sink = { sendFrame: () => true, sendBinary: () => true }
+        void pool
+          .acquire(MACHINE_ID, 'prod', { type: 'machine_select', payload: { machineId: MACHINE_ID } }, sink, (code, reason) => resolve({ code, reason }))
+          .then(() => {
+            // Session is live — now simulate the responder revoking mid-session, exactly as
+            // E2eeManager.denyAndDropSessionsFor does on `harness unpair`: send e2e_denied without
+            // closing the socket itself.
+            serverWs?.send(JSON.stringify({ type: 'e2e_denied', payload: { reason: 'revoked' } }))
+          })
+      })
+
+      const result = await closed
+      expect(result.code).toBe(4404)
+      expect(peers.get(MACHINE_ID)).toBeNull()
+    } finally {
+      await new Promise<void>((resolve) => wss.close(() => resolve()))
+    }
   })
 })

@@ -164,8 +164,15 @@ export class RemoteRelayPool {
           if (frame.type === 'e2e_denied') {
             if (!settled) {
               settled = true; clearTimeout(timeout)
-              const reason = (frame.payload as { reason?: unknown } | undefined)?.reason
-              reject(new RelayConnectError(typeof reason === 'string' ? `E2EE_DENIED:${reason}` : 'E2EE_DENIED'))
+              // The peer no longer trusts our identity — most commonly `harness unpair` run on ITS
+              // side. Our own pinned trust is now stale too; drop it so the next attempt fails fast
+              // with NO_PEER_LINK (same close-code-4404 mapping in localWsServer.ts) instead of
+              // repeating a handshake that will only be denied again. The handshake never got as far
+              // as being usable, so there is nothing more to read from this socket — close it rather
+              // than leaving it dangling open.
+              this.peers.unlink(machineId)
+              try { ws.close(1000, 'peer denied') } catch { ws.terminate() }
+              reject(new RelayConnectError('NO_PEER_LINK'))
             }
             return
           }
@@ -182,6 +189,16 @@ export class RemoteRelayPool {
         let frame: Frame
         try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
         if (frame.type === 'e2e_rekey') { crypto.handleRekey((frame.payload ?? {}) as Record<string, unknown>); return }
+        if (frame.type === 'e2e_denied') {
+          // Mid-session revoke (e.g. `harness unpair` run on the peer while this relay was already
+          // live) — the peer proactively sends this instead of just going silent. Drop our now-stale
+          // trust and close with the same 4404 the app already knows how to turn into "needs to be
+          // linked": the `ws.on('close', ...)` handler below forwards this code verbatim to
+          // `entry.onClosed`, which `localWsServer.ts` wires straight to the local client's own close.
+          this.peers.unlink(machineId)
+          try { ws.close(4404, 'peer revoked trust') } catch { ws.terminate() }
+          return
+        }
         const plain = crypto.unwrapIncoming(frame)
         if (plain) entry.sink?.sendFrame(plain)
       })
