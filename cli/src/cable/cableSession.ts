@@ -190,10 +190,35 @@ export class CableSession {
   }
 
   private openAt = 0
+  private opening = false
   private lastPing = 0
 
+  /**
+   * Open the dial's port, at most ONE attempt at a time.
+   *
+   * ⚠️ THE `opening` FLAG IS THE FIX FOR A BUG THAT LOOKED LIKE BROKEN HARDWARE. `tick()` is fired by
+   * setInterval and never awaited, so runs overlap freely, and opening a port is not instant — it spawns
+   * `stty` and waits for it before it opens the descriptor. Under load that outlasts REOPEN_EVERY_MS, the
+   * next tick walks straight past the throttle below, and a second open begins while the first is still in
+   * flight. Only the last one is stored in `this.link`. The others are orphaned WITH THEIR READ LOOPS
+   * STILL RUNNING.
+   *
+   * That is not a descriptor quietly wasted. Every orphan reads the SAME tty and feeds the SAME decoder,
+   * so one byte stream arrives interleaved from several readers: frames are shredded, CRCs fail, and the
+   * dial's greetings disappear into the noise.
+   *
+   * Measured 2026-08-24 — five descriptors open on one port inside one process (`lsof` names them all),
+   * the daemon receiving 4 of the dial's 22 greetings in 45s, and a 20-byte ping taking 15 SECONDS to
+   * write. That last number is the dial's own silence deadline, so the session died and restarted forever
+   * and the screen sat on "0 agents" while this side logged, truthfully, that it had sent two.
+   *
+   * The dial was never at fault: sniffed directly with the daemon stopped, it emits one clean 71-byte
+   * greeting every 2.0s, indefinitely.
+   */
   private async tryOpen(): Promise<void> {
+    if (this.opening) return
     if (Date.now() - this.openAt < REOPEN_EVERY_MS) return
+    this.opening = true
     this.openAt = Date.now()
     let opened: CablePort | null
     try {
@@ -206,8 +231,13 @@ export class CableSession {
       // or a second daemon. Say so and try again on the next tick.
       this.host.log(`cable: cannot open the dial: ${(err as Error).message}`)
       return
+    } finally {
+      this.opening = false
     }
     if (!opened) return   // no dial plugged in — this daemon's resting state
+    // Nothing reaches this line holding a live port — tick() only calls in when the link is closed — but
+    // assigning over one would strand it exactly as above, and the cost of being sure is one branch.
+    if (this.link) await this.link.close('replaced')
     this.link = opened
     // Leftover bytes belong to a session that has ended; carrying them across would put a stale
     // half-frame in front of the first real frame of the new one.
