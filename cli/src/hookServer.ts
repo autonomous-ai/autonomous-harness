@@ -89,6 +89,13 @@ export interface HookServerHandlers {
   onLogs?: () => string
   /** Stop the adapter from the local dashboard (POST /api/stop). */
   onStop?: () => void
+  /** GET /api/machines — proxy the user's full machine list from backend using this daemon's own
+   *  saved SSO session, so a local GUI client never needs a token of its own. */
+  onMachinesList?: () => Promise<PairOutcome>
+  /** PATCH /api/machines/:machineId — proxy a rename to backend the same way. */
+  onMachineRename?: (machineId: string, name: string) => Promise<PairOutcome>
+  /** GET /api/auth/me — proxy the signed-in user's profile from backend. */
+  onAuthMe?: () => Promise<PairOutcome>
 }
 
 const MAX_HOOK_BODY_BYTES = 256 * 1024
@@ -507,6 +514,29 @@ export function startHookServer(
         if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
         if (!handlers.onSetupLink) { json(503, { error: 'UNAVAILABLE' }); return }
         const out = handlers.onSetupLink(); json(out.status, out.body); return
+      }
+
+      // Local GUI clients (e.g. the desktop app): read the full machine list / rename one / read the
+      // signed-in profile through this daemon's own SSO session, so the local caller never holds a
+      // bearer token itself — loopback trust does the authenticating. Reads are ungated (same tier as
+      // /api/status); the rename mutation is CSRF-guarded like every other local write.
+      if (req.method === 'GET' && url === '/api/machines') {
+        if (!handlers.onMachinesList) { json(503, { error: 'UNAVAILABLE' }); return }
+        const out = await handlers.onMachinesList(); json(out.status, out.body); return
+      }
+      if (req.method === 'GET' && url === '/api/auth/me') {
+        if (!handlers.onAuthMe) { json(503, { error: 'UNAVAILABLE' }); return }
+        const out = await handlers.onAuthMe(); json(out.status, out.body); return
+      }
+      if (req.method === 'PATCH' && url.startsWith('/api/machines/')) {
+        if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+        if (!handlers.onMachineRename) { json(503, { error: 'UNAVAILABLE' }); return }
+        const machineId = decodeURIComponent(url.slice('/api/machines/'.length))
+        if (!machineId) { json(400, { error: 'MISSING_MACHINE_ID' }); return }
+        let body: { name?: string }
+        try { body = JSON.parse(await readBody(req)) as { name?: string } } catch { json(400, { error: 'bad json' }); return }
+        if (!body.name) { json(400, { error: 'MISSING_NAME' }); return }
+        const out = await handlers.onMachineRename(machineId, body.name); json(out.status, out.body); return
       }
 
       // `harness pairings` — list paired browsers.

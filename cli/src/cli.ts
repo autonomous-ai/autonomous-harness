@@ -33,7 +33,7 @@ import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCu
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
-import { AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
+import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineLaunchArgv } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -60,6 +60,7 @@ import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
 import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
+import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
 import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
 import { AnalyticsCollector } from './lib/analytics/collector.js'
@@ -75,6 +76,9 @@ import {
 import { setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { E2eeStore } from './lib/e2ee/store.js'
+import { b64e, verifySetupToken } from './lib/e2ee/core.js'
+import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
+import { claimSetupToken } from './lib/e2ee/relayClient.js'
 import {
   startSelfUpdater, restore as restoreUpdate, confirm as confirmUpdate,
   fetchManifest, downloadVerified, canary, stage, semverGt,
@@ -186,6 +190,8 @@ A launcher that hands the pane to one of these works the same — "ori claude" i
 Machine:
   harness login                sign in with SSO and save this computer's session
   harness login --force        stop the daemon and sign in with a different SSO account
+  harness login --json         emit machine-readable NDJSON instead of opening a browser (for GUI clients)
+  harness auth status --json   print {loggedIn,...} for this computer's saved session
   harness start                start the adapter using the saved SSO session
   harness start -f             run the adapter in the FOREGROUND (for a supervisor; logs to stdout)
   harness logout               stop the adapter and clear this computer's SSO session
@@ -203,6 +209,13 @@ Browser end-to-end encryption:
   harness pairings             list paired clients
   harness unpair <#|fp>        unpair one browser (by list number or fingerprint)
   harness unpair --all         unpair every browser
+
+Machine-to-machine linking (lets this machine's relay reach ANOTHER of your machines with the CLI,
+not the app, terminating E2EE):
+  harness link create          print a token for another machine's \`harness link import\`
+  harness link import <token>  claim a token printed by another machine's \`harness link create\`
+  harness link list            list machines this one has linked
+  harness link unlink <id>     remove a linked machine's trust
 
   harness --help
 
@@ -291,11 +304,43 @@ async function resolveComputerMachine(): Promise<AuthSession> {
   return next
 }
 
-async function loginCommand(foreground: boolean, force: boolean): Promise<void> {
+/** `harness auth status --json` — one JSON line, always exit 0; logged-out is a valid answer, not a
+ *  process failure. Reuses AuthSessionManager.accessToken() (not a raw file read) so a session that's
+ *  on-disk-but-about-to-expire gets refreshed here rather than reporting loggedIn:true and 401ing on
+ *  the caller's very next request. */
+async function authStatusCommand(json: boolean): Promise<void> {
+  const session = readAuthSession()
+  if (!session) {
+    if (json) console.log(JSON.stringify({ loggedIn: false }))
+    else console.log('\n  ✗ Not signed in. Run: harness login\n')
+    return
+  }
+  const auth = new AuthSessionManager(backendHttpBase())
+  let loggedIn = true
+  try {
+    await auth.accessToken()
+  } catch (err) {
+    loggedIn = !(err instanceof AuthSessionError)
+  }
+  const latest = readAuthSession()
+  const payload = {
+    loggedIn: loggedIn && latest !== null,
+    computerId: latest?.computerId,
+    machineId: latest?.machineId,
+    autonomousEnv: latest?.autonomousEnv,
+    expiresAt: latest?.expiresAt,
+  }
+  if (json) console.log(JSON.stringify(payload))
+  else console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}\n`)
+}
+
+async function loginCommand(foreground: boolean, force: boolean, json: boolean): Promise<void> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
+  const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
   if (readAuthSession() && !force) {
     await resolveComputerMachine()
-    console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
+    if (json) emit({ type: 'result', status: 'success', alreadySignedIn: true })
+    else console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
     return
   }
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
@@ -310,35 +355,58 @@ async function loginCommand(foreground: boolean, force: boolean): Promise<void> 
   if (!address || typeof address === 'string') throw new Error('Could not start the SSO callback server')
   const redirectUri = `http://127.0.0.1:${address.port}/callback`
   try {
-    const start = await postJson<{ authorizeUrl?: string; tx?: string }>('/api/auth/authorize-native', {
-      redirectUri,
-      autonomousEnv: env.AUTONOMOUS_ENV,
-    })
-    if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
-    console.log('\n  Sign in to Harness in your browser:\n')
-    console.log(`    ${start.authorizeUrl}\n`)
-    openInBrowser(start.authorizeUrl)
-    const callbackResult = await new Promise<{ code: string; state: string }>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('SSO login timed out')), 5 * 60_000)
-      callback.on('request', (req, res) => {
-        const url = new URL(req.url ?? '/', redirectUri)
-        const code = url.searchParams.get('code')
-        const state = url.searchParams.get('state')
-        const error = url.searchParams.get('error')
-        res.writeHead(error || !code || !state ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
-        res.end(error || !code || !state
-          ? '<h1>Harness login failed</h1><p>You can close this window.</p>'
-          : '<h1>Harness login complete</h1><p>You can close this window and return to the terminal.</p>')
-        clearTimeout(timeout)
-        if (error) reject(new Error(`SSO login failed: ${error}`))
-        else if (code && state) resolve({ code, state })
+    let start: { authorizeUrl?: string; tx?: string }
+    try {
+      start = await postJson<{ authorizeUrl?: string; tx?: string }>('/api/auth/authorize-native', {
+        redirectUri,
+        autonomousEnv: env.AUTONOMOUS_ENV,
       })
-    })
-    const exchanged = await postJson<{ token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }>('/api/auth/exchange', {
-      ...callbackResult,
-      tx: start.tx,
-    })
-    if (!exchanged.token) throw new Error('SSO exchange returned no access token')
+      if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
+    } catch (err) {
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      throw err
+    }
+    if (json) {
+      emit({ type: 'authorize_url', url: start.authorizeUrl })
+    } else {
+      console.log('\n  Sign in to Harness in your browser:\n')
+      console.log(`    ${start.authorizeUrl}\n`)
+      openInBrowser(start.authorizeUrl)
+    }
+    let callbackResult: { code: string; state: string }
+    try {
+      callbackResult = await new Promise<{ code: string; state: string }>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('SSO login timed out')), 5 * 60_000)
+        callback.on('request', (req, res) => {
+          const url = new URL(req.url ?? '/', redirectUri)
+          const code = url.searchParams.get('code')
+          const state = url.searchParams.get('state')
+          const error = url.searchParams.get('error')
+          res.writeHead(error || !code || !state ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
+          res.end(error || !code || !state
+            ? '<h1>Harness login failed</h1><p>You can close this window.</p>'
+            : '<h1>Harness login complete</h1><p>You can close this window and return to the terminal.</p>')
+          clearTimeout(timeout)
+          if (error) reject(new Error(`SSO login failed: ${error}`))
+          else if (code && state) resolve({ code, state })
+        })
+      })
+    } catch (err) {
+      const timedOut = (err as Error).message === 'SSO login timed out'
+      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      throw err
+    }
+    let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }
+    try {
+      exchanged = await postJson<{ token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }>('/api/auth/exchange', {
+        ...callbackResult,
+        tx: start.tx,
+      })
+      if (!exchanged.token) throw new Error('SSO exchange returned no access token')
+    } catch (err) {
+      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return }
+      throw err
+    }
     const id = computerId()
     const session: AuthSession = {
       version: 1,
@@ -350,8 +418,14 @@ async function loginCommand(foreground: boolean, force: boolean): Promise<void> 
       updatedAt: Date.now(),
     }
     writeAuthSession(session)
-    await resolveComputerMachine()
-    console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+    try {
+      await resolveComputerMachine()
+    } catch (err) {
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      throw err
+    }
+    if (json) emit({ type: 'result', status: 'success' })
+    else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
@@ -1817,6 +1891,26 @@ async function runForeground(session: AuthSession): Promise<void> {
     void agentReconciler.trigger()
   }
 
+  /** Proxy a control-plane call to backend using THIS daemon's own SSO session — the local caller
+   *  (e.g. the desktop app) never needs a bearer token of its own, loopback trust does the
+   *  authenticating. Forwards backend's response status/body verbatim, success or error alike, so a
+   *  local client's model layer needs zero special-casing versus talking to backend directly. */
+  async function proxyBackend(method: string, path: string, body?: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+    const accessToken = await auth.accessToken()
+    const latest = readAuthSession()
+    const res = await fetch(`${backendHttpBase()}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'x-autonomous-env': latest?.autonomousEnv ?? session.autonomousEnv,
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    })
+    const json = await res.json().catch(() => ({})) as Record<string, unknown>
+    return { status: res.status, body: json }
+  }
+
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
     resolveHookAgent: async ({ engine, runtimeHints, callerPid }) => {
       if (!callerPid) return null
@@ -2152,10 +2246,25 @@ async function runForeground(session: AuthSession): Promise<void> {
       try { return readFileSync(LOG_FILE, 'utf-8').split('\n').slice(-120).join('\n') } catch { return '' }
     },
     onStop: () => { setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50) }, // let the 200 flush first
+    onMachinesList: () => proxyBackend('GET', '/api/machines'),
+    onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
+    onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
   })
+  // Same on-disk identity `harness link create`/`import` use (E2eeStore.init() is idempotent per file,
+  // so a separate in-memory instance here just reads the one this machine already has).
+  const relayIdentityStore = new E2eeStore()
+  relayIdentityStore.init()
+  const relayPool = new RemoteRelayPool(
+    auth,
+    env.BACKEND_WS_URL.replace(/\/$/, ''),
+    relayIdentityStore.getIdentity(),
+    new MachinePeerStore(),
+  )
   const localWsServer = attachLocalWsServer(hookServer, {
     machineId: backend.machineId,
     backend,
+    relayPool,
+    autonomousEnv: readAuthSession()?.autonomousEnv ?? session.autonomousEnv,
   })
   // Install both CLI hooks with the port the local server actually bound.
   if (!env.DISABLE_HOOK_INSTALL) {
@@ -3124,6 +3233,90 @@ async function unpairCommand(id: string | undefined, all: boolean): Promise<void
   process.exit(1)
 }
 
+/** `harness link create` — print a reusable setup token this machine's own identity signs, for
+ *  ANOTHER MACHINE's `harness link import` to consume — the machine-to-machine counterpart of
+ *  `browser-link` (same token mechanism, different consumer). Kept a distinct verb on purpose: `pair`/
+ *  `browser-link` stay reserved for the browser↔this-machine relation (see the file header comment). */
+async function linkCreateCommand(): Promise<void> {
+  const session = readAuthSession()
+  if (!session?.machineId) { console.error('\n  ✗ This computer is not signed in. Run: harness login\n'); process.exit(1) }
+  const setup = createSetupToken(session.machineId)
+  console.log('\n  Machine-link token (valid for 7 days):\n')
+  console.log(`    ${setup.token}\n`)
+  console.log('  Run on the OTHER machine:\n')
+  console.log(`    harness link import ${setup.token}\n`)
+  console.log(`  fingerprint  ${setup.fingerprint}   — verify it matches on the other machine\n`)
+  process.exit(0)
+}
+
+/** `harness link import <token>` — claim another machine's link token, proving THIS machine's own
+ *  identity to it. Needs only this computer's own SSO session and network — no running daemon
+ *  required. On success this machine can relay through to that machine's data plane with the CLI (not
+ *  the app) terminating E2EE — see lib/remoteRelay.ts. */
+async function linkImportCommand(token: string | undefined): Promise<void> {
+  if (!token) { console.error('Usage: harness link import <token>   (from `harness link create` on the other machine)'); process.exit(1) }
+  const session = readAuthSession()
+  if (!session) { console.error('\n  ✗ Not signed in. Run: harness login\n'); process.exit(1) }
+  const verified = verifySetupToken(token)
+  if (!verified || !verified.payload.machineId) {
+    console.error('\n  ✗ That token is invalid, expired, or missing a machine id.\n')
+    process.exit(1)
+  }
+  const targetMachineId = verified.payload.machineId
+  const auth = new AuthSessionManager(backendHttpBase())
+  let accessToken: string
+  try {
+    accessToken = await auth.accessToken()
+  } catch (err) {
+    console.error(`\n  ✗ Could not refresh this computer's SSO session: ${err instanceof Error ? err.message : err}\n`)
+    process.exit(1)
+    return
+  }
+  const store = new E2eeStore()
+  store.init()
+  const result = await claimSetupToken({
+    token,
+    targetMachineId,
+    selfIdentity: store.getIdentity(),
+    accessToken,
+    backendWsBase: env.BACKEND_WS_URL.replace(/\/$/, ''),
+    autonomousEnv: session.autonomousEnv,
+  })
+  if (!result.ok) {
+    console.error(`\n  ✗ Link failed: ${result.error}\n`)
+    process.exit(1)
+    return
+  }
+  new MachinePeerStore().pin(targetMachineId, b64e(result.peerPub), 'harness link', Date.now())
+  console.log(`\n  ✓ Linked machine ${targetMachineId}`)
+  console.log(`    fingerprint  ${result.fingerprint}   — verify it matches \`harness link create\`'s output on the other machine\n`)
+  process.exit(0)
+}
+
+/** `harness link list` — machines this one has linked (CLI-to-CLI/machine-node trust, not browsers). */
+async function linkListCommand(): Promise<void> {
+  const peers = new MachinePeerStore().list()
+  if (!peers.length) {
+    console.log('\n  No machines linked yet.\n  Run `harness link create` on another machine and `harness link import <token>` here.\n')
+    process.exit(0)
+  }
+  console.log('\n  Linked machines:\n')
+  peers.forEach((p, i) => {
+    const when = new Date(p.linkedAt).toISOString().slice(0, 16).replace('T', ' ')
+    console.log(`   ${String(i + 1).padStart(2)}. ${p.machineId}  ${p.fingerprint}  (linked ${when})`)
+  })
+  process.exit(0)
+}
+
+/** `harness link unlink <machineId>` — remove a linked machine's trust pin. */
+async function linkUnlinkCommand(machineId: string | undefined): Promise<void> {
+  if (!machineId) { console.error('Usage: harness link unlink <machineId>   (see: harness link list)'); process.exit(1) }
+  const removed = new MachinePeerStore().unlink(machineId)
+  if (!removed) { console.error(`\n  ✗ No linked machine matches "${machineId}".  Run: harness link list\n`); process.exit(1); return }
+  console.log(`\n  ✓ Unlinked ${machineId}\n`)
+  process.exit(0)
+}
+
 /** `harness status` — print the info block with the current running state. */
 async function status(): Promise<void> {
   const pid = readPid()
@@ -3158,7 +3351,11 @@ const onError = (err: unknown): never => {
 
 switch (cmd) {
   case 'login':
-    loginCommand(foreground, flags.includes('--force')).catch(onError)
+    loginCommand(foreground, flags.includes('--force'), flags.includes('--json')).catch(onError)
+    break
+  case 'auth':
+    if (args[0] !== 'status') { console.error('Unknown command: auth ' + (args[0] ?? '')); usage(1) }
+    else authStatusCommand(flags.includes('--json')).catch(onError)
     break
   case 'logout':
     logout().catch(onError)
@@ -3187,6 +3384,13 @@ switch (cmd) {
     break
   case 'pairings':
     pairingsCommand().catch(onError)
+    break
+  case 'link':
+    if (args[0] === 'create') linkCreateCommand().catch(onError)
+    else if (args[0] === 'import') linkImportCommand(args[1]).catch(onError)
+    else if (args[0] === 'list') linkListCommand().catch(onError)
+    else if (args[0] === 'unlink') linkUnlinkCommand(args[1]).catch(onError)
+    else { console.error(`Unknown command: link ${args[0] ?? ''}`); usage(1) }
     break
   case 'unpair':
     unpairCommand(args[0], flags.includes('--all') || flags.includes('-a')).catch(onError)

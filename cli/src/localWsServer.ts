@@ -4,6 +4,7 @@ import type { Socket } from 'node:net'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
 import type { Frame, LocalClientSink } from './backendSocket.js'
 import { decodeTerminalLocal, TERMINAL_BINARY_VERSION, type TerminalBinaryClear } from './lib/terminalBinary.js'
+import { RelayConnectError, type RelaySession, type RemoteRelayPool } from './lib/remoteRelay.js'
 
 export const LOCAL_WS_PATH = '/api/local-ws'
 export const LOCAL_WS_PROTOCOL_VERSION = 1
@@ -21,6 +22,10 @@ export interface LocalWsBackend {
 export interface LocalWsServerOptions {
   machineId: string
   backend: LocalWsBackend
+  /** Serves a `machine_select` for any OTHER machine this signed-in user owns, by relaying to
+   *  backend's `/api/web-ws` — see lib/remoteRelay.ts. Omit to keep today's own-machine-only behavior. */
+  relayPool?: RemoteRelayPool
+  autonomousEnv?: string
 }
 
 export interface LocalWsServer {
@@ -99,6 +104,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
   wss.on('connection', (ws) => {
     const connId = `local:${randomUUID()}`
     let selected = false
+    let relay: RelaySession | null = null
     let alive = true
     let chain = Promise.resolve()
 
@@ -124,27 +130,61 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           if (isBinary) { close(4400, 'machine_select required'); return }
           const frame = jsonFrame(raw)
           const payload = frame?.payload as Record<string, unknown> | undefined
+          const requestedMachineId = payload?.machineId
           if (frame?.type !== 'machine_select'
-            || payload?.machineId !== options.machineId
+            || typeof requestedMachineId !== 'string'
             || payload?.localProtocolVersion !== LOCAL_WS_PROTOCOL_VERSION) {
             close(4403, 'machine mismatch')
             return
           }
-          if (!options.backend.registerLocalClient(connId, sink)) {
-            close(1011, 'local registration failed')
+          if (requestedMachineId === options.machineId) {
+            if (!options.backend.registerLocalClient(connId, sink)) {
+              close(1011, 'local registration failed')
+              return
+            }
+            selected = true
+            sink.sendFrame({
+              type: 'connected',
+              payload: {
+                machineId: options.machineId,
+                transport: 'local',
+                localProtocolVersion: LOCAL_WS_PROTOCOL_VERSION,
+                terminalProtocolVersion: TERMINAL_BINARY_VERSION,
+                e2ee: false,
+              },
+            })
             return
           }
-          selected = true
-          sink.sendFrame({
-            type: 'connected',
-            payload: {
-              machineId: options.machineId,
-              transport: 'local',
-              localProtocolVersion: LOCAL_WS_PROTOCOL_VERSION,
-              terminalProtocolVersion: TERMINAL_BINARY_VERSION,
-              e2ee: false,
-            },
-          })
+          // Not this daemon's own machine — relay to backend for the other machines this same
+          // signed-in user owns, if the daemon was wired up to do that (see lib/remoteRelay.ts).
+          if (!options.relayPool || !options.autonomousEnv) {
+            close(4403, 'machine mismatch')
+            return
+          }
+          try {
+            relay = await options.relayPool.acquire(requestedMachineId, options.autonomousEnv, frame, sink, close)
+            selected = true
+          } catch (err) {
+            const noPeerLink = err instanceof RelayConnectError && err.message === 'NO_PEER_LINK'
+            const code = noPeerLink ? 4404 : err instanceof RelayConnectError && err.closeCode ? err.closeCode : 1011
+            close(code, err instanceof Error ? err.message.slice(0, 120) : 'relay failed')
+          }
+          return
+        }
+
+        if (relay) {
+          // The relay now terminates E2EE itself (lib/remoteRelay.ts) — every frame past this point is
+          // already plaintext going in and out, so binary frames use the SAME local wire format as this
+          // daemon's own machine.
+          if (isBinary) {
+            const clear = decodeTerminalLocal(binaryBytes(raw))
+            if (!clear) { close(4400, 'invalid terminal frame'); return }
+            relay.sendBinary(clear)
+            return
+          }
+          const frame = jsonFrame(raw)
+          if (!frame) { close(4400, 'invalid json frame'); return }
+          relay.send(frame)
           return
         }
 
@@ -169,7 +209,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
 
     const cleanup = (): void => {
       clearInterval(heartbeat)
-      if (selected) void options.backend.unregisterLocalClient(connId)
+      if (relay) { relay.detach(); relay = null }
+      else if (selected) void options.backend.unregisterLocalClient(connId)
       selected = false
     }
     ws.once('close', cleanup)
