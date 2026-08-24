@@ -78,6 +78,48 @@ describe('FirmwareTransfer', () => {
     expect(sent.at(-1)).toBe(123) // the tail is short, not padded
   })
 
+  it('sends every slice exactly once when acks land mid-write', async () => {
+    // THE FIELD FAILURE, REPRODUCED. On 2026-08-24 a 3,091,648-byte push reached the dial with slice 130
+    // written twice — once where it belonged and once over slice 131, which never arrived at all. Both
+    // writes were a full 8192 bytes, so the dial's counter read 3091648/3091648 and the daemon logged a
+    // complete transfer; only esp_ota_end caught it, as a checksum error that pointed nowhere near here.
+    //
+    // The cause was ordinary: pump() advanced `offset` AFTER awaiting the write, and `fw.progress` — which
+    // the read loop dispatches while that write is parked — called pump() again, which read the same
+    // unadvanced offset and sent the same slice.
+    //
+    // Every other test in this file passes a sendSlice that returns immediately, which is why none of them
+    // saw it: with no await gap there is no window for the ack to arrive in. This one parks, acks from
+    // inside the write, and asserts on the reassembled BYTES rather than their count — the count was the
+    // one thing that stayed correct.
+    const slices = 40
+    const size = FW_SLICE_BYTES * slices
+    const image = Buffer.alloc(size)
+    for (let i = 0; i < size; i++) image[i] = Math.floor(i / FW_SLICE_BYTES) & 0xff // each slice, its own byte
+
+    const sent: Buffer[] = []
+    let acked = 0
+    let transfer: FirmwareTransfer
+    transfer = new FirmwareTransfer(
+      image,
+      '1.2.3',
+      async (slice) => {
+        sent.push(Buffer.from(slice)) // a copy: the argument is a view into the image
+        await Promise.resolve() // a real write parks here, several times, on a tty
+        if (acked < size) {
+          acked += FW_SLICE_BYTES
+          void transfer.onProgress(acked) // the read loop does not wait for the writer, and neither does this
+        }
+      },
+      () => {},
+    )
+
+    await transfer.pump()
+
+    expect(sent.length).toBe(slices)
+    expect(Buffer.concat(sent).equals(image)).toBe(true)
+  })
+
   it('says how far it got when it is cut off', async () => {
     const log = vi.fn()
     const image = Buffer.alloc(100_000)

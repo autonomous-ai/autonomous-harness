@@ -121,6 +121,7 @@ export class CableSession {
   private decoder = new CableDecoder()
   private timer: NodeJS.Timeout | null = null
   private greetedMac: string | null = null
+  private greetedFw: string | null = null
   private lastRx = 0
   private stopped = false
 
@@ -212,6 +213,7 @@ export class CableSession {
     // half-frame in front of the first real frame of the new one.
     this.decoder.reset()
     this.greetedMac = null
+    this.greetedFw = null
     this.lastAgentsKey = ''   // a new port is a new dial until proven otherwise; tell it everything
     this.lastRx = Date.now()
     this.host.log(`cable: open on ${opened.path}`)
@@ -221,6 +223,7 @@ export class CableSession {
     this.host.log(`cable: closed (${why})`)
     this.link = null
     this.greetedMac = null
+    this.greetedFw = null
     this.lastAgentsKey = ''
     this.voice = null
     // The dial keeps its running image; the half-written slot is erased again by the next accepted offer.
@@ -274,9 +277,20 @@ export class CableSession {
           machine: { id: mac, name: this.host.machineName() },
           voiceLang: this.host.voiceLang(),
         })
-        if (mac !== this.greetedMac) {
+        // Log a dial that is new OR that came back running something else. The version half of that test
+        // is not decoration: a dial reboots into its new image after an update and greets with the SAME
+        // mac, so keying the line on the mac alone suppresses the one line anybody wants after an OTA —
+        // "it came back, and on which version". Losing it left a successful 0.0.37 install unverifiable
+        // from the log on 2026-08-24.
+        const fw = str('fw') ?? '?'
+        if (mac !== this.greetedMac || fw !== this.greetedFw) {
+          const returning = mac === this.greetedMac
           this.greetedMac = mac
-          this.host.log(`cable: dial ${mac} on fw ${str('fw') ?? '?'} proto ${msg.proto}`)
+          this.greetedFw = fw
+          this.host.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
+          // Both halves of the test above mean the same thing to this line: a dial with nothing on its
+          // screen. A repeat greeting from the same dial on the same image is a keepalive and is skipped,
+          // which is the whole reason the branch exists.
           await this.pushAgents()
         }
         // Offered on every greeting, but only ONCE per version per session: accepting makes the dial erase

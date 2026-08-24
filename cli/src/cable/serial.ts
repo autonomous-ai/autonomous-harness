@@ -183,8 +183,31 @@ export class SerialLink {
     this.onClosed(why)
   }
 
-  /** Write every byte, looping over short writes. Rejects only when the port is gone. */
+  /**
+   * Write every byte of ONE frame, looping over short writes. Rejects only when the port is gone.
+   *
+   * ⚠️ SERIALISED, AND NOT AS A PRECAUTION. A tty accepts a few hundred bytes at a time, so an 8 KB
+   * firmware slice takes several passes through the loop below and parks on an await between each. Frames
+   * come from several places at once — the 5-second ping, the per-tick agent sync, a slice pump — and
+   * without this queue a JSON frame lands in the MIDDLE of a firmware slice. The dial's decoder resyncs
+   * past the wreckage, which costs it both frames, and the transfer then fails at the far end with a
+   * checksum error that says nothing about whose fault it was.
+   *
+   * The firmware holds exactly this invariant on its own side (`s_tx_lock` in cable_link.c, "two tasks
+   * sending at once cannot interleave halves of two frames"). This is the mirror of it. A failed write
+   * must not strand the writes queued behind it, so the tail deliberately swallows the rejection — the
+   * caller still receives it.
+   */
   async write(bytes: Uint8Array): Promise<void> {
+    if (this.closed) throw new Error('port closed')
+    const next = this.tail.then(() => this.writeFrame(bytes))
+    this.tail = next.catch(() => {})
+    return next
+  }
+
+  private tail: Promise<void> = Promise.resolve()
+
+  private async writeFrame(bytes: Uint8Array): Promise<void> {
     if (this.closed) throw new Error('port closed')
     let off = 0
     while (off < bytes.length) {

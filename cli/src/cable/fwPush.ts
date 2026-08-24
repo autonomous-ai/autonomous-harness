@@ -111,6 +111,7 @@ export class FirmwareTransfer {
   private acked = 0
   private offset = 0
   private done = false
+  private pumping = false
 
   constructor(
     private readonly image: Buffer,
@@ -123,12 +124,40 @@ export class FirmwareTransfer {
     return this.done
   }
 
-  /** Push as much as the credit window allows. Called on accept and again on every `fw.progress`. */
+  /**
+   * Push as much as the credit window allows. Called on accept and again on every `fw.progress`.
+   *
+   * ⚠️ RE-ENTRANT BY DESIGN, AND BOTH GUARDS BELOW ARE LOAD-BEARING. This loop parks inside the write, and
+   * the ack that wakes the credit arrives DURING that park — `fw.progress` is dispatched from the read
+   * loop and calls straight back in here. So a second pump() running while the first is mid-slice is the
+   * normal case, not a pathological one.
+   *
+   * Measured on hardware 2026-08-24, and it is worth stating exactly because the symptom hid the cause:
+   * one slice of a 3,091,648-byte image went out TWICE and the next never went out at all. The dial wrote
+   * both, 8192 bytes each, so its byte counter reported a perfect 3091648/3091648 while the image in flash
+   * had slice 130 sitting where slice 131 belonged. It failed at esp_ota_end with a checksum error, which
+   * reads as a corrupt download rather than as a bug on this side. Reading the slot back and diffing it
+   * against the published image is what named it.
+   *
+   *   · `offset` ADVANCES BEFORE THE AWAIT. Reserving the range first is what makes a concurrent entry
+   *     pick up the NEXT slice instead of resending the one already on the wire.
+   *   · `pumping` keeps the second caller out entirely. This side has no equivalent of the firmware's
+   *     tx lock, so two loops on one port would interleave the halves of two frames. The running loop
+   *     re-reads `acked` every iteration, so the credit the second caller brought is not lost by turning
+   *     it away.
+   */
   async pump(): Promise<void> {
-    while (!this.done && this.offset < this.image.length && this.offset - this.acked < FW_WINDOW_BYTES) {
-      const end = Math.min(this.offset + FW_SLICE_BYTES, this.image.length)
-      await this.sendSlice(this.image.subarray(this.offset, end))
-      this.offset = end
+    if (this.pumping) return
+    this.pumping = true
+    try {
+      while (!this.done && this.offset < this.image.length && this.offset - this.acked < FW_WINDOW_BYTES) {
+        const end = Math.min(this.offset + FW_SLICE_BYTES, this.image.length)
+        const slice = this.image.subarray(this.offset, end)
+        this.offset = end
+        await this.sendSlice(slice)
+      }
+    } finally {
+      this.pumping = false
     }
   }
 
