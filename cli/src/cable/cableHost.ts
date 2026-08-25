@@ -16,7 +16,8 @@ import { fetchRelease, loadImage, shouldOffer } from './fwPush.js'
 import { routeVoiceTask, type RouterAgent } from '../lib/voiceRouter.js'
 import { env } from '../config/env.js'
 
-import type { CableAgent, CableHost, RouteDecision } from './cableSession.js'
+import type { CableAgent, CableHost, CableMachine, CableMachineSource, RouteDecision } from './cableSession.js'
+import { FleetError, type FleetMachine, type MachineFleet } from './machineFleet.js'
 
 /** One completed turn's recap, as the mirror keeps them. */
 export interface RecentTurn {
@@ -26,10 +27,16 @@ export interface RecentTurn {
 
 export interface CableHostWiring {
   machineName: () => string
+  /** This computer's machineId, or '' when the daemon has never resolved one (signed out). */
+  machineId: () => string
+  /** A stable id for this computer, used to name the local row when there is no machineId yet. */
+  computerId: () => string
+  /** How many agents this computer is running — the local row's count, free to read. */
+  localAgentCount: () => number
   /** Deliver text into an agent. The SAME path the web and the WiFi device use — see cli.ts. */
   sendTurn: (agentId: string, text: string) => void
   stopTurn: (agentId: string) => void
-  answer: (agentId: string, id: string, optionId: string) => void
+  answer: (agentId: string, requestId: string, answers: Record<string, string>) => void
   /** Recaps of an agent's last `n` completed turns — for routing, and for redrawing a reattached dial. */
   recent: (agentId: string, n: number) => RecentTurn[]
   /** The opaque runtime-v1 profile, which is where the dial's Model/Effort chips come from. */
@@ -44,6 +51,17 @@ export interface CableHostWiring {
   log: (line: string) => void
 }
 
+/** How the local row names itself before the daemon has ever resolved a machineId for this computer. */
+function localFallbackId(computerId: string): string {
+  return `cable:${computerId}`
+}
+
+/** A fleet row as the wire carries it. `authMode` does not travel: the dial has no use for the word, and
+ *  `remote` is just `!local`, which the row already says. */
+function toCableMachine(m: FleetMachine): CableMachine {
+  return { id: m.machineId, name: m.name, state: m.state, local: false, agents: m.agentCount }
+}
+
 /** Split `runtime-v1:<sid>:<engine>:<model>@<effort>` back into the two words the dial's chips show. */
 function chipsFromProfile(profile: string | null | undefined): { model?: string; effort?: string } {
   if (!profile || !profile.startsWith('runtime-v1:')) return {}
@@ -54,7 +72,76 @@ function chipsFromProfile(profile: string | null | undefined): { model?: string;
 }
 
 export class DaemonCableHost implements CableHost {
-  constructor(private readonly wiring: CableHostWiring) {}
+  /**
+   * The machine whose agents are on the dial right now. Defaults to — and falls back to — the local one:
+   * it is the only machine that is certainly reachable, so it is the honest thing to land on.
+   *
+   * Held in memory only. The dial deliberately does not remember a selection across its own reboot (a
+   * restored id is meaningless until you know whose computer the cable is in), and this side does not
+   * remember across a daemon restart either — that is when the registry reloads anyway.
+   */
+  private selected = ''
+
+  /** `undefined` = no lane to any other machine exists; the wheel is the local row and nothing else. */
+  constructor(private readonly wiring: CableHostWiring, private readonly fleet?: MachineFleet) {}
+
+  /** The identity of the computer at the other end of the cable. */
+  localMachine(): { id: string; name: string } {
+    return { id: this.localId(), name: this.wiring.machineName() }
+  }
+
+  private localId(): string {
+    return this.wiring.machineId() || localFallbackId(this.wiring.computerId())
+  }
+
+  /** Whether the dial is looking at THIS computer. Everything forks on this one question. */
+  isLocalSelected(): boolean {
+    return this.selectedMachine() === this.localId()
+  }
+
+  selectedMachine(): string {
+    return this.selected || this.localId()
+  }
+
+  async listMachines(): Promise<{ machines: CableMachine[]; source: CableMachineSource }> {
+    const local: CableMachine = {
+      id: this.localId(),
+      name: this.wiring.machineName(),
+      // Always ready: the cable IS the evidence. Nothing else on this list can say that about itself.
+      state: 'ready',
+      local: true,
+      agents: this.wiring.localAgentCount(),
+    }
+    if (!this.fleet) return { machines: [local], source: 'signed-out' }
+    const { machines, source } = await this.fleet.list()
+    const rows: CableMachine[] = [local]
+    for (const m of machines) {
+      // The backend list contains THIS computer too. Keep its id and name — they are the canonical ones —
+      // but the liveness and the agent count come from here, where they are facts rather than a snapshot.
+      if (m.machineId === local.id) { local.name = m.name || local.name; continue }
+      rows.push(toCableMachine(m))
+    }
+    return { machines: rows, source }
+  }
+
+  async selectMachine(machineId: string): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+    if (machineId === this.localId()) {
+      this.fleet?.release()
+      this.selected = machineId
+      return { ok: true }
+    }
+    if (!this.fleet) {
+      return { ok: false, code: 'UNAVAILABLE', message: 'Sign in on this computer to reach other machines' }
+    }
+    try {
+      await this.fleet.select(machineId)
+    } catch (err) {
+      if (err instanceof FleetError) return { ok: false, code: err.code, message: err.message }
+      return { ok: false, code: 'UNREACHABLE', message: (err as Error).message }
+    }
+    this.selected = machineId
+    return { ok: true }
+  }
 
   machineName(): string {
     return this.wiring.machineName()
@@ -72,6 +159,7 @@ export class DaemonCableHost implements CableHost {
   }
 
   async listAgents(): Promise<CableAgent[]> {
+    if (!this.isLocalSelected()) return this.fleet!.listAgents(this.selectedMachine())
     const sessions = registry.list()
     // Oldest → newest: a stable order that does not reshuffle as agents become active, which matters more
     // on a carousel than on a list — a tile that moves under a swipe is a tile you cannot aim at.
@@ -85,21 +173,28 @@ export class DaemonCableHost implements CableHost {
   }
 
   sendTurn(agentId: string, text: string): void {
+    if (!this.isLocalSelected()) { this.fleet!.sendTurn(this.selectedMachine(), agentId, text); return }
     this.wiring.sendTurn(agentId, text)
   }
 
   stopTurn(agentId: string): void {
+    if (!this.isLocalSelected()) { this.fleet!.stopTurn(this.selectedMachine(), agentId); return }
     this.wiring.stopTurn(agentId)
   }
 
-  answer(agentId: string, id: string, optionId: string): void {
-    this.wiring.answer(agentId, id, optionId)
+  answer(agentId: string, requestId: string, answers: Record<string, string>): void {
+    if (!this.isLocalSelected()) { this.fleet!.answer(this.selectedMachine(), agentId, requestId, answers); return }
+    this.wiring.answer(agentId, requestId, answers)
   }
 
   focus(agentId: string): void {
     // A statement about where the user is looking, and the desktop window follows it: turning the dial to
     // an agent switches the terminal on screen to the same one. The daemon still has no window of its own
     // — it forwards, and the app decides what following means for it.
+    // Local only, and not an oversight: this says where a hand at THIS desk is looking. There is no
+    // window here to move for an agent running on another computer, and moving one there is not what the
+    // person turning the dial asked for.
+    if (!this.isLocalSelected()) return
     this.wiring.log(`cable: focus ${agentId}`)
     this.wiring.focused?.(agentId)
   }
@@ -110,6 +205,7 @@ export class DaemonCableHost implements CableHost {
     // protocol is most exposed to is a stroke that never CLOSES — the far side then holds a drag forever
     // and its list stops answering the mouse — and that failure is invisible without a matching pair to
     // look for. Two lines per swipe buys the one thing worth seeing.
+    if (!this.isLocalSelected()) return   // same reasoning as focus(): a finger on this glass, this desk
     if (phase !== 'move') {
       this.wiring.log(phase === 'down' ? 'cable: scroll ↓' : `cable: scroll ↑ (v=${velocity})`)
     }
@@ -117,18 +213,20 @@ export class DaemonCableHost implements CableHost {
   }
 
   updateAgent(agentId: string, model?: string, effort?: string): void {
+    if (!this.isLocalSelected()) { this.fleet!.updateAgent(this.selectedMachine(), agentId, model, effort); return }
     this.wiring.updateAgent?.(agentId, model, effort)
   }
 
   /** The last few turns, newest first, in the shape the dial's tile draws: a headline and a body. */
-  recentSummaries(agentId: string): Array<{ recap: string; text: string }> {
-    return this.wiring
-      .recent(agentId, 3)
-      .map((r) => ({ recap: r?.recap ?? '', text: r?.text ?? '' }))
-      .filter((s) => s.recap || s.text)
+  async recentSummaries(agentId: string): Promise<Array<{ recap: string; text: string }>> {
+    const raw = this.isLocalSelected()
+      ? this.wiring.recent(agentId, 3)
+      : await this.fleet!.recentSummaries(this.selectedMachine(), agentId)
+    return raw.map((r) => ({ recap: r?.recap ?? '', text: r?.text ?? '' })).filter((s) => s.recap || s.text)
   }
 
   async listModels(agentId: string): Promise<string[]> {
+    if (!this.isLocalSelected()) return this.fleet!.listModels(this.selectedMachine(), agentId)
     const models = (await this.wiring.listModels?.(agentId)) ?? []
     return models.map((m) => m.id).filter(Boolean)
   }
@@ -157,16 +255,18 @@ export class DaemonCableHost implements CableHost {
    * which is the whole reason voice on the cable does not inherit the hosted path's failure modes.
    */
   async route(transcript: string, agents: CableAgent[]): Promise<RouteDecision> {
-    const candidates: RouterAgent[] = agents.map((a) => ({
+    // The recaps must come from the SELECTED machine. Scored against this computer's history instead, a
+    // spoken turn meant for a remote agent is routed by what the agents HERE were last doing — which is
+    // both wrong and completely invisible, because the router always answers with something.
+    const candidates: RouterAgent[] = await Promise.all(agents.map(async (a) => ({
       id: a.id,
       name: a.name,
       engine: a.engine,
-      recentSummary: this.wiring
-        .recent(a.id, 3)
-        .map((r) => r?.recap || r?.text || '')
+      recentSummary: (await this.recentSummaries(a.id))
+        .map((r) => r.recap || r.text || '')
         .filter(Boolean)
         .join(' · '),
-    }))
+    })))
     const decision = await routeVoiceTask(transcript, candidates)
     return { agentId: decision.agentId, confidence: decision.confidence, reason: decision.reason }
   }
@@ -286,4 +386,21 @@ export function cableEventFor(
   const kind = frame.payload?.kind
   if (kind !== 'processing' && kind !== 'done' && kind !== 'summary' && kind !== 'error') return null
   return { kind, agentId: frame.agentId, text: frame.payload?.text ?? '', recap: frame.payload?.recap ?? '' }
+}
+
+/**
+ * Translate one device-bound `commander_question` into the dial's `question`.
+ *
+ * A sibling of `cableEventFor` rather than a branch inside it, because the shapes have nothing in common
+ * — this one carries a requestId and an option list, not a card. Until this existed the dial's whole
+ * question screen was complete, wired and unreachable: nothing on this side ever produced the message.
+ */
+export function cableQuestionFor(
+  frame: { type?: string; agentId?: string; payload?: { requestId?: string; questions?: unknown } },
+): { agentId: string; requestId: string; questions: unknown } | null {
+  if (frame.type !== 'commander_question' || !frame.agentId) return null
+  const requestId = frame.payload?.requestId
+  const questions = frame.payload?.questions
+  if (typeof requestId !== 'string' || !requestId || !Array.isArray(questions)) return null
+  return { agentId: frame.agentId, requestId, questions }
 }

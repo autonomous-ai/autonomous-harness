@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { CableDecoder, CableType, encodeCableFrame } from './cableFrame.js'
-import { CableSession, type CableAgent, type CableHost, type CablePort } from './cableSession.js'
+import { CableSession, type CableAgent, type CableHost, type CableMachine, type CablePort } from './cableSession.js'
 
 /** A port whose two ends are both in this process. */
 class LoopbackPort implements CablePort {
@@ -20,6 +20,8 @@ class LoopbackPort implements CablePort {
   isOpen = true
   /** Everything the daemon wrote, decoded back into messages. */
   readonly sent: Array<Record<string, unknown>> = []
+  /** The raw bytes of every frame written, so a test can assert the 8 KB cap holds. */
+  readonly frames: Uint8Array[] = []
   closedWith: string | null = null
 
   private decoder = new CableDecoder()
@@ -27,6 +29,7 @@ class LoopbackPort implements CablePort {
   constructor(private readonly onData: (chunk: Buffer) => void) {}
 
   async write(bytes: Uint8Array): Promise<void> {
+    this.frames.push(bytes)
     this.decoder.feed(Buffer.from(bytes), (frame) => {
       if (frame.type === CableType.Json) {
         this.sent.push(JSON.parse(Buffer.from(frame.payload).toString('utf8')) as Record<string, unknown>)
@@ -59,6 +62,8 @@ class LoopbackPort implements CablePort {
   }
 }
 
+const LOCAL_ROW: CableMachine = { id: 'mac-local', name: 'MacBook Pro', state: 'ready', local: true, agents: 2 }
+
 const AGENTS: CableAgent[] = [
   { id: 'a1', name: 'Fix login screen', engine: 'claude' },
   { id: 'a2', name: 'Device firmware voice', engine: 'codex' },
@@ -66,7 +71,10 @@ const AGENTS: CableAgent[] = [
 
 function makeHost(over: Partial<CableHost> = {}) {
   const host: CableHost = {
-    machineName: () => 'MacBook Pro',
+    localMachine: () => ({ id: 'mac-local', name: 'MacBook Pro' }),
+    listMachines: async () => ({ machines: [LOCAL_ROW], source: 'backend' as const }),
+    selectedMachine: () => 'mac-local',
+    selectMachine: async () => ({ ok: true as const }),
     appName: () => 'harness',
     voiceLang: () => 'en',
     listAgents: async () => AGENTS,
@@ -77,7 +85,7 @@ function makeHost(over: Partial<CableHost> = {}) {
     focus: vi.fn(),
     updateAgent: vi.fn(),
     listModels: async () => ['runtime-v1:s1:claude:opus@high', 'runtime-v1:s1:claude:sonnet@low'],
-    recentSummaries: () => [],
+    recentSummaries: async () => [],
     transcribe: async () => 'fix the login screen',
     route: async () => ({ agentId: 'a1', confidence: 0.9, reason: 'name matched' }),
     log: () => {},
@@ -107,12 +115,16 @@ describe('cable session', () => {
     port.say({ t: 'hello', fw: '0.1.0', proto: 1, mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
 
-    expect(port.types()).toEqual(['welcome', 'agents.begin', 'agent', 'agent', 'agents.end'])
+    expect(port.types()).toEqual(
+      // Machines FIRST: the dial paints its machine name from this list, so an agent list that lands
+      // ahead of it shows a nameless placeholder for a frame.
+      ['welcome', 'machines.begin', 'machine', 'machines.end', 'agents.begin', 'agent', 'agent', 'agents.end'],
+    )
     const welcome = port.sent[0]
     expect(welcome).toMatchObject({ t: 'welcome', app: 'harness', machine: { name: 'MacBook Pro' } })
     // Streamed one per message: a hundred agents do not fit in one 8 KB frame, and the dial must not have
     // to reassemble anything.
-    expect(port.sent[2]).toMatchObject({ t: 'agent', id: 'a1', name: 'Fix login screen', engine: 'claude' })
+    expect(port.sent.find((m) => m.t === 'agent')).toMatchObject({ t: 'agent', id: 'a1', name: 'Fix login screen', engine: 'claude' })
     await session.stop()
   })
 
@@ -138,7 +150,11 @@ describe('cable session', () => {
 
     port.say({ t: 'hello', mac: 'cc:dd' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
-    expect(port.types()).toEqual(['welcome', 'agents.begin', 'agent', 'agent', 'agents.end'])
+    expect(port.types()).toEqual(
+      // Machines FIRST: the dial paints its machine name from this list, so an agent list that lands
+      // ahead of it shows a nameless placeholder for a frame.
+      ['welcome', 'machines.begin', 'machine', 'machines.end', 'agents.begin', 'agent', 'agent', 'agents.end'],
+    )
     await session.stop()
   })
 
@@ -295,7 +311,7 @@ describe('cable session', () => {
     // The summaries were on disk the whole time; a tile with a name and no recap has forgotten the work
     // it belongs to. Newest LAST on the wire so it ends up on top of the tile's stack.
     const host = makeHost({
-      recentSummaries: (id) =>
+      recentSummaries: async (id) =>
         id === 'a1' ? [{ recap: 'newest', text: 'b2' }, { recap: 'older', text: 'b1' }] : [],
     })
     const { session, port } = await connect(host)
@@ -353,6 +369,222 @@ describe('cable session', () => {
     port.say({ t: 'voice.end' })
     await vi.waitFor(() => expect(port.types()).toContain('voice.error'))
     expect(host.sendTurn).not.toHaveBeenCalled()
+    await session.stop()
+  })
+  // ── the machine wheel ─────────────────────────────────────────────────────────────────────────────
+
+  it('streams the machine list and names the selected one', async () => {
+    const { session, port } = await connect()
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('machines.end'))
+
+    expect(port.sent.find((m) => m.t === 'machine')).toMatchObject({
+      t: 'machine', id: 'mac-local', name: 'MacBook Pro', state: 'ready', local: true,
+    })
+    expect(port.sent.find((m) => m.t === 'machines.end')).toMatchObject({ selected: 'mac-local', source: 'backend' })
+    await session.stop()
+  })
+
+  it('names the CABLED computer in welcome, not the dial', async () => {
+    // Until proto 2 this carried the dial's own MAC as the machine id — a value nothing could ever select.
+    const { session, port } = await connect()
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('welcome'))
+    expect(port.sent[0]).toMatchObject({ t: 'welcome', machine: { id: 'mac-local' }, selected: 'mac-local' })
+    await session.stop()
+  })
+
+  it('says nothing about machines when nothing changed', async () => {
+    // The 15s hello cadence and every port reopen would otherwise re-push a list the dial already has —
+    // the flap that measured out at 31 session restarts an hour, with the agent list wiped each time.
+    const { session, port } = await connect()
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('machines.end'))
+    const before = port.types().filter((t) => t === 'machines.begin').length
+
+    port.say({ t: 'hello', mac: 'aa:bb' })   // same dial, same firmware: a keepalive
+    await settle()
+    expect(port.types().filter((t) => t === 'machines.begin')).toHaveLength(before)
+    await session.stop()
+  })
+
+  it('acks a select, then pushes THAT machine\'s agents', async () => {
+    const other: CableMachine = { id: 'm2', name: 'office-imac', state: 'ready', local: false, agents: 3 }
+    const remote: CableAgent[] = [{ id: 'r1', name: 'api refactor', engine: 'codex' }]
+    let selected = 'mac-local'
+    const host = makeHost({
+      listMachines: async () => ({ machines: [LOCAL_ROW, other], source: 'backend' as const }),
+      selectedMachine: () => selected,
+      selectMachine: async (id: string) => { selected = id; return { ok: true as const } },
+      listAgents: async () => (selected === 'm2' ? remote : AGENTS),
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    port.sent.length = 0
+
+    port.say({ t: 'machine.select', machineId: 'm2' })
+    await vi.waitFor(() => expect(port.types()).toContain('machine.selected'))
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    expect(port.sent.filter((m) => m.t === 'agent')).toHaveLength(1)
+    expect(port.sent.find((m) => m.t === 'agent')).toMatchObject({ id: 'r1' })
+    await session.stop()
+  })
+
+  it('sends the new list even when it hashes identically to the old one', async () => {
+    // Two machines whose agents share names and engines produce an EQUAL agentsKey. Without resetting it
+    // on a switch, the dial would keep the previous machine's tiles and nothing would ever correct it.
+    const twin: CableAgent[] = [...AGENTS]
+    let selected = 'mac-local'
+    const host = makeHost({
+      listMachines: async () => ({
+        machines: [LOCAL_ROW, { id: 'm2', name: 'twin', state: 'ready' as const, local: false, agents: 2 }],
+        source: 'backend' as const,
+      }),
+      selectedMachine: () => selected,
+      selectMachine: async (id: string) => { selected = id; return { ok: true as const } },
+      listAgents: async () => twin,
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    port.sent.length = 0
+
+    port.say({ t: 'machine.select', machineId: 'm2' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    expect(port.sent.filter((m) => m.t === 'agent')).toHaveLength(2)
+    await session.stop()
+  })
+
+  it('reports a refused select and leaves the selection alone', async () => {
+    const host = makeHost({
+      selectMachine: async () => ({ ok: false as const, code: 'NEEDS_LINK', message: 'Run harness link import' }),
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    port.sent.length = 0
+
+    port.say({ t: 'machine.select', machineId: 'm2' })
+    await vi.waitFor(() => expect(port.types()).toContain('machine.error'))
+    expect(port.sent.find((m) => m.t === 'machine.error')).toMatchObject({
+      machineId: 'm2', code: 'NEEDS_LINK', message: 'Run harness link import',
+    })
+    expect(port.types()).not.toContain('agents.begin')   // the old machine's tiles stay put
+    await session.stop()
+  })
+
+  it('answers a select of the machine already selected instead of going quiet', async () => {
+    // Silence here strands the dial on its spinner until its own deadline, which reads as a hang.
+    const { session, port } = await connect()
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    port.sent.length = 0
+
+    port.say({ t: 'machine.select', machineId: 'mac-local' })
+    await vi.waitFor(() => expect(port.types()).toContain('machine.selected'))
+    await session.stop()
+  })
+
+  it('shows one row and says why when there is no lane to anywhere else', async () => {
+    const host = makeHost({ listMachines: async () => ({ machines: [LOCAL_ROW], source: 'signed-out' as const }) })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('machines.end'))
+    expect(port.sent.filter((m) => m.t === 'machine')).toHaveLength(1)
+    expect(port.sent.find((m) => m.t === 'machines.end')).toMatchObject({ source: 'signed-out' })
+    await session.stop()
+  })
+
+  it('forwards a question answer verbatim, keyed by the QUESTION keys', async () => {
+    // The dial has always sent {agentId, requestId, answers}; this case used to demand {id, optionId} and
+    // silently dropped every answer the question screen produced.
+    const host = makeHost()
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await settle()
+
+    port.say({ t: 'answer', agentId: 'a1', requestId: 'req-7', answers: { scope: 'wide', mode: 'plan' } })
+    await vi.waitFor(() => expect(host.answer).toHaveBeenCalled())
+    expect(host.answer).toHaveBeenCalledWith('a1', 'req-7', { scope: 'wide', mode: 'plan' })
+    await session.stop()
+  })
+
+  it('fits ten machines with long names into single frames', async () => {
+    const many: CableMachine[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `machine-${String(i).padStart(30, 'x')}`,
+      name: 'x'.repeat(39),
+      state: 'ready' as const,
+      local: i === 0,
+      agents: 99,
+    }))
+    const host = makeHost({ listMachines: async () => ({ machines: many, source: 'backend' as const }) })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.sent.filter((m) => m.t === 'machine')).toHaveLength(10))
+    for (const frame of port.frames) expect(frame.length).toBeLessThan(8192)
+    await session.stop()
+  })
+  it('never interleaves two streamed pushes', async () => {
+    // MEASURED ON HARDWARE, 2026-08-25, first plug-in of the proto-2 firmware: the dial reported EIGHT
+    // machines while the daemon's own log said it had sent four, three times.
+    //
+    // `onMessage` is fired from the decoder and never awaited, so a dial that greets and then asks for
+    // both lists has three pushes in flight at once — and each row parks on an await. Unserialised, the
+    // wire carried `begin begin begin row×6 end end end`: the dial reset its staging on every begin,
+    // accumulated every push's rows, and committed the pile on the first end.
+    //
+    // THE SLOW PORT IS THE TEST. With a write that resolves synchronously the three pushes run to
+    // completion one at a time and this passes with or without the fix — which is exactly what the first
+    // version of this test did, and why it proved nothing. A real tty accepts a few hundred bytes at a
+    // time; every frame parks.
+    class SlowPort implements CablePort {
+      readonly path = 'slow'
+      isOpen = true
+      readonly sent: Array<Record<string, unknown>> = []
+      private decoder = new CableDecoder()
+      constructor(private readonly onData: (chunk: Buffer) => void) {}
+      async write(bytes: Uint8Array): Promise<void> {
+        await new Promise((r) => setTimeout(r, 0))
+        this.decoder.feed(Buffer.from(bytes), (frame) => {
+          if (frame.type === CableType.Json) this.sent.push(JSON.parse(Buffer.from(frame.payload).toString('utf8')))
+        })
+      }
+      async close(): Promise<void> { this.isOpen = false }
+      say(msg: Record<string, unknown>): void {
+        this.onData(Buffer.from(encodeCableFrame(CableType.Json, Buffer.from(JSON.stringify(msg), 'utf8'))))
+      }
+    }
+
+    const rows: CableMachine[] = [
+      LOCAL_ROW,
+      { id: 'm2', name: 'office-imac', state: 'ready', local: false, agents: 3 },
+    ]
+    const host = makeHost({ listMachines: async () => ({ machines: rows, source: 'backend' as const }) })
+    let port!: SlowPort
+    const session = new CableSession(host, '/dev/null', async (onData) => {
+      port = new SlowPort(onData)
+      return port
+    })
+    session.start()
+    await vi.waitFor(() => expect(port).toBeTruthy())
+
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'machines.list' })
+    port.say({ t: 'agents.list' })
+    await vi.waitFor(() => {
+      expect(port.sent.filter((m) => m.t === 'machines.end').length).toBeGreaterThanOrEqual(3)
+    })
+
+    // Walk the wire: a `begin` may never open inside another, and each pair must hold the rows of ONE list.
+    let open = false
+    let seen = 0
+    for (const m of port.sent) {
+      if (m.t === 'machines.begin') { expect(open, 'a begin arrived inside another begin').toBe(false); open = true; seen = 0 }
+      else if (m.t === 'machine') { expect(open, 'a row arrived outside a begin/end pair').toBe(true); seen++ }
+      else if (m.t === 'machines.end') { expect(open).toBe(true); expect(seen).toBe(rows.length); open = false }
+    }
+    expect(open, 'a begin was never closed').toBe(false)
     await session.stop()
   })
 })

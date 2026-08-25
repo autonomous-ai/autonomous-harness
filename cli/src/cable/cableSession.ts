@@ -28,13 +28,16 @@ import { FirmwareTransfer } from './fwPush.js'
 import { SerialLink, findDialPort } from './serial.js'
 
 /** Bumped when the VOCABULARY changes. Separate from the frame version, which is the envelope. */
-export const CABLE_PROTO_VERSION = 1
+export const CABLE_PROTO_VERSION = 2
 
 const PING_EVERY_MS = 5_000
 /** No bytes of any kind for this long → the handle is dead. Longer than the dial's own 15 s window, so a
  *  single late message cannot trip both sides at once and have each conclude the other left. */
 const SILENCE_MS = 20_000
 const REOPEN_EVERY_MS = 2_000
+/** How often the machine list is re-read. Slower than the agent list because it is an HTTP read, not a
+ *  map lookup — and because a machine appearing is not something anyone is waiting on a stopwatch for. */
+const MACHINES_POLL_MS = 15_000
 
 /** What a `voice.begin` without an `sr` is assumed to be — firmware old enough not to say. */
 const DEFAULT_VOICE_RATE = 16_000
@@ -50,6 +53,26 @@ export interface CableAgent {
   effort?: string
 }
 
+/**
+ * One row of the dial's machine wheel.
+ *
+ * `state` is the ONLY liveness word on the wire, deliberately as one tri-value rather than an `online`
+ * boolean beside a `known` one: one field cannot contradict itself, two can — and would, the first time a
+ * list refresh fails halfway through.
+ */
+export interface CableMachine {
+  id: string
+  name: string
+  state: 'ready' | 'offline' | 'unknown' | 'needs-link'
+  /** Exactly one row carries this: the computer at the other end of the cable. */
+  local: boolean
+  /** −1 when unknown. Sent only when it is free to know — never worth a round trip per machine. */
+  agents: number
+}
+
+/** Why the list is as short as it is. The dial renders this, instead of drawing an empty wheel. */
+export type CableMachineSource = 'backend' | 'local' | 'signed-out'
+
 export interface RouteDecision {
   agentId: string
   confidence: number
@@ -62,13 +85,29 @@ export interface RouteDecision {
  * and a network to prove that `hello` gets a `welcome`.
  */
 export interface CableHost {
-  machineName(): string
+  /** The computer at the other end of the cable — its identity, not "the" machine's. */
+  localMachine(): { id: string; name: string }
+  /** Every machine the owner has, local row included. Never rejects: `source` explains a short list. */
+  listMachines(): Promise<{ machines: CableMachine[]; source: CableMachineSource }>
+  /** Which one the agent list currently belongs to. */
+  selectedMachine(): string
+  /**
+   * Switch. Resolves to a discriminated result and NEVER throws — a refusal is data here, the same way
+   * `firmwareFor()` returning null is. `code` is the daemon's; `message` is shown to a person verbatim,
+   * so the dial needs no table for a set it does not own.
+   */
+  selectMachine(machineId: string): Promise<{ ok: true } | { ok: false; code: string; message: string }>
   appName(): string
   voiceLang(): string
   listAgents(): Promise<CableAgent[]>
   sendTurn(agentId: string, text: string): void
   stopTurn(agentId: string): void
-  answer(agentId: string, id: string, optionId: string): void
+  /**
+   * The user answered a `question`. `answers` is keyed by the QUESTION keys the daemon itself asked with
+   * and travels verbatim — re-deriving it, or keying it by the requestId, is how a rename at either end
+   * becomes an answer nobody gave.
+   */
+  answer(agentId: string, requestId: string, answers: Record<string, string>): void
   focus(agentId: string): void
   /** A finger moving on the dial's glass, on its way to whatever window is open on this computer. */
   scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void
@@ -80,7 +119,7 @@ export interface CableHost {
   /** The runtime model/effort catalog for one agent, as opaque profile ids the dial groups and shows. */
   listModels(agentId: string): Promise<string[]>
   /** One agent's last turn summaries, newest first — what a reattached dial needs to redraw its tiles. */
-  recentSummaries(agentId: string): Array<{ recap: string; text: string }>
+  recentSummaries(agentId: string): Promise<Array<{ recap: string; text: string }>>
   /**
    * The image to offer a dial running `runningVersion`, or null for "nothing to do" — which covers a
    * dial that is current, a dev build that must not be touched, and an unreachable manifest.
@@ -129,6 +168,30 @@ export class CableSession {
 
   /** What the dial was last told the agent list is. Empty = it has been told nothing. */
   private lastAgentsKey = ''
+  /** The same, for the machine wheel. Both reset together on any new port — see `tryOpen`. */
+  private lastMachinesKey = ''
+  /** Throttle for the machine list, which costs an HTTP read where the agent list costs a map lookup. */
+  private machinesAt = 0
+  /**
+   * Serialises every STREAMED push (begin / rows / end).
+   *
+   * ⚠️ NOT a precaution. `onMessage` is fired from the decoder callback and never awaited, so a dial that
+   * greets and then asks for both lists has three pushes in flight at once — each awaiting a write
+   * between every row. Their frames interleave, and the far end sees `begin, begin, 8 rows, end, end`:
+   * it stages one machine list twice over and reports eight machines where the daemon sent four.
+   *
+   * Measured on hardware 2026-08-25, first plug-in of the proto-2 firmware. The dial's own hash gate does
+   * not help here — it faithfully gates a list that was already shredded on the way in.
+   */
+  private pushChain: Promise<void> = Promise.resolve()
+
+  /** Run `body` after every push already queued, and before any queued later. */
+  private queued(body: () => Promise<void>): Promise<void> {
+    const next = this.pushChain.then(body)
+    // The tail swallows so one failed push cannot strand the ones behind it; the caller still sees it.
+    this.pushChain = next.catch(() => {})
+    return next
+  }
 
   /** A firmware transfer in flight, and the versions already tried this session. */
   private transfer: FirmwareTransfer | null = null
@@ -188,7 +251,15 @@ export class CableSession {
     // Without this the list was sent ONCE per session and never corrected — and a daemon that has just
     // restarted greets the dial before its registry has finished loading, so the one thing it ever said
     // was "no agents". The dial removed both tiles and sat empty while the daemon knew about two.
-    if (this.greetedMac !== null) await this.syncAgents()
+    if (this.greetedMac !== null) {
+      // Machines FIRST. The dial paints its Overview eyebrow from the machine list, so an agent list that
+      // lands first shows a nameless "Machine" for a frame.
+      if (Date.now() - this.machinesAt >= MACHINES_POLL_MS) {
+        this.machinesAt = Date.now()
+        await this.syncMachines()
+      }
+      await this.syncAgents()
+    }
   }
 
   private openAt = 0
@@ -246,7 +317,9 @@ export class CableSession {
     this.decoder.reset()
     this.greetedMac = null
     this.greetedFw = null
-    this.lastAgentsKey = ''   // a new port is a new dial until proven otherwise; tell it everything
+    // A new port is a new dial until proven otherwise; tell it everything.
+    this.lastAgentsKey = ''
+    this.lastMachinesKey = ''
     this.lastRx = Date.now()
     this.host.log(`cable: open on ${opened.path}`)
   }
@@ -257,6 +330,7 @@ export class CableSession {
     this.greetedMac = null
     this.greetedFw = null
     this.lastAgentsKey = ''
+    this.lastMachinesKey = ''
     this.voice = null
     // The dial keeps its running image; the half-written slot is erased again by the next accepted offer.
     this.transfer?.finish('interrupted by the port closing')
@@ -306,7 +380,12 @@ export class CableSession {
           t: 'welcome',
           proto: CABLE_PROTO_VERSION,
           app: this.host.appName(),
-          machine: { id: mac, name: this.host.machineName() },
+          // The CABLED computer's identity — no longer "the one machine". It was the dial's own mac here
+          // until proto 2, which was simply wrong: a mac is not a machine id and nothing could select it.
+          machine: this.host.localMachine(),
+          // Stated up front so the ✓ is correct from the first frame, before any list arrives — which
+          // matters after a dial reboot that lands mid-session on a remote selection.
+          selected: this.host.selectedMachine(),
           voiceLang: this.host.voiceLang(),
         })
         // Log a dial that is new OR that came back running something else. The version half of that test
@@ -335,6 +414,12 @@ export class CableSession {
         return
       case 'agents.list':
         await this.pushAgents()
+        return
+      case 'machines.list':
+        await this.syncMachines(true)
+        return
+      case 'machine.select':
+        await this.selectMachine(str('machineId') ?? '')
         return
       case 'models.list': {
         // The one round trip in this protocol: the dial cannot draw a picker until the catalog is in hand,
@@ -371,11 +456,22 @@ export class CableSession {
       case 'turn.stop':
         if (str('agentId')) this.host.stopTurn(str('agentId')!)
         return
-      case 'answer':
-        if (str('agentId') && str('id') && str('optionId')) {
-          this.host.answer(str('agentId')!, str('id')!, str('optionId')!)
+      case 'answer': {
+        // `answers` is the dial's own object, one entry per question, keyed by the keys WE asked with. It
+        // travels verbatim. Until proto 2 this case demanded `{id, optionId}` — a shape the dial has never
+        // sent — so every answer from the question screen was silently dropped on the floor.
+        const agentId = str('agentId')
+        const requestId = str('requestId')
+        const answers = msg.answers
+        if (agentId && requestId && answers && typeof answers === 'object' && !Array.isArray(answers)) {
+          const flat: Record<string, string> = {}
+          for (const [k, v] of Object.entries(answers as Record<string, unknown>)) {
+            if (typeof v === 'string') flat[k] = v
+          }
+          this.host.answer(agentId, requestId, flat)
         }
         return
+      }
       case 'agent.update':
         if (str('agentId')) this.host.updateAgent(str('agentId')!, str('model'), str('effort'))
         return
@@ -535,6 +631,10 @@ export class CableSession {
    * the honest answer at that instant is "no agents". Something has to say the true one a second later.
    */
   async syncAgents(force = false): Promise<void> {
+    return this.queued(() => this.syncAgentsNow(force))
+  }
+
+  private async syncAgentsNow(force: boolean): Promise<void> {
     const agents = await this.host.listAgents()
     const key = CableSession.agentsKey(agents)
     if (!force && key === this.lastAgentsKey) return
@@ -564,8 +664,12 @@ export class CableSession {
    * rename would replay a week of recaps.
    */
   async pushRestores(): Promise<void> {
+    return this.queued(() => this.pushRestoresNow())
+  }
+
+  private async pushRestoresNow(): Promise<void> {
     for (const a of await this.host.listAgents()) {
-      const past = this.host.recentSummaries(a.id)
+      const past = await this.host.recentSummaries(a.id)
       // Oldest first, so the newest ends up on top of the tile's stack.
       for (const s of [...past].reverse()) {
         if (!s.recap && !s.text) continue
@@ -576,8 +680,89 @@ export class CableSession {
 
   /** Attach: tell the dial everything, whether or not any of it looks unchanged from here. */
   async pushAgents(): Promise<void> {
+    await this.syncMachines(true)
     await this.syncAgents(true)
     await this.pushRestores()
+  }
+
+  // ── machines ──────────────────────────────────────────────────────────────────────────────────────
+
+  /** What the dial has been told about the wheel, as one comparable string. Order counts: it is render
+   *  order, so two lists that differ only by a swap are a real change. */
+  private static machinesKey(machines: CableMachine[], source: string, selected: string): string {
+    return `${source}|${selected}|${machines
+      .map((m) => `${m.id}:${m.name}:${m.state}:${m.agents}:${m.local ? 1 : 0}`)
+      .join('|')}`
+  }
+
+  /**
+   * Push the machine wheel IF it differs from what the dial was last told.
+   *
+   * The diff is not an optimisation. `ui_local_machine_set` on the dial once rebuilt its wheel on every
+   * arriving greeting, on the USB reader task, and that measured out at 31 session restarts an hour with
+   * the agent list wiped each time — the screen sat on "0 agents" while the daemon believed it had said
+   * otherwise. The dial hashes the rows again on its side; this is the half that stops the bytes leaving.
+   */
+  async syncMachines(force = false): Promise<void> {
+    return this.queued(() => this.syncMachinesNow(force))
+  }
+
+  private async syncMachinesNow(force: boolean): Promise<void> {
+    const { machines, source } = await this.host.listMachines()
+    const selected = this.host.selectedMachine()
+    const key = CableSession.machinesKey(machines, source, selected)
+    if (!force && key === this.lastMachinesKey) return
+    this.lastMachinesKey = key
+    this.host.log(`cable: machines → ${machines.length} (${source})${force ? ' [push]' : ''}`)
+
+    await this.send({ t: 'machines.begin' })
+    for (const m of machines) {
+      await this.send({ t: 'machine', id: m.id, name: m.name, state: m.state, local: m.local, agents: m.agents })
+    }
+    await this.send({ t: 'machines.end', selected, source })
+  }
+
+  /**
+   * Switch the dial to another machine.
+   *
+   * Always answered, including for the machine already selected: silence strands the dial on a spinner
+   * until its own deadline, which reads as a hang rather than as "done, nothing changed" — the same rule
+   * `models.list` follows.
+   */
+  private async selectMachine(machineId: string): Promise<void> {
+    if (!machineId) return
+    if (machineId === this.host.selectedMachine()) {
+      await this.send({ t: 'machine.selected', machineId })
+      await this.syncAgents(true)
+      await this.pushRestores()
+      return
+    }
+    const result = await this.host.selectMachine(machineId)
+    if (!result.ok) {
+      this.host.log(`cable: machine.select ${machineId} refused (${result.code})`)
+      await this.send({ t: 'machine.error', machineId, code: result.code, message: result.message })
+      return
+    }
+    this.host.log(`cable: machine.select → ${machineId}`)
+    // REQUIRED, not hygiene: two machines whose agents happen to share names and engines produce an equal
+    // agentsKey, and the new machine's list would then never be sent at all.
+    this.lastAgentsKey = ''
+    await this.send({ t: 'machine.selected', machineId })
+    await this.syncAgents(true)
+    await this.pushRestores()
+    await this.syncMachines(true)   // the ✓ moved, and the agent counts with it
+  }
+
+  /** One row changed — liveness, a rename, a count. Cheaper than re-streaming the wheel. */
+  async machineState(machine: CableMachine): Promise<void> {
+    await this.send({
+      t: 'machine.updated',
+      id: machine.id,
+      name: machine.name,
+      state: machine.state,
+      local: machine.local,
+      agents: machine.agents,
+    })
   }
 
   // Turn state is UNSOLICITED: the daemon reports every turn in every agent, including ones started at the

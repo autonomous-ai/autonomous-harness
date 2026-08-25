@@ -27,7 +27,10 @@ import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
 import { binaryOnPath } from './lib/binaryOnPath.js'
 import { CableSession } from './cable/cableSession.js'
-import { DaemonCableHost, cableEventFor } from './cable/cableHost.js'
+import { DaemonCableHost, cableEventFor, cableQuestionFor } from './cable/cableHost.js'
+import { MachineListCache } from './device/machineList.js'
+import { DeviceLink } from './device/deviceLink.js'
+import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
@@ -156,6 +159,11 @@ const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
 // The dial's session, held at module scope for the same reason `backendRef` is: shutdown() is defined
 // before the wiring that creates it, and the port has to be released on the way out.
 let cableRef: CableSession | null = null
+/** The same object the session holds — module scope so the recap gates can ask which machine is selected
+ *  without threading it through every constructor between here and there. */
+let cableHostRef: DaemonCableHost | null = null
+/** Module scope for the same reason cableRef is: shutdown() has to release the socket. */
+let deviceLinkRef: DeviceLink | null = null
 
 // OpenCode's SQLite store — polled per session by OpencodeReader (no per-session transcript file).
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
@@ -918,7 +926,11 @@ async function runForeground(session: AuthSession): Promise<void> {
    * backend-only meant a dial plugged into a machine with no WiFi device saw a turn start in its tmux
    * pane and then nothing at all: the daemon skipped GENERATING the cards, so there was nothing to send.
    */
-  const deviceIsWatching = (): boolean => backend.hasCommander() || cableRef?.isConnected === true
+  // The cable half is gated on the dial actually LOOKING at this computer. A dial turned to another
+  // machine is watching that machine's cards, not ours, so generating recaps here would spend an LLM call
+  // per turn on something nobody renders.
+  const cableWatchingLocal = (): boolean => cableRef?.isConnected === true && cableHostRef?.isLocalSelected() === true
+  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal()
   const terminalStreams = new TerminalStreamManager({
     terminals,
     resolveAgent: (agentId) => registry.resolve(agentId),
@@ -1426,7 +1438,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     hasDevice: () => deviceIsWatching(),        // device-gate the LLM recap (mirror node)
     // Live cards stream to whatever is actually rendering. The dial has one screen and it is always the
     // one in front of the user, so a cable session counts as active by construction.
-    active: () => backend.hasActiveCommander() || cableRef?.isConnected === true,
+    active: () => backend.hasActiveCommander() || cableWatchingLocal(),
     summarize: async (text, signal, userMessage, sessionId) => {
       const session = sessionId ? registry.bySession(sessionId) : undefined
       // Gateway agents recap through OpenRouter directly (no vendor credential to spend). The probe is
@@ -2742,6 +2754,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Release the serial port first. It is exclusive, and a daemon that exits still holding it makes
     // esptool fail in a way that reads exactly like dead hardware.
     void cableRef?.stop()
+    deviceLinkRef?.stop()
     updater?.stop()
     agentReconciler.stop()
     clearInterval(logTrimTimer)
@@ -2799,13 +2812,58 @@ async function runForeground(session: AuthSession): Promise<void> {
   // of any of those is a second set of bugs.
   //
   // Deliberately not fatal and not blocking: an unplugged cable is this daemon's ordinary state.
+  // ── the lane to the owner's OTHER machines ───────────────────────────────────────────────────────
+  //
+  // Three independent things, on purpose. The LIST is a REST read that works while the backend socket is
+  // down; `local` is derived from the computer id and needs no network at all; and the LANE is a device
+  // socket that only exists while the dial is actually looking at another machine.
+  const machineList = new MachineListCache(
+    () => proxyBackend('GET', '/api/machines'),
+    computerId,
+    (line) => console.log(`[cable] ${line}`),
+  )
+  void machineList.refresh()
+  const machineListTimer = setInterval(() => void machineList.refresh(), 60_000)
+  machineListTimer.unref?.()
+
+  const machinePeers = new MachinePeerStore()
+  const deviceLink = new DeviceLink({
+    auth,
+    backendWsBase: env.BACKEND_WS_URL,
+    computerId: computerId(),
+    autonomousEnv: readAuthSession()?.autonomousEnv ?? session.autonomousEnv,
+    // The SAME identity `harness link create` publishes and `harness link import` verifies against, so
+    // one link ceremony covers the desktop app's relay and the dial's lane alike.
+    identity: relayIdentityStore.getIdentity(),
+    // Read FRESH on every attach: `harness link import` runs as a separate process, so a value captured
+    // at daemon start would keep answering "not linked" until the next restart.
+    peer: (machineId) => machinePeers.get(machineId),
+    log: (line) => console.log(`[device] ${line}`),
+  })
+  deviceLinkRef = deviceLink
+
+  const fleet = new DeviceFleet({
+    list: machineList,
+    link: deviceLink,
+    // Read FRESH on every call, never cached: `harness link import` runs as a separate process, so a
+    // cached answer would keep saying "not linked" for as long as this daemon lives.
+    hasPeerLink: (machineId) => machinePeers.get(machineId) !== null,
+    log: (line) => console.log(`[device] ${line}`),
+  })
+
   const cableHost = new DaemonCableHost({
     machineName: () => { try { return readFileSync(MACHINE_NAME_FILE, 'utf8').trim() || 'This machine' } catch { return 'This machine' } },
+    machineId: () => backend.machineId,
+    computerId: () => computerId(),
+    localAgentCount: () => registry.list().length,
     // The SAME handlers the backend socket drives, called directly rather than reimplemented: the
     // slash-command adaptation, the turn bookkeeping and the question plumbing all live in them.
     sendTurn: (agentId, text) => backend.onMessage?.(agentId, text),
     stopTurn: (agentId) => backend.onCancel?.(agentId),
-    answer: (agentId, id, optionId) => backend.onQuestionAnswer?.({ agentId, requestId: id, answers: { [id]: optionId } }),
+    // The dial's own object, forwarded verbatim. It used to be rebuilt here as `{ [requestId]: optionId }`
+    // — keyed by the REQUEST id rather than by the question key `onQuestionAnswer` expects, so the answer
+    // named a question that does not exist.
+    answer: (agentId, requestId, answers) => backend.onQuestionAnswer?.({ agentId, requestId, answers }),
     recent: (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n),
     runtimeProfile: (session) => runtimeProfiles.selectedModel(session),
     updateAgent: (agentId, model, effort) => {
@@ -2822,13 +2880,20 @@ async function runForeground(session: AuthSession): Promise<void> {
     focused: (agentId) => backend.sendLocal({ type: 'dial_focus', payload: { agentId } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
     log: (line) => console.log(`[cable] ${line}`),
-  })
+  }, fleet)
+  cableHostRef = cableHost
   const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
   cableRef = cable
 
   // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.
   backend.onOutboundCommander = (frame) => {
+    // THIS COMPUTER'S cards, by definition. When the dial is showing another machine they must not be
+    // painted: agent ids are bare local UUIDs with no machine component, so the tile they land on is
+    // either the wrong agent's or nobody's.
+    if (!cableHost.isLocalSelected()) return
+    const question = cableQuestionFor(frame as { type?: string; agentId?: string; payload?: { requestId?: string; questions?: unknown } })
+    if (question) { void cable.question(question.agentId, question.requestId, question.questions); return }
     const event = cableEventFor(frame as { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string } })
     // Logged at the fork, not at the send: this is the one place that can answer "did the daemon even
     // decide to tell the dial", which is a different question from "did the wire carry it" and was the
@@ -2842,6 +2907,18 @@ async function runForeground(session: AuthSession): Promise<void> {
     else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)
     else void cable.turnError(event.agentId, event.text)
   }
+
+  // A remote machine's cards reach the dial through the SAME four calls the local tee uses, so a new
+  // event kind lands on both surfaces the day it lands on either.
+  fleet.onEvent((event) => {
+    if (cableHost.isLocalSelected()) return   // the dial came back to this computer mid-flight
+    if (event.kind === 'question') { void cable.question(event.agentId, event.requestId, event.questions); return }
+    if (event.kind === 'state') { void cable.syncMachines(true); return }
+    if (event.kind === 'processing') void cable.turnStarted(event.agentId, event.text)
+    else if (event.kind === 'done') void cable.turnDone(event.agentId)
+    else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)
+    else void cable.turnError(event.agentId, event.text)
+  })
 
   if (env.CABLE_DISABLE) console.log('[cable] disabled (CABLE_DISABLE=true) — the serial port is left alone')
   else cable.start()
