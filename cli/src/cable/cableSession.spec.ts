@@ -175,6 +175,30 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('does not wedge forever when opening the port hangs', async () => {
+    // The `opening` guard keeps two opens from racing on one tty — a race that once left five read loops
+    // shredding a single byte stream. But a guard released only when the attempt FINISHES is a guard held
+    // forever by an attempt that never does, and the dial is then gone until the daemon is restarted:
+    // no error, no retry, no line in the log saying why. Seen once in the field — the link closed and
+    // nothing tried again for twelve minutes, after the dial re-enumerated mid-flash.
+    vi.useFakeTimers()
+    try {
+      let attempts = 0
+      const session = new CableSession(makeHost(), '/dev/null', async (onData, onClosed) => {
+        attempts += 1
+        if (attempts === 1) return new Promise<never>(() => {})   // the hang
+        return new LoopbackPort(onData, onClosed)
+      })
+      session.start()
+      await vi.advanceTimersByTimeAsync(20_000)
+
+      expect(attempts).toBeGreaterThan(1)
+      await session.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('brings the dial to the agent the window opened', async () => {
     const host = makeHost()
     const { session, port } = await connect(host)

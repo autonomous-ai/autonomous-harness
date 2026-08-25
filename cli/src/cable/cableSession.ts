@@ -35,6 +35,15 @@ const PING_EVERY_MS = 5_000
  *  single late message cannot trip both sides at once and have each conclude the other left. */
 const SILENCE_MS = 20_000
 const REOPEN_EVERY_MS = 2_000
+// How long one attempt at opening the port may take before it is abandoned.
+//
+// ⚠️ THIS IS WHAT KEEPS THE `opening` GUARD FROM BECOMING A PERMANENT STALL. That guard exists to stop
+// two opens racing (which stranded read loops on one tty and shredded the stream), but a guard released
+// only when the attempt finishes is a guard held forever by an attempt that never does. Opening spawns
+// `stty` against a device that may have just re-enumerated mid-flash; if that call hangs, the dial is
+// gone until the daemon is restarted — no error, no retry, no log line saying why. Observed once: the
+// link closed at 14:14 and nothing tried again for twelve minutes.
+const OPEN_TIMEOUT_MS = 8_000
 /** How often the machine list is re-read. Slower than the agent list because it is an HTTP read, not a
  *  map lookup — and because a machine appearing is not something anyone is waiting on a stopwatch for. */
 const MACHINES_POLL_MS = 15_000
@@ -306,10 +315,25 @@ export class CableSession {
     this.openAt = Date.now()
     let opened: CablePort | null
     try {
-      opened = await this.openPort(
+      // A late port must not be left running: the attempt we gave up on can still succeed afterwards, and
+      // an unowned open port with a live read loop is exactly the stranded reader this guard exists to
+      // prevent. So the loser of the race is closed rather than dropped.
+      const attempt = this.openPort(
         (chunk) => this.onBytes(chunk),
         (why) => this.onClosed(why),
       )
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const expiry = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`open timed out after ${OPEN_TIMEOUT_MS}ms`)), OPEN_TIMEOUT_MS)
+      })
+      try {
+        opened = await Promise.race([attempt, expiry])
+      } catch (err) {
+        void attempt.then((late) => late?.close('abandoned — open timed out')).catch(() => {})
+        throw err
+      } finally {
+        clearTimeout(timer)
+      }
     } catch (err) {
       // A port that another process holds is the ordinary case, not a fault: esptool, a serial monitor,
       // or a second daemon. Say so and try again on the next tick.
