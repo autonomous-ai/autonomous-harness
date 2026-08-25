@@ -127,7 +127,13 @@ export async function flashCommand(args: string[], overrides: Partial<FlashDeps>
   const { source } = await resolveScript(deps)
   deps.log(`>> circle flasher (${source === 'fetched' ? scriptUrl() : `cached: ${CACHED_SCRIPT}`})`)
   try {
-    return await deps.run(CACHED_SCRIPT, args)
+    // `--yes` FIRST, ALWAYS. The prompt in the script exists for the standalone `curl | bash` case, where
+    // the operator may not know what is plugged in; it still guards that path. Reaching a board through
+    // `harness flash` is a different situation — the person typed the product's own command at the
+    // product's own device — and the check that actually prevents damage is the script's refusal to write
+    // to anything that is not an ESP32-S3. A confirmation in front of a customer converting the device
+    // they own is friction wearing the clothes of safety. The user's own flags follow and still win.
+    return await deps.run(CACHED_SCRIPT, ['--yes', ...args])
   } catch (err) {
     // The only way `spawn` itself fails here in practice. Every macOS and Linux ships bash; a machine
     // without it cannot run the flasher at all, so say what to do instead of just failing.

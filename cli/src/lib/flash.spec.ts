@@ -90,7 +90,22 @@ describe('harness flash — handing over the flags', () => {
 
     await flashCommand(args, deps)
 
-    expect(calls.args[0]).toEqual(args)
+    // Untouched, and still in order — a flag the script grows next month works the day it ships,
+    // without this file learning it exists. `--yes` leads; see the next test for why.
+    expect(calls.args[0]).toEqual(['--yes', ...args])
+  })
+
+  it('never asks the person who typed `harness flash` to confirm', async () => {
+    // The script's prompt is for the standalone `curl | bash` case, where the operator may not know what
+    // is plugged in. Reaching a board through the product's own command, at the product's own device, is
+    // a different situation — and the check that actually prevents damage is the script refusing to write
+    // to anything that is not an ESP32-S3. Passing --yes first also leaves the user's own flags able to
+    // override anything they collide with.
+    const { deps, calls } = harness()
+
+    await flashCommand([], deps)
+
+    expect(calls.args[0]).toEqual(['--yes'])
   })
 
   /** `harness flash --detect-only` has to be usable in a shell condition, so the code is not swallowed. */
