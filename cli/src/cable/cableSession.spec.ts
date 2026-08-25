@@ -118,7 +118,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 describe('cable session', () => {
   it('answers hello with welcome and pushes the agent list once', async () => {
     const { session, port } = await connect()
-    port.say({ t: 'hello', fw: '0.1.0', proto: 1, mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', fw: '0.1.0', proto: 1, mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
 
     expect(port.types()).toEqual(
@@ -136,13 +136,13 @@ describe('cable session', () => {
 
   it('answers a repeat hello WITHOUT re-pushing the list', async () => {
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
 
     // The dial greets every 15 s for as long as it is plugged in. Re-attaching on each of those re-sends
     // the whole state four times a minute and undoes the "say nothing when nothing changed" rule.
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     expect(port.types()).toEqual(['welcome'])
     await session.stop()
@@ -150,11 +150,11 @@ describe('cable session', () => {
 
   it('re-attaches for a DIFFERENT dial', async () => {
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
 
-    port.say({ t: 'hello', mac: 'cc:dd' })
+    port.say({ t: 'hello', product: 'harness', mac: 'cc:dd' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     expect(port.types()).toEqual(
       // Machines FIRST: the dial paints its machine name from this list, so an agent list that lands
@@ -167,11 +167,64 @@ describe('cable session', () => {
   it('delivers a turn through the host, not through the protocol', async () => {
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.say({ t: 'turn.send', agentId: 'a2', text: 'flash it' })
     await settle()
     expect(host.sendTurn).toHaveBeenCalledWith('a2', 'flash it')
+    await session.stop()
+  })
+
+  it("refuses a dial that names another product, and lets go of its port", async () => {
+    // The framing magic should already have made this greeting unreadable — reaching here means something
+    // this code cannot see has changed (a re-unified magic, a fork of the firmware, a third product). The
+    // safe reading of "I do not recognise you" is never "you are probably mine".
+    const host = makeHost()
+    const { session, port } = await connect(host)
+
+    port.say({ t: 'hello', product: 'grid', fw: '0.1.2', proto: 1, mac: 'aa:bb' })
+    await settle()
+
+    // No welcome: a welcome is what starts a session, and there is no session to have with someone
+    // else's dial. And the port is released, because two daemons reading one tty take turns stealing
+    // each other's bytes — a stalemate that breaks BOTH links, not just this one.
+    expect(port.types()).not.toContain('welcome')
+    expect(port.closedWith).toBe('another product')
+    await session.stop()
+  })
+
+  it('refuses a greeting that names no product at all', async () => {
+    // Absence has to mean no. Reading it as "probably ours" puts the hole straight back: the firmware
+    // that predates this field is exactly the firmware the sibling product can still capture.
+    const host = makeHost()
+    const { session, port } = await connect(host)
+
+    port.say({ t: 'hello', fw: '0.0.39', proto: 2, mac: 'aa:bb' })
+    await settle()
+
+    expect(port.types()).not.toContain('welcome')
+    await session.stop()
+  })
+
+  it('writes a given image to a given dial once, however many sessions it takes', async () => {
+    // `offered` is per SESSION and every flash ends in a reboot that starts a new one, so it cannot see a
+    // loop. Two daemons disagreeing about who owns a board flash it every fifteen seconds — 3 MB a time,
+    // ~700 MB an hour — and the dial pays in erase cycles. This is the memory that outlives the port.
+    const image = Buffer.alloc(2048, 9)
+    const host = makeHost({
+      firmwareFor: async () => ({ version: '9.9.9', image, sha256: 'x'.repeat(64) }),
+    })
+    const { session, port } = await connect(host)
+
+    port.say({ t: 'hello', product: 'harness', fw: '0.0.1', proto: 2, mac: 'aa:bb' })
+    await settle()
+    expect(port.types().filter((t) => t === 'fw.offer')).toHaveLength(1)
+
+    // A new session for the same dial — what a reboot looks like from here.
+    port.sent.length = 0
+    port.say({ t: 'hello', product: 'harness', fw: '0.0.1', proto: 2, mac: 'aa:bb' })
+    await settle()
+    expect(port.types()).not.toContain('fw.offer')
     await session.stop()
   })
 
@@ -202,7 +255,7 @@ describe('cable session', () => {
   it('brings the dial to the agent the window opened', async () => {
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.sent.length = 0
 
@@ -220,7 +273,7 @@ describe('cable session', () => {
     // end does not re-report a carousel that never moved — a property of its UI, not of this protocol.
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
 
     port.say({ t: 'focus', agentId: 'a2' })   // the dial moved itself
@@ -241,7 +294,7 @@ describe('cable session', () => {
     // "optimised away" the empty ones would leave the window holding a drag forever.
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
 
     port.say({ t: 'scroll', phase: 'down', dy: 0 })
@@ -260,7 +313,7 @@ describe('cable session', () => {
     // phase nobody understands must not reach the window as a drag it can never close.
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
 
     port.say({ t: 'scroll', phase: 'sideways', dy: 40 })
@@ -273,7 +326,7 @@ describe('cable session', () => {
   it('routes a voice turn that names no agent', async () => {
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.sent.length = 0
 
@@ -292,7 +345,7 @@ describe('cable session', () => {
     const route = vi.fn()
     const host = makeHost({ route })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
 
     port.say({ t: 'voice.begin', agentId: 'a2', lang: 'en' })
@@ -314,7 +367,7 @@ describe('cable session', () => {
       transcribe: async (_pcm, rate) => { sawRate = rate; return 'xin chào' },
     })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.say({ t: 'voice.begin', lang: 'vi', sr: 8000 })
     port.pcm(Buffer.alloc(1600, 3))
@@ -330,7 +383,7 @@ describe('cable session', () => {
       },
     })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.say({ t: 'voice.begin', lang: 'en' })
     port.pcm(Buffer.alloc(64))
@@ -349,7 +402,7 @@ describe('cable session', () => {
     // empty while the daemon knew about two.
     let agents: CableAgent[] = []
     const { session, port } = await connect(makeHost({ listAgents: async () => agents }))
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     expect(port.sent.filter((m) => m.t === 'agent')).toHaveLength(0)
 
@@ -364,7 +417,7 @@ describe('cable session', () => {
     // The other half of the same rule. A push per tick would re-send the whole board every second and
     // undo the thing that keeps an idle link idle.
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
     await new Promise((r) => setTimeout(r, 2500))      // two ticks
@@ -380,7 +433,7 @@ describe('cable session', () => {
         id === 'a1' ? [{ recap: 'newest', text: 'b2' }, { recap: 'older', text: 'b1' }] : [],
     })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types().filter((t) => t === 'summary')).toHaveLength(2))
 
     const restores = port.sent.filter((m) => m.t === 'summary')
@@ -395,7 +448,7 @@ describe('cable session', () => {
     // The dial BLOCKS on this one message — it cannot draw a picker until the catalog is in hand. Silence
     // strands it on a spinner until its own timeout, which reads as a hang rather than "no choices here".
     const { session, port } = await connect(makeHost({ listModels: async () => [] }))
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.sent.length = 0
     port.say({ t: 'models.list', agentId: 'a1', mode: 'model' })
@@ -406,7 +459,7 @@ describe('cable session', () => {
 
   it('answers models.list when the provider throws', async () => {
     const { session, port } = await connect(makeHost({ listModels: async () => { throw new Error('no engine') } }))
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.say({ t: 'models.list', agentId: 'a1' })
     await vi.waitFor(() => expect(port.types()).toContain('models'))
@@ -428,7 +481,7 @@ describe('cable session', () => {
     // A dial that rebooted mid-capture starts sending PCM again with no `voice.begin` in front of it.
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     port.pcm(Buffer.alloc(3200, 9))
     port.say({ t: 'voice.end' })
@@ -440,7 +493,7 @@ describe('cable session', () => {
 
   it('streams the machine list and names the selected one', async () => {
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('machines.end'))
 
     expect(port.sent.find((m) => m.t === 'machine')).toMatchObject({
@@ -453,7 +506,7 @@ describe('cable session', () => {
   it('names the CABLED computer in welcome, not the dial', async () => {
     // Until proto 2 this carried the dial's own MAC as the machine id — a value nothing could ever select.
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('welcome'))
     expect(port.sent[0]).toMatchObject({ t: 'welcome', machine: { id: 'mac-local' }, selected: 'mac-local' })
     await session.stop()
@@ -463,11 +516,11 @@ describe('cable session', () => {
     // The 15s hello cadence and every port reopen would otherwise re-push a list the dial already has —
     // the flap that measured out at 31 session restarts an hour, with the agent list wiped each time.
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('machines.end'))
     const before = port.types().filter((t) => t === 'machines.begin').length
 
-    port.say({ t: 'hello', mac: 'aa:bb' })   // same dial, same firmware: a keepalive
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })   // same dial, same firmware: a keepalive
     await settle()
     expect(port.types().filter((t) => t === 'machines.begin')).toHaveLength(before)
     await session.stop()
@@ -484,7 +537,7 @@ describe('cable session', () => {
       listAgents: async () => (selected === 'm2' ? remote : AGENTS),
     })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
 
@@ -511,7 +564,7 @@ describe('cable session', () => {
       listAgents: async () => twin,
     })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
 
@@ -526,7 +579,7 @@ describe('cable session', () => {
       selectMachine: async () => ({ ok: false as const, code: 'NEEDS_LINK', message: 'Run harness link import' }),
     })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
 
@@ -542,7 +595,7 @@ describe('cable session', () => {
   it('answers a select of the machine already selected instead of going quiet', async () => {
     // Silence here strands the dial on its spinner until its own deadline, which reads as a hang.
     const { session, port } = await connect()
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
     port.sent.length = 0
 
@@ -554,7 +607,7 @@ describe('cable session', () => {
   it('shows one row and says why when there is no lane to anywhere else', async () => {
     const host = makeHost({ listMachines: async () => ({ machines: [LOCAL_ROW], source: 'signed-out' as const }) })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.types()).toContain('machines.end'))
     expect(port.sent.filter((m) => m.t === 'machine')).toHaveLength(1)
     expect(port.sent.find((m) => m.t === 'machines.end')).toMatchObject({ source: 'signed-out' })
@@ -566,7 +619,7 @@ describe('cable session', () => {
     // silently dropped every answer the question screen produced.
     const host = makeHost()
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
 
     port.say({ t: 'answer', agentId: 'a1', requestId: 'req-7', answers: { scope: 'wide', mode: 'plan' } })
@@ -584,7 +637,7 @@ describe('cable session', () => {
     }))
     const host = makeHost({ listMachines: async () => ({ machines: many, source: 'backend' as const }) })
     const { session, port } = await connect(host)
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(port.sent.filter((m) => m.t === 'machine')).toHaveLength(10))
     for (const frame of port.frames) expect(frame.length).toBeLessThan(8192)
     await session.stop()
@@ -633,7 +686,7 @@ describe('cable session', () => {
     session.start()
     await vi.waitFor(() => expect(port).toBeTruthy())
 
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     port.say({ t: 'machines.list' })
     port.say({ t: 'agents.list' })
     await vi.waitFor(() => {
@@ -659,12 +712,12 @@ describe('cable session', () => {
     host.onDialGone = vi.fn()
     const { session, port } = await connect(host)
 
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await vi.waitFor(() => expect(host.onDialAttached).toHaveBeenCalledTimes(1))
 
     // A keepalive greeting from the same dial is not a new arrival — re-opening the lane on every one
     // would dial the cloud every fifteen seconds for as long as the dial sits there.
-    port.say({ t: 'hello', mac: 'aa:bb' })
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
     await settle()
     expect(host.onDialAttached).toHaveBeenCalledTimes(1)
 

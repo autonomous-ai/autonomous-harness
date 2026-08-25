@@ -44,6 +44,27 @@ const REOPEN_EVERY_MS = 2_000
 // gone until the daemon is restarted — no error, no retry, no log line saying why. Observed once: the
 // link closed at 14:14 and nothing tried again for twelve minutes.
 const OPEN_TIMEOUT_MS = 8_000
+
+/** What this dial must call itself. A greeting that does not say exactly this is another product's. */
+const CABLE_PRODUCT = 'harness'
+
+// How long a port may deliver BYTES WITHOUT A SINGLE DECODABLE FRAME before it is written off as another
+// product's dial.
+//
+// The magic (cableFrame.ts) makes the sibling product's frames undecodable here, which is the point — but
+// it also means a foreign dial looks exactly like a chatty port that says nothing we understand. Left
+// alone we would hold that port open forever, and two daemons reading one tty is not a stalemate: each
+// takes a share of the other's bytes, so frames arrive interleaved and BOTH links fail. Measured on this
+// hardware: five readers on one stream cost 18 of 22 greetings.
+//
+// Generous on purpose. Our own dial is silent-then-noisy across a reboot — the ROM and the bootloader
+// write plain text to this same wire before the application starts framing anything — so a short window
+// would evict a dial that was merely booting.
+const FOREIGN_AFTER_MS = 12_000
+
+// Most firmware writes one dial may take in an hour. A real release is one; anything repeating is two
+// pieces of software disagreeing about who owns the board, and the dial pays for that in erase cycles.
+const FW_WRITES_PER_HOUR = 3
 /** How often the machine list is re-read. Slower than the agent list because it is an HTTP read, not a
  *  map lookup — and because a machine appearing is not something anyone is waiting on a stopwatch for. */
 const MACHINES_POLL_MS = 15_000
@@ -184,6 +205,15 @@ export class CableSession {
 
   /** What the dial was last told the agent list is. Empty = it has been told nothing. */
   private lastAgentsKey = ''
+  /** Bytes and frames seen since this port opened — the evidence for the foreign-dial verdict. */
+  private bytesSinceOpen = 0
+  private framesSinceOpen = 0
+  /** Ports written off as another product's, and when it becomes worth looking again. */
+  private foreignPort: string | null = null
+  private foreignRetryAt = 0
+  /** Which images have already been written to which dial, and when. Survives the port, unlike `offered`. */
+  private readonly written = new Set<string>()
+  private readonly writeLog = new Map<string, number[]>()
   /** The agent the dial is on, as last observed or commanded. See followApp() for why this exists. */
   private dialFocus = ''
   /** The same, for the machine wheel. Both reset together on any new port — see `tryOpen`. */
@@ -251,6 +281,25 @@ export class CableSession {
       await this.tryOpen()
       return
     }
+    // BYTES BUT NO FRAMES = SOMEBODY ELSE'S DIAL. Nothing we can read has arrived, and something is
+    // plainly talking — which is what the sibling product's panel looks like from here now that the two
+    // framings no longer overlap. Holding the port would leave both daemons reading one tty and taking
+    // turns stealing each other's bytes, so this side lets go and remembers not to come back for it.
+    if (this.link?.isOpen
+        && this.framesSinceOpen === 0
+        && this.bytesSinceOpen > 0
+        && Date.now() - this.openAt > FOREIGN_AFTER_MS) {
+      this.foreignPort = this.link.path
+      // Long enough not to fight over it, short enough to notice a swap. In practice the other daemon
+      // takes the port the moment this one lets go and a tty is exclusive on macOS, so the next probes
+      // fail to open rather than steal it back — this interval only decides how soon we would find OUR
+      // dial if the user unplugged theirs and plugged ours into the same socket.
+      this.foreignRetryAt = Date.now() + 60_000
+      this.host.log(`cable: ${this.link.path} is not a Harness dial (${this.bytesSinceOpen} B, no frames) — releasing it`)
+      await this.link.close('not ours')
+      this.link = null
+      return
+    }
     // Rule 2. The read never fails on a dead handle, so silence is the only symptom there is.
     if (Date.now() - this.lastRx > SILENCE_MS) {
       this.host.log('cable: silent, reopening the port')
@@ -310,6 +359,7 @@ export class CableSession {
    */
   private async tryOpen(): Promise<void> {
     if (this.opening) return
+    if (this.foreignPort && Date.now() < this.foreignRetryAt) return
     if (Date.now() - this.openAt < REOPEN_EVERY_MS) return
     this.opening = true
     this.openAt = Date.now()
@@ -346,6 +396,11 @@ export class CableSession {
     // Nothing reaches this line holding a live port — tick() only calls in when the link is closed — but
     // assigning over one would strand it exactly as above, and the cost of being sure is one branch.
     if (this.link) await this.link.close('replaced')
+    // A port that earned the verdict once is presumed foreign until it proves otherwise, but the evidence
+    // is gathered fresh every time: a dial that was replaced behind the same path gets a clean hearing.
+    if (opened.path !== this.foreignPort) this.foreignPort = null
+    this.bytesSinceOpen = 0
+    this.framesSinceOpen = 0
     this.link = opened
     // Leftover bytes belong to a session that has ended; carrying them across would put a stale
     // half-frame in front of the first real frame of the new one.
@@ -377,7 +432,9 @@ export class CableSession {
 
   private onBytes(chunk: Buffer): void {
     this.lastRx = Date.now()
+    this.bytesSinceOpen += chunk.length
     this.decoder.feed(chunk, (frame) => {
+      this.framesSinceOpen += 1
       if (frame.type === CableType.Json) {
         let msg: Message
         try {
@@ -410,6 +467,25 @@ export class CableSession {
 
     switch (msg.t) {
       case 'hello': {
+        // ⚠️ A POSITIVE MATCH, AND ABSENCE MEANS NO. The framing magic already stops the sibling product's
+        // dial from ever getting this far, so reaching here with the wrong product means something changed
+        // that this code cannot see — a re-unified magic, a fork of this firmware, a third product. The
+        // safe reading of "I do not recognise you" is never "you are probably mine".
+        //
+        // Answered with nothing at all: a `welcome` is what starts a session, and there is no session to
+        // have with a dial that is not ours. The port is released on the next tick by the same rule that
+        // handles a dial we cannot decode.
+        const product = str('product')
+        if (product !== CABLE_PRODUCT) {
+          if (this.foreignPort !== this.link?.path) {
+            this.host.log(`cable: greeted by a '${product ?? 'nameless'}' dial, not a ${CABLE_PRODUCT} one — releasing the port`)
+          }
+          this.foreignPort = this.link?.path ?? null
+          this.foreignRetryAt = Date.now() + 60_000
+          await this.link?.close('another product')
+          this.link = null
+          return
+        }
         const mac = str('mac') ?? ''
         // Rule 1: every greeting is answered, but only an unfamiliar dial gets the full state.
         await this.send({
@@ -563,10 +639,41 @@ export class CableSession {
   }
 
   /** Offer an update if there is one, the dial is not on it, and this session has not tried it already. */
+  /**
+   * May this version be written to this dial at all?
+   *
+   * DEFENCE IN DEPTH, AND IT IS THE LAYER THAT PROTECTS THE HARDWARE. Everything above decides whether a
+   * dial is ours; this decides how badly a wrong answer can hurt. An OTA writes three megabytes and
+   * reboots, so a pair of daemons that disagree about ownership do not merely argue — they take turns
+   * flashing the same board every fifteen seconds, which is about 700 MB an hour into a flash rated in
+   * erase cycles. The device is unusable throughout, and nothing about it looks like a loop from either
+   * side: each daemon sees a dial on an unexpected version and does the reasonable thing.
+   *
+   * `offered` alone does not cover it: that set is per SESSION, and every one of those flashes ends in a
+   * reboot that starts a new one. This memory is keyed by the dial and outlives the port.
+   */
+  private mayOffer(mac: string, version: string): boolean {
+    const key = `${mac}:${version}`
+    if (this.written.has(key)) {
+      this.host.log(`cable: firmware ${version} already written to ${mac} — not offering it again`)
+      return false
+    }
+    const now = Date.now()
+    const recent = (this.writeLog.get(mac) ?? []).filter((at) => now - at < 60 * 60 * 1000)
+    if (recent.length >= FW_WRITES_PER_HOUR) {
+      this.host.log(`cable: ${mac} has taken ${recent.length} firmware writes this hour — holding off`)
+      return false
+    }
+    this.written.add(key)
+    this.writeLog.set(mac, [...recent, now])
+    return true
+  }
+
   private async maybeOfferFirmware(runningVersion: string): Promise<void> {
     if (!this.host.firmwareFor || this.transfer || !runningVersion) return
     const candidate = await this.host.firmwareFor(runningVersion).catch(() => null)
     if (!candidate || this.offered.has(candidate.version)) return
+    if (!this.mayOffer(this.greetedMac ?? 'unknown', candidate.version)) return
     this.offered.add(candidate.version)
 
     this.host.log(`cable: offering firmware ${candidate.version} (${candidate.image.length} B)`)

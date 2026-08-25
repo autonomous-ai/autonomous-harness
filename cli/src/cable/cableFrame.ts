@@ -20,8 +20,17 @@
 // the firmware cannot route — ROM chatter, a panic dump — comes as bare text, which the decoder steps
 // over a byte at a time and counts.
 
+// ⚠️ THE SECOND BYTE NAMES THE PRODUCT. Must match the firmware's cable_frame.h exactly, and the long
+// comment there is the one to read: a sibling product ships the SAME board with the same USB identity and
+// a protocol descended from the same ancestor, and its updater flashes any panel whose version differs
+// from its bundled one — in either direction. Different magic is what makes that impossible without
+// needing the other product to agree to anything: it can never read a `hello` from this dial, so it never
+// learns a version, so it never offers.
+//
+// 0x48 is 'H'. The sibling takes 'G'. Changing one of these two without the other is a link that opens
+// and then delivers nothing at all.
 export const CABLE_MAGIC_0 = 0xa5
-export const CABLE_MAGIC_1 = 0x5a
+export const CABLE_MAGIC_1 = 0x48
 
 /** Bumped only when the ENVELOPE changes. The vocabulary carries its own version in `hello`. */
 export const CABLE_FRAME_VERSION = 1
