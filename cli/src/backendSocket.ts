@@ -906,8 +906,12 @@ export class BackendSocket {
         case 'agents_list': {
           const projects = await Promise.all(registry.active().map((s) => this.toProject(s)))
           // Ordered by creation time, oldest → newest — a stable tab order that doesn't reshuffle as
-          // sessions become active (createdAt = the session's registeredAt).
-          projects.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+          // sessions become active (createdAt = the session's registeredAt). The id breaks a tie so the
+          // order is TOTAL: without it two agents registered in the same millisecond fall through to array
+          // position, which is Map insertion order and differs between daemon runs — the web, the app and
+          // the dial would each show a different order for the same registry. `cableHost.listAgents`
+          // sorts by the same rule; the two must stay identical.
+          projects.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id))
           if (this.e2ee.sessionRole(connId) === 'device') {
             reply(type, requestId, { agents: projects.slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
             return

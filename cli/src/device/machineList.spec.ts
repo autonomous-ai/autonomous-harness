@@ -14,7 +14,7 @@ const DIR = (): string => mkdtempSync(join(tmpdir(), 'machines-'))
 
 /** The shape `GET /api/machines` actually answers with (MachineService.toOwner). */
 function row(over: Record<string, unknown> = {}): Record<string, unknown> {
-  return { machineId: 'm1', computerId: 'aabbccdd', name: 'office-imac', status: 'running', agentCount: 3, authMode: 'remote', ...over }
+  return { machineId: 'm1', computerId: 'aabbccdd', name: 'office-imac', status: 'running', authMode: 'remote', ...over }
 }
 
 function ok(machines: Record<string, unknown>[]) {

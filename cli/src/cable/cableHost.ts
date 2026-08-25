@@ -31,8 +31,6 @@ export interface CableHostWiring {
   machineId: () => string
   /** A stable id for this computer, used to name the local row when there is no machineId yet. */
   computerId: () => string
-  /** How many agents this computer is running — the local row's count, free to read. */
-  localAgentCount: () => number
   /** Deliver text into an agent. The SAME path the web and the WiFi device use — see cli.ts. */
   sendTurn: (agentId: string, text: string) => void
   stopTurn: (agentId: string) => void
@@ -59,7 +57,7 @@ function localFallbackId(computerId: string): string {
 /** A fleet row as the wire carries it. `authMode` does not travel: the dial has no use for the word, and
  *  `remote` is just `!local`, which the row already says. */
 function toCableMachine(m: FleetMachine): CableMachine {
-  return { id: m.machineId, name: m.name, state: m.state, local: false, agents: m.agentCount }
+  return { id: m.machineId, name: m.name, state: m.state, local: false }
 }
 
 /** Split `runtime-v1:<sid>:<engine>:<model>@<effort>` back into the two words the dial's chips show. */
@@ -106,19 +104,21 @@ export class DaemonCableHost implements CableHost {
   async listMachines(): Promise<{ machines: CableMachine[]; source: CableMachineSource }> {
     const local: CableMachine = {
       id: this.localId(),
+      // The machine's own name. What makes this row recognisable as the cabled one is its second line,
+      // which the dial writes — see machine_meta_line.
       name: this.wiring.machineName(),
       // Always ready: the cable IS the evidence. Nothing else on this list can say that about itself.
       state: 'ready',
       local: true,
-      agents: this.wiring.localAgentCount(),
     }
     if (!this.fleet) return { machines: [local], source: 'signed-out' }
     const { machines, source } = await this.fleet.list()
     const rows: CableMachine[] = [local]
     for (const m of machines) {
-      // The backend list contains THIS computer too. Keep its id and name — they are the canonical ones —
-      // but the liveness and the agent count come from here, where they are facts rather than a snapshot.
-      if (m.machineId === local.id) { local.name = m.name || local.name; continue }
+      // The backend list contains THIS computer too. Dropped rather than rendered: the same machine on
+      // the wheel twice, under two names, with the ✓ able to mark only one of them. Its name is already
+      // here anyway — MACHINE_NAME_FILE is mirrored from the backend on every connect.
+      if (m.machineId === local.id) continue
       rows.push(toCableMachine(m))
     }
     return { machines: rows, source }
@@ -160,10 +160,14 @@ export class DaemonCableHost implements CableHost {
 
   async listAgents(): Promise<CableAgent[]> {
     if (!this.isLocalSelected()) return this.fleet!.listAgents(this.selectedMachine())
-    const sessions = registry.list()
-    // Oldest → newest: a stable order that does not reshuffle as agents become active, which matters more
-    // on a carousel than on a list — a tile that moves under a swipe is a tile you cannot aim at.
-    sessions.sort((a, b) => a.registeredAt - b.registeredAt)
+    // `active()`, not `list()` — the SAME set `agents_list` answers the web and the desktop app with. They
+    // read one registry and must not disagree about what is on it: a dead agent holding a tile on the dial
+    // and nowhere else is a tile that cannot be driven and cannot be explained.
+    const sessions = registry.active()
+    // Oldest → newest, and TOTAL: the id breaks a tie so the order cannot fall through to array position,
+    // which is Map insertion order and differs between daemon runs. Both producers sort identically, so
+    // the dial and the app cannot drift apart while reading the same registry.
+    sessions.sort((a, b) => a.registeredAt - b.registeredAt || a.agentId.localeCompare(b.agentId))
     return sessions.map((s) => ({
       id: s.agentId,
       name: projectDisplayName(s),

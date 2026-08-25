@@ -66,8 +66,6 @@ export interface CableMachine {
   state: 'ready' | 'offline' | 'unknown' | 'needs-link'
   /** Exactly one row carries this: the computer at the other end of the cable. */
   local: boolean
-  /** −1 when unknown. Sent only when it is free to know — never worth a round trip per machine. */
-  agents: number
 }
 
 /** Why the list is as short as it is. The dial renders this, instead of drawing an empty wheel. */
@@ -691,7 +689,7 @@ export class CableSession {
    *  order, so two lists that differ only by a swap are a real change. */
   private static machinesKey(machines: CableMachine[], source: string, selected: string): string {
     return `${source}|${selected}|${machines
-      .map((m) => `${m.id}:${m.name}:${m.state}:${m.agents}:${m.local ? 1 : 0}`)
+      .map((m) => `${m.id}:${m.name}:${m.state}:${m.local ? 1 : 0}`)
       .join('|')}`
   }
 
@@ -717,7 +715,7 @@ export class CableSession {
 
     await this.send({ t: 'machines.begin' })
     for (const m of machines) {
-      await this.send({ t: 'machine', id: m.id, name: m.name, state: m.state, local: m.local, agents: m.agents })
+      await this.send({ t: 'machine', id: m.id, name: m.name, state: m.state, local: m.local })
     }
     await this.send({ t: 'machines.end', selected, source })
   }
@@ -755,14 +753,7 @@ export class CableSession {
 
   /** One row changed — liveness, a rename, a count. Cheaper than re-streaming the wheel. */
   async machineState(machine: CableMachine): Promise<void> {
-    await this.send({
-      t: 'machine.updated',
-      id: machine.id,
-      name: machine.name,
-      state: machine.state,
-      local: machine.local,
-      agents: machine.agents,
-    })
+    await this.send({ t: 'machine.updated', id: machine.id, name: machine.name, state: machine.state, local: machine.local })
   }
 
   // Turn state is UNSOLICITED: the daemon reports every turn in every agent, including ones started at the

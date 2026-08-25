@@ -20,7 +20,6 @@ interface OwnerMachine {
   name?: unknown
   hostname?: unknown
   status?: unknown
-  agentCount?: unknown
   authMode?: unknown
 }
 
@@ -111,7 +110,6 @@ export class MachineListCache {
       machineId,
       name,
       state: stateOf(typeof r.status === 'string' ? r.status : ''),
-      agentCount: typeof r.agentCount === 'number' ? r.agentCount : -1,
       authMode,
       // Derived, never declared — the same rule the desktop app follows.
       local: sameComputer(typeof r.computerId === 'string' ? r.computerId : '', mine),

@@ -62,7 +62,7 @@ class LoopbackPort implements CablePort {
   }
 }
 
-const LOCAL_ROW: CableMachine = { id: 'mac-local', name: 'MacBook Pro', state: 'ready', local: true, agents: 2 }
+const LOCAL_ROW: CableMachine = { id: 'mac-local', name: 'MacBook Pro', state: 'ready', local: true }
 
 const AGENTS: CableAgent[] = [
   { id: 'a1', name: 'Fix login screen', engine: 'claude' },
@@ -409,7 +409,7 @@ describe('cable session', () => {
   })
 
   it('acks a select, then pushes THAT machine\'s agents', async () => {
-    const other: CableMachine = { id: 'm2', name: 'office-imac', state: 'ready', local: false, agents: 3 }
+    const other: CableMachine = { id: 'm2', name: 'office-imac', state: 'ready', local: false }
     const remote: CableAgent[] = [{ id: 'r1', name: 'api refactor', engine: 'codex' }]
     let selected = 'mac-local'
     const host = makeHost({
@@ -438,7 +438,7 @@ describe('cable session', () => {
     let selected = 'mac-local'
     const host = makeHost({
       listMachines: async () => ({
-        machines: [LOCAL_ROW, { id: 'm2', name: 'twin', state: 'ready' as const, local: false, agents: 2 }],
+        machines: [LOCAL_ROW, { id: 'm2', name: 'twin', state: 'ready' as const, local: false }],
         source: 'backend' as const,
       }),
       selectedMachine: () => selected,
@@ -516,7 +516,6 @@ describe('cable session', () => {
       name: 'x'.repeat(39),
       state: 'ready' as const,
       local: i === 0,
-      agents: 99,
     }))
     const host = makeHost({ listMachines: async () => ({ machines: many, source: 'backend' as const }) })
     const { session, port } = await connect(host)
@@ -558,7 +557,7 @@ describe('cable session', () => {
 
     const rows: CableMachine[] = [
       LOCAL_ROW,
-      { id: 'm2', name: 'office-imac', state: 'ready', local: false, agents: 3 },
+      { id: 'm2', name: 'office-imac', state: 'ready', local: false },
     ]
     const host = makeHost({ listMachines: async () => ({ machines: rows, source: 'backend' as const }) })
     let port!: SlowPort

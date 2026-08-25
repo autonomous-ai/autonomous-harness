@@ -2855,7 +2855,6 @@ async function runForeground(session: AuthSession): Promise<void> {
     machineName: () => { try { return readFileSync(MACHINE_NAME_FILE, 'utf8').trim() || 'This machine' } catch { return 'This machine' } },
     machineId: () => backend.machineId,
     computerId: () => computerId(),
-    localAgentCount: () => registry.list().length,
     // The SAME handlers the backend socket drives, called directly rather than reimplemented: the
     // slash-command adaptation, the turn bookkeeping and the question plumbing all live in them.
     sendTurn: (agentId, text) => backend.onMessage?.(agentId, text),

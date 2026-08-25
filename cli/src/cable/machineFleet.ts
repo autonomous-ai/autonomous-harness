@@ -17,7 +17,6 @@ export interface FleetMachine {
   /** `ready` = reachable now · `offline` = known but not reachable · `unknown` = the list itself is stale
    *  · `needs-link` = reachable, but this daemon holds no pinned key for it, so nothing can be read. */
   state: 'ready' | 'offline' | 'unknown' | 'needs-link'
-  agentCount: number
   authMode: 'self' | 'managed' | 'remote' | 'provider'
 }
 
@@ -33,7 +32,7 @@ export class FleetError extends Error {
 export type FleetEvent =
   | { machineId: string; kind: 'processing' | 'done' | 'summary' | 'error'; agentId: string; text: string; recap: string }
   | { machineId: string; kind: 'question'; agentId: string; requestId: string; questions: unknown }
-  | { machineId: string; kind: 'state'; state: FleetMachine['state']; agentCount?: number }
+  | { machineId: string; kind: 'state'; state: FleetMachine['state'] }
 
 /**
  * Everything the dial needs from a machine that is NOT this computer.

@@ -13,7 +13,7 @@ type Listed = { machineId: string; name: string; state: string; agentCount: numb
 
 function listOf(rows: Partial<Listed>[]): Listed[] {
   return rows.map((r) => ({
-    machineId: 'm1', name: 'office-imac', state: 'ready', agentCount: 2, authMode: 'remote', local: false, ...r,
+    machineId: 'm1', name: 'office-imac', state: 'ready', authMode: 'remote', local: false, ...r,
   })) as Listed[]
 }
 
