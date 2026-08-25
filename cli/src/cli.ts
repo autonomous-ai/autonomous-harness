@@ -2273,6 +2273,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     new MachinePeerStore(),
   )
   const localWsServer = attachLocalWsServer(hookServer, {
+    // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
+    // the dial's machine first when the app moved to another one.
+    onAppFocus: (machineId, agentId) => { void cableRef?.followApp(machineId, agentId) },
     machineId: backend.machineId,
     backend,
     relayPool,

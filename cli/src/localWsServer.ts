@@ -26,6 +26,9 @@ export interface LocalWsServerOptions {
    *  backend's `/api/web-ws` — see lib/remoteRelay.ts. Omit to keep today's own-machine-only behavior. */
   relayPool?: RemoteRelayPool
   autonomousEnv?: string
+  /** The desktop app opened an agent's terminal — which agent, and on which machine. Lets the dial follow
+   *  the window, so the two screens stay one desk. */
+  onAppFocus?: (machineId: string, agentId: string) => void
 }
 
 export interface LocalWsServer {
@@ -104,6 +107,9 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
   wss.on('connection', (ws) => {
     const connId = `local:${randomUUID()}`
     let selected = false
+    // Which machine THIS connection is bound to. The app opens one local socket per machine, so it is
+    // fixed for the life of the connection — set once, beside `selected`.
+    let boundMachineId: string | null = null
     let relay: RelaySession | null = null
     let alive = true
     let chain = Promise.resolve()
@@ -131,6 +137,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           const frame = jsonFrame(raw)
           const payload = frame?.payload as Record<string, unknown> | undefined
           const requestedMachineId = payload?.machineId
+          if (typeof requestedMachineId === 'string') boundMachineId = requestedMachineId
           if (frame?.type !== 'machine_select'
             || typeof requestedMachineId !== 'string'
             || payload?.localProtocolVersion !== LOCAL_WS_PROTOCOL_VERSION) {
@@ -175,6 +182,18 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             close(code, err instanceof Error ? err.message.slice(0, 120) : 'relay failed')
           }
           return
+        }
+
+        // THE APP MOVED — tell whoever wants to follow it, before the frame is dispatched either way.
+        // Sniffed here rather than in the backend socket because that path never sees a RELAYED machine's
+        // frames: those are forwarded upstream a few lines below and would be invisible, which is exactly
+        // the case that matters — the dial has to follow the window onto ANOTHER machine too.
+        if (!isBinary && options.onAppFocus && boundMachineId) {
+          const opened = jsonFrame(raw)
+          const agentId = (opened?.payload as Record<string, unknown> | undefined)?.agentId
+          if (opened?.type === 'terminal_open' && typeof agentId === 'string' && agentId) {
+            options.onAppFocus(boundMachineId, agentId)
+          }
         }
 
         if (relay) {

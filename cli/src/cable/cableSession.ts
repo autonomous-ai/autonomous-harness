@@ -175,6 +175,8 @@ export class CableSession {
 
   /** What the dial was last told the agent list is. Empty = it has been told nothing. */
   private lastAgentsKey = ''
+  /** The agent the dial is on, as last observed or commanded. See followApp() for why this exists. */
+  private dialFocus = ''
   /** The same, for the machine wheel. Both reset together on any new port — see `tryOpen`. */
   private lastMachinesKey = ''
   /** Throttle for the machine list, which costs an HTTP read where the agent list costs a map lookup. */
@@ -450,7 +452,12 @@ export class CableSession {
         return
       }
       case 'focus':
-        if (str('agentId')) this.host.focus(str('agentId')!)
+        if (str('agentId')) {
+          // Remember where the dial IS, not just that it said so: followApp() compares against this to
+          // avoid echoing the dial's own move back at it.
+          this.dialFocus = str('agentId')!
+          this.host.focus(str('agentId')!)
+        }
         return
       case 'scroll': {
         // Forwarded verbatim, including the reports carrying no travel: the two ends of a stroke are the
@@ -795,7 +802,33 @@ export class CableSession {
     await this.send({ t: 'question', agentId, id, questions })
   }
   async focusAgent(agentId: string): Promise<void> {
+    this.dialFocus = agentId
     await this.send({ t: 'focus', agentId })
+  }
+
+  /**
+   * The desktop window moved to an agent — bring the dial with it.
+   *
+   * ⚠️ THE `dialFocus` GUARD IS WHAT KEEPS THIS FROM OSCILLATING. The two screens drive each other: the
+   * dial's own carousel reports `focus` up, the daemon hands that to the app, the app opens that agent's
+   * terminal, and the app opening a terminal is exactly what calls this. Answering it with another `focus`
+   * closes the ring. It happens to settle today — the dial does not re-report a carousel that never moved
+   * — but that is a property of the far end's UI, not of this protocol, and it is one jittery settle away
+   * from a loop. So: say nothing when the dial is already there.
+   *
+   * The machine comes first when it differs. Sending `focus` for an agent on a machine the dial is not on
+   * would name an id its list has never heard of, and the tile it would have to move to does not exist
+   * yet — selectMachine is what streams that list.
+   */
+  async followApp(machineId: string, agentId: string): Promise<void> {
+    if (!this.link?.isOpen || this.greetedMac === null) return
+    if (machineId && machineId !== this.host.selectedMachine()) {
+      this.host.log(`cable: following the app to machine ${machineId}`)
+      await this.selectMachine(machineId)
+    }
+    if (!agentId || agentId === this.dialFocus) return
+    this.host.log(`cable: following the app to agent ${agentId}`)
+    await this.focusAgent(agentId)
   }
   async toast(text: string): Promise<void> {
     await this.send({ t: 'toast', text })

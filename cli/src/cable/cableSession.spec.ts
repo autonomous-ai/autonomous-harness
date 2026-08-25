@@ -175,6 +175,41 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('brings the dial to the agent the window opened', async () => {
+    const host = makeHost()
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await settle()
+    port.sent.length = 0
+
+    await session.followApp('', 'a2')
+    await settle()
+
+    expect(port.sent.filter((m) => m.t === 'focus').map((m) => m.agentId)).toEqual(['a2'])
+    await session.stop()
+  })
+
+  it("never echoes the dial's own move back at it", async () => {
+    // THE RING: the dial's carousel reports `focus` up, the daemon hands that to the window, the window
+    // opens that agent's terminal, and a window opening a terminal is exactly what calls followApp. Left
+    // unguarded that answers the dial with the move it just made. It settles today only because the far
+    // end does not re-report a carousel that never moved — a property of its UI, not of this protocol.
+    const host = makeHost()
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await settle()
+
+    port.say({ t: 'focus', agentId: 'a2' })   // the dial moved itself
+    await settle()
+    port.sent.length = 0
+
+    await session.followApp('', 'a2')          // the window caught up
+    await settle()
+
+    expect(port.sent.filter((m) => m.t === 'focus')).toEqual([])
+    await session.stop()
+  })
+
   it('forwards a whole stroke, including the reports that carry no travel', async () => {
     // The ends of a stroke are the point of the message, not padding around it: a `down` with nothing in
     // it is what stops a fling still running on the far side, and an `up` with nothing in it is a finger
