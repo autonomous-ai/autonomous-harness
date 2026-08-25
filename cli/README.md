@@ -2,7 +2,7 @@
 
 **Run the coding-agent CLIs you already use, and drive them from anywhere.**
 
-`harness` watches the agent sessions you start in **tmux, Herdr, or both** on your own machine and bridges them to a
+`harness` watches the agent sessions you start in **tmux** on your own machine and bridges them to a
 web UI and, optionally, to a paired hardware device. The agents keep running as your processes, in
 your terminal, with your credentials; this is a bridge, not a wrapper.
 
@@ -12,7 +12,7 @@ folder per agent, and yours can join them.
 - Every supported agent process under a configured terminal backend shows up as one agent you can talk to from the browser.
 - Turns, tool calls, todo lists and sub-agents stream out as they happen.
 - The browser channel is end-to-end encrypted (see `src/lib/e2ee/`).
-- One self-contained bundle with no Node native dependencies. Node ≥ 20 plus tmux and/or Herdr 0.8.x is required.
+- One self-contained bundle with no Node native dependencies. Node ≥ 20 plus tmux is required.
 
 ## Supported platforms
 
@@ -23,7 +23,7 @@ native module to compile — the same `cli.js` runs everywhere.
 | Requirement | Notes |
 |---|---|
 | **Node ≥ 20** | On Ubuntu the distro `nodejs` package is too old (24.04 ships 18.19, 22.04 ships 12.22). Install from [NodeSource](https://github.com/nodesource/distributions) or `nvm install 20`. |
-| **tmux and/or Herdr 0.8.x** | How agents are discovered. Neither is preinstalled on Ubuntu Server: `sudo apt install tmux`. |
+| **tmux** | How agents are discovered. Not preinstalled on Ubuntu Server: `sudo apt install tmux`. |
 | **`sqlite3` CLI** | Only for the store-backed engines (`opencode`, `kilo`, `hermes`, `devin`), which keep conversations in SQLite instead of a transcript file. Present by default on macOS, **not** on Ubuntu: `sudo apt install sqlite3`. Every other engine works without it, and the daemon says so at startup if it is missing. |
 
 Windows is not supported.
@@ -82,23 +82,18 @@ daemon on it, so `harness` on this computer means your code without publishing a
 turned **off** in the command shim it writes (otherwise the published release overwrites your build within
 the minute). See [`RELEASE.md`](RELEASE.md#local-install-no-upload).
 
-After signing in, start each agent yourself in tmux or Herdr with its normal vendor command. Harness
-observes the process; it does not launch the CLI or choose its permission/trust flags:
+After signing in, start each agent yourself in tmux with its normal vendor command. Harness observes
+the process; it does not launch the CLI or choose its permission/trust flags:
 
 ```bash
 tmux new
 claude                    # or: codex, agent, opencode, pi, hermes, cmd, devin, muse, amp, kilo, grok
-
-# Or the same engines under Herdr — nothing to configure, and both at once is fine:
-herdr
-claude
 ```
 
-Both multiplexers are watched by default, and a Herdr session started after the daemon is adopted on
-the next scan. There is no env var to set for either one.
+tmux is watched by default — there is no env var to set.
 
 Each supported top-level CLI process appears automatically. Exiting or deleting the agent stops only
-the validated engine process; Harness never closes the user-owned tmux or Herdr pane.
+the validated engine process; Harness never closes the user-owned tmux pane.
 
 ## How it works
 
@@ -143,18 +138,14 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
 
 ### Terminal backend behavior
 
-- **Unset means auto.** Every backend usable on the machine is watched: tmux always, Herdr whenever its
-  binary is on `PATH`. A machine without Herdr pays a few `PATH` lookups and never spawns anything.
-- `TERMINAL_BACKENDS` overrides that with a strict ordered list — `tmux`, `herdr`, or `tmux,herdr`.
-  `TERMINAL_BACKENDS=tmux` is how you turn Herdr off.
-- `HERDR_SESSIONS` unset means every session Herdr reports as **running** is adopted, so a session
-  started later needs no restart. Setting it makes a strict allowlist that discovery never widens.
-- Harness never auto-starts a session, and never connects to a socket supplied only by a hook. A hook's
-  socket path only ever SELECTS among endpoints already validated at discovery — it can never introduce
-  one. (It has to be accepted at all because herdr 0.8.0 exports `HERDR_PANE_ID` and
-  `HERDR_SOCKET_PATH` but **no session name**; matching endpoints by name rejected every real hook, so
-  nothing bound and resumed conversations opened blank.) Herdr support is pinned to compatible 0.8.x,
-  protocol 19.
+- **tmux is the only supported backend.** Herdr was retired: nothing puts it in the backend list any
+  more, so none of its code paths are reached. `TERMINAL_BACKENDS=herdr` is not an error — it is
+  dropped with a warning and the daemon runs on tmux, because the CLI self-updates and a retired
+  setting must not stop an unattended machine from starting.
+- **Unset means auto**, which now resolves to tmux alone. `TERMINAL_BACKENDS` survives only as a pin.
+- `HERDR_SESSIONS` and `HERDR_BIN` still parse so an existing environment does not fail boot, but they
+  select nothing.
+- Harness never auto-starts a session.
 - `harness status` answers "is my pane being watched?" — `terminalSelection` says `auto` or `configured`,
   and `terminalTargets` lists what is live right now, not what was configured at boot.
 - The shared backend contract can create and close a tmux session or Herdr workspace when explicitly
@@ -194,9 +185,9 @@ reported as such, not described as exercised.
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | where Claude writes session JSONL |
 | `ADAPTER_DATA_DIR` | `~/.harness/cli/data` | registry and daemon-local state (SSO session is always `~/.harness/auth/session.json`) |
 | `DISABLE_HOOK_INSTALL` | `false` | skip auto-installing the claude hooks |
-| `TERMINAL_BACKENDS` | *(auto)* | pin the set: `tmux`, `herdr`, or `tmux,herdr`. Unset = every usable backend |
-| `HERDR_SESSIONS` | *(auto)* | pin an allowlist. Unset = every running Herdr session is adopted |
-| `HERDR_BIN` | `herdr` | Herdr executable used only for session discovery/diagnostics |
+| `TERMINAL_BACKENDS` | *(auto)* | pin the set. `tmux` is the only supported value; a retired `herdr` is dropped with a warning |
+| `HERDR_SESSIONS` | *(inert)* | retired with the Herdr backend; still parses, selects nothing |
+| `HERDR_BIN` | *(inert)* | retired with the Herdr backend |
 | `TERMINAL_RECONCILE_INTERVAL_MS` | `5000` | backend-neutral discovery interval; minimum 5000 ms |
 | `TMUX_REAP_INTERVAL_MS` | `5000` | process discovery interval (removal requires two confirmed misses) |
 | `ADAPTER_UPDATE_URL` | `…/adapter/metadata.json` | GCS release manifest the daemon polls for a newer build |

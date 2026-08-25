@@ -610,15 +610,20 @@ async function runForeground(session: AuthSession): Promise<void> {
   await registry.transaction(() => {
     for (const session of registry.list()) registry.setActive(session.agentId, false)
   })
-  // Unset means AUTO: watch every backend usable on this machine, and adopt whatever Herdr sessions are
-  // running. That is what makes `herdr` then an engine behave exactly like `tmux new` then an engine —
-  // no env var to know about. An explicit value still pins the set, and an explicit HERDR_SESSIONS is
-  // still a strict allowlist that discovery never widens.
+  // Unset means AUTO: watch every backend usable on this machine. Herdr is retired, so that set is
+  // tmux and only tmux (see config/terminalConfig.ts) — `parseTerminalBackends` drops a `herdr` still
+  // named in someone's environment rather than refusing to boot on it.
+  //
+  // NB this deliberately mirrors `parseTerminalConfig` instead of calling it, and the two must not
+  // drift: both read ALL_TERMINAL_BACKENDS for the AUTO case.
   const backendsExplicit = env.TERMINAL_BACKENDS !== undefined
   const herdrSessionsExplicit = env.HERDR_SESSIONS !== undefined
   const terminalConfig = {
     backends: env.TERMINAL_BACKENDS ?? ALL_TERMINAL_BACKENDS,
-    herdrSessions: env.HERDR_SESSIONS ?? [],
+    // Always empty: `backends` can no longer contain 'herdr', so every Herdr path below short-circuits
+    // and there is nothing left to name sessions for. HERDR_SESSIONS still parses so an existing
+    // environment does not fail boot; it simply selects nothing.
+    herdrSessions: [] as readonly string[],
   }
   /** The names in play right now: the operator's allowlist, or whatever Herdr currently reports. */
   let activeHerdrSessions: readonly string[] = terminalConfig.herdrSessions
