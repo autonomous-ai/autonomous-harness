@@ -2910,9 +2910,12 @@ async function runForeground(session: AuthSession): Promise<void> {
   // A remote machine's cards reach the dial through the SAME four calls the local tee uses, so a new
   // event kind lands on both surfaces the day it lands on either.
   fleet.onEvent((event) => {
+    // A `state` event is about the WHEEL, not about a turn — live machine presence, which matters
+    // whichever machine is selected. Filtering it with the guard below would freeze the dots the moment
+    // the dial came back to this computer, which is where it sits most of the time.
+    if (event.kind === 'state') { void cable.syncMachines(); return }
     if (cableHost.isLocalSelected()) return   // the dial came back to this computer mid-flight
     if (event.kind === 'question') { void cable.question(event.agentId, event.requestId, event.questions); return }
-    if (event.kind === 'state') { void cable.syncMachines(true); return }
     if (event.kind === 'processing') void cable.turnStarted(event.agentId, event.text)
     else if (event.kind === 'done') void cable.turnDone(event.agentId)
     else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)

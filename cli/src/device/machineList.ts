@@ -116,6 +116,34 @@ export class MachineListCache {
     }
   }
 
+  /**
+   * Overlay live presence from a `machines_status` frame.
+   *
+   * The REST list is a SNAPSHOT — it is re-read on a timer, so on its own a machine that just came up
+   * stays grey for up to a minute. This is the stream that fixes that, and it is why the socket is worth
+   * holding while the dial is plugged in.
+   *
+   * Presence only: the name, the auth mode and which row is local all keep coming from REST, which is the
+   * source that knows them. Returns true when something actually changed, so the caller can push a wheel
+   * that differs and stay silent about one that does not.
+   */
+  applyLive(rows: Array<{ machineId?: unknown; online?: unknown }>): boolean {
+    let changed = false
+    let unknown = false
+    for (const r of rows) {
+      const id = typeof r.machineId === 'string' ? r.machineId : ''
+      if (!id) continue
+      const row = this.machines.find((m) => m.machineId === id)
+      if (!row) { unknown = true; continue }
+      const next = r.online === true ? 'ready' : 'offline'
+      if (row.state !== next) { row.state = next; changed = true }
+    }
+    // A machine nobody has heard of means the account gained one since the last read. Go and find out
+    // what it is called rather than inventing a row from a presence frame.
+    if (unknown) void this.refresh()
+    return changed
+  }
+
   /** The list is stale but not wrong: keep the rows, stop claiming they are live. */
   private degrade(why: string): void {
     if (this.source !== 'local') this.log(`machines: ${why} — showing the last known list`)

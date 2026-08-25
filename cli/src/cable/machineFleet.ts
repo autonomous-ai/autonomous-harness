@@ -48,10 +48,24 @@ export interface MachineFleet {
    * explains itself, and a dial whose daemon is offline still has one machine that works perfectly.
    */
   list(): Promise<{ machines: FleetMachine[]; source: 'backend' | 'local' | 'signed-out' }>
-  /** Attach to a machine. Throws `FleetError` on refusal. */
+  /**
+   * Come online for the dial: hold a socket to the backend, attached to no machine.
+   *
+   * Connecting and attaching are different things. A held socket buys device presence and a LIVE machine
+   * list — the wheel's dots stop being a REST snapshot up to a minute old — without making any machine
+   * believe a commander is watching it.
+   */
+  online(): Promise<void>
+  /** Attach to a machine, which is also how the backend learns where the dial is. Throws on refusal. */
   select(machineId: string): Promise<void>
-  /** Release whatever `select` acquired. Called when the dial goes back to the local machine. */
-  release(): void
+  /**
+   * Let go of whatever `select` acquired.
+   *
+   * `immediate` is the difference between "the user looked away" and "the dial is gone". Going back to
+   * the local machine lingers, so flicking between two machines does not pay a dial each way; the cable
+   * dropping closes the lane now, because the thing it was being held for is no longer there.
+   */
+  release(immediate?: boolean): void
   listAgents(machineId: string): Promise<CableAgent[]>
   sendTurn(machineId: string, agentId: string, text: string): void
   stopTurn(machineId: string, agentId: string): void

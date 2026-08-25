@@ -123,6 +123,15 @@ export interface CableHost {
    * dial that is current, a dev build that must not be touched, and an unreachable manifest.
    */
   firmwareFor?(runningVersion: string): Promise<{ version: string; image: Buffer; sha256: string } | null>
+  /**
+   * A dial greeted us, or the port went away.
+   *
+   * The daemon holds its cloud lane ON THE DIAL'S BEHALF — nothing else in this process uses it. So with
+   * no dial there is nobody to hold it for, and holding it anyway leaves the account showing a device
+   * that is attached to a machine while sitting unplugged in a drawer.
+   */
+  onDialAttached?(): void
+  onDialGone?(): void
   log(line: string): void
 }
 
@@ -234,6 +243,8 @@ export class CableSession {
     // Rule 2. The read never fails on a dead handle, so silence is the only symptom there is.
     if (Date.now() - this.lastRx > SILENCE_MS) {
       this.host.log('cable: silent, reopening the port')
+      // close() runs onClosed, which is where onDialGone fires — one path for "the dial is not there",
+      // whether the cable was pulled or the far end simply stopped answering.
       await this.link.close('silence')
       this.link = null
       return
@@ -324,6 +335,7 @@ export class CableSession {
 
   private onClosed(why: string): void {
     this.host.log(`cable: closed (${why})`)
+    this.host.onDialGone?.()
     this.link = null
     this.greetedMac = null
     this.greetedFw = null
@@ -397,6 +409,9 @@ export class CableSession {
           this.greetedMac = mac
           this.greetedFw = fw
           this.host.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
+          // BEFORE the state push, not after: the push reads the selected machine, and for a remote one
+          // that means an RPC over a lane this is what re-opens.
+          this.host.onDialAttached?.()
           // Both halves of the test above mean the same thing to this line: a dial with nothing on its
           // screen. A repeat greeting from the same dial on the same image is a keepalive and is skipped,
           // which is the whole reason the branch exists.

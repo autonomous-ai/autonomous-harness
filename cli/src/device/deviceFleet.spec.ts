@@ -25,6 +25,8 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
     selectedMachine: 'm1',
     onFrame: (cb: (f: DeviceFrame) => void) => { frameCb = cb; return () => {} },
     attach: vi.fn(async () => {}),
+    online: vi.fn(async () => {}),
+    detach: vi.fn(),
     release: vi.fn(),
     send: (f: DeviceFrame) => { sent.push(f) },
     rpc: over.rpc ?? (async () => ({})),
@@ -140,5 +142,85 @@ describe('DeviceFleet', () => {
   it('answers an empty history rather than throwing when a recap RPC fails', async () => {
     const { fleet } = make({ rpc: async () => { throw new Error('timed out') } })
     await expect(fleet.recentSummaries('m1', 'a1')).resolves.toEqual([])
+  })
+
+  it('selects THIS computer without asking for a pinned key', async () => {
+    // Our own machine is `authMode: 'remote'` like any other computer-backed one and has no pin for
+    // itself — nor does it need one: its agents are read in-process, never over the relay.
+    const { fleet, link } = make({ rows: [{ machineId: 'mine', local: true, authMode: 'remote' }], linked: [] })
+    await expect(fleet.select('mine')).resolves.toBeUndefined()
+    expect(link.attach).toHaveBeenCalledWith('mine')
+  })
+
+  it('keeps the socket when the dial goes back to local, and drops it when the dial goes', () => {
+    // Two different events. "Looked away" detaches from the machine but the wheel's dots must stay live;
+    // "unplugged" takes the socket with it, because it was only ever held for the dial.
+    const { fleet, link } = make()
+    // Lingering: nothing happens yet, and when it does it DETACHES rather than closing.
+    fleet.release(false)
+    expect(link.release).not.toHaveBeenCalled()
+
+    // Unplugged: the socket goes now.
+    fleet.release(true)
+    expect(link.release).toHaveBeenCalled()
+    expect(link.detach).not.toHaveBeenCalled()
+  })
+
+  it('folds a live machines_status into the list and reports the change', () => {
+    const rows = [{ machineId: 'm1', name: 'a', state: 'offline', authMode: 'remote', local: false }]
+    const applied: unknown[] = []
+    let frameCb!: (f: { type?: string; payload?: Record<string, unknown> }) => void
+    const fleet = new DeviceFleet({
+      list: {
+        list: () => ({ machines: rows, source: 'backend' as const }),
+        find: (id: string) => rows.find((r) => r.machineId === id),
+        applyLive: (r: unknown) => { applied.push(r); return true },
+      } as never,
+      link: { selectedMachine: 'm1', onFrame: (cb: never) => { frameCb = cb; return () => {} } } as never,
+      hasPeerLink: () => true,
+      log: () => {},
+    })
+    const seen: string[] = []
+    fleet.onEvent((e) => seen.push(e.kind))
+
+    frameCb({ type: 'machines_status', payload: { statuses: [{ machineId: 'm1', online: true }] } })
+    expect(applied).toHaveLength(1)
+    expect(seen).toEqual(['state'])
+  })
+
+  it('does not filter machines_status by the selected machine', () => {
+    // It is about the whole account, and it arrives while nothing at all is selected.
+    let frameCb!: (f: { type?: string; machineId?: string; payload?: Record<string, unknown> }) => void
+    const fleet = new DeviceFleet({
+      list: { list: () => ({ machines: [], source: 'backend' as const }), find: () => undefined, applyLive: () => true } as never,
+      link: { selectedMachine: 'm1', onFrame: (cb: never) => { frameCb = cb; return () => {} } } as never,
+      hasPeerLink: () => true,
+      log: () => {},
+    })
+    const seen: string[] = []
+    fleet.onEvent((e) => seen.push(e.kind))
+    frameCb({ type: 'machines_status', machineId: 'someone-else', payload: { statuses: [] } })
+    expect(seen).toEqual(['state'])
+  })
+
+  it('reads nothing over the lane for THIS computer', async () => {
+    // Selecting the local machine is an announcement, not an attach-to-read: its agents are in-process.
+    // Asking the cloud round-trips to ourselves and is refused with E2EE_REQUIRED, because a
+    // computer-backed machine is `authMode: 'remote'` — which is exactly what happened on hardware.
+    const rpc = vi.fn(async () => ({ agents: [] }))
+    const { fleet } = make({ rows: [{ machineId: 'mine', local: true, authMode: 'remote' }], linked: [], rpc })
+    await fleet.select('mine')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(rpc).not.toHaveBeenCalled()
+  })
+
+  it('drops our own cards when they come back the long way', () => {
+    // Selecting the local machine attaches a commander to it, so everything this daemon emits is fanned
+    // back down the socket — after the dial already had it in-process.
+    const { fleet, say } = make({ rows: [{ machineId: 'mine', local: true }, { machineId: 'm1' }] })
+    const seen: string[] = []
+    fleet.onEvent((e) => seen.push(e.kind))
+    say({ type: 'commander_event', machineId: 'mine', agentId: 'a1', payload: { kind: 'summary', recap: 'echo' } })
+    expect(seen).toHaveLength(0)
   })
 })

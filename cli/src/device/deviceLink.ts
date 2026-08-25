@@ -70,6 +70,8 @@ export class DeviceLink {
   private reconnectTimer: NodeJS.Timeout | null = null
   private pingTimer: NodeJS.Timeout | null = null
   private state: DeviceLinkStatus = 'idle'
+  /** The dial is plugged in, so this socket should exist even with no machine selected. */
+  private held = false
   private readonly pending = new Map<string, { resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
   private readonly listeners = new Set<(frame: DeviceFrame) => void>()
   /** Resolves when `machine_selected` lands, so callers can await the attach rather than poll for it. */
@@ -92,6 +94,22 @@ export class DeviceLink {
   onFrame(cb: (frame: DeviceFrame) => void): () => void {
     this.listeners.add(cb)
     return () => this.listeners.delete(cb)
+  }
+
+  /**
+   * Open the socket WITHOUT attaching to any machine, and start watching the machine list.
+   *
+   * Connecting and attaching are different things, and the difference is the whole reason this can be
+   * held for as long as the dial is plugged in. The backend's relay starts UNATTACHED: a commander client
+   * is created by `machine_select`, or by `machines_watch` when a device advertises `multi_machine` —
+   * which this one deliberately does not. So the socket costs presence and a live machine list, and
+   * nothing else: no machine sees a commander, no daemon starts generating recap cards for a screen
+   * nobody is looking at.
+   */
+  async online(): Promise<void> {
+    this.held = true
+    await this.connect()
+    this.send({ type: 'machines_watch' })
   }
 
   /** Dial if needed, then select `machineId`. Rejects with a plain Error the caller maps to a code. */
@@ -129,8 +147,16 @@ export class DeviceLink {
   }
 
   /** Let go of whatever is attached. The socket is closed: nothing else on it is being watched. */
+  /** Detach from the machine but KEEP the socket: the dial is still plugged in. */
+  detach(): void {
+    this.wanted = ''
+    this.attached = ''
+    if (this.ws?.readyState === WebSocket.OPEN) this.send({ type: 'machine_deselect' })
+  }
+
   release(): void {
     this.wanted = ''
+    this.held = false
     this.attached = ''
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.send({ type: 'machine_deselect' })
@@ -140,6 +166,7 @@ export class DeviceLink {
 
   stop(): void {
     this.wanted = ''
+    this.held = false
     this.teardown('daemon stopping')
   }
 
@@ -287,8 +314,9 @@ export class DeviceLink {
   private onClose(code: number): void {
     this.opts.log(`device: closed (${code})`)
     const wanted = this.wanted
+    const held = this.held
     this.teardown(`socket closed (${code})`)
-    if (!wanted) return
+    if (!wanted && !held) return
     // 401/403 after the one refresh above is a decision, not a hiccup: stop, and let the cabled machine
     // carry on. Clearing the session here is NOT this class's call — see rule 2 in the header.
     if (code === 4401 || code === 4403) {
@@ -298,7 +326,10 @@ export class DeviceLink {
     }
     const delay = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(this.attempts++, 5))
     this.reconnectTimer = setTimeout(() => {
-      void this.attach(wanted).catch((err) => this.opts.log(`device: reattach failed (${(err as Error).message})`))
+      // Re-select only if a machine was selected. A socket held open purely for presence comes back the
+      // same way it went up — connected and attached to nothing.
+      const retry = wanted ? this.attach(wanted) : this.online()
+      void retry.catch((err) => this.opts.log(`device: reconnect failed (${(err as Error).message})`))
     }, delay)
   }
 

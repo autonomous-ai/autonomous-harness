@@ -30,6 +30,7 @@ function wiring(over: Partial<CableHostWiring> = {}): CableHostWiring {
 function fleetOf(machines: FleetMachine[]): MachineFleet {
   return {
     list: async () => ({ machines, source: 'backend' as const }),
+    online: async () => {},
     select: async () => {},
     release: vi.fn(),
     listAgents: async () => [],
@@ -76,9 +77,10 @@ describe('DaemonCableHost.listMachines', () => {
     expect(machines[0].local).toBe(true)
   })
 
-  it('falls back to a cable: id when the daemon has never resolved a machineId', async () => {
-    // Signed out, or offline before the first resolve. The row must still exist and still be selectable —
-    // it is the one machine that is certainly reachable.
+  it('falls back to a placeholder id rather than an empty one', async () => {
+    // A belt, not a mode: `harness start` refuses to run signed out and resolves the machineId before the
+    // daemon spawns, so this should never happen. It is guarded because the alternative is silent — an
+    // empty id renders a row that is tappable and can never be selected.
     const host = new DaemonCableHost(wiring({ machineId: () => '' }))
     const { machines } = await host.listMachines()
     expect(machines[0].id).toBe('cable:abc-123')
@@ -115,5 +117,84 @@ describe('DaemonCableHost.listAgents', () => {
 
     set([{ agentId: 'aa', registeredAt: 5 }, { agentId: 'zz', registeredAt: 5 }])
     expect((await new DaemonCableHost(wiring()).listAgents()).map((a) => a.id)).toEqual(['aa', 'zz'])
+  })
+})
+
+describe('the cloud lane follows the CABLE, not the selection', () => {
+  const remoteFleet = () => {
+    const f = fleetOf([REMOTE])
+    f.online = vi.fn(async () => {})
+    f.select = vi.fn(async () => {})
+    f.release = vi.fn()
+    return f
+  }
+
+  it('drops the lane the moment the dial goes away', async () => {
+    // Held on the dial's behalf and used by nothing else here. Keeping it open leaves the account showing
+    // a device attached to a machine while the dial sits unplugged in a drawer, with that machine's cards
+    // relayed to a screen that is not there.
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring(), fleet)
+    await host.selectMachine('other')
+
+    host.onDialGone()
+    expect(fleet.release).toHaveBeenCalledWith(true)   // true = now, not after the linger
+  })
+
+  it('drops it even when the dial was on the local machine — cancelling a linger', () => {
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring(), fleet)
+    host.onDialGone()
+    expect(fleet.release).toHaveBeenCalledWith(true)
+  })
+
+  it('opens the socket the moment the dial appears, whatever is selected', async () => {
+    // The whole point: plugged in means online. The wheel's dots are live from that moment, instead of
+    // waiting for the user to pick a machine that is not this computer.
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring(), fleet)
+    host.onDialAttached()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fleet.online).toHaveBeenCalled()
+  })
+
+  it('announces the selected machine on attach — including the local one', async () => {
+    // `DeviceBinding.activeMachineId` is what the web and the mobile app read to say where a dial is.
+    // Skipping the local machine leaves it naming whatever was selected last, forever.
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring(), fleet)
+    host.onDialAttached()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fleet.select).toHaveBeenCalledWith('mine')
+  })
+
+  it('announces a remote selection after a replug', async () => {
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring(), fleet)
+    await host.selectMachine('other')
+    ;(fleet.select as ReturnType<typeof vi.fn>).mockClear()
+
+    host.onDialAttached()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fleet.select).toHaveBeenCalledWith('other')
+  })
+
+  it('announces nothing for the placeholder id — it is not a machineId', async () => {
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring({ machineId: () => '' }), fleet)
+    host.onDialAttached()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fleet.online).toHaveBeenCalled()
+    expect(fleet.select).not.toHaveBeenCalled()
+  })
+
+  it('survives a lane that will not reopen, instead of rejecting into the greeting', async () => {
+    const fleet = remoteFleet()
+    const host = new DaemonCableHost(wiring(), fleet)
+    await host.selectMachine('other')
+    ;(fleet.select as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('unreachable'))
+
+    expect(() => host.onDialAttached()).not.toThrow()
+    await new Promise((r) => setTimeout(r, 0))   // let the rejection land on its catch
   })
 })

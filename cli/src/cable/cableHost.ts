@@ -49,9 +49,22 @@ export interface CableHostWiring {
   log: (line: string) => void
 }
 
-/** How the local row names itself before the daemon has ever resolved a machineId for this computer. */
-function localFallbackId(computerId: string): string {
+/**
+ * A placeholder id for a machine this daemon does not know the real id of.
+ *
+ * A BELT, not a mode. `harness start` refuses to run without an SSO session and awaits
+ * `resolveComputerMachine()` before it spawns the daemon, so by the time anything here runs the machineId
+ * is real. The guard exists because the alternative failure is silent: an empty id makes a row that
+ * renders, is tappable, and can never be selected. `cable:` is deliberately not machineId-shaped, so
+ * nothing downstream mistakes it for one and announces it to the backend.
+ */
+function placeholderId(computerId: string): string {
   return `cable:${computerId}`
+}
+
+/** Whether an id is that placeholder rather than a machine the backend has heard of. */
+function isPlaceholder(id: string): boolean {
+  return id.startsWith('cable:')
 }
 
 /** A fleet row as the wire carries it. `authMode` does not travel: the dial has no use for the word, and
@@ -89,7 +102,7 @@ export class DaemonCableHost implements CableHost {
   }
 
   private localId(): string {
-    return this.wiring.machineId() || localFallbackId(this.wiring.computerId())
+    return this.wiring.machineId() || placeholderId(this.wiring.computerId())
   }
 
   /** Whether the dial is looking at THIS computer. Everything forks on this one question. */
@@ -126,8 +139,12 @@ export class DaemonCableHost implements CableHost {
 
   async selectMachine(machineId: string): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
     if (machineId === this.localId()) {
-      this.fleet?.release()
       this.selected = machineId
+      // Let go of the REMOTE machine after a linger, keeping the socket — then announce where the dial
+      // actually is. `activeMachineId` on the account is then true for this machine too, instead of
+      // silently going stale on whatever was selected last.
+      this.fleet?.release()
+      void this.announceSelection()
       return { ok: true }
     }
     if (!this.fleet) {
@@ -141,6 +158,60 @@ export class DaemonCableHost implements CableHost {
     }
     this.selected = machineId
     return { ok: true }
+  }
+
+  /**
+   * The dial is on the wire again.
+   *
+   * If it left looking at another machine, the cloud lane has to be back UP before the state push that
+   * follows — that push calls listAgents(), which for a remote machine is an RPC over exactly this lane.
+   * Awaiting it here would block the greeting, so it is fired and the push retries on the next tick if
+   * it loses the race; a failure marks the machine unreachable rather than pretending it has no agents.
+   */
+  onDialAttached(): void {
+    if (!this.fleet) return
+    const fleet = this.fleet
+    this.wiring.log('cable: dial on the wire — opening the cloud lane')
+    void (async () => {
+      // The socket first, and unconditionally: it is what makes the machine wheel's dots live, and it is
+      // held for as long as the dial is plugged in whether or not anything is selected.
+      await fleet.online()
+      await this.announceSelection()
+    })().catch((err) => this.wiring.log(`cable: could not open the lane (${(err as Error).message})`))
+  }
+
+  /**
+   * Tell the backend which machine the dial is on.
+   *
+   * Sent for the LOCAL machine too. It costs one frame and it is the only thing that makes
+   * `DeviceBinding.activeMachineId` true rather than "whatever was selected last" — which is what the web
+   * and the mobile app read to say where a dial is.
+   *
+   * Skipped only for the placeholder id, which is not a machineId and means nothing to the backend.
+   */
+  private async announceSelection(): Promise<void> {
+    if (!this.fleet) return
+    const machineId = this.selectedMachine()
+    if (isPlaceholder(machineId)) return
+    try {
+      await this.fleet.select(machineId)
+    } catch (err) {
+      // Never fatal. The local machine in particular must stay usable with no backend at all — it is the
+      // one machine the cable can vouch for on its own.
+      this.wiring.log(`cable: could not announce ${machineId} (${(err as Error).message})`)
+    }
+  }
+
+  /**
+   * The dial is gone — cable pulled, or the far end stopped answering.
+   *
+   * Drop the lane NOW rather than lingering. The daemon holds it on the dial's behalf and nothing else in
+   * this process uses it, so keeping it open leaves the account showing a device attached to a machine
+   * while the dial sits unplugged in a drawer — and every card that machine produces would be relayed to
+   * a screen that is not there.
+   */
+  onDialGone(): void {
+    this.fleet?.release(true)
   }
 
   machineName(): string {

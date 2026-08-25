@@ -26,7 +26,10 @@ class LoopbackPort implements CablePort {
 
   private decoder = new CableDecoder()
 
-  constructor(private readonly onData: (chunk: Buffer) => void) {}
+  constructor(
+    private readonly onData: (chunk: Buffer) => void,
+    private readonly onClosed: (why: string) => void = () => {},
+  ) {}
 
   async write(bytes: Uint8Array): Promise<void> {
     this.frames.push(bytes)
@@ -38,8 +41,11 @@ class LoopbackPort implements CablePort {
   }
 
   async close(why = 'closed'): Promise<void> {
+    if (!this.isOpen) return
     this.isOpen = false
     this.closedWith = why
+    // SerialLink announces its own close; a fake that stays quiet makes "the dial went away" untestable.
+    this.onClosed(why)
   }
 
   /** Speak as the dial. */
@@ -97,8 +103,8 @@ function makeHost(over: Partial<CableHost> = {}) {
 /** Start a session on a loopback and hand back both ends. Never touches the real serial layer. */
 async function connect(host: CableHost = makeHost(), logPath = '/dev/null') {
   let port!: LoopbackPort
-  const session = new CableSession(host, logPath, async (onData) => {
-    port = new LoopbackPort(onData)
+  const session = new CableSession(host, logPath, async (onData, onClosed) => {
+    port = new LoopbackPort(onData, onClosed)
     return port
   })
   session.start()
@@ -585,5 +591,25 @@ describe('cable session', () => {
     }
     expect(open, 'a begin was never closed').toBe(false)
     await session.stop()
+  })
+  it('tells the host when the dial arrives and when it goes', async () => {
+    // The daemon's cloud lane is held on the dial's behalf, so these two are what open and close it. A
+    // port that goes silent must look identical to a cable that was pulled — both are "no dial".
+    const host = makeHost()
+    host.onDialAttached = vi.fn()
+    host.onDialGone = vi.fn()
+    const { session, port } = await connect(host)
+
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(host.onDialAttached).toHaveBeenCalledTimes(1))
+
+    // A keepalive greeting from the same dial is not a new arrival — re-opening the lane on every one
+    // would dial the cloud every fifteen seconds for as long as the dial sits there.
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await settle()
+    expect(host.onDialAttached).toHaveBeenCalledTimes(1)
+
+    await session.stop()
+    expect(host.onDialGone).toHaveBeenCalled()
   })
 })

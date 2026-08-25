@@ -67,10 +67,23 @@ export class DeviceFleet implements MachineFleet {
     }
   }
 
+  /**
+   * The dial is plugged in: hold a socket for presence, attached to nothing.
+   *
+   * Cheap on purpose — see DeviceLink.online for why a held socket does not make any machine think a
+   * commander is watching it.
+   */
+  async online(): Promise<void> {
+    await this.opts.link.online()
+  }
+
   async select(machineId: string): Promise<void> {
     const row = this.opts.list.find(machineId)
     if (!row) throw new FleetError('UNKNOWN_MACHINE', 'That machine is not on your account')
-    if (row.authMode === 'remote' && !this.opts.hasPeerLink(machineId)) {
+    // THIS computer is `authMode: 'remote'` like any other computer-backed machine, and it has no pinned
+    // key for itself — nor does it need one. Selecting it announces where the dial is; the agents behind
+    // it are read in-process, never over the relay, so there is nothing to encrypt and nothing to link.
+    if (!row.local && row.authMode === 'remote' && !this.opts.hasPeerLink(machineId)) {
       // Checked HERE, locally and for free, so the guide appears instantly instead of after a connect
       // that was always going to fail.
       throw new FleetError('NEEDS_LINK', `Link ${row.name} to this computer first`)
@@ -83,16 +96,31 @@ export class DeviceFleet implements MachineFleet {
       throw new FleetError(this.codeFor(message), this.messageFor(message, row.name))
     }
     this.recapCache.clear()
+    // NOTHING is read over the lane for this computer. Selecting it is an ANNOUNCEMENT — it tells the
+    // backend where the dial is — and its agents, turns and recaps all come from this process. Asking the
+    // cloud for them instead round-trips to ourselves and, because a computer-backed machine is
+    // `authMode: 'remote'`, is refused outright with E2EE_REQUIRED.
+    if (row.local) return
     // Prefetch the recaps SERIALLY. Not caution — the contract: the agent list stays metadata-only and
     // recaps are fetched one at a time precisely so no giant frame is ever built.
     void this.prefetchRecaps(machineId)
   }
 
-  release(): void {
-    if (this.lingerTimer) clearTimeout(this.lingerTimer)
+  /**
+   * `immediate` = the dial is gone, so the socket goes with it. Otherwise the dial merely went back to the
+   * local machine: DETACH from the remote one after a linger, but keep the socket — it is still what
+   * keeps the machine wheel's dots live.
+   */
+  release(immediate = false): void {
+    if (this.lingerTimer) { clearTimeout(this.lingerTimer); this.lingerTimer = null }
+    if (immediate) {
+      this.opts.link.release()
+      this.recapCache.clear()
+      return
+    }
     this.lingerTimer = setTimeout(() => {
       this.lingerTimer = null
-      this.opts.link.release()
+      this.opts.link.detach()
       this.recapCache.clear()
     }, LINGER_MS)
   }
@@ -177,10 +205,20 @@ export class DeviceFleet implements MachineFleet {
 
   private onFrame(frame: DeviceFrame): void {
     const selected = this.opts.link.selectedMachine
-    // The hub stamps `machineId` on every frame it fans out to a commander client. Anything wearing
-    // another machine's tag is a card for a machine the dial is not showing — dropped at the source, which
-    // is what keeps the agent id space flat and unscoped everywhere else.
-    if (frame.machineId && selected && frame.machineId !== selected) return
+    // `machines_status` is about the whole account, not one machine, so it must not be filtered by the
+    // selection — it arrives while nothing at all is selected.
+    if (frame.type !== 'machines_status') {
+      // The hub stamps `machineId` on every frame it fans out to a commander client. Anything wearing
+      // another machine's tag is a card for a machine the dial is not showing — dropped at the source,
+      // which is what keeps the agent id space flat and unscoped everywhere else.
+      if (frame.machineId && selected && frame.machineId !== selected) return
+    }
+
+    // OUR OWN cards, come back to us the long way. Selecting the local machine attaches a commander to
+    // it, so everything this daemon emits for the dial is fanned back down this socket — and the dial has
+    // already had it, in-process, milliseconds earlier. Dropping it here rather than at the consumer
+    // keeps the echo out of the event stream entirely.
+    if (frame.machineId && this.opts.list.find(frame.machineId)?.local) return
 
     const payload = (frame.payload ?? {}) as Record<string, unknown>
     if (frame.type === 'commander_event' && frame.agentId) {
@@ -203,6 +241,15 @@ export class DeviceFleet implements MachineFleet {
     }
     if (frame.type === 'node_status') {
       this.emit({ machineId: selected, kind: 'state', state: payload.online === true ? 'ready' : 'offline' })
+      return
+    }
+    // The live machine list. This is what the held socket buys: without it the wheel's dots are a REST
+    // snapshot up to a minute old, and a machine that just came up stays grey while the user looks at it.
+    if (frame.type === 'machines_status') {
+      const rows = Array.isArray(payload.statuses) ? payload.statuses : []
+      if (this.opts.list.applyLive(rows as Array<{ machineId?: unknown; online?: unknown }>)) {
+        this.emit({ machineId: selected, kind: 'state', state: 'ready' })
+      }
     }
   }
 
