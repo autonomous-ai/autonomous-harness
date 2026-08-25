@@ -37,6 +37,10 @@ export interface CableHostWiring {
   updateAgent?: (agentId: string, model?: string, effort?: string) => void
   /** The runtime catalog, from the same provider the web and the WiFi device read. */
   listModels?: (agentId: string) => Promise<Array<{ id: string }>>
+  /** The dial moved to another agent — the desktop window should show that one. */
+  focused?: (agentId: string) => void
+  /** A finger on the dial's glass, in pieces, while it is down. */
+  scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
   log: (line: string) => void
 }
 
@@ -93,9 +97,23 @@ export class DaemonCableHost implements CableHost {
   }
 
   focus(agentId: string): void {
-    // A statement about where the user is looking. Nothing on this machine has to move for it yet — the
-    // daemon has no window of its own — so it is recorded and logged rather than acted on.
+    // A statement about where the user is looking, and the desktop window follows it: turning the dial to
+    // an agent switches the terminal on screen to the same one. The daemon still has no window of its own
+    // — it forwards, and the app decides what following means for it.
     this.wiring.log(`cable: focus ${agentId}`)
+    this.wiring.focused?.(agentId)
+  }
+
+  scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void {
+    // THE ENDS ARE LOGGED, THE MIDDLE IS NOT. A stroke is a `down`, a dozen `move`s and an `up`, several
+    // times a second: logging the middle buries every other line in the file. But the failure this
+    // protocol is most exposed to is a stroke that never CLOSES — the far side then holds a drag forever
+    // and its list stops answering the mouse — and that failure is invisible without a matching pair to
+    // look for. Two lines per swipe buys the one thing worth seeing.
+    if (phase !== 'move') {
+      this.wiring.log(phase === 'down' ? 'cable: scroll ↓' : `cable: scroll ↑ (v=${velocity})`)
+    }
+    this.wiring.scrolled?.(phase, dy, velocity)
   }
 
   updateAgent(agentId: string, model?: string, effort?: string): void {

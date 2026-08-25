@@ -70,6 +70,8 @@ export interface CableHost {
   stopTurn(agentId: string): void
   answer(agentId: string, id: string, optionId: string): void
   focus(agentId: string): void
+  /** A finger moving on the dial's glass, on its way to whatever window is open on this computer. */
+  scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void
   updateAgent(agentId: string, model?: string, effort?: string): void
   /** PCM is 16-bit mono at `sampleRate`; the daemon owns the credential this needs. */
   transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string>
@@ -352,6 +354,17 @@ export class CableSession {
       case 'focus':
         if (str('agentId')) this.host.focus(str('agentId')!)
         return
+      case 'scroll': {
+        // Forwarded verbatim, including the reports carrying no travel: the two ends of a stroke are the
+        // whole point of the message. A `down` with nothing in it stops a fling still running, and an `up`
+        // with nothing in it is a finger that came to rest before it lifted and must not be thrown.
+        const phase = str('phase')
+        if (phase !== 'down' && phase !== 'move' && phase !== 'up') return
+        const dy = typeof msg.dy === 'number' ? msg.dy : 0
+        const v = typeof msg.v === 'number' ? msg.v : 0
+        this.host.scrolled(phase, dy, v)
+        return
+      }
       case 'turn.send':
         if (str('agentId') && str('text')) this.host.sendTurn(str('agentId')!, str('text')!)
         return

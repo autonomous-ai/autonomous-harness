@@ -542,6 +542,19 @@ export class BackendSocket {
     this.enqueue({ t: 'up', frame: this.e2ee.wrapUp(frame) })
   }
 
+  /** Send an up-frame to the LOOPBACK clients only — never to the cloud.
+   *
+   *  For things that describe what is happening at THIS desk rather than what the machine is doing: the
+   *  dial is a physical object on one table, and a finger moving on its glass is meaningful to the window
+   *  in front of it and to nothing else. `send()` fans out to the web audience as well, which would scroll
+   *  a window on a computer the user is not sitting at. */
+  sendLocal(frame: Frame): void {
+    if (env.LOG_FRAMES) logFrame('→', 'local', frame)
+    for (const [connId, sink] of this.localClients) {
+      if (!sink.sendFrame(frame)) void this.unregisterLocalClient(connId)
+    }
+  }
+
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
   sendTo(connId: string, frame: Frame): void {
     const local = this.localClients.get(connId)

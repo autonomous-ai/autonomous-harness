@@ -72,6 +72,7 @@ function makeHost(over: Partial<CableHost> = {}) {
     listAgents: async () => AGENTS,
     sendTurn: vi.fn(),
     stopTurn: vi.fn(),
+    scrolled: vi.fn(),
     answer: vi.fn(),
     focus: vi.fn(),
     updateAgent: vi.fn(),
@@ -149,6 +150,42 @@ describe('cable session', () => {
     port.say({ t: 'turn.send', agentId: 'a2', text: 'flash it' })
     await settle()
     expect(host.sendTurn).toHaveBeenCalledWith('a2', 'flash it')
+    await session.stop()
+  })
+
+  it('forwards a whole stroke, including the reports that carry no travel', async () => {
+    // The ends of a stroke are the point of the message, not padding around it: a `down` with nothing in
+    // it is what stops a fling still running on the far side, and an `up` with nothing in it is a finger
+    // that came to rest before it lifted and must land as a stop rather than a throw. A forwarder that
+    // "optimised away" the empty ones would leave the window holding a drag forever.
+    const host = makeHost()
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await settle()
+
+    port.say({ t: 'scroll', phase: 'down', dy: 0 })
+    port.say({ t: 'scroll', phase: 'move', dy: 12 })
+    port.say({ t: 'scroll', phase: 'up', dy: 3, v: -1800 })
+    await settle()
+
+    expect(host.scrolled).toHaveBeenNthCalledWith(1, 'down', 0, 0)
+    expect(host.scrolled).toHaveBeenNthCalledWith(2, 'move', 12, 0)
+    expect(host.scrolled).toHaveBeenNthCalledWith(3, 'up', 3, -1800)
+    await session.stop()
+  })
+
+  it('drops a stroke whose phase is not one of the three', async () => {
+    // The dial is the only thing that speaks this today, but the decoder hands up whatever arrives, and a
+    // phase nobody understands must not reach the window as a drag it can never close.
+    const host = makeHost()
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', mac: 'aa:bb' })
+    await settle()
+
+    port.say({ t: 'scroll', phase: 'sideways', dy: 40 })
+    await settle()
+
+    expect(host.scrolled).not.toHaveBeenCalled()
     await session.stop()
   })
 

@@ -2816,6 +2816,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The same provider the web and the WiFi device read, so the dial's picker cannot show a different
     // catalog from the one the machine will actually honour.
     listModels: async (agentId) => (await backend.runtimeModelsProvider?.(agentId)) ?? [],
+    // Both of these are LOCAL-ONLY on purpose (backend.sendLocal, not backend.send): they describe a hand
+    // at this desk, not a change in what the machine is doing, and the cloud web audience may be sitting
+    // at another computer entirely.
+    focused: (agentId) => backend.sendLocal({ type: 'dial_focus', payload: { agentId } }),
+    scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
     log: (line) => console.log(`[cable] ${line}`),
   })
   const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
