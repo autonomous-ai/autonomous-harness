@@ -34,7 +34,7 @@ Prerequisite: **Node ≥ 20**. Install the CLI, then sign in once with the same 
 Harness:
 
 ```bash
-curl -fsSL https://harness.autonomous.ai/install.sh | bash
+curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
 ```
 
 (The installer is a first-party hosted script; it downloads the published bundle and writes the

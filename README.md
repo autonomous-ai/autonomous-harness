@@ -61,7 +61,7 @@ Two ways to integrate. We support both **CLI** and **API**.
 To get started, run this:
 
 ```bash
-curl -fsSL https://harness.autonomous.ai/install.sh | bash
+curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
 harness login
 harness start
 ```

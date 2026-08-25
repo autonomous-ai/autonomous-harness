@@ -22,7 +22,7 @@
 # in the launcher, switching off both the 60s poll and `harness start`'s update-before-connect (cli.ts
 # `stageLatestBundle`). To rejoin the release train from a pinned install, re-run this without the flag,
 # or the public installer:
-#   curl -fsSL https://harness.autonomous.ai/install.sh | bash
+#   curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
 set -euo pipefail
 
 ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # this package
