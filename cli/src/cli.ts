@@ -507,10 +507,14 @@ function promptForCallbackUrl(redirectUri: string): {
     }
     ask()
   })
-  // rl.close() alone leaves stdin in flowing mode — a known Node quirk — so the process hangs open
-  // waiting on a stream nothing reads from anymore until Ctrl+C. pause() releases it so `harness
-  // login` can exit on its own once it's done.
-  return { promise, cancel: () => { settled = true; rl.close(); process.stdin.pause() } }
+  // rl.close() alone leaves stdin in flowing mode — a known Node quirk — and pause() alone still
+  // wasn't enough to let a TTY process exit on its own (its handle stays ref'd even once nothing
+  // reads from it). unref() is what actually stops it counting toward the event loop, so `harness
+  // login` exits by itself once it's done instead of hanging until Ctrl+C.
+  return {
+    promise,
+    cancel: () => { settled = true; rl.close(); process.stdin.pause(); process.stdin.unref() },
+  }
 }
 
 /** Best-effort: a failed open is not a failed connect, the URL is printed above either way. */
