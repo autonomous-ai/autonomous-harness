@@ -229,7 +229,16 @@ export class TerminalStreamManager {
       // A terminal is single-controller. A later client explicitly wins the lease and the incumbent
       // receives a targeted close notification; it must not be broadcast to other clients.
       await this.closeStreamsForTakeover(session.agentId, reservedPlacement, connId)
-      await this.closeConnection(connId, 'replaced', false)
+      // Only THIS connection's stream for THIS terminal, not every stream it holds.
+      //
+      // It used to be closeConnection(connId), i.e. "opening a terminal ends every other terminal
+      // this client had". That was invisible while a client could only ever show one terminal at a
+      // time. A client showing several — the desktop app's pane grid — opens a second agent on the
+      // same connection, and the blanket close killed the FIRST agent's stream a few milliseconds
+      // after handing it its opening keyframe. The pane kept rendering that stale keyframe and
+      // looked alive, but its session never reached `controlling`, so every keystroke into it was
+      // dropped in silence.
+      await this.closeOwnStreamsFor(connId, session.agentId, reservedPlacement)
       this.controllerByAgent.set(session.agentId, connId)
       this.controllerByPlacement.set(reservedPlacement, connId)
       const streamId = randomUUID()
@@ -625,6 +634,19 @@ export class TerminalStreamManager {
       engineId: state.engineId,
       ...fields,
     })
+  }
+
+  /// Replace this connection's own stream for the same terminal.
+  ///
+  /// Reopening is routine — a resync, a relay that came back — and the old stream has to go or the
+  /// agent would have two tmux clients on one window. Matched on agent AND placement so a client
+  /// holding several different terminals keeps the ones it did not ask about. No notification: the
+  /// client that asked for this is the one being replaced, and it already knows.
+  private async closeOwnStreamsFor(connId: string, agentId: string, placementKey: string): Promise<void> {
+    const own = [...this.streams.values()].filter((state) =>
+      !state.closing && state.connId === connId
+        && (state.agentId === agentId || state.placementKey === placementKey))
+    await Promise.all(own.map((state) => this.closeStream(state, 'replaced', false)))
   }
 
   private async closeStreamsForTakeover(agentId: string, placementKey: string, nextConnId: string): Promise<void> {

@@ -232,6 +232,50 @@ describe('TerminalStreamManager', () => {
     expect(sent.findLast((frame) => frame.type === 'terminal_ready')?.connId).toBe('web-2')
   })
 
+  it('keeps a client\'s other terminals alive when it opens another one', async () => {
+    // The desktop app's pane grid: one connection, several agents, each its own tmux window.
+    agents.set('agent-2', {
+      ...session('claude', 'agent-2'),
+      runtimes: [{ backend: 'tmux', paneId: '%2' }],
+      primaryRuntimeKey: 'tmux:default:%2',
+    } as unknown as RegisteredSession)
+
+    await manager.handleFrame('app-1', 'terminal_open', {
+      requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
+    })
+    const first = sent.find((frame) => frame.type === 'terminal_ready')?.payload.streamId as string
+
+    await manager.handleFrame('app-1', 'terminal_open', {
+      requestId: 'open-2', protocolVersion: 3, agentId: 'agent-2', cols: 100, rows: 30,
+    })
+
+    // Observed through a resize rather than a close frame: replacing a stream is deliberately
+    // silent, so the only way to tell a live stream from a dead one is whether it still acts.
+    const before = stream.sizes.length
+    await manager.handleFrame('app-1', 'terminal_resize', {
+      streamId: first, resizeSeq: 1, cols: 90, rows: 25,
+    })
+    expect(stream.sizes.length).toBe(before + 1)
+  })
+
+  it('still replaces its own stream when the same terminal is reopened', async () => {
+    await manager.handleFrame('app-1', 'terminal_open', {
+      requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
+    })
+    const first = sent.find((frame) => frame.type === 'terminal_ready')?.payload.streamId as string
+
+    await manager.handleFrame('app-1', 'terminal_open', {
+      requestId: 'open-2', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
+    })
+
+    // Two tmux clients on one window is the thing this must never allow.
+    const before = stream.sizes.length
+    await manager.handleFrame('app-1', 'terminal_resize', {
+      streamId: first, resizeSeq: 1, cols: 90, rows: 25,
+    })
+    expect(stream.sizes.length).toBe(before)
+  })
+
   it('uses frequent ACKs rather than the five-second heartbeat for output backpressure', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'open-1', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
