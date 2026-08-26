@@ -58,7 +58,7 @@ run('TmuxControlStream real tmux', () => {
       expect(snapshot.value.rows).toBe(28)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from('\u001bc'))).toBe(true)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(snapshotMarker))).toBe(true)
-      expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(historyMarker))).toBe(false)
+      expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(historyMarker))).toBe(true)
     }
 
     const postCutMarker = 'HARNESS_POST_CUT_OK'

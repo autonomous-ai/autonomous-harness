@@ -22,6 +22,7 @@ const CONTROL_COMMAND_TIMEOUT_MS = 3_000
 const SNAPSHOT_BUFFER_MAX_BYTES = 2 * 1024 * 1024
 const SNAPSHOT_QUIET_MS = 8
 const SNAPSHOT_QUIET_MAX_MS = 40
+const SNAPSHOT_HISTORY_LINES = 500
 const PANE_META_FORMAT = [
   '#{session_id}', '#{window_id}', '#{window_panes}', '#{window_width}', '#{window_height}',
   '#{pane_width}', '#{pane_height}', '#{alternate_on}', '#{cursor_x}', '#{cursor_y}',
@@ -200,13 +201,35 @@ export function normalizeTmuxCaptureLines(capture: Uint8Array): Uint8Array {
   return output.subarray(0, write)
 }
 
-export function synthesizeTmuxSnapshot(capture: Uint8Array, meta: PaneMeta): Uint8Array {
+export function normalizeTmuxHistoryLines(capture: Uint8Array): Uint8Array {
+  const raw = Buffer.from(capture)
+  if (raw.length === 0) return raw
+  const end = raw.at(-1) === 0x0a ? raw.length - 1 : raw.length
+  if (end <= 0) return Buffer.alloc(0)
+  const rows = raw.subarray(0, end).toString('utf8').split('\n')
+  return Buffer.from(rows.map((row) => `${row.replace(/\r$/, '')}\u001b[0m\r\n`).join(''), 'utf8')
+}
+
+export function synthesizeTmuxSnapshot(
+  capture: Uint8Array,
+  meta: PaneMeta,
+  history: Uint8Array = Buffer.alloc(0),
+): Uint8Array {
   const cursorRow = Math.max(1, Math.min(meta.paneHeight, meta.cursorY + 1))
   const cursorCol = Math.max(1, Math.min(meta.paneWidth, meta.cursorX + 1))
   const prefix = Buffer.from(
-    `\u001bc\u001b[?25l\u001b[?7l\u001b[H\u001b[2J\u001b[3J${mouseModes(meta)}`,
+    '\u001bc\u001b[?25l\u001b[?7l\u001b[H\u001b[2J',
     'utf8',
   )
+  const normalizedHistory = normalizeTmuxHistoryLines(history)
+  // Push every captured history row above the viewport before clearing the
+  // visible grid. History is intentionally captured without `-e`, so old TUI
+  // cursor/repaint sequences become inert text instead of corrupting the new
+  // emulator. Extra blank rows move even the newest history lines into local
+  // scrollback; ESC[2J clears only the viewport, not that scrollback.
+  const historySuffix = normalizedHistory.length === 0
+    ? Buffer.alloc(0)
+    : Buffer.from(`${'\r\n'.repeat(meta.paneHeight)}\u001b[H\u001b[2J${mouseModes(meta)}`, 'utf8')
   const raw = Buffer.from(capture)
   const rows: Buffer[] = []
   let start = 0
@@ -228,7 +251,7 @@ export function synthesizeTmuxSnapshot(capture: Uint8Array, meta: PaneMeta): Uin
     start = index + 1
   }
   const suffix = Buffer.from(`\u001b[${cursorRow};${cursorCol}H\u001b[?7h\u001b[?25h`, 'utf8')
-  return Buffer.concat([prefix, ...rows, suffix])
+  return Buffer.concat([prefix, normalizedHistory, historySuffix, ...rows, suffix])
 }
 
 async function loadAndPaste(paneId: string, bytes: Uint8Array): Promise<TerminalActionResult> {
@@ -496,10 +519,15 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
         this.snapshotPostCutBytes = 0
       })
       if (!capture.ok) return { state: 'failed', reason: 'tmux snapshot failed' }
+      const history = meta.alternateOn
+        ? Buffer.alloc(0)
+        : (await this.runControlCommand(
+            `capture-pane -p -N -t ${this.runtime.paneId} -S -${SNAPSHOT_HISTORY_LINES} -E -1`,
+          )).stdout
       return {
         state: 'succeeded',
         value: {
-          bytes: synthesizeTmuxSnapshot(capture.stdout, meta),
+          bytes: synthesizeTmuxSnapshot(capture.stdout, meta, history),
           cols: meta.paneWidth,
           rows: meta.paneHeight,
         },
