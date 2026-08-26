@@ -69,10 +69,10 @@ describe('tmux snapshot row normalization', () => {
     expect(snapshot).toContain('\u001b[2;5H\u001b[?7h\u001b[?25h')
   })
 
-  it('seeds inert plain history before rebuilding the visible grid', () => {
-    const history = Buffer.from('old-frame-1\nold-frame-2\n')
+  it('seeds styled cell history before rebuilding the visible grid', () => {
+    const history = Buffer.from('\u001b[31mold-frame-1\u001b[39m\nold-frame-2\n')
     expect(Buffer.from(normalizeTmuxHistoryLines(history)).toString()).toBe(
-      'old-frame-1\u001b[0m\r\nold-frame-2\u001b[0m\r\n',
+      '\u001b[31mold-frame-1\u001b[39m\u001b[0m\r\nold-frame-2\u001b[0m\r\n',
     )
     const snapshot = Buffer.from(synthesizeTmuxSnapshot(
       Buffer.from('current-screen\n'),
@@ -88,5 +88,20 @@ describe('tmux snapshot row normalization', () => {
 
     expect(snapshot.indexOf('old-frame-1')).toBeLessThan(snapshot.indexOf('current-screen'))
     expect(snapshot).toContain('old-frame-2\u001b[0m\r\n\r\n\r\n\u001b[H\u001b[2J')
+  })
+
+  it('restores tmux mouse modes even when no scrollback exists', () => {
+    const snapshot = Buffer.from(synthesizeTmuxSnapshot(
+      Buffer.from('alternate-screen\n'),
+      {
+        sessionId: '$1', windowId: '@1', windowPanes: 1,
+        windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
+        alternateOn: true, cursorX: 0, cursorY: 0,
+        mouseStandard: false, mouseButton: false, mouseAll: true,
+        mouseUtf8: false, mouseSgr: true,
+      },
+    )).toString()
+
+    expect(snapshot).toContain('\u001b[H\u001b[2J\u001b[?1003h\u001b[?1006h')
   })
 })

@@ -223,13 +223,14 @@ export function synthesizeTmuxSnapshot(
   )
   const normalizedHistory = normalizeTmuxHistoryLines(history)
   // Push every captured history row above the viewport before clearing the
-  // visible grid. History is intentionally captured without `-e`, so old TUI
-  // cursor/repaint sequences become inert text instead of corrupting the new
-  // emulator. Extra blank rows move even the newest history lines into local
-  // scrollback; ESC[2J clears only the viewport, not that scrollback.
-  const historySuffix = normalizedHistory.length === 0
-    ? Buffer.alloc(0)
-    : Buffer.from(`${'\r\n'.repeat(meta.paneHeight)}\u001b[H\u001b[2J${mouseModes(meta)}`, 'utf8')
+  // visible grid. `capture-pane -e` serializes tmux's already-rendered cells:
+  // it preserves SGR colours but contains none of the original TUI's cursor
+  // movement/repaint stream. Extra blank rows move even the newest history
+  // lines into local scrollback; ESC[2J clears only the viewport, not it.
+  const historySuffix = Buffer.from(
+    `${normalizedHistory.length === 0 ? '' : '\r\n'.repeat(meta.paneHeight)}\u001b[H\u001b[2J${mouseModes(meta)}`,
+    'utf8',
+  )
   const raw = Buffer.from(capture)
   const rows: Buffer[] = []
   let start = 0
@@ -512,6 +513,15 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
       if (!metadata.ok) return { state: 'failed', reason: 'tmux snapshot metadata is unavailable' }
       const meta = parsePaneMeta(metadata.stdout)
       if (!meta || meta.windowPanes !== 1) return { state: 'failed', reason: 'tmux snapshot metadata is invalid' }
+      // History is a styled cell capture used only to seed the receiver's
+      // local scrollback. It preserves SGR attributes without replaying old
+      // TUI cursor movement. Read it before the authoritative visible-grid cut
+      // so concurrent output is included there or in a post-cut delta.
+      const history = meta.alternateOn
+        ? Buffer.alloc(0)
+        : (await this.runControlCommand(
+            `capture-pane -p -e -N -t ${this.runtime.paneId} -S -${SNAPSHOT_HISTORY_LINES} -E -1`,
+          )).stdout
       const capture = await this.runControlCommand(baseCapture, () => {
         // `%end` is the ordered cut. Notifications observed before it are
         // represented by capture-pane; only later output may follow the keyframe.
@@ -519,11 +529,6 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
         this.snapshotPostCutBytes = 0
       })
       if (!capture.ok) return { state: 'failed', reason: 'tmux snapshot failed' }
-      const history = meta.alternateOn
-        ? Buffer.alloc(0)
-        : (await this.runControlCommand(
-            `capture-pane -p -N -t ${this.runtime.paneId} -S -${SNAPSHOT_HISTORY_LINES} -E -1`,
-          )).stdout
       return {
         state: 'succeeded',
         value: {

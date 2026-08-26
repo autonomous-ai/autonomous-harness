@@ -45,9 +45,10 @@ run('TmuxControlStream real tmux', () => {
     if (opened.state !== 'succeeded') return
 
     const historyMarker = 'HARNESS_OLD_TUI_FRAME_MUST_NOT_REPLAY'
+    const styledHistoryMarker = 'HARNESS_STYLED_HISTORY'
     const snapshotMarker = 'HARNESS_SNAPSHOT_OK'
     await opened.value.writeRaw(Buffer.from(
-      `printf '${historyMarker}\\n'; for i in {1..40}; do printf 'filler-%s\\n' "$i"; done; printf '${snapshotMarker}\\n'\r`,
+      `printf '\\033[31m${styledHistoryMarker}\\033[0m\\n${historyMarker}\\n'; for i in {1..40}; do printf 'filler-%s\\n' "$i"; done; printf '${snapshotMarker}\\n'\r`,
     ))
     await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes(snapshotMarker))
     opened.value.beginSnapshot()
@@ -59,6 +60,7 @@ run('TmuxControlStream real tmux', () => {
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from('\u001bc'))).toBe(true)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(snapshotMarker))).toBe(true)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(historyMarker))).toBe(true)
+      expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(`\u001b[31m${styledHistoryMarker}`))).toBe(true)
     }
 
     const postCutMarker = 'HARNESS_POST_CUT_OK'
