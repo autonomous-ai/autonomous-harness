@@ -20,6 +20,7 @@ import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
 import { createServer } from 'http'
+import { createInterface } from 'readline'
 import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
@@ -382,6 +383,11 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       console.log(`    ${start.authorizeUrl}\n`)
       openInBrowser(start.authorizeUrl)
     }
+    // A browser on this SAME machine can reach the loopback server directly. Over SSH the user's
+    // browser is on a DIFFERENT machine — its own 127.0.0.1 has nothing listening on that port, so the
+    // redirect never arrives here. It still lands on a URL carrying `code`/`state` (the page just fails
+    // to load); let them paste that URL back in instead of hanging until the 5-minute timeout.
+    const manual = !json && process.stdin.isTTY ? promptForCallbackUrl(redirectUri) : null
     let callbackResult: { code: string; state: string }
     try {
       callbackResult = await new Promise<{ code: string; state: string }>((resolve, reject) => {
@@ -399,11 +405,14 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
           if (error) reject(new Error(`SSO login failed: ${error}`))
           else if (code && state) resolve({ code, state })
         })
+        manual?.promise.then(resolve, reject)
       })
     } catch (err) {
       const timedOut = (err as Error).message === 'SSO login timed out'
       if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
       throw err
+    } finally {
+      manual?.cancel()
     }
     let exchanged: { token?: string; refreshToken?: string; expiresIn?: number; autonomousEnv?: 'prod' | 'stag' }
     try {
@@ -438,6 +447,53 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
+}
+
+/**
+ * Fallback for a browser that cannot reach this machine's loopback callback (running `harness login`
+ * over SSH: the user's browser is on a different box, so its own 127.0.0.1 has nothing listening).
+ * Prompts on stdin until the pasted text parses as a URL carrying `code`+`state` (or `error`), so a
+ * TTY user can complete login without waiting out the 5-minute timeout. `cancel()` stops asking —
+ * called once the loopback path wins the race, or on the way out either way.
+ */
+function promptForCallbackUrl(redirectUri: string): {
+  promise: Promise<{ code: string; state: string }>
+  cancel: () => void
+} {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  let settled = false
+  const promise = new Promise<{ code: string; state: string }>((resolve, reject) => {
+    const ask = (): void => {
+      rl.question(
+        '\n  If your browser could not reach back to this machine (SSH/remote), paste the URL it landed on here:\n  ',
+        (answer) => {
+          if (settled) return
+          const trimmed = answer.trim()
+          if (!trimmed) { ask(); return }
+          let url: URL
+          try {
+            url = new URL(trimmed, redirectUri)
+          } catch {
+            console.log('  That did not look like a URL — paste the full address from the browser.')
+            ask()
+            return
+          }
+          const code = url.searchParams.get('code')
+          const state = url.searchParams.get('state')
+          const error = url.searchParams.get('error')
+          if (error) { reject(new Error(`SSO login failed: ${error}`)); return }
+          if (!code || !state) {
+            console.log('  No login code in that URL — paste the full address from the browser.')
+            ask()
+            return
+          }
+          resolve({ code, state })
+        },
+      )
+    }
+    ask()
+  })
+  return { promise, cancel: () => { settled = true; rl.close() } }
 }
 
 /** Best-effort: a failed open is not a failed connect, the URL is printed above either way. */
