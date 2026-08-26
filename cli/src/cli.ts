@@ -36,6 +36,7 @@ import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCu
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
+import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineLaunchArgv } from './lib/engineLaunch.js'
@@ -393,7 +394,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
           res.writeHead(error || !code || !state ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
           res.end(error || !code || !state
             ? '<h1>Harness login failed</h1><p>You can close this window.</p>'
-            : '<h1>Harness login complete</h1><p>You can close this window and return to the terminal.</p>')
+            : renderLoginSuccessHtml())
           clearTimeout(timeout)
           if (error) reject(new Error(`SSO login failed: ${error}`))
           else if (code && state) resolve({ code, state })
