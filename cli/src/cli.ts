@@ -1232,6 +1232,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       })
       opencodeReaders.set(session.sessionId, reader)
       await reader.start()
+      // The composer footer is the ONLY place OpenCode names its model and reasoning level, so
+      // without this a freshly opened agent showed empty chips until the five-minute reconcile came
+      // round — which is exactly how long it looked broken for.
+      const ocPane = await captureTerminal(session.agentId, 100)
+      if (ocPane) runtimeProfiles.ingestPane(session, ocPane, true)
     } else if (session.engine === 'kilo') {
       // Kilo is opencode's fork and keeps the same store shape, so it is polled the same way — but from
       // its OWN db and through its own reader, so the two can diverge without one breaking the other.
@@ -2544,7 +2549,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   // the device, which is the whole point.
   // agy joins these three: its model/effort exist only in the hook payload and the pane footer, never
   // in the transcript, so the chip goes stale without a poll.
-  const PANE_POLLED_ENGINES = new Set(['devin', 'cursor', 'grok', 'agy'])
+  // opencode and its fork kilo belong here for the same stated reason and were simply missing: neither
+  // writes its model anywhere but the composer footer, so between reconciles their chips said nothing
+  // at all rather than going stale.
+  const PANE_POLLED_ENGINES = new Set(['devin', 'cursor', 'grok', 'agy', 'opencode', 'kilo'])
   const PANE_POLL_MS = 15_000
   setInterval(() => {
     for (const session of registry.list()) {

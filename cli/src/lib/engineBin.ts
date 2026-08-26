@@ -6,6 +6,7 @@
  */
 
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join, normalize, sep } from 'node:path'
 import { env } from '../config/env.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
@@ -182,6 +183,37 @@ export function cursorRuntimeBin(snapshot = agentCommandOwnershipSnapshot()): st
   const cursorAgent = snapshot.cursorAgentCandidates[0]
   if (cursorAgent && agentAliasOwner([cursorAgent.fileKey], snapshot) === 'cursor') return 'cursor-agent'
   return null
+}
+
+/**
+ * Where OpenCode is, for the processes this daemon spawns.
+ *
+ * It installs itself to `~/.opencode/bin` and puts that on PATH by editing the user's SHELL profile —
+ * which a GUI-launched process never reads. This daemon is started by the desktop app, so `opencode`
+ * is simply not on its PATH: the recap pool logged `spawn opencode ENOENT` once a second and the
+ * model catalog came back empty every time, while the same command worked fine from a terminal.
+ *
+ * ONE answer for the whole daemon, because there were two and they disagreed: the recap path honoured
+ * `OPENCODE_PATH` and the catalog fetch did not.
+ *
+ * `OPENCODE_PATH` wins; a bare `opencode` remains the last answer, so a genuinely missing install
+ * still fails with the message it always did.
+ */
+export function opencodeBin(): string {
+  if (env.OPENCODE_PATH) return env.OPENCODE_PATH
+  for (const entry of pathEntries()) {
+    try {
+      accessSync(join(entry, 'opencode'), constants.X_OK)
+      return 'opencode'
+    } catch { /* keep looking */ }
+  }
+  const installed = join(homedir(), '.opencode', 'bin', 'opencode')
+  try {
+    accessSync(installed, constants.X_OK)
+    return installed
+  } catch {
+    return 'opencode'
+  }
 }
 
 /** Resolve an installed executable for real-engine verification without trusting a colliding alias. */

@@ -106,11 +106,51 @@ export function opencodeRowMatches(target: OpencodeModelTarget, row: OpencodePic
  * Both halves are needed: the model name alone is ambiguous across providers, and the provider alone
  * cannot name a model. The longest model match wins so `MiMo V2.5 Pro` never resolves to `mimo-v2.5`.
  */
-export function opencodeFooterModelId(capture: string, catalog: OpencodeModelTarget[]): string | null {
+/** What OpenCode's composer footer says is running. */
+export interface OpencodeFooter {
+  /** Model and provider as printed, e.g. `Ox Alpha Free (Unlimited) OpenCode Zen`. */
+  target: string
+  /** The reasoning level, when the build prints one. */
+  effort: string | null
+}
+
+/**
+ * Read the composer footer: `Build · <model> <provider>` and, on builds that have a reasoning axis,
+ * `· <effort>` after it.
+ *
+ *   Build · MiniMax M3 (vibe) Vibe Gateway
+ *   Build · Ox Alpha Free (Unlimited) OpenCode Zen · high
+ *
+ * Split on the separator rather than taking everything after the FIRST one, which is what this used
+ * to do: on a build that prints an effort, the level was swallowed into the model text, so the
+ * catalog was searched for "…OpenCode Zen high" and the level itself was thrown away.
+ */
+export function parseOpencodeFooter(capture: string): OpencodeFooter | null {
   const line = capture.split('\n').map((l) => l.trim()).reverse()
     .find((l) => /·/.test(l) && /\b(Build|Plan)\b/i.test(l))
   if (!line) return null
-  const tail = squash(line.slice(line.indexOf('·') + 1))
+  // [0] is the mode (Build/Plan) and is not ours to report; the chips show model and effort.
+  const parts = line.split('·').map((part) => part.trim()).filter(Boolean)
+  if (parts.length < 2) return null
+  const target = parts[1]
+  if (!target) return null
+  const trailing = parts[2]?.toLowerCase() ?? null
+  // Only a single bare word is treated as a level. Anything longer is part of the name of something,
+  // and inventing an effort out of it would put a wrong value on the chip rather than no value.
+  const effort = trailing && /^[a-z][a-z-]*$/.test(trailing) ? trailing : null
+  return { target, effort }
+}
+
+/**
+ * The catalog entry the footer names, or null when the footer names something the catalog does not
+ * list — which happens for real: with no provider connected, OpenCode runs a built-in free model
+ * that `opencode models` does not print. Callers that only want to SHOW what is running should read
+ * [parseOpencodeFooter] instead; this answers the narrower question of which switchable option it is.
+ */
+export function opencodeFooterModelId(capture: string, catalog: OpencodeModelTarget[]): string | null {
+  const footer = parseOpencodeFooter(capture)
+  if (!footer) return null
+  const tail = squash(footer.target)
   if (!tail) return null
 
   let best: { id: string; length: number } | null = null

@@ -156,6 +156,22 @@ describe('RuntimeProfileManager', () => {
     })
   })
 
+  it('names an OpenCode model the catalog does not list, with its reasoning level', () => {
+    const value = session('opencode')
+    const manager = new RuntimeProfileManager()
+
+    // A real footer from a machine with no provider connected: OpenCode runs a built-in free model
+    // that `opencode models` never prints, so there is no catalog entry to resolve against and the
+    // chips used to stay blank while the terminal named the model two lines below.
+    manager.ingestPane(value, '┃  Build · Ox Alpha Free (Unlimited) OpenCode Zen · high')
+
+    const profile = manager.selectedModel(value)
+    expect(profile).not.toBeNull()
+    const decoded = parseRuntimeProfile(profile!)
+    expect(decoded?.model).toBe('Ox Alpha Free (Unlimited) OpenCode Zen')
+    expect(decoded?.effort).toBe('high')
+  })
+
   it('observes Grok model metadata and its live footer effort', () => {
     const manager = new RuntimeProfileManager()
     const value = session('grok')

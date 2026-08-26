@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   countOpencodePickers,
   opencodeFooterModelId,
+  parseOpencodeFooter,
   opencodeRowMatches,
   parseOpencodeModelsOutput,
   parseOpencodePickerRows,
@@ -105,5 +106,37 @@ describe('opencode model catalog', () => {
     expect(opencodeFooterModelId('┃  Build · MiMo V2.5 Pro OpenCode Go', catalog))
       .toBe('opencode-go/mimo-v2.5-pro')
     expect(opencodeFooterModelId('┃  Ask anything...', catalog)).toBeNull()
+  })
+
+  it('keeps the reasoning level out of the model it searches for', () => {
+    // Builds that have a reasoning axis print it after a second separator. Taking everything after
+    // the FIRST one swallowed the level into the model text, so the catalog was searched for
+    // "…OpenCode Zen high" and the level was thrown away.
+    expect(opencodeFooterModelId('┃  Build · Ling-3.0-flash Free OpenCode Zen · high', catalog))
+      .toBe('opencode/ling-3.0-flash-free')
+  })
+
+  it('reads model and level apart, from a real footer', () => {
+    expect(parseOpencodeFooter('┃  Build · Ox Alpha Free (Unlimited) OpenCode Zen · high'))
+      .toEqual({ target: 'Ox Alpha Free (Unlimited) OpenCode Zen', effort: 'high' })
+
+    // A build with no reasoning axis says nothing about one, and nothing is what it gets.
+    expect(parseOpencodeFooter('┃  Build · MiniMax M3 (vibe) Vibe Gateway (Minimax)'))
+      .toEqual({ target: 'MiniMax M3 (vibe) Vibe Gateway (Minimax)', effort: null })
+
+    // A trailing segment that is not a single bare word is part of a name, not a level: guessing one
+    // would put a wrong value on the chip rather than no value.
+    expect(parseOpencodeFooter('┃  Build · Some Model Provider · 2 files')?.effort).toBeNull()
+
+    expect(parseOpencodeFooter('┃  Ask anything...')).toBeNull()
+  })
+
+  it('still names the model when the catalog does not list it', () => {
+    // Not hypothetical: with no provider connected OpenCode runs a built-in free model that
+    // `opencode models` never prints, and insisting on a catalog match left the chips blank while
+    // the terminal named the model two lines below.
+    const footer = '┃  Build · Ox Alpha Free (Unlimited) OpenCode Zen · high'
+    expect(opencodeFooterModelId(footer, catalog)).toBeNull()
+    expect(parseOpencodeFooter(footer)?.target).toBe('Ox Alpha Free (Unlimited) OpenCode Zen')
   })
 })

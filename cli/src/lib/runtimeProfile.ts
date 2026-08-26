@@ -29,6 +29,7 @@ import {
 } from '../engines/commandcode/runtimeProfile.js'
 import {
   opencodeFooterModelId,
+  parseOpencodeFooter,
   parseOpencodeModelsOutput,
   type OpencodeModelTarget,
 } from '../engines/opencode/runtimeProfile.js'
@@ -153,6 +154,8 @@ const CURSOR_CONTROLLED_BUILD = '2026.07.20-8cc9c0b'
 const CURSOR_CATALOG_TTL_MS = 5 * 60_000
 /** Shared TTL for the stdout catalogs (devin, pi) — same rationale as the cursor one. */
 const CATALOG_TTL_MS = 5 * 60_000
+import { opencodeBin } from './engineBin.js'
+
 const execFileAsync = promisify(execFile)
 
 function decode(value: string): string | null {
@@ -834,14 +837,26 @@ export class RuntimeProfileManager {
         void this.ingestConfig(session, true).catch(() => undefined)
       }
     } else if (session.engine === 'opencode') {
-      // OpenCode names the model in its composer footer (`Build · MiniMax M3 (vibe) Vibe Gateway …`), which
-      // only resolves against the catalog — hence the cached entries rather than a fresh (async) fetch.
+      // OpenCode names what is running in its composer footer
+      // (`Build · MiniMax M3 (vibe) Vibe Gateway · high`). Prefer the catalog entry it resolves to,
+      // because that id is also what a SWITCH is addressed to — the cached entries rather than a
+      // fresh (async) fetch, since this runs on the pane poll.
+      //
+      // Fall back to the footer's own words when the catalog does not list it. That is not a corner
+      // case: with no provider connected OpenCode runs a built-in free model that `opencode models`
+      // never prints, so insisting on a catalog match left the chips blank on a freshly opened agent
+      // — showing nothing about a model the terminal was naming two lines below.
+      const footer = parseOpencodeFooter(paneText)
       const id = opencodeFooterModelId(paneText, this.opencodeCatalogCache?.entries ?? [])
-      if (id) {
-        state.model = id
-        state.effort = 'auto'
+      const model = id ?? footer?.target ?? null
+      if (model) {
+        // 'auto' remains the default: early builds had no reasoning axis at all, and inventing a
+        // level for them would put a wrong value on the chip instead of an empty one.
+        const effort = footer?.effort ?? 'auto'
+        state.model = model
+        state.effort = effort
         state.observedAt = Date.now()
-        this.confirmObserved(session.sessionId, id, 'auto')
+        this.confirmObserved(session.sessionId, model, effort)
       }
     } else if (session.engine === 'kilo') {
       // Kilo names the model in its composer footer too, but the line is shaped differently enough that
@@ -1521,7 +1536,7 @@ export class RuntimeProfileManager {
     }
     let entries: OpencodeModelTarget[] = []
     try {
-      const result = await execFileAsync('opencode', ['models'], {
+      const result = await execFileAsync(opencodeBin(), ['models'], {
         env: process.env, timeout: 10_000, maxBuffer: 1024 * 1024,
       })
       entries = parseOpencodeModelsOutput(result.stdout)

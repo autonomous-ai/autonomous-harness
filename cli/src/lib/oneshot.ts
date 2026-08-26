@@ -8,7 +8,7 @@ import { randomUUID } from 'crypto'
 import { homedir, tmpdir, userInfo } from 'os'
 import { env } from '../config/env.js'
 import { findCursorTranscript } from '../engines/cursor/discovery.js'
-import { cursorRuntimeBin } from './engineBin.js'
+import { cursorRuntimeBin, opencodeBin } from './engineBin.js'
 import {
   DisposableOneShotPool,
   type ActiveEngineCounts,
@@ -473,9 +473,6 @@ class CursorWorker extends ProcessWorker {
   }
 }
 
-function opencodeBin(): string {
-  return env.OPENCODE_PATH || 'opencode'
-}
 
 // Recap runs in an isolated OpenCode data dir so ephemeral summary sessions never land in the user's
 // real opencode.db, while still reading their ~/.config/opencode provider/model config.
