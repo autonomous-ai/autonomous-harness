@@ -105,6 +105,41 @@ describe('local CLI WebSocket', () => {
     ws.close()
   })
 
+  it('follows an explicit app_focus, and keeps it off the wire', async () => {
+    const backend = new FakeBackend()
+    const moves: Array<{ machineId: string; agentId: string }> = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onAppFocus: (m, a) => moves.push({ machineId: m, agentId: a }),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    // Opening a terminal still counts: that is all an older app build sends.
+    ws.send(JSON.stringify({ type: 'terminal_open', payload: { agentId: 'agent-opened' } }))
+    // And a window that MOVED without opening anything now says so — which is every click on a pane
+    // that already holds a live session, the case the dial used to miss entirely.
+    ws.send(JSON.stringify({ type: 'app_focus', payload: { agentId: 'agent-focused' } }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(moves).toEqual([
+      { machineId, agentId: 'agent-opened' },
+      { machineId, agentId: 'agent-focused' },
+    ])
+    // Consumed locally: it describes a hand at this desk, and the machine has no use for an unknown
+    // frame type arriving on every pane click.
+    expect(backend.frames.map((frame) => frame.type)).toEqual(['terminal_open'])
+    ws.close()
+  })
+
   it('does not require a credential on the loopback transport', async () => {
     const url = await start(new FakeBackend())
     const ws = new WebSocket(url, ['legacy-client-label'])

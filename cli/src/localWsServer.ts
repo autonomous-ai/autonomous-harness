@@ -189,10 +189,23 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
         // frames: those are forwarded upstream a few lines below and would be invisible, which is exactly
         // the case that matters — the dial has to follow the window onto ANOTHER machine too.
         if (!isBinary && options.onAppFocus && boundMachineId) {
-          const opened = jsonFrame(raw)
-          const agentId = (opened?.payload as Record<string, unknown> | undefined)?.agentId
-          if (opened?.type === 'terminal_open' && typeof agentId === 'string' && agentId) {
-            options.onAppFocus(boundMachineId, agentId)
+          const moved = jsonFrame(raw)
+          const agentId = (moved?.payload as Record<string, unknown> | undefined)?.agentId
+          if (typeof agentId === 'string' && agentId) {
+            // `app_focus` is the window SAYING where it is looking. `terminal_open` is it being
+            // inferred from a side effect, which is all there was when a window could only show one
+            // terminal: every move opened a stream, so opening one meant it had moved.
+            //
+            // A pane grid breaks that equivalence. Clicking a tile that already holds a live session
+            // opens nothing at all, so the dial never heard about it and stayed on the agent the last
+            // rail click had opened. Both are still read: an older app build only sends the second.
+            if (moved?.type === 'app_focus') {
+              options.onAppFocus(boundMachineId, agentId)
+              // Consumed here. It describes a hand at THIS desk and the machine has no use for it —
+              // forwarding it would put an unknown frame type on the wire for every pane click.
+              return
+            }
+            if (moved?.type === 'terminal_open') options.onAppFocus(boundMachineId, agentId)
           }
         }
 
