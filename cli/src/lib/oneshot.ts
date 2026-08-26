@@ -15,6 +15,7 @@ import {
   type DisposableWorker,
   type OneShotEngine,
 } from './disposableOneShotPool.js'
+import { oneShotParentEnv } from './loginShellEnv.js'
 import { scrubTerminalContext } from './terminalEnvironment.js'
 
 function claudeBin(): string {
@@ -287,7 +288,7 @@ class CodexWorker extends ProcessWorker {
       ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
       '-',
     ]
-    const processEnv = scrubTerminalContext({ ...process.env })
+    const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
     const child = spawn(process.env.CODEX_PATH || 'codex', args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'ignore', 'pipe'],
     })
@@ -376,7 +377,7 @@ class CursorWorker extends ProcessWorker {
       '--output-format', 'stream-json',
       ...(model ? ['--model', model] : []),
     ]
-    const processEnv = scrubTerminalContext({ ...process.env })
+    const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
     const child = spawn(cursorBin(), args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -497,7 +498,7 @@ class OpencodeWorker extends ProcessWorker {
     // self-registers this ephemeral recap session). `--format json` streams `{type:'text',part:{text}}`.
     mkdirSync(OPENCODE_RECAP_DATA_DIR, { recursive: true, mode: 0o700 })
     const args = ['run', '--pure', '--format', 'json', ...(model ? ['--model', model] : [])]
-    const processEnv = scrubTerminalContext({ ...process.env })
+    const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
     processEnv.OPENCODE_DATA_DIR = OPENCODE_RECAP_DATA_DIR
     const child = spawn(opencodeBin(), args, {
       cwd: OPENCODE_RECAP_DATA_DIR, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -648,7 +649,7 @@ class KiloWorker extends ProcessWorker {
     // the moment a prompt arrived, i.e. every recap ran against the user's real repository instead of an
     // empty scratch dir. It then hung indexing and gathering context until the 60s timeout, so no
     // `turn_summary` was ever emitted and the device tile stayed on `processing` forever.
-    const { args, env: processEnv } = kiloOneShotSpawn(model, process.env)
+    const { args, env: processEnv } = kiloOneShotSpawn(model, oneShotParentEnv())
     const child = spawn(kiloBin(), args, {
       cwd: KILO_RECAP_DATA_DIR, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -744,7 +745,7 @@ class PiWorker extends ProcessWorker {
     // answer, so the worker can be pre-warmed and fed later. `--no-session` keeps the recap out of the
     // user's session store; `--no-extensions` stops the machine discovery extension from registering it.
     const args = ['-p', '--no-session', '--no-extensions', ...(model ? ['--model', model] : [])]
-    const processEnv = scrubTerminalContext({ ...process.env })
+    const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
     const child = spawn(piBin(), args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -822,7 +823,7 @@ class CommandCodeWorker extends ProcessWorker {
     // recap shows up as a session. There is no --no-hooks flag; the scrubbed terminal context below
     // stops our own SessionStart hook registering this process.
     const args = ['-p', '--no-session', ...(model ? ['-m', model] : [])]
-    const processEnv = scrubTerminalContext({ ...process.env })
+    const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
     const child = spawn(commandCodeBin(), args, {
       cwd, env: processEnv, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -990,7 +991,7 @@ export function runCursorOneShot(opts: OneShotOptions): Promise<OneShotResult> {
 export function grokOneShotSpawn(
   opts: Pick<OneShotOptions, 'prompt' | 'model' | 'effort' | 'cwd'>,
   scratchHome: string,
-  parentEnv: NodeJS.ProcessEnv = process.env,
+  parentEnv: NodeJS.ProcessEnv = oneShotParentEnv(),
 ): { args: string[]; env: NodeJS.ProcessEnv } {
   const args = [
     '--cwd', opts.cwd,
@@ -1091,7 +1092,7 @@ export async function runGrokOneShot(opts: OneShotOptions): Promise<OneShotResul
  */
 export function agyOneShotSpawn(
   opts: Pick<OneShotOptions, 'prompt' | 'model' | 'effort'>,
-  parentEnv: NodeJS.ProcessEnv = process.env,
+  parentEnv: NodeJS.ProcessEnv = oneShotParentEnv(),
 ): { args: string[]; env: NodeJS.ProcessEnv } {
   const args = [
     '--output-format', 'json',
@@ -1215,7 +1216,7 @@ export async function runAgyOneShot(opts: OneShotOptions): Promise<OneShotResult
 export function copilotOneShotSpawn(
   opts: Pick<OneShotOptions, 'prompt' | 'model'>,
   sessionId: string,
-  parentEnv: NodeJS.ProcessEnv = process.env,
+  parentEnv: NodeJS.ProcessEnv = oneShotParentEnv(),
 ): { args: string[]; env: NodeJS.ProcessEnv } {
   const args = [
     '-p', opts.prompt,
@@ -1318,7 +1319,7 @@ function museBin(): string {
 export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('muse one-shot aborted'), { name: 'AbortError' }))
   const args = ['exec', opts.prompt, ...(opts.model ? ['--model', opts.model] : [])]
-  const processEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...process.env, MUSE_NO_AUTO_UPDATE: '1' })
+  const processEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...oneShotParentEnv(), MUSE_NO_AUTO_UPDATE: '1' })
   const timeoutMs = opts.timeoutMs ?? 60_000
 
   return new Promise<OneShotResult>((resolve, reject) => {
@@ -1387,7 +1388,7 @@ export function runMuseOneShot(opts: OneShotOptions): Promise<OneShotResult> {
  */
 function ampOneShotAttempt(opts: OneShotOptions, timeoutMs: number): Promise<OneShotResult | null> {
   const args = ['-x', '--no-notifications', '-m', opts.model || env.AMP_SUMMARY_MODE]
-  const processEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...process.env, AMP_DISABLE_PLUGINS: '1' })
+  const processEnv: NodeJS.ProcessEnv = scrubTerminalContext({ ...oneShotParentEnv(), AMP_DISABLE_PLUGINS: '1' })
   delete processEnv.MACHINE_ID
 
   return new Promise<OneShotResult | null>((resolve, reject) => {
@@ -1452,7 +1453,7 @@ export async function runAmpOneShot(opts: OneShotOptions): Promise<OneShotResult
 export function runHermesOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('hermes one-shot aborted'), { name: 'AbortError' }))
   const args = ['chat', '-q', opts.prompt, '-Q', '--source', 'tool', ...(opts.model ? ['-m', opts.model] : [])]
-  const processEnv = scrubTerminalContext({ ...process.env })
+  const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
   const timeoutMs = opts.timeoutMs ?? 60_000
 
   return new Promise<OneShotResult>((resolve, reject) => {
@@ -1515,7 +1516,7 @@ export function runDevinOneShot(opts: OneShotOptions): Promise<OneShotResult> {
   if (opts.signal?.aborted) return Promise.reject(Object.assign(new Error('devin one-shot aborted'), { name: 'AbortError' }))
   if (opts.cwd) trustDevinWorkspace(opts.cwd, (m) => console.warn('[recap] could not trust the devin scratch dir:', m))
   const args = ['-p', opts.prompt, ...(opts.model ? ['--model', opts.model] : [])]
-  const processEnv = scrubTerminalContext({ ...process.env })
+  const processEnv = scrubTerminalContext({ ...oneShotParentEnv() })
   const timeoutMs = opts.timeoutMs ?? 60_000
 
   return new Promise<OneShotResult>((resolve, reject) => {

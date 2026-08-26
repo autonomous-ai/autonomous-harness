@@ -25,6 +25,7 @@ import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
+import { warmLoginShellEnvironment } from './lib/loginShellEnv.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
 import { binaryOnPath } from './lib/binaryOnPath.js'
 import { CableSession } from './cable/cableSession.js'
@@ -829,6 +830,18 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const sqliteWarning = sqlitePreflightMessage()
   if (sqliteWarning) console.warn(sqliteWarning)
+  // Capture the user's shell environment NOW, not on the first recap. It is a synchronous spawn, and
+  // paying it here — where the daemon is already doing blocking startup work — keeps it off the path
+  // of a live turn, where a slow profile (nvm, conda, …) would stall frame handling instead.
+  // See lib/loginShellEnv.ts: this is what lets a recap reach a credential the user exports from their
+  // rc file, which a launchd/systemd-parented daemon never read.
+  {
+    const t0 = Date.now()
+    const captured = Object.keys(warmLoginShellEnvironment()).length
+    console.log(captured
+      ? `[env] read ${captured} variables from the login shell in ${Date.now() - t0}ms (engine one-shots only)`
+      : '[env] could not read a login shell environment — engine one-shots use the daemon environment only')
+  }
   for (const target of herdrStartup) {
     console.log(target.state === 'available'
       ? `[terminal] Herdr session ${target.sessionName}: available`
