@@ -450,11 +450,34 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
 }
 
 /**
+ * Pulls `code`/`state`/`error` out of whatever the user pasted — the full callback URL, just its query
+ * string (with or without a leading `?`), or a bare `code=...&state=...` pair with no URL shape at all.
+ * `new URL(input, redirectUri)` never throws (a base makes it permissive), but a bare `code=...&state=...`
+ * parses as a relative PATH against that base, landing in an empty query — so a URL parse that comes up
+ * empty falls back to treating the whole input as a raw query string instead.
+ */
+function extractCallbackParams(input: string, redirectUri: string): {
+  code: string | null
+  state: string | null
+  error: string | null
+} {
+  const read = (params: URLSearchParams) => ({
+    code: params.get('code'),
+    state: params.get('state'),
+    error: params.get('error'),
+  })
+  const viaUrl = read(new URL(input, redirectUri).searchParams)
+  if (viaUrl.code || viaUrl.state || viaUrl.error) return viaUrl
+  return read(new URLSearchParams(input))
+}
+
+/**
  * Fallback for a browser that cannot reach this machine's loopback callback (running `harness login`
  * over SSH: the user's browser is on a different box, so its own 127.0.0.1 has nothing listening).
- * Prompts on stdin until the pasted text parses as a URL carrying `code`+`state` (or `error`), so a
- * TTY user can complete login without waiting out the 5-minute timeout. `cancel()` stops asking —
- * called once the loopback path wins the race, or on the way out either way.
+ * Prompts on stdin until the pasted text yields `code`+`state` (or `error`) — see
+ * [extractCallbackParams] for the accepted shapes — so a TTY user can complete login without waiting
+ * out the 5-minute timeout. `cancel()` stops asking — called once the loopback path wins the race, or
+ * on the way out either way.
  */
 function promptForCallbackUrl(redirectUri: string): {
   promise: Promise<{ code: string; state: string }>
@@ -465,25 +488,16 @@ function promptForCallbackUrl(redirectUri: string): {
   const promise = new Promise<{ code: string; state: string }>((resolve, reject) => {
     const ask = (): void => {
       rl.question(
-        '\n  If your browser could not reach back to this machine (SSH/remote), paste the URL it landed on here:\n  ',
+        '\n  If your browser could not reach back to this machine (SSH/remote), paste the URL it landed on\n' +
+          '  (or just its code=...&state=... part) here:\n  ',
         (answer) => {
           if (settled) return
           const trimmed = answer.trim()
           if (!trimmed) { ask(); return }
-          let url: URL
-          try {
-            url = new URL(trimmed, redirectUri)
-          } catch {
-            console.log('  That did not look like a URL — paste the full address from the browser.')
-            ask()
-            return
-          }
-          const code = url.searchParams.get('code')
-          const state = url.searchParams.get('state')
-          const error = url.searchParams.get('error')
+          const { code, state, error } = extractCallbackParams(trimmed, redirectUri)
           if (error) { reject(new Error(`SSO login failed: ${error}`)); return }
           if (!code || !state) {
-            console.log('  No login code in that URL — paste the full address from the browser.')
+            console.log('  No login code found in that — paste the full callback URL or its code=...&state=... part.')
             ask()
             return
           }
@@ -493,7 +507,10 @@ function promptForCallbackUrl(redirectUri: string): {
     }
     ask()
   })
-  return { promise, cancel: () => { settled = true; rl.close() } }
+  // rl.close() alone leaves stdin in flowing mode — a known Node quirk — so the process hangs open
+  // waiting on a stream nothing reads from anymore until Ctrl+C. pause() releases it so `harness
+  // login` can exit on its own once it's done.
+  return { promise, cancel: () => { settled = true; rl.close(); process.stdin.pause() } }
 }
 
 /** Best-effort: a failed open is not a failed connect, the URL is printed above either way. */
