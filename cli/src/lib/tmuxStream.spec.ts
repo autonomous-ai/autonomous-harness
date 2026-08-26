@@ -3,6 +3,7 @@ import {
   decodeTmuxControlData,
   normalizeTmuxCaptureLines,
   parseTmuxControlOutput,
+  synthesizeTmuxSnapshot,
 } from './tmuxStream.js'
 
 describe('tmux control-mode output decoding', () => {
@@ -47,5 +48,23 @@ describe('tmux snapshot row normalization', () => {
     expect(Buffer.from(normalizeTmuxCaptureLines(capture)).toString()).toBe(
       '\u001b[48;5;237mprompt   \u001b[0m\r\n\u001b[0m\r\n\u001b[49mreply\u001b[0m',
     )
+  })
+
+  it('places every captured row absolutely while autowrap is disabled', () => {
+    const snapshot = Buffer.from(synthesizeTmuxSnapshot(
+      Buffer.from('wide 世界 row\nsecond row\n'),
+      {
+        sessionId: '$1', windowId: '@1', windowPanes: 1,
+        windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
+        alternateOn: false, cursorX: 4, cursorY: 1,
+        mouseStandard: false, mouseButton: false, mouseAll: false,
+        mouseUtf8: false, mouseSgr: false,
+      },
+    )).toString()
+
+    expect(snapshot).toContain('\u001b[?7l')
+    expect(snapshot).toContain('\u001b[1;1Hwide 世界 row\u001b[0m')
+    expect(snapshot).toContain('\u001b[2;1Hsecond row\u001b[0m')
+    expect(snapshot).toContain('\u001b[2;5H\u001b[?7h\u001b[?25h')
   })
 })

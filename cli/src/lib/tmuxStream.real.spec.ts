@@ -44,17 +44,21 @@ run('TmuxControlStream real tmux', () => {
     expect(opened.state).toBe('succeeded')
     if (opened.state !== 'succeeded') return
 
+    const historyMarker = 'HARNESS_OLD_TUI_FRAME_MUST_NOT_REPLAY'
     const snapshotMarker = 'HARNESS_SNAPSHOT_OK'
-    await opened.value.writeRaw(Buffer.from(`printf '${snapshotMarker}\\n'\r`))
+    await opened.value.writeRaw(Buffer.from(
+      `printf '${historyMarker}\\n'; for i in {1..40}; do printf 'filler-%s\\n' "$i"; done; printf '${snapshotMarker}\\n'\r`,
+    ))
     await eventually(async () => (await tmux(['capture-pane', '-p', '-t', paneId])).includes(snapshotMarker))
     opened.value.beginSnapshot()
-    const snapshot = await opened.value.snapshot(100)
+    const snapshot = await opened.value.snapshot()
     expect(snapshot.state).toBe('succeeded')
     if (snapshot.state === 'succeeded') {
       expect(snapshot.value.cols).toBe(96)
       expect(snapshot.value.rows).toBe(28)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from('\u001bc'))).toBe(true)
       expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(snapshotMarker))).toBe(true)
+      expect(Buffer.from(snapshot.value.bytes).includes(Buffer.from(historyMarker))).toBe(false)
     }
 
     const postCutMarker = 'HARNESS_POST_CUT_OK'
@@ -74,6 +78,7 @@ run('TmuxControlStream real tmux', () => {
     expect((await opened.value.resize({ cols: 110, rows: 35 })).state).toBe('succeeded')
     expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}'])).toBe('110x35')
     await opened.value.close()
+    expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}'])).toBe('110x35')
     expect(closedReason === '' || closedReason === 'closed').toBe(true)
   })
 
@@ -145,4 +150,20 @@ run('TmuxControlStream real tmux', () => {
       }
     }
   }, 60_000)
+
+  it('never mistakes the control client handshake for the first snapshot command', async () => {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const opened = await TmuxControlStream.open(paneId, { cols: 100, rows: 30 }, {
+        onData: () => {},
+        onClose: () => {},
+      })
+      expect(opened.state).toBe('succeeded')
+      if (opened.state !== 'succeeded') continue
+      opened.value.beginSnapshot()
+      const snapshot = await opened.value.snapshot()
+      expect(snapshot.state).toBe('succeeded')
+      opened.value.endSnapshot()
+      await opened.value.close()
+    }
+  })
 })

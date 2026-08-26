@@ -12,7 +12,6 @@ class FakeStream implements TerminalStreamHandle {
   sizes: Array<{ cols: number; rows: number }> = []
   closed = false
   snapshots = 0
-  snapshotHistory: number[] = []
   snapshotBytes = Buffer.from('\u001bcfixture')
   onSnapshot: ((count: number) => void) | null = null
   pauses = 0
@@ -22,9 +21,8 @@ class FakeStream implements TerminalStreamHandle {
   onEndSnapshot: (() => void) | null = null
 
   beginSnapshot() { this.snapshotBegins++ }
-  async snapshot(historyLines: number): Promise<{ state: 'succeeded'; value: { bytes: Uint8Array; cols: number; rows: number } }> {
+  async snapshot(): Promise<{ state: 'succeeded'; value: { bytes: Uint8Array; cols: number; rows: number } }> {
     this.snapshots++
-    this.snapshotHistory.push(historyLines)
     this.onSnapshot?.(this.snapshots)
     return { state: 'succeeded', value: { bytes: this.snapshotBytes, cols: 120, rows: 40 } }
   }
@@ -328,7 +326,7 @@ describe('TerminalStreamManager', () => {
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'oversized', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
     })
-    expect(stream.snapshotHistory).toEqual([1_000, 500, 250, 100, 0])
+    expect(stream.snapshots).toBe(1)
     expect(binarySent.some(({ frame }) => frame.kind === TerminalBinaryKind.keyframe)).toBe(false)
     expect(sent.findLast((frame) => frame.type === 'terminal_error')?.payload.code)
       .toBe('TERMINAL_SNAPSHOT_TOO_LARGE')

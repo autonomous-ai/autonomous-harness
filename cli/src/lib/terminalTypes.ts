@@ -140,7 +140,10 @@ export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalR
   readonly runtime: Ref
   /** Gate live output before taking an ordered snapshot. */
   beginSnapshot(): void
-  snapshot(historyLines: number): Promise<TerminalReadResult<TerminalStreamSnapshot>>
+  /** Capture only the authoritative visible viewport. Terminal scrollback can
+   * contain prior full-screen TUI repaint frames and must never be replayed as
+   * part of a keyframe. */
+  snapshot(): Promise<TerminalReadResult<TerminalStreamSnapshot>>
   /** Release output produced strictly after the snapshot cut. */
   endSnapshot(): void
   writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>

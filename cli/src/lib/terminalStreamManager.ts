@@ -20,7 +20,6 @@ const RESUME_LOW_WATERMARK_BYTES = 128 * 1024
 const RENDER_STALL_TIMEOUT_MS = 10_000
 const MAX_TOTAL_BUFFERED_BYTES = 2 * 1024 * 1024
 const KEYFRAME_MAX_BYTES = 480 * 1024
-const KEYFRAME_HISTORY_ATTEMPTS = [1_000, 500, 250, 100, 0] as const
 const TERMINAL_ENGINES: ReadonlySet<string> = new Set(ENGINES)
 
 interface PendingOutput {
@@ -530,10 +529,7 @@ export class TerminalStreamManager {
       reason: 'tmux snapshot did not run',
     }
     try {
-      for (const historyLines of KEYFRAME_HISTORY_ATTEMPTS) {
-        snapshot = await state.handle.snapshot(historyLines)
-        if (snapshot.state !== 'succeeded' || snapshot.value.bytes.length <= KEYFRAME_MAX_BYTES) break
-      }
+      snapshot = await state.handle.snapshot()
     } catch (error) {
       snapshot = { state: 'failed', reason: error instanceof Error ? error.message : 'tmux snapshot failed' }
     }

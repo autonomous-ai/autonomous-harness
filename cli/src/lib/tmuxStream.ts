@@ -20,6 +20,8 @@ const MAX_ROWS = 120
 const SMALL_INPUT_BYTES = 4 * 1024
 const CONTROL_COMMAND_TIMEOUT_MS = 3_000
 const SNAPSHOT_BUFFER_MAX_BYTES = 2 * 1024 * 1024
+const SNAPSHOT_QUIET_MS = 8
+const SNAPSHOT_QUIET_MAX_MS = 40
 const PANE_META_FORMAT = [
   '#{session_id}', '#{window_id}', '#{window_panes}', '#{window_width}', '#{window_height}',
   '#{pane_width}', '#{pane_height}', '#{alternate_on}', '#{cursor_x}', '#{cursor_y}',
@@ -201,9 +203,32 @@ export function normalizeTmuxCaptureLines(capture: Uint8Array): Uint8Array {
 export function synthesizeTmuxSnapshot(capture: Uint8Array, meta: PaneMeta): Uint8Array {
   const cursorRow = Math.max(1, Math.min(meta.paneHeight, meta.cursorY + 1))
   const cursorCol = Math.max(1, Math.min(meta.paneWidth, meta.cursorX + 1))
-  const prefix = Buffer.from(`\u001bc\u001b[?25l\u001b[H\u001b[2J\u001b[3J${mouseModes(meta)}`, 'utf8')
-  const suffix = Buffer.from(`\u001b[${cursorRow};${cursorCol}H\u001b[?25h`, 'utf8')
-  return Buffer.concat([prefix, normalizeTmuxCaptureLines(capture), suffix])
+  const prefix = Buffer.from(
+    `\u001bc\u001b[?25l\u001b[?7l\u001b[H\u001b[2J\u001b[3J${mouseModes(meta)}`,
+    'utf8',
+  )
+  const raw = Buffer.from(capture)
+  const rows: Buffer[] = []
+  let start = 0
+  let rowIndex = 0
+  for (let index = 0; index <= raw.length && rowIndex < meta.paneHeight; index++) {
+    if (index !== raw.length && raw[index] !== 0x0a) continue
+    let end = index
+    if (end > start && raw[end - 1] === 0x0d) end--
+    // Position every tmux row independently. tmux and the receiving emulator
+    // can disagree on the display width of Unicode scalars; replaying rows via
+    // CRLF lets that disagreement wrap one row into another. Absolute row
+    // placement with autowrap disabled makes the captured grid authoritative.
+    rows.push(
+      Buffer.from(`\u001b[${rowIndex + 1};1H`, 'utf8'),
+      raw.subarray(start, end),
+      Buffer.from('\u001b[0m', 'utf8'),
+    )
+    rowIndex++
+    start = index + 1
+  }
+  const suffix = Buffer.from(`\u001b[${cursorRow};${cursorCol}H\u001b[?7h\u001b[?25h`, 'utf8')
+  return Buffer.concat([prefix, ...rows, suffix])
 }
 
 async function loadAndPaste(paneId: string, bytes: Uint8Array): Promise<TerminalActionResult> {
@@ -240,23 +265,23 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private lineBuffer = Buffer.alloc(0)
   private closed = false
   private closeNotified = false
-  private original: PaneMeta
-  private lastApplied: TerminalStreamSize | null = null
+  // `tmux -C attach-session` emits its own initial %begin/%end transaction.
+  // Do not assign that command number to our first queued command.
+  private controlReady = false
   private commandActive: PendingControlCommand | null = null
   private readonly commandQueue: PendingControlCommand[] = []
   private operationTail: Promise<void> = Promise.resolve()
   private snapshotGated = false
   private snapshotPostCut: Buffer[] = []
   private snapshotPostCutBytes = 0
+  private snapshotLastOutputAt = 0
 
   private constructor(
     paneId: string,
-    original: PaneMeta,
     child: ChildProcessWithoutNullStreams,
     private readonly sink: TerminalStreamSink,
   ) {
     this.runtime = { backend: 'tmux', paneId }
-    this.original = original
     this.child = child
     child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk))
     child.once('error', (error) => this.notifyClose(`tmux control client error: ${error.message}`))
@@ -276,7 +301,7 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
       child.once('error', () => { if (!settled) { settled = true; resolve(false) } })
     })
     if (!spawned) return { state: 'failed', reason: 'tmux control client could not start' }
-    const stream = new TmuxControlStream(paneId, original, child, sink)
+    const stream = new TmuxControlStream(paneId, child, sink)
     const resized = await stream.resize(size)
     if (resized.state !== 'succeeded') {
       await stream.close()
@@ -314,6 +339,11 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     const completed = /^%(end|error)\s+\d+\s+(\d+)\s+\d+$/.exec(text)
     if (completed) {
       const active = this.commandActive
+      if (!this.controlReady && active == null) {
+        this.controlReady = true
+        this.pumpControlCommand()
+        return
+      }
       if (active?.commandNumber === completed[2]) {
         if (completed[1] === 'end') active.onEnd?.()
         this.finishControlCommand(active, completed[1] === 'end')
@@ -347,6 +377,7 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     const chunk = Buffer.from(bytes)
     this.snapshotPostCut.push(chunk)
     this.snapshotPostCutBytes += chunk.length
+    this.snapshotLastOutputAt = Date.now()
     if (this.snapshotPostCutBytes > SNAPSHOT_BUFFER_MAX_BYTES) {
       this.failControlCommands()
       this.notifyClose('tmux snapshot output exceeded safe buffer limit')
@@ -369,7 +400,7 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   }
 
   private pumpControlCommand(): void {
-    if (this.commandActive || this.closed) return
+    if (!this.controlReady || this.commandActive || this.closed) return
     const next = this.commandQueue.shift()
     if (!next) return
     this.commandActive = next
@@ -425,26 +456,40 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     this.snapshotGated = true
     this.snapshotPostCut = []
     this.snapshotPostCutBytes = 0
+    this.snapshotLastOutputAt = Date.now()
   }
 
-  async snapshot(historyLines: number): Promise<TerminalReadResult<TerminalStreamSnapshot>> {
+  private async waitForSnapshotQuiet(): Promise<void> {
+    const deadline = Date.now() + SNAPSHOT_QUIET_MAX_MS
+    while (!this.closed) {
+      const now = Date.now()
+      const remainingQuiet = SNAPSHOT_QUIET_MS - (now - this.snapshotLastOutputAt)
+      if (remainingQuiet <= 0 || now >= deadline) return
+      await new Promise((resolve) => setTimeout(resolve, Math.min(remainingQuiet, deadline - now)))
+    }
+  }
+
+  async snapshot(): Promise<TerminalReadResult<TerminalStreamSnapshot>> {
     return this.serializeOperation(async () => {
       if (!this.snapshotGated) return { state: 'failed', reason: 'tmux snapshot gate is not active' }
-      const boundedHistory = Math.max(0, Math.min(1_000, Math.floor(historyLines)))
       // -N is required for TUI fidelity: styled blank cells (for example the
       // Codex input box background) live in trailing spaces that tmux otherwise
-      // trims from each captured row.
+      // trims from each captured row. Deliberately do not use capture-pane -S:
+      // tmux scrollback contains old full-screen TUI repaint frames. Replaying
+      // those frames into a fresh emulator corrupts the visible screen.
       const baseCapture = `capture-pane -p -e -N -t ${this.runtime.paneId}`
+      // Attaching a control client can trigger an immediate TUI repaint. Wait
+      // before reading both cursor metadata and the grid so the synthesized
+      // keyframe cannot combine a post-repaint grid with pre-repaint cursor
+      // coordinates.
+      await this.waitForSnapshotQuiet()
       const metadata = await this.runControlCommand(
         `display-message -p -t ${this.runtime.paneId} '${PANE_META_FORMAT}'`,
       )
       if (!metadata.ok) return { state: 'failed', reason: 'tmux snapshot metadata is unavailable' }
       const meta = parsePaneMeta(metadata.stdout)
       if (!meta || meta.windowPanes !== 1) return { state: 'failed', reason: 'tmux snapshot metadata is invalid' }
-      const captureCommand = !meta.alternateOn && boundedHistory > 0
-        ? `${baseCapture} -S -${boundedHistory}`
-        : baseCapture
-      const capture = await this.runControlCommand(captureCommand, () => {
+      const capture = await this.runControlCommand(baseCapture, () => {
         // `%end` is the ordered cut. Notifications observed before it are
         // represented by capture-pane; only later output may follow the keyframe.
         this.snapshotPostCut = []
@@ -486,9 +531,14 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
       if (!meta) return terminalActionNotStarted('tmux pane disappeared')
       if (meta.windowPanes !== 1) return terminalActionNotStarted('TERMINAL_MULTI_PANE_UNSUPPORTED')
       const size = boundedSize(requested)
+      // A repeated open/focus can legitimately ask for the grid already in
+      // use. Avoid a redundant resize-window because full-screen TUIs may
+      // repaint on SIGWINCH even when the dimensions did not change.
+      if (meta.windowWidth === size.cols && meta.windowHeight === size.rows) {
+        return TERMINAL_ACTION_SUCCEEDED
+      }
       const result = await execTmux(['resize-window', '-t', meta.windowId, '-x', String(size.cols), '-y', String(size.rows)])
       if (!result.ok) return terminalActionPossiblyExecuted('tmux resize did not complete')
-      this.lastApplied = size
       return TERMINAL_ACTION_SUCCEEDED
     })
   }
@@ -509,14 +559,10 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
-    const current = await paneMeta(this.runtime.paneId)
-    if (current && current.windowPanes === 1 && this.lastApplied
-      && current.windowWidth === this.lastApplied.cols && current.windowHeight === this.lastApplied.rows) {
-      await execTmux([
-        'resize-window', '-t', current.windowId,
-        '-x', String(this.original.windowWidth), '-y', String(this.original.windowHeight),
-      ])
-    }
+    // Keep the last applied grid. Restoring the headless tmux default here
+    // makes agent switching shrink and immediately re-expand the pane; TUIs
+    // such as Grok preserve those intermediate repaint fragments in the live
+    // screen. The next controller will resize only if its grid truly differs.
     try { this.child.stdin.write('detach-client\n') } catch { /* ignore */ }
     const exited = await new Promise<boolean>((resolve) => {
       if (this.child.exitCode != null || this.child.signalCode != null) { resolve(true); return }
