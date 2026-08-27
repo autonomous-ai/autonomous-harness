@@ -93,6 +93,15 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     if (!/^%\d+$/.test(paneId)) {
       return terminalActionPossiblyExecuted('tmux created a session without returning its root pane')
     }
+    // Without this, a scroll gesture over a program in the alternate screen buffer (Claude Code's
+    // own TUI, most chat CLIs) is forwarded to that program as raw wheel/arrow-key bytes instead of
+    // being caught by tmux — the program mostly has no binding for it, so scrolling silently does
+    // nothing. `mouse on` makes tmux itself catch the wheel event and enter copy-mode, which DOES
+    // keep scrollback for the alternate screen. Session-scoped (target is the pane tmux just
+    // returned, no -g) so this never touches tmux mouse behavior outside sessions this app creates.
+    await new Promise<void>((resolve) => {
+      execFile('tmux', ['set-option', '-t', paneId, 'mouse', 'on'], { timeout: 2_000 }, () => resolve())
+    })
     return { state: 'succeeded', dispatch: 'executed', runtime: { backend: 'tmux', paneId } }
   }
 
