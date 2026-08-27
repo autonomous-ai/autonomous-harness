@@ -58,6 +58,7 @@ describe('tmux snapshot row normalization', () => {
         sessionId: '$1', windowId: '@1', windowPanes: 1,
         windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
         alternateOn: false, cursorX: 4, cursorY: 1,
+        cursorVisible: true,
         mouseStandard: false, mouseButton: false, mouseAll: false,
         mouseUtf8: false, mouseSgr: false,
       },
@@ -67,6 +68,22 @@ describe('tmux snapshot row normalization', () => {
     expect(snapshot).toContain('\u001b[1;1Hwide 世界 row\u001b[0m')
     expect(snapshot).toContain('\u001b[2;1Hsecond row\u001b[0m')
     expect(snapshot).toContain('\u001b[2;5H\u001b[?7h\u001b[?25h')
+  })
+
+  it('preserves a tmux-hidden hardware cursor while restoring its position', () => {
+    const snapshot = Buffer.from(synthesizeTmuxSnapshot(
+      Buffer.from('painted input\n'),
+      {
+        sessionId: '$1', windowId: '@1', windowPanes: 1,
+        windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
+        alternateOn: false, cursorX: 0, cursorY: 1,
+        cursorVisible: false,
+        mouseStandard: false, mouseButton: false, mouseAll: false,
+        mouseUtf8: false, mouseSgr: false,
+      },
+    )).toString()
+
+    expect(snapshot.endsWith('\u001b[2;1H\u001b[?7h\u001b[?25l')).toBe(true)
   })
 
   it('seeds styled cell history before rebuilding the visible grid', () => {
@@ -80,6 +97,7 @@ describe('tmux snapshot row normalization', () => {
         sessionId: '$1', windowId: '@1', windowPanes: 1,
         windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
         alternateOn: false, cursorX: 0, cursorY: 0,
+        cursorVisible: true,
         mouseStandard: false, mouseButton: false, mouseAll: false,
         mouseUtf8: false, mouseSgr: false,
       },
@@ -97,6 +115,7 @@ describe('tmux snapshot row normalization', () => {
         sessionId: '$1', windowId: '@1', windowPanes: 1,
         windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
         alternateOn: true, cursorX: 0, cursorY: 0,
+        cursorVisible: true,
         mouseStandard: false, mouseButton: false, mouseAll: true,
         mouseUtf8: false, mouseSgr: true,
       },

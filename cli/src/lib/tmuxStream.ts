@@ -26,6 +26,7 @@ const SNAPSHOT_HISTORY_LINES = 500
 const PANE_META_FORMAT = [
   '#{session_id}', '#{window_id}', '#{window_panes}', '#{window_width}', '#{window_height}',
   '#{pane_width}', '#{pane_height}', '#{alternate_on}', '#{cursor_x}', '#{cursor_y}',
+  '#{cursor_flag}',
   '#{mouse_standard_flag}', '#{mouse_button_flag}', '#{mouse_all_flag}', '#{mouse_utf8_flag}', '#{mouse_sgr_flag}',
 ].join('|')
 
@@ -40,6 +41,7 @@ interface PaneMeta {
   alternateOn: boolean
   cursorX: number
   cursorY: number
+  cursorVisible: boolean
   mouseStandard: boolean
   mouseButton: boolean
   mouseAll: boolean
@@ -79,7 +81,7 @@ async function paneMeta(paneId: string): Promise<PaneMeta | null> {
 
 function parsePaneMeta(bytes: Uint8Array): PaneMeta | null {
   const fields = Buffer.from(bytes).toString('utf8').trim().split('|')
-  if (fields.length !== 15 || !/^\$\d+$/.test(fields[0]) || !/^@\d+$/.test(fields[1])) return null
+  if (fields.length !== 16 || !/^\$\d+$/.test(fields[0]) || !/^@\d+$/.test(fields[1])) return null
   const nums = fields.slice(2).map(Number)
   if (nums.some((value) => !Number.isFinite(value))) return null
   return {
@@ -93,11 +95,12 @@ function parsePaneMeta(bytes: Uint8Array): PaneMeta | null {
     alternateOn: nums[5] === 1,
     cursorX: nums[6],
     cursorY: nums[7],
-    mouseStandard: nums[8] === 1,
-    mouseButton: nums[9] === 1,
-    mouseAll: nums[10] === 1,
-    mouseUtf8: nums[11] === 1,
-    mouseSgr: nums[12] === 1,
+    cursorVisible: nums[8] === 1,
+    mouseStandard: nums[9] === 1,
+    mouseButton: nums[10] === 1,
+    mouseAll: nums[11] === 1,
+    mouseUtf8: nums[12] === 1,
+    mouseSgr: nums[13] === 1,
   }
 }
 
@@ -251,7 +254,12 @@ export function synthesizeTmuxSnapshot(
     rowIndex++
     start = index + 1
   }
-  const suffix = Buffer.from(`\u001b[${cursorRow};${cursorCol}H\u001b[?7h\u001b[?25h`, 'utf8')
+  // tmux keeps visibility separately from the cursor coordinate. Full-screen
+  // TUIs such as Command Code park the physical cursor below their own painted
+  // input and hide it; restoring the coordinate with an unconditional ?25h
+  // creates a stray block cursor in remote renderers.
+  const cursorVisibility = meta.cursorVisible ? 'h' : 'l'
+  const suffix = Buffer.from(`\u001b[${cursorRow};${cursorCol}H\u001b[?7h\u001b[?25${cursorVisibility}`, 'utf8')
   return Buffer.concat([prefix, normalizedHistory, historySuffix, ...rows, suffix])
 }
 
