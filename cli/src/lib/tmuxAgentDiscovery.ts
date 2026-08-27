@@ -22,6 +22,7 @@ import {
   enrichProcessRows,
   parseProcessRow,
   resumeSessionId,
+  setPaneMouseOn,
   type ProcessRow,
 } from './tmux.js'
 
@@ -256,6 +257,10 @@ export class TmuxAgentReconciler {
   private timer: NodeJS.Timeout | null = null
   private readonly hints = new Map<string, AgentEngine>()
   private readonly warnedAmbiguousPanes = new Set<string>()
+  /** Panes already confirmed `mouse on` this run — set once per pane, not re-checked every scan. A
+   *  pane surviving a daemon restart (or created by an older build, before this existed) starts
+   *  outside this set, so the very next scan that sees it fixes it — not just brand-new panes. */
+  private readonly mouseEnabledPanes = new Set<string>()
 
   constructor(private readonly deps: TmuxAgentDiscoveryDeps) {}
 
@@ -300,6 +305,17 @@ export class TmuxAgentReconciler {
     if (!probe.ok) {
       console.warn(`[discovery] ${probe.error}; keeping ${this.deps.current().length} agent(s)`)
       return
+    }
+    // Retroactive: a pane from an older build (before tmuxBackend.create() started doing this itself)
+    // or one that survived a daemon restart never got `mouse on` set. Fire-and-forget — a scan that
+    // misses one because tmux was briefly slow just catches it on the next pass.
+    for (const pane of probe.panes) {
+      if (this.mouseEnabledPanes.has(pane)) continue
+      this.mouseEnabledPanes.add(pane)
+      void setPaneMouseOn(pane)
+    }
+    for (const pane of [...this.mouseEnabledPanes]) {
+      if (!probe.panes.has(pane)) this.mouseEnabledPanes.delete(pane)
     }
     for (const pane of hints.keys()) this.hints.delete(pane)
     for (const pane of probe.ambiguousPanes) {

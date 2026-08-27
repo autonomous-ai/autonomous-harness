@@ -595,6 +595,20 @@ function tmuxLoadBuffer(name: string, content: string): Promise<boolean> {
   })
 }
 
+/**
+ * Session-scoped (no `-g`) so this never touches tmux mouse behavior outside sessions this app
+ * created — `-t` resolves a pane id up to its session's option table. Without this, scrolling over a
+ * program in the alternate screen buffer (Claude Code's own TUI, most chat CLIs) is forwarded to
+ * that program as raw wheel/arrow-key bytes instead of being caught by tmux, which mostly has no
+ * binding for it — scrolling silently does nothing. Idempotent and best-effort: safe to call on
+ * every discovery scan, including for a pane whose mouse option is already on.
+ */
+export function setPaneMouseOn(pane: string): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('tmux', ['set-option', '-t', pane, 'mouse', 'on'], { timeout: 2_000 }, () => resolve())
+  })
+}
+
 function tmuxDeleteBuffer(name: string): Promise<void> {
   return new Promise((resolve) => {
     execFile('tmux', ['delete-buffer', '-b', name], { timeout: 2_000 }, () => resolve())
