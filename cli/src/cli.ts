@@ -2361,6 +2361,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onStop: () => { setTimeout(() => process.kill(process.pid, 'SIGTERM'), 50) }, // let the 200 flush first
     onMachinesList: () => proxyBackend('GET', '/api/machines'),
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
+    onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
   })
   // Same on-disk identity `harness link create`/`import` use (E2eeStore.init() is idempotent per file,

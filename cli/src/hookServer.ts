@@ -94,6 +94,8 @@ export interface HookServerHandlers {
   onMachinesList?: () => Promise<PairOutcome>
   /** PATCH /api/machines/:machineId — proxy a rename to backend the same way. */
   onMachineRename?: (machineId: string, name: string) => Promise<PairOutcome>
+  /** DELETE /api/machines/:machineId — proxy a delete to backend the same way. */
+  onMachineDelete?: (machineId: string) => Promise<PairOutcome>
   /** GET /api/auth/me — proxy the signed-in user's profile from backend. */
   onAuthMe?: () => Promise<PairOutcome>
 }
@@ -516,10 +518,10 @@ export function startHookServer(
         const out = handlers.onSetupLink(); json(out.status, out.body); return
       }
 
-      // Local GUI clients (e.g. the desktop app): read the full machine list / rename one / read the
-      // signed-in profile through this daemon's own SSO session, so the local caller never holds a
-      // bearer token itself — loopback trust does the authenticating. Reads are ungated (same tier as
-      // /api/status); the rename mutation is CSRF-guarded like every other local write.
+      // Local GUI clients (e.g. the desktop app): read the full machine list / rename or delete one /
+      // read the signed-in profile through this daemon's own SSO session, so the local caller never
+      // holds a bearer token itself — loopback trust does the authenticating. Reads are ungated (same
+      // tier as /api/status); the rename/delete mutations are CSRF-guarded like every other local write.
       if (req.method === 'GET' && url === '/api/machines') {
         if (!handlers.onMachinesList) { json(503, { error: 'UNAVAILABLE' }); return }
         const out = await handlers.onMachinesList(); json(out.status, out.body); return
@@ -537,6 +539,13 @@ export function startHookServer(
         try { body = JSON.parse(await readBody(req)) as { name?: string } } catch { json(400, { error: 'bad json' }); return }
         if (!body.name) { json(400, { error: 'MISSING_NAME' }); return }
         const out = await handlers.onMachineRename(machineId, body.name); json(out.status, out.body); return
+      }
+      if (req.method === 'DELETE' && url.startsWith('/api/machines/')) {
+        if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+        if (!handlers.onMachineDelete) { json(503, { error: 'UNAVAILABLE' }); return }
+        const machineId = decodeURIComponent(url.slice('/api/machines/'.length))
+        if (!machineId) { json(400, { error: 'MISSING_MACHINE_ID' }); return }
+        const out = await handlers.onMachineDelete(machineId); json(out.status, out.body); return
       }
 
       // `harness pairings` — list paired browsers.
