@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  ControlCommandQueue,
   decodeTmuxControlData,
   normalizeTmuxHistoryLines,
   normalizeTmuxCaptureLines,
@@ -122,5 +123,123 @@ describe('tmux snapshot row normalization', () => {
     )).toString()
 
     expect(snapshot).toContain('\u001b[H\u001b[2J\u001b[?1003h\u001b[?1006h')
+  })
+})
+
+describe('ControlCommandQueue', () => {
+  function harness(timeoutMs = 3_000) {
+    const written: string[] = []
+    const fatal: string[] = []
+    let accept = true
+    const queue = new ControlCommandQueue({
+      write: (line) => { if (!accept) return false; written.push(line); return true },
+      onFatal: (reason) => fatal.push(reason),
+      timeoutMs,
+    })
+    queue.markReady()
+    return { queue, written, fatal, reject: () => { accept = false } }
+  }
+
+  it('pipelines commands and completes them in order', async () => {
+    const { queue, written } = harness()
+    const first = queue.run('display-message -p one')
+    const second = queue.run('display-message -p two')
+
+    // Both reached tmux before either replied — that is what stops input queueing behind a snapshot.
+    expect(written).toEqual(['display-message -p one\n', 'display-message -p two\n'])
+    expect(queue.idle).toBe(false)
+
+    queue.handleBegin('10')
+    queue.appendResponseLine(Buffer.from('ONE'))
+    queue.handleCompleted('end', '10')
+    queue.handleBegin('11')
+    queue.appendResponseLine(Buffer.from('TWO'))
+    queue.handleCompleted('end', '11')
+
+    expect((await first).stdout.toString()).toBe('ONE\n')
+    expect((await second).stdout.toString()).toBe('TWO\n')
+    expect(queue.idle).toBe(true)
+  })
+
+  it('keeps an untracked send-keys from stealing a real command number', async () => {
+    const { queue } = harness()
+    const keys = queue.run('send-keys -t %1 -H 61')
+    const query = queue.run('display-message -p meta')
+
+    queue.handleBegin('20')
+    queue.handleCompleted('end', '20')
+    queue.handleBegin('21')
+    queue.appendResponseLine(Buffer.from('META'))
+    queue.handleCompleted('end', '21')
+
+    expect((await keys).ok).toBe(true)
+    // The reply landed on the query, not on the keystroke that preceded it.
+    expect((await query).stdout.toString()).toBe('META\n')
+  })
+
+  it('fails one command on %error without disturbing the next', async () => {
+    const { queue } = harness()
+    const bad = queue.run('send-keys -t %1 -H zz')
+    const good = queue.run('display-message -p ok')
+
+    queue.handleBegin('30')
+    queue.handleCompleted('error', '30')
+    queue.handleBegin('31')
+    queue.appendResponseLine(Buffer.from('OK'))
+    queue.handleCompleted('end', '31')
+
+    expect((await bad).ok).toBe(false)
+    expect((await good).ok).toBe(true)
+    expect((await good).stdout.toString()).toBe('OK\n')
+  })
+
+  it('ignores a completion that does not match the head', async () => {
+    const { queue } = harness()
+    const pending = queue.run('display-message -p one')
+    queue.handleBegin('40')
+    expect(queue.handleCompleted('end', '41')).toBe(false)
+    expect(queue.idle).toBe(false)
+    expect(queue.handleCompleted('end', '40')).toBe(true)
+    expect((await pending).ok).toBe(true)
+  })
+
+  it('times out from the moment a command reaches the head, not when it was written', async () => {
+    vi.useFakeTimers()
+    try {
+      const { queue, fatal } = harness(100)
+      const slow = queue.run('capture-pane -p')
+      const queued = queue.run('send-keys -t %1 -H 61')
+
+      queue.handleBegin('50')
+      // The second command has been on the wire the whole time but is not being timed yet.
+      await vi.advanceTimersByTimeAsync(90)
+      queue.handleCompleted('end', '50')
+      await vi.advanceTimersByTimeAsync(90)
+      expect(fatal).toEqual([])
+
+      await vi.advanceTimersByTimeAsync(20)
+      expect(fatal).toEqual(['tmux control command timed out'])
+      await slow
+      queue.failAll()
+      await queued
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resolves everything as failed when the channel dies', async () => {
+    const { queue } = harness()
+    const inFlight = queue.run('display-message -p one')
+    queue.handleBegin('60')
+    queue.failAll()
+    expect((await inFlight).ok).toBe(false)
+    expect(queue.idle).toBe(true)
+  })
+
+  it('reports a write that the pipe refused', async () => {
+    const { queue, reject } = harness()
+    reject()
+    expect((await queue.run('display-message -p one')).ok).toBe(false)
+    expect(queue.idle).toBe(true)
   })
 })

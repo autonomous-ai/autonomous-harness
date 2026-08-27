@@ -45,6 +45,7 @@ interface ActiveStream {
   output: Buffer[]
   outputBytes: number
   flushTimer: ReturnType<typeof setTimeout> | null
+  lastFlushAt: number
   snapshotting: boolean
   resyncing: boolean
   closing: boolean
@@ -301,6 +302,7 @@ export class TerminalStreamManager {
         output: buffered,
         outputBytes: buffered.reduce((sum, chunk) => sum + chunk.length, 0),
         flushTimer: null,
+        lastFlushAt: 0,
         snapshotting: false,
         resyncing: false,
         closing: false,
@@ -428,12 +430,21 @@ export class TerminalStreamManager {
       this.flushOutput(state)
       return
     }
+    // Leading edge: the first output after a quiet gap goes out immediately, which is what a
+    // keystroke echo is. Waiting the full window for it cost every echo 8ms for no benefit —
+    // there was nothing else to coalesce it with. A burst still lands on the trailing timer
+    // below, so the frame rate ceiling is unchanged.
+    if (!state.flushTimer && this.now() - state.lastFlushAt >= OUTPUT_FLUSH_MS) {
+      this.flushOutput(state)
+      return
+    }
     state.flushTimer ??= setTimeout(() => this.flushOutput(state), OUTPUT_FLUSH_MS)
   }
 
   private flushOutput(state: ActiveStream): void {
     if (state.flushTimer) { clearTimeout(state.flushTimer); state.flushTimer = null }
     if (state.closing || state.snapshotting || state.outputBytes === 0) return
+    state.lastFlushAt = this.now()
     const all = Buffer.concat(state.output, state.outputBytes)
     state.output = []
     state.outputBytes = 0

@@ -391,4 +391,34 @@ describe('TerminalStreamManager', () => {
     expect(sent.at(-1)?.type).toBe('terminal_ready')
     expect(binarySent.at(-1)?.frame.kind).toBe(TerminalBinaryKind.keyframe)
   })
+  it('sends the first output after a quiet gap without waiting for the coalescing window', async () => {
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-echo', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
+    })
+    const before = binarySent.length
+
+    // A keystroke echo: no timers advanced at all.
+    sink!.onData(Buffer.from('a'))
+    expect(binarySent.length).toBe(before + 1)
+    expect(binarySent.at(-1)?.frame.kind).toBe(TerminalBinaryKind.output)
+    expect(Buffer.from(binarySent.at(-1)!.frame.bytes).toString()).toBe('a')
+  })
+
+  it('still coalesces a burst onto the trailing window', async () => {
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-burst', protocolVersion: 3, agentId: 'agent-1', cols: 100, rows: 30,
+    })
+    sink!.onData(Buffer.from('lead'))
+    const afterLeadingEdge = binarySent.length
+
+    // Everything arriving inside the window rides one frame, not one frame each.
+    sink!.onData(Buffer.from('one'))
+    sink!.onData(Buffer.from('two'))
+    sink!.onData(Buffer.from('three'))
+    expect(binarySent.length).toBe(afterLeadingEdge)
+
+    await vi.advanceTimersByTimeAsync(8)
+    expect(binarySent.length).toBe(afterLeadingEdge + 1)
+    expect(Buffer.from(binarySent.at(-1)!.frame.bytes).toString()).toBe('onetwothree')
+  })
 })

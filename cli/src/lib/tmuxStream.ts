@@ -1,5 +1,4 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import {
   TERMINAL_ACTION_SUCCEEDED,
   terminalActionNotStarted,
@@ -17,7 +16,9 @@ const MIN_COLS = 40
 const MAX_COLS = 300
 const MIN_ROWS = 12
 const MAX_ROWS = 120
-const SMALL_INPUT_BYTES = 4 * 1024
+// One `send-keys -H` line carries two hex characters plus a space per byte. tmux accepts a command
+// line built from 8192 such bytes and rejects 16384 with `%error`, so this leaves a 4x margin.
+const INPUT_CHUNK_BYTES = 2 * 1024
 const CONTROL_COMMAND_TIMEOUT_MS = 3_000
 const SNAPSHOT_BUFFER_MAX_BYTES = 2 * 1024 * 1024
 const SNAPSHOT_QUIET_MS = 8
@@ -49,15 +50,6 @@ interface PaneMeta {
   mouseSgr: boolean
 }
 
-interface PendingControlCommand {
-  command: string
-  lines: Buffer[]
-  commandNumber: string | null
-  timer: ReturnType<typeof setTimeout> | null
-  onEnd?: () => void
-  resolve: (result: { ok: boolean; stdout: Buffer }) => void
-}
-
 function boundedSize(size: TerminalStreamSize): TerminalStreamSize {
   return {
     cols: Math.max(MIN_COLS, Math.min(MAX_COLS, Math.floor(size.cols))),
@@ -65,6 +57,8 @@ function boundedSize(size: TerminalStreamSize): TerminalStreamSize {
   }
 }
 
+/** Spawns a one-shot tmux client. Only the pre-open probe below may use it: once the control
+ *  client is attached, every command goes down its stdin instead (see `ControlCommandQueue`). */
 function execTmux(args: string[], timeout = 2_000): Promise<{ ok: boolean; stdout: Buffer }> {
   return new Promise((resolve) => {
     execFile('tmux', args, { timeout, encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
@@ -263,32 +257,146 @@ export function synthesizeTmuxSnapshot(
   return Buffer.concat([prefix, normalizedHistory, historySuffix, ...rows, suffix])
 }
 
-async function loadAndPaste(paneId: string, bytes: Uint8Array): Promise<TerminalActionResult> {
-  const bufferName = `harness-terminal-${randomUUID()}`
-  const loaded = await new Promise<boolean>((resolve) => {
-    const child = spawn('tmux', ['load-buffer', '-b', bufferName, '-'], { stdio: ['pipe', 'ignore', 'ignore'] })
-    child.once('error', () => resolve(false))
-    child.once('close', (code) => resolve(code === 0))
-    child.stdin.end(Buffer.from(bytes))
-  })
-  if (!loaded) return terminalActionNotStarted('tmux input buffer could not be loaded')
-  const pasted = await execTmux(['paste-buffer', '-d', '-b', bufferName, '-t', paneId])
-  if (!pasted.ok) {
-    void execTmux(['delete-buffer', '-b', bufferName])
-    return terminalActionPossiblyExecuted('tmux raw paste did not complete')
-  }
-  return TERMINAL_ACTION_SUCCEEDED
+export interface ControlCommandResult {
+  ok: boolean
+  stdout: Buffer
 }
 
-async function sendHexBytes(paneId: string, bytes: Uint8Array): Promise<TerminalActionResult> {
-  for (let offset = 0; offset < bytes.length; offset += 256) {
-    const hex = [...bytes.slice(offset, offset + 256)].map((byte) => byte.toString(16).padStart(2, '0'))
-    const result = await execTmux(['send-keys', '-t', paneId, '-H', ...hex])
-    if (!result.ok) return offset === 0
-      ? terminalActionNotStarted('tmux raw input could not be sent')
-      : terminalActionPossiblyExecuted('tmux raw input stopped after a partial write')
+interface PendingControlCommand {
+  command: string
+  lines: Buffer[]
+  commandNumber: string | null
+  timer: ReturnType<typeof setTimeout> | null
+  onEnd?: () => void
+  resolve: (result: ControlCommandResult) => void
+}
+
+const CONTROL_COMMAND_FAILED: ControlCommandResult = { ok: false, stdout: Buffer.alloc(0) }
+
+export interface ControlCommandQueueDeps {
+  /** Write one command line to the control client's stdin. False means the pipe is gone. */
+  write: (line: string) => boolean
+  /** The channel is unusable and the owning stream must be torn down. */
+  onFatal: (reason: string) => void
+  timeoutMs?: number
+}
+
+/**
+ * FIFO bookkeeping for `tmux -C` commands, kept free of the child process so it can be tested
+ * directly — the same reason the octal/capture helpers above are exported as pure functions.
+ *
+ * tmux answers EVERY command with its own `%begin`/`%end` block, strictly in the order the commands
+ * were written, with monotonically increasing command numbers. That holds even when several
+ * commands are written back-to-back while an earlier one is still outstanding, which is what lets
+ * keystrokes pipeline instead of waiting for whatever else is in flight.
+ */
+export class ControlCommandQueue {
+  private readonly waiting: PendingControlCommand[] = []
+  private readonly outstanding: PendingControlCommand[] = []
+  private ready = false
+  private readonly timeoutMs: number
+
+  constructor(private readonly deps: ControlCommandQueueDeps) {
+    this.timeoutMs = deps.timeoutMs ?? CONTROL_COMMAND_TIMEOUT_MS
   }
-  return TERMINAL_ACTION_SUCCEEDED
+
+  /** No command of ours is in flight. Distinguishes tmux's own opening transaction from a reply. */
+  get idle(): boolean {
+    return this.outstanding.length === 0
+  }
+
+  get isReady(): boolean {
+    return this.ready
+  }
+
+  /** `tmux -C attach-session` finishes its own initial transaction before ours may be written. */
+  markReady(): void {
+    if (this.ready) return
+    this.ready = true
+    this.pump()
+  }
+
+  run(command: string, onEnd?: () => void): Promise<ControlCommandResult> {
+    return new Promise((resolve) => {
+      this.waiting.push({ command, lines: [], commandNumber: null, timer: null, onEnd, resolve })
+      this.pump()
+    })
+  }
+
+  handleBegin(commandNumber: string): void {
+    const pending = this.outstanding.find((command) => command.commandNumber == null)
+    if (pending) pending.commandNumber = commandNumber
+  }
+
+  /** Response lines belong to the head: tmux never interleaves two commands' output. */
+  appendResponseLine(line: Buffer): void {
+    const head = this.outstanding[0]
+    if (head?.commandNumber != null) head.lines.push(Buffer.from(line))
+  }
+
+  handleCompleted(kind: 'end' | 'error', commandNumber: string): boolean {
+    const head = this.outstanding[0]
+    if (!head || head.commandNumber !== commandNumber) return false
+    this.outstanding.shift()
+    if (head.timer) clearTimeout(head.timer)
+    head.timer = null
+    if (kind === 'end') head.onEnd?.()
+    head.resolve({ ok: kind === 'end', stdout: decodeControlResponse(head.lines) })
+    this.armHead()
+    return true
+  }
+
+  failAll(): void {
+    const abandoned = [...this.outstanding.splice(0), ...this.waiting.splice(0)]
+    for (const command of abandoned) {
+      if (command.timer) clearTimeout(command.timer)
+      command.timer = null
+      command.resolve(CONTROL_COMMAND_FAILED)
+    }
+  }
+
+  private pump(): void {
+    if (!this.ready) return
+    while (this.waiting.length) {
+      const next = this.waiting.shift()!
+      let written = false
+      try {
+        written = this.deps.write(`${next.command}\n`)
+      } catch {
+        written = false
+      }
+      if (!written) {
+        next.resolve(CONTROL_COMMAND_FAILED)
+        continue
+      }
+      this.outstanding.push(next)
+    }
+    this.armHead()
+  }
+
+  /**
+   * Only the head is timed. The timeout has to start when a command reaches the head rather than
+   * when it was written: commands now pipeline, so anything queued behind a slow `capture-pane`
+   * would otherwise expire while tmux was still legitimately busy and take the stream down with it.
+   */
+  private armHead(): void {
+    const head = this.outstanding[0]
+    if (!head || head.timer) return
+    head.timer = setTimeout(() => {
+      if (this.outstanding[0] !== head) return
+      this.deps.onFatal('tmux control command timed out')
+    }, this.timeoutMs)
+  }
+}
+
+/** tmux escapes a response line that starts with `%` as `%%`; the rest is octal-escaped as usual. */
+function decodeControlResponse(lines: readonly Buffer[]): Buffer {
+  const chunks: Buffer[] = []
+  for (const line of lines) {
+    const escaped = line.subarray(0, 2).equals(Buffer.from('%%')) ? line.subarray(1) : line
+    chunks.push(Buffer.from(decodeTmuxControlBytes(escaped)), Buffer.from('\n'))
+  }
+  return Buffer.concat(chunks)
 }
 
 export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
@@ -299,9 +407,7 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private closeNotified = false
   // `tmux -C attach-session` emits its own initial %begin/%end transaction.
   // Do not assign that command number to our first queued command.
-  private controlReady = false
-  private commandActive: PendingControlCommand | null = null
-  private readonly commandQueue: PendingControlCommand[] = []
+  private readonly commands: ControlCommandQueue
   private operationTail: Promise<void> = Promise.resolve()
   private snapshotGated = false
   private snapshotPostCut: Buffer[] = []
@@ -315,6 +421,19 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   ) {
     this.runtime = { backend: 'tmux', paneId }
     this.child = child
+    this.commands = new ControlCommandQueue({
+      write: (line) => {
+        if (this.closed || !child.stdin.writable) return false
+        // A large paste can outrun the pipe. Node buffers what does not fit and drains it in
+        // order, so a false return here is backpressure, not loss — never a reason to drop input.
+        child.stdin.write(line)
+        return true
+      },
+      onFatal: (reason) => {
+        this.notifyClose(reason)
+        void this.close()
+      },
+    })
     child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk))
     child.once('error', (error) => this.notifyClose(`tmux control client error: ${error.message}`))
     child.once('close', (code) => this.notifyClose(this.closed ? 'closed' : `tmux control client exited (${code ?? 'signal'})`))
@@ -363,23 +482,16 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     const text = line.toString('ascii')
     const begin = /^%begin\s+\d+\s+(\d+)\s+\d+$/.exec(text)
     if (begin) {
-      if (this.commandActive && this.commandActive.commandNumber == null) {
-        this.commandActive.commandNumber = begin[1]
-      }
+      this.commands.handleBegin(begin[1])
       return
     }
     const completed = /^%(end|error)\s+\d+\s+(\d+)\s+\d+$/.exec(text)
     if (completed) {
-      const active = this.commandActive
-      if (!this.controlReady && active == null) {
-        this.controlReady = true
-        this.pumpControlCommand()
+      if (!this.commands.isReady && this.commands.idle) {
+        this.commands.markReady()
         return
       }
-      if (active?.commandNumber === completed[2]) {
-        if (completed[1] === 'end') active.onEnd?.()
-        this.finishControlCommand(active, completed[1] === 'end')
-      }
+      this.commands.handleCompleted(completed[1] === 'end' ? 'end' : 'error', completed[2])
       return
     }
     const paused = /^%pause\s+(%\d+)$/.exec(text)
@@ -398,7 +510,7 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     // leading-percent line is an asynchronous control-mode notification and
     // must not be mixed into a command response.
     if (text.startsWith('%') && !text.startsWith('%%')) return
-    if (this.commandActive?.commandNumber != null) this.commandActive.lines.push(Buffer.from(line))
+    this.commands.appendResponseLine(line)
   }
 
   private routeOutput(bytes: Uint8Array): void {
@@ -417,12 +529,9 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     }
   }
 
-  private runControlCommand(command: string, onEnd?: () => void): Promise<{ ok: boolean; stdout: Buffer }> {
-    if (this.closed || !this.child.stdin.writable) return Promise.resolve({ ok: false, stdout: Buffer.alloc(0) })
-    return new Promise((resolve) => {
-      this.commandQueue.push({ command, lines: [], commandNumber: null, timer: null, onEnd, resolve })
-      this.pumpControlCommand()
-    })
+  private runControlCommand(command: string, onEnd?: () => void): Promise<ControlCommandResult> {
+    if (this.closed || !this.child.stdin.writable) return Promise.resolve(CONTROL_COMMAND_FAILED)
+    return this.commands.run(command, onEnd)
   }
 
   private serializeOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -431,49 +540,8 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     return result
   }
 
-  private pumpControlCommand(): void {
-    if (!this.controlReady || this.commandActive || this.closed) return
-    const next = this.commandQueue.shift()
-    if (!next) return
-    this.commandActive = next
-    next.timer = setTimeout(() => {
-      if (this.commandActive !== next) return
-      this.notifyClose('tmux control command timed out')
-      void this.close()
-    }, CONTROL_COMMAND_TIMEOUT_MS)
-    try {
-      this.child.stdin.write(`${next.command}\n`)
-    } catch {
-      this.finishControlCommand(next, false)
-    }
-  }
-
-  private finishControlCommand(command: PendingControlCommand, ok: boolean): void {
-    if (this.commandActive !== command) return
-    if (command.timer) clearTimeout(command.timer)
-    command.timer = null
-    this.commandActive = null
-    const chunks: Buffer[] = []
-    for (const line of command.lines) {
-      const escaped = line.subarray(0, 2).equals(Buffer.from('%%')) ? line.subarray(1) : line
-      chunks.push(Buffer.from(decodeTmuxControlBytes(escaped)), Buffer.from('\n'))
-    }
-    command.resolve({ ok, stdout: Buffer.concat(chunks) })
-    this.pumpControlCommand()
-  }
-
   private failControlCommands(): void {
-    const active = this.commandActive
-    this.commandActive = null
-    const queuedCommands = this.commandQueue.splice(0)
-    if (active) {
-      if (active.timer) clearTimeout(active.timer)
-      active.timer = null
-      active.resolve({ ok: false, stdout: Buffer.alloc(0) })
-    }
-    for (const queued of queuedCommands) {
-      queued.resolve({ ok: false, stdout: Buffer.alloc(0) })
-    }
+    this.commands.failAll()
   }
 
   private notifyClose(reason: string): void {
@@ -557,18 +625,42 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     for (const chunk of postCut) this.sink.onData(chunk)
   }
 
+  /**
+   * Keystrokes go down the control client that is already attached, never a fresh `tmux` process.
+   * Spawning one cost 4.4ms at the median and 13ms at the tail — per keystroke — against 0.2ms
+   * here, and an 8 KiB paste went from 184ms across 32 spawns to under a millisecond.
+   *
+   * Deliberately NOT wrapped in `serializeOperation`: input must not queue behind a `snapshot()`
+   * or a `resize()`. Ordering against those still holds because tmux runs control commands in the
+   * order they were written, which is also what keeps the snapshot's `%end` cut correct.
+   */
   async writeRaw(bytes: Uint8Array): Promise<TerminalActionResult> {
     if (this.closed) return terminalActionNotStarted('terminal stream is closed')
     if (bytes.length === 0) return TERMINAL_ACTION_SUCCEEDED
-    return bytes.length <= SMALL_INPUT_BYTES
-      ? sendHexBytes(this.runtime.paneId, bytes)
-      : loadAndPaste(this.runtime.paneId, bytes)
+    // Every chunk is handed to the queue before any reply is awaited, so a paste costs one
+    // round-trip rather than one per chunk. tmux applies them in the order they were written.
+    const sends: Array<Promise<ControlCommandResult>> = []
+    for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
+      const chunk = bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)
+      const hex = [...chunk].map((byte) => byte.toString(16).padStart(2, '0')).join(' ')
+      sends.push(this.runControlCommand(`send-keys -t ${this.runtime.paneId} -H ${hex}`))
+    }
+    const results = await Promise.all(sends)
+    const failedAt = results.findIndex((result) => !result.ok)
+    if (failedAt < 0) return TERMINAL_ACTION_SUCCEEDED
+    return failedAt === 0
+      ? terminalActionNotStarted('tmux raw input could not be sent')
+      : terminalActionPossiblyExecuted('tmux raw input stopped after a partial write')
   }
 
   async resize(requested: TerminalStreamSize): Promise<TerminalActionResult> {
     return this.serializeOperation(async () => {
       if (this.closed) return terminalActionNotStarted('terminal stream is closed')
-      const meta = await paneMeta(this.runtime.paneId)
+      const metadata = await this.runControlCommand(
+        `display-message -p -t ${this.runtime.paneId} '${PANE_META_FORMAT}'`,
+      )
+      if (!metadata.ok) return terminalActionNotStarted('tmux pane disappeared')
+      const meta = parsePaneMeta(metadata.stdout)
       if (!meta) return terminalActionNotStarted('tmux pane disappeared')
       if (meta.windowPanes !== 1) return terminalActionNotStarted('TERMINAL_MULTI_PANE_UNSUPPORTED')
       const size = boundedSize(requested)
@@ -578,7 +670,9 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
       if (meta.windowWidth === size.cols && meta.windowHeight === size.rows) {
         return TERMINAL_ACTION_SUCCEEDED
       }
-      const result = await execTmux(['resize-window', '-t', meta.windowId, '-x', String(size.cols), '-y', String(size.rows)])
+      const result = await this.runControlCommand(
+        `resize-window -t ${meta.windowId} -x ${size.cols} -y ${size.rows}`,
+      )
       if (!result.ok) return terminalActionPossiblyExecuted('tmux resize did not complete')
       return TERMINAL_ACTION_SUCCEEDED
     })

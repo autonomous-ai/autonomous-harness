@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process'
+import { mkdtemp, readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ENGINES } from '../engines/types.js'
@@ -82,6 +85,43 @@ run('TmuxControlStream real tmux', () => {
     await opened.value.close()
     expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}'])).toBe('110x35')
     expect(closedReason === '' || closedReason === 'closed').toBe(true)
+  })
+
+  it('delivers a multi-chunk paste to the pane whole and in order', async () => {
+    // 8 KiB in one writeRaw spans several `send-keys -H` commands (INPUT_CHUNK_BYTES is 2 KiB).
+    // They are pipelined into the control client, so this is the case that would expose either a
+    // lost chunk or a reordered one. Lines stay under the tty's canonical-mode limit on purpose.
+    const directory = await mkdtemp(join(tmpdir(), 'harness-paste-'))
+    const sink = join(directory, 'paste.txt')
+    const pasteSession = `harness-paste-${randomUUID().slice(0, 8)}`
+    // tmux runs the command with execvp, not a shell, so the redirect needs an explicit one.
+    const pastePane = await tmux([
+      'new-session', '-d', '-P', '-F', '#{pane_id}', '-s', pasteSession,
+      'bash', '--noprofile', '--norc', '-c', `cat > ${sink}`,
+    ])
+
+    try {
+      const opened = await TmuxControlStream.open(pastePane, { cols: 120, rows: 30 }, {
+        onData: () => { /* echo is irrelevant; the file is the assertion */ },
+        onClose: () => { /* torn down below */ },
+      })
+      expect(opened.state).toBe('succeeded')
+      if (opened.state !== 'succeeded') return
+
+      const lines = Array.from({ length: 100 }, (_, index) => `${String(index).padStart(4, '0')}${'y'.repeat(96)}`)
+      const payload = Buffer.from(`${lines.join('\r')}\r`)
+      // Spans five `send-keys -H` commands at INPUT_CHUNK_BYTES.
+      expect(Math.ceil(payload.length / 2048)).toBeGreaterThanOrEqual(5)
+
+      expect((await opened.value.writeRaw(payload)).state).toBe('succeeded')
+      await eventually(async () => (await readFile(sink, 'utf8')).split('\n').length > lines.length)
+
+      const written = (await readFile(sink, 'utf8')).split('\n').filter((line) => line.length > 0)
+      expect(written).toEqual(lines)
+      await opened.value.close()
+    } finally {
+      await tmux(['kill-session', '-t', pasteSession]).catch(() => { /* best effort */ })
+    }
   })
 
   it('runs every catalog engine through the same manager and real tmux stream', async () => {
