@@ -39,6 +39,7 @@ esac
     await expect(backend.kill(created.runtime)).resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
       'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test',
+      'set-option -t %42 mouse on',
       'display-message -p -t %42 #{session_id}',
       'kill-session -t $7',
     ])

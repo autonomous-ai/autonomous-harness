@@ -27,7 +27,6 @@ import { VERSION } from './version.js'
 import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { warmLoginShellEnvironment } from './lib/loginShellEnv.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
-import { binaryOnPath } from './lib/binaryOnPath.js'
 import { CableSession } from './cable/cableSession.js'
 import { DaemonCableHost, cableEventFor, cableQuestionFor } from './cable/cableHost.js'
 import { MachineListCache } from './device/machineList.js'
@@ -41,7 +40,7 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
-import { buildEngineLaunchArgv } from './lib/engineLaunch.js'
+import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
@@ -2642,7 +2641,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       return { ok: false, error: 'CWD_NOT_FOUND' }
     }
     const label = `${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
-    const argv = buildEngineLaunchArgv(engine, { bypassPermission })
+    const launchOptions = { bypassPermission }
+    const command = buildEngineCommandArgv(engine, launchOptions)
+    const argv = buildEngineLaunchArgv(engine, launchOptions)
     const spawned = await tmuxBackend.create({ cwd, label, command: argv })
     if (spawned.state !== 'succeeded') {
       console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
@@ -2654,22 +2655,18 @@ async function runForeground(session: AuthSession): Promise<void> {
       const session = registry.byRuntimeEngine(spawned.runtime, engine)
       if (session) return { ok: true, session }
     }
-    // `tmux new-session` reports success for a command that does not exist — it opens the pane, the
-    // shell says "<engine>: command not found", and the session is gone a moment later. Discovery then
-    // finds nothing and the user is told ENGINE_DID_NOT_START, which on a fresh machine is almost
-    // always "that CLI is not installed" and reads like a Harness bug instead. Measured on a container
-    // with only claude present: `tmux new-session -d "codex …"` exits 0 and leaves no session.
-    //
-    // The check is done HERE rather than before spawning on purpose: the tmux server may carry a
-    // different PATH than this daemon (it inherits from whoever started it), so a binary we cannot see
-    // might still launch. Refusing up front would turn that into a false negative; explaining a failure
-    // that already happened cannot.
-    const bin = argv[0]
-    if (!binaryOnPath(bin)) {
-      console.warn(`[agent] create ${engine} failed · "${bin}" is not installed or not on PATH`)
+    // A detached daemon and an already-running tmux server do not necessarily have the user's terminal
+    // PATH. The launch above therefore used the interactive shell; inspect that same context before
+    // claiming a binary is absent. Checking process.env here was a false "not installed" report on
+    // macOS and Ubuntu whenever the CLI lived in .zshrc/.bashrc (nvm, asdf, vendor installers).
+    const bin = command[0]
+    if (!await commandAvailableInInteractiveShell(bin)) {
+      const shell = interactiveEngineShell()
+      console.warn(`[agent] create ${engine} failed · "${bin}" is unavailable from the user's ${shell?.label ?? 'daemon PATH'}`)
       return { ok: false, error: 'ENGINE_NOT_INSTALLED' }
     }
-    console.warn(`[agent] create ${engine} failed · "${bin}" started but no engine process appeared in the pane`)
+    const shell = interactiveEngineShell()
+    console.warn(`[agent] create ${engine} failed · "${bin}" resolved from the user's ${shell?.label ?? 'daemon PATH'} but no engine process appeared in the pane`)
     return { ok: false, error: 'ENGINE_DID_NOT_START' }
   }
 
