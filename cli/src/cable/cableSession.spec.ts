@@ -228,6 +228,36 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('offers the image to a SECOND dial, even after a first one took it', async () => {
+    // Found in the field: one dial updated, was unplugged, and a second still on the old image was plugged
+    // into the same daemon and never offered anything. `offered` held bare version strings, so it was a
+    // statement about the IMAGE rather than about the board — the second dial was refused because that
+    // version had been offered to someone else, and nothing in the log said so.
+    const image = Buffer.alloc(2048, 9)
+    const host = makeHost({
+      firmwareFor: async () => ({ version: '9.9.9', image, sha256: 'x'.repeat(64) }),
+    })
+    const { session, port } = await connect(host)
+
+    port.say({ t: 'hello', product: 'harness', fw: '0.0.1', proto: 2, mac: 'aa:bb' })
+    await settle()
+    expect(port.types().filter((t) => t === 'fw.offer')).toHaveLength(1)
+
+    // The first dial takes it and reboots. Without this the transfer is still in flight and the guard
+    // that refuses a SECOND concurrent offer would be what answers below — a different rule, and the
+    // wrong one to be testing here.
+    port.say({ t: 'fw.done' })
+    await settle()
+
+    // A different board, same daemon, same port — the port does not close when a dial reboots, which is
+    // why the session's memory of what it has offered outlives the dial it offered to.
+    port.sent.length = 0
+    port.say({ t: 'hello', product: 'harness', fw: '0.0.1', proto: 2, mac: 'cc:dd' })
+    await settle()
+    expect(port.types().filter((t) => t === 'fw.offer')).toHaveLength(1)
+    await session.stop()
+  })
+
   it('does not wedge forever when opening the port hangs', async () => {
     // The `opening` guard keeps two opens from racing on one tty — a race that once left five read loops
     // shredding a single byte stream. But a guard released only when the attempt FINISHES is a guard held

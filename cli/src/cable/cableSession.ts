@@ -243,6 +243,7 @@ export class CableSession {
 
   /** A firmware transfer in flight, and the versions already tried this session. */
   private transfer: FirmwareTransfer | null = null
+  /** `<mac>:<version>` already offered on this port. The durable, cross-port guard is `mayOffer`. */
   private offered = new Set<string>()
 
   /** Voice capture in flight: PCM chunks as they arrive, plus what `voice.begin` said about them. */
@@ -410,6 +411,15 @@ export class CableSession {
     // A new port is a new dial until proven otherwise; tell it everything.
     this.lastAgentsKey = ''
     this.lastMachinesKey = ''
+    // INCLUDING which images it has been offered. `offered` holds bare version strings and named no dial,
+    // so without this it outlived the session its comment claims it belongs to and became per-DAEMON:
+    // offer 0.0.42 to one dial, unplug it, plug in a second still on 0.0.41, and the second is refused
+    // because the version — not the board — had already been offered. It sat there on the old image with
+    // nothing in the log to say why.
+    //
+    // Clearing it does NOT reopen the flash loop this guards against. That is `mayOffer`'s job, and it is
+    // keyed by MAC and outlives the port precisely so this one does not have to.
+    this.offered.clear()
     this.lastRx = Date.now()
     this.host.log(`cable: open on ${opened.path}`)
   }
@@ -672,9 +682,16 @@ export class CableSession {
   private async maybeOfferFirmware(runningVersion: string): Promise<void> {
     if (!this.host.firmwareFor || this.transfer || !runningVersion) return
     const candidate = await this.host.firmwareFor(runningVersion).catch(() => null)
-    if (!candidate || this.offered.has(candidate.version)) return
-    if (!this.mayOffer(this.greetedMac ?? 'unknown', candidate.version)) return
-    this.offered.add(candidate.version)
+    // Keyed by DIAL as well as version. Holding bare version strings made this a statement about the
+    // image rather than about the board: offer 0.0.42 to one dial, swap in a second still on 0.0.41, and
+    // the second was refused because that version had been offered — to someone else. It then sat on the
+    // old image with nothing in the log to say why, which is how it was found.
+    if (!candidate) return
+    const mac = this.greetedMac ?? 'unknown'
+    const offerKey = `${mac}:${candidate.version}`
+    if (this.offered.has(offerKey)) return
+    if (!this.mayOffer(mac, candidate.version)) return
+    this.offered.add(offerKey)
 
     this.host.log(`cable: offering firmware ${candidate.version} (${candidate.image.length} B)`)
     this.transfer = new FirmwareTransfer(
