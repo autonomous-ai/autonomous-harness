@@ -28,11 +28,14 @@ export interface AgentCreatePaneFacts {
   engineBin: string
   /** Process name of the wrapper login shell, e.g. `zsh`. Null when no interactive shell was used. */
   shellName: string | null
+  /** Processes found under the pane, shallowest first. Only read when nothing matched the engine. */
+  processes: ReadonlyArray<{ executable: string; args: string }>
   elapsedMs: number
 }
 
 const MAX_OUTPUT_CHARS = 180
-const MAX_DETAIL_CHARS = 340
+const MAX_DETAIL_CHARS = 520
+const MAX_ARGV_CHARS = 90
 
 /** tmux paints this into a pane it is keeping alive under `remain-on-exit`; it is our own artifact. */
 const DEAD_PANE_NOTICE = /^Pane is dead \(.*\)$/
@@ -61,6 +64,32 @@ export function summarizePaneOutput(raw: string): string {
   return tail.length > MAX_OUTPUT_CHARS ? `${tail.slice(0, MAX_OUTPUT_CHARS - 1)}…` : tail
 }
 
+/**
+ * Blank anything in an argv that looks like a credential before it travels into a dialog.
+ *
+ * The processes reported here are the ones under a pane this daemon just created, so their argv is
+ * normally the engine launch we built ourselves. "Normally" is not a guarantee once the engine starts
+ * spawning its own children, and an error string is the wrong place to find out.
+ */
+export function redactArgv(args: string): string {
+  return args
+    .replace(/(--?[\w-]*(?:key|token|secret|password|passwd|auth|credential)[\w-]*[= ])\S+/gi, '$1<redacted>')
+    // A long opaque run of credential-shaped characters is not something a launch argv needs to show.
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<redacted>')
+}
+
+/** `node "/usr/local/bin/codex" · sh "..."` — what the pane was actually made of. */
+export function summarizeProcessTree(
+  processes: ReadonlyArray<{ executable: string; args: string }>,
+): string {
+  const rendered = processes.slice(0, 4).map(({ executable, args }) => {
+    const argv = redactArgv(args).trim()
+    const shown = argv.length > MAX_ARGV_CHARS ? `${argv.slice(0, MAX_ARGV_CHARS - 1)}\u2026` : argv
+    return shown ? `${executable} "${shown}"` : executable
+  })
+  return rendered.join(' \u00b7 ')
+}
+
 function seconds(elapsedMs: number): string {
   return `${(elapsedMs / 1000).toFixed(1)}s`
 }
@@ -77,7 +106,7 @@ function withOutput(summary: string, output: string): string {
  * failed: it says what the pane was doing, not what the code checked.
  */
 export function describeAgentCreateFailure(facts: AgentCreatePaneFacts): string {
-  const { state, output, engineBin, shellName, elapsedMs } = facts
+  const { state, output, engineBin, shellName, processes, elapsedMs } = facts
   const waited = seconds(elapsedMs)
 
   // tmux forgot the pane entirely. `create` asks tmux to keep dead panes, so reaching this means the
@@ -106,8 +135,12 @@ export function describeAgentCreateFailure(facts: AgentCreatePaneFacts): string 
     )
   }
 
+  // Naming only the foreground command is what left the last report unactionable: discovery searches
+  // the WHOLE tree under the pane, so "it was running node" does not say what discovery rejected.
+  const tree = summarizeProcessTree(processes)
   return withOutput(
-    `after ${waited} the pane was running "${state.command}" but it was not recognised as a ${engineBin} agent`,
+    `after ${waited} the pane was running "${state.command}" but no ${engineBin} process was found under it`
+      + (tree ? ` · saw: ${tree}` : ''),
     output,
   )
 }

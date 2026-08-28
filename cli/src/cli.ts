@@ -47,7 +47,7 @@ import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { basename } from 'node:path'
-import { captureTmuxPane, clearPaneRemainOnExit, tmuxPaneState } from './lib/tmux.js'
+import { captureTmuxPane, clearPaneRemainOnExit, tmuxPaneProcessTree, tmuxPaneState } from './lib/tmux.js'
 import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
@@ -2697,6 +2697,10 @@ async function runForeground(session: AuthSession): Promise<void> {
         await captureTmuxPane(spawned.runtime.paneId, 40, { ansi: false }) ?? '',
       ),
       engineBin: command[0],
+      // Only useful when a process IS there and did not match; a dead or vanished pane has no tree.
+      processes: paneState && !paneState.dead
+        ? await tmuxPaneProcessTree(spawned.runtime.paneId)
+        : [],
       shellName: (() => {
         const path = interactiveEngineShell()?.path
         return path ? basename(path) : null

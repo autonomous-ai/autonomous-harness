@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   describeAgentCreateFailure,
+  redactArgv,
   summarizePaneOutput,
+  summarizeProcessTree,
   type AgentCreatePaneFacts,
 } from './agentCreateDiagnosis.js'
 
@@ -10,6 +12,7 @@ const base: AgentCreatePaneFacts = {
   output: '',
   engineBin: 'codex',
   shellName: 'zsh',
+  processes: [],
   elapsedMs: 1400,
 }
 
@@ -62,7 +65,7 @@ describe('describeAgentCreateFailure', () => {
       state: { dead: false, exitStatus: null, command: 'node' },
     })
     expect(detail).toContain('was running "node"')
-    expect(detail).toContain('not recognised as a codex agent')
+    expect(detail).toContain('no codex process was found under it')
   })
 
   it('says so when tmux did not keep the pane, since the output is then unrecoverable', () => {
@@ -81,6 +84,55 @@ describe('describeAgentCreateFailure', () => {
       state: { dead: true, exitStatus: 1, command: 'codex' },
       output: 'e'.repeat(400),
     })
-    expect(detail.length).toBeLessThanOrEqual(340)
+    expect(detail.length).toBeLessThanOrEqual(520)
+  })
+})
+
+describe('redactArgv', () => {
+  it('blanks credential-shaped flag values', () => {
+    expect(redactArgv('codex --api-key sk-live-1 --token=abc --model gpt-5.5'))
+      .toBe('codex --api-key <redacted> --token=<redacted> --model gpt-5.5')
+  })
+
+  it('blanks a long opaque run no launch argv needs to show', () => {
+    expect(redactArgv('node /bin/x AKIAIOSFODNN7EXAMPLEKEYVALUE12345'))
+      .toBe('node /bin/x <redacted>')
+  })
+
+  it('leaves an ordinary launch untouched', () => {
+    const argv = '/bin/zsh -lic exec "$@" harness-engine codex'
+    expect(redactArgv(argv)).toBe(argv)
+  })
+})
+
+describe('summarizeProcessTree', () => {
+  it('names what discovery walked past, which the foreground command alone does not', () => {
+    expect(summarizeProcessTree([
+      { executable: 'node', args: 'node /usr/local/bin/codex-update-notifier' },
+      { executable: 'sh', args: 'sh -c true' },
+    ])).toBe('node "node /usr/local/bin/codex-update-notifier" \u00b7 sh "sh -c true"')
+  })
+
+  it('bounds each argv so one long command cannot eat the message', () => {
+    const long = summarizeProcessTree([{ executable: 'node', args: 'node ' + 'a'.repeat(300) }])
+    expect(long.length).toBeLessThan(120)
+  })
+
+  it('is empty when no process could be read', () => {
+    expect(summarizeProcessTree([])).toBe('')
+  })
+})
+
+describe('describeAgentCreateFailure with a process tree', () => {
+  it('reports the tree so a remote reader can identify an uncovered install layout', () => {
+    const detail = describeAgentCreateFailure({
+      ...base,
+      state: { dead: false, exitStatus: null, command: 'node' },
+      processes: [{ executable: 'node', args: 'node /opt/x/update-notifier.js' }],
+      output: '2. Skip \u00b7 Press enter to continue',
+    })
+    expect(detail).toContain('no codex process was found under it')
+    expect(detail).toContain('saw: node "node /opt/x/update-notifier.js"')
+    expect(detail).toContain('Press enter to continue')
   })
 })

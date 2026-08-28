@@ -497,6 +497,42 @@ async function lookupPaneEngineProcess(
   }
 }
 
+/**
+ * Every process under a pane, shallowest first — the answer to "then WHAT was running?".
+ *
+ * `selectEngineProcess` returning null says only that nothing matched the engine, which is the least
+ * useful half of the finding. The processes it walked past are what identify an install layout the
+ * matcher does not cover, or a launcher that has not exec'd the engine yet, and reading them off the
+ * failing machine is exactly what a person diagnosing a remote New Agent failure cannot do.
+ */
+export async function tmuxPaneProcessTree(
+  pane: string,
+  limit = 4,
+): Promise<Array<{ executable: string; args: string }>> {
+  const rootPid = await panePid(pane)
+  if (!rootPid) return []
+  const rows = await processRows()
+  if (!rows) return []
+  const children = new Map<number, ProcessRow[]>()
+  for (const row of rows) {
+    const list = children.get(row.parentPid) ?? []
+    list.push(row)
+    children.set(row.parentPid, list)
+  }
+  const byPid = new Map(rows.map((row) => [row.pid, row]))
+  const found: Array<{ executable: string; args: string }> = []
+  const queue = [rootPid]
+  // Breadth-first for the same reason `selectEngineProcess` is: the shallowest processes are the
+  // launch chain, and a deep child is the least likely to explain the failure.
+  while (queue.length && found.length < limit) {
+    const pid = queue.shift()!
+    const row = byPid.get(pid)
+    if (row) found.push({ executable: row.executable, args: row.args })
+    for (const child of children.get(pid) ?? []) queue.push(child.pid)
+  }
+  return found
+}
+
 /** Boolean form for callers that only need "is it there". */
 export async function resolvePaneEngineProcess(
   pane: string,
