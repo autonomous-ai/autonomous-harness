@@ -37,7 +37,7 @@ function toCableAgent(raw: unknown): CableAgent {
 export interface DeviceFleetOpts {
   list: MachineListCache
   link: DeviceLink
-  /** Whether this daemon holds a pinned E2EE key for a machine — see `harness link import`. */
+  /** Whether this daemon holds a pinned E2EE key for a machine — see `harness link connect`. */
   hasPeerLink: (machineId: string) => boolean
   log: (line: string) => void
 }

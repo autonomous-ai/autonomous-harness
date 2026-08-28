@@ -11,11 +11,12 @@ type Frame = Record<string, unknown>
 let C: typeof import('./core.js')
 let E2eeManagerCtor: typeof import('./manager.js')['E2eeManager']
 let RelaySessionCrypto: typeof import('./relayClient.js')['RelaySessionCrypto']
-let claimSetupToken: typeof import('./relayClient.js')['claimSetupToken']
+let connectWithPassword: typeof import('./relayClient.js')['connectWithPassword']
 let MachinePeerStore: typeof import('./machinePeers.js')['MachinePeerStore']
 let RemoteRelayPool: typeof import('../remoteRelay.js')['RemoteRelayPool']
 
 const MACHINE_ID = 'f2e0383771b734e4fc00f0bc8ccf060f'
+const REMOTE_PASSWORD = 'correct horse battery staple'
 
 beforeAll(async () => {
   process.env.ADAPTER_DATA_DIR = mkdtempSync(join(tmpdir(), 'e2ee-link-'))
@@ -23,7 +24,7 @@ beforeAll(async () => {
   E2eeManagerCtor = (await import('./manager.js')).E2eeManager
   const relayClient = await import('./relayClient.js')
   RelaySessionCrypto = relayClient.RelaySessionCrypto
-  claimSetupToken = relayClient.claimSetupToken
+  connectWithPassword = relayClient.connectWithPassword
   MachinePeerStore = (await import('./machinePeers.js')).MachinePeerStore
   RemoteRelayPool = (await import('../remoteRelay.js')).RemoteRelayPool
 })
@@ -37,7 +38,7 @@ describe('MachinePeerStore', () => {
     const a = new MachinePeerStore()
     const identity = C.newIdentity()
     a.pin(MACHINE_ID, C.b64e(identity.pub), 'test peer')
-    // A second instance must see the write immediately — RemoteRelayPool and `harness link import`
+    // A second instance must see the write immediately — RemoteRelayPool and `harness link connect`
     // run as separate processes/instances and must never rely on a stale in-memory cache.
     const b = new MachinePeerStore()
     expect(b.get(MACHINE_ID)?.pub).toBe(C.b64e(identity.pub))
@@ -49,8 +50,8 @@ describe('MachinePeerStore', () => {
   })
 })
 
-describe('link create/import + relay session crypto (interop with the real E2eeManager)', () => {
-  it('claimSetupToken pins the correct adapter pubkey, then hello/welcome + frame/terminal round-trip succeed', async () => {
+describe('remote-password link + relay session crypto (interop with the real E2eeManager)', () => {
+  it('connectWithPassword pins the correct adapter pubkey, then hello/welcome + frame/terminal round-trip succeed', async () => {
     const inbox: Frame[] = []
     // Fakes just enough of backend's `/api/web-ws` (machine_select -> connected, then generic e2e_*
     // frame relay) to drive a REAL E2eeManager on the "adapter" side against real client-role code —
@@ -86,16 +87,16 @@ describe('link create/import + relay session crypto (interop with the real E2eeM
       const port = (wss.address() as AddressInfo).port
       const wsBase = `ws://127.0.0.1:${port}`
       const clientIdentity = C.newIdentity()
-      const token = manager.createSetupToken(MACHINE_ID).token
+      await manager.setRemotePassword(REMOTE_PASSWORD)
 
-      const result = await claimSetupToken({
-        token,
+      const result = await connectWithPassword({
         targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
         selfIdentity: clientIdentity,
         accessToken: 'unused-in-this-fake',
         backendWsBase: wsBase,
         autonomousEnv: 'prod',
-        timeoutMs: 2_000,
+        timeoutMs: 5_000,
       })
 
       expect(result.ok).toBe(true)
@@ -144,18 +145,144 @@ describe('link create/import + relay session crypto (interop with the real E2eeM
     }
   })
 
-  it('rejects a token signed for a different machine id', async () => {
-    const manager = new E2eeManagerCtor({ machineId: MACHINE_ID, sendTo: () => {}, isConnected: () => true })
-    const token = manager.createSetupToken(MACHINE_ID).token
-    const result = await claimSetupToken({
-      token,
-      targetMachineId: 'a-completely-different-machine-id',
-      selfIdentity: C.newIdentity(),
-      accessToken: 'unused',
-      backendWsBase: 'ws://127.0.0.1:1', // never reached — rejected before any connection is opened
-      autonomousEnv: 'prod',
+  /** Spin up the same fake `/api/web-ws` (machine_select -> connected, then e2e_* frame relay) used
+   *  above, wired to a fresh real E2eeManager, and return both plus a cleanup function. */
+  function fakeMachine(): { manager: InstanceType<typeof E2eeManagerCtor>; wsBase: Promise<string>; close: () => Promise<void> } {
+    const wss = new WebSocketServer({ port: 0 })
+    const manager = new E2eeManagerCtor({
+      machineId: MACHINE_ID,
+      sendTo: (_connId, frame) => { for (const client of wss.clients) client.send(JSON.stringify(frame)) },
+      isConnected: () => true,
     })
-    expect(result).toEqual({ ok: false, error: 'BAD_TOKEN' })
+    wss.on('connection', (ws) => {
+      let selected = false
+      ws.on('message', (raw) => {
+        let frame: Frame
+        try { frame = JSON.parse(raw.toString()) as Frame } catch { return }
+        if (!selected) {
+          if (frame.type === 'machine_select') {
+            selected = true
+            ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+          }
+          return
+        }
+        const type = frame.type as string
+        if (type.startsWith('e2e_')) manager.handleFrame('fake-conn', frame)
+      })
+    })
+    const wsBase = new Promise<string>((resolve) => {
+      wss.once('listening', () => resolve(`ws://127.0.0.1:${(wss.address() as AddressInfo).port}`))
+    })
+    return { manager, wsBase, close: () => new Promise<void>((resolve) => wss.close(() => resolve())) }
+  }
+
+  it('NO_REMOTE_PASSWORD when the target machine never set one', async () => {
+    const { manager, wsBase, close } = fakeMachine()
+    try {
+      const result = await connectWithPassword({
+        targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
+        selfIdentity: C.newIdentity(),
+        accessToken: 'unused',
+        backendWsBase: await wsBase,
+        autonomousEnv: 'prod',
+        timeoutMs: 5_000,
+      })
+      expect(result).toEqual({ ok: false, error: 'NO_REMOTE_PASSWORD' })
+      expect(manager.remotePasswordStatus().hasPassword).toBe(false)
+    } finally {
+      await close()
+    }
+  })
+
+  it('a wrong password fails the MAC check and never pins a peer', async () => {
+    const { manager, wsBase, close } = fakeMachine()
+    try {
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const result = await connectWithPassword({
+        targetMachineId: MACHINE_ID,
+        password: 'definitely the wrong password',
+        selfIdentity: C.newIdentity(),
+        accessToken: 'unused',
+        backendWsBase: await wsBase,
+        autonomousEnv: 'prod',
+        timeoutMs: 5_000,
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toBe('WRONG_PASSWORD')
+    } finally {
+      await close()
+    }
+  })
+
+  it('locks out after repeated wrong passwords, rejecting further attempts before running any crypto', async () => {
+    const { manager, wsBase, close } = fakeMachine()
+    try {
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const base = await wsBase
+      // Five wrong attempts cross store.ts's PW_FAIL_THRESHOLD (5) and lock the machine out.
+      for (let i = 0; i < 5; i++) {
+        const attempt = await connectWithPassword({
+          targetMachineId: MACHINE_ID,
+          password: `wrong-${i}`,
+          selfIdentity: C.newIdentity(),
+          accessToken: 'unused',
+          backendWsBase: base,
+          autonomousEnv: 'prod',
+          timeoutMs: 5_000,
+        })
+        expect(attempt.ok).toBe(false)
+      }
+      // The 6th attempt — even with the CORRECT password — must be rejected as RATE_LIMITED, proving
+      // the lockout is checked before any CPace round runs (not just before the final verdict).
+      const locked = await connectWithPassword({
+        targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
+        selfIdentity: C.newIdentity(),
+        accessToken: 'unused',
+        backendWsBase: base,
+        autonomousEnv: 'prod',
+        timeoutMs: 5_000,
+      })
+      expect(locked).toEqual({ ok: false, error: 'RATE_LIMITED' })
+    } finally {
+      await close()
+    }
+  })
+
+  it('setting a new password clears an existing lockout', async () => {
+    const { manager, wsBase, close } = fakeMachine()
+    try {
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const base = await wsBase
+      for (let i = 0; i < 5; i++) {
+        await connectWithPassword({
+          targetMachineId: MACHINE_ID,
+          password: `wrong-${i}`,
+          selfIdentity: C.newIdentity(),
+          accessToken: 'unused',
+          backendWsBase: base,
+          autonomousEnv: 'prod',
+          timeoutMs: 5_000,
+        })
+      }
+      const stillLocked = await connectWithPassword({
+        targetMachineId: MACHINE_ID, password: REMOTE_PASSWORD, selfIdentity: C.newIdentity(),
+        accessToken: 'unused', backendWsBase: base, autonomousEnv: 'prod', timeoutMs: 5_000,
+      })
+      expect(stillLocked).toEqual({ ok: false, error: 'RATE_LIMITED' })
+
+      const NEW_PASSWORD = 'a brand new remote password'
+      await manager.setRemotePassword(NEW_PASSWORD)
+      const result = await connectWithPassword({
+        targetMachineId: MACHINE_ID, password: NEW_PASSWORD, selfIdentity: C.newIdentity(),
+        accessToken: 'unused', backendWsBase: base, autonomousEnv: 'prod', timeoutMs: 5_000,
+      })
+      expect(result.ok).toBe(true)
+    } finally {
+      await close()
+    }
   })
 })
 
@@ -231,15 +358,15 @@ describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
     try {
       const port = (wss.address() as AddressInfo).port
       const clientIdentity = C.newIdentity()
-      const token = manager.createSetupToken(MACHINE_ID).token
-      const claim = await claimSetupToken({
-        token,
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const claim = await connectWithPassword({
         targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
         selfIdentity: clientIdentity,
         accessToken: 'unused-in-this-fake',
         backendWsBase: `ws://127.0.0.1:${port}`,
         autonomousEnv: 'prod',
-        timeoutMs: 2_000,
+        timeoutMs: 5_000,
       })
       expect(claim.ok).toBe(true)
       if (!claim.ok) return
@@ -303,15 +430,15 @@ describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
     try {
       const port = (wss.address() as AddressInfo).port
       const clientIdentity = C.newIdentity()
-      const token = manager.createSetupToken(MACHINE_ID).token
-      const claim = await claimSetupToken({
-        token,
+      await manager.setRemotePassword(REMOTE_PASSWORD)
+      const claim = await connectWithPassword({
         targetMachineId: MACHINE_ID,
+        password: REMOTE_PASSWORD,
         selfIdentity: clientIdentity,
         accessToken: 'unused-in-this-fake',
         backendWsBase: `ws://127.0.0.1:${port}`,
         autonomousEnv: 'prod',
-        timeoutMs: 2_000,
+        timeoutMs: 5_000,
       })
       expect(claim.ok).toBe(true)
       if (!claim.ok) return
@@ -329,7 +456,7 @@ describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
         staleSink,
         () => { staleOnClosedFired = true },
       )
-      expect(selects).toBe(2) // 1 for claimSetupToken's own connection, 1 for the acquire() dial
+      expect(selects).toBe(2) // 1 for connectWithPassword's own connection, 1 for the acquire() dial
 
       pool.invalidate(MACHINE_ID)
       // onClosed is a stand-in for the LOCAL app socket's own close() — invalidate() must never call

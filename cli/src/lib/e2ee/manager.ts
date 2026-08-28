@@ -5,6 +5,11 @@
  *  - always-on group key (per process, epoch id) that encrypts 1→many `up` user events (wrapUp);
  *  - the CPace pairing state machine (single slot): browser sends e2e_pair_intent → user runs
  *    `harness pair <code>` → onPair() runs CPace toward that connId → pin the browser identity;
+ *  - the SEPARATE persistent remote-password CPace state machine (multi-slot, keyed by connId):
+ *    another machine sends e2e_pw_pair_intent → onPwPairIntent()/onPwPake() run CPace against
+ *    store.remotePasswordVerifier() with no local "arm" step → pin that machine's identity, exactly
+ *    as if it were a paired browser session — see passwordPake.ts for why it's a fully separate
+ *    generator/context from the live-code flow above;
  *  - a per-connection session table (X25519 → pairwise keys) established by a signed e2e_hello,
  *    used to decrypt the down `message` frame and to encrypt targeted RPC replies + the group key.
  *
@@ -19,6 +24,7 @@ import {
   type TerminalBinaryClear,
 } from '../terminalBinary.js'
 import { E2eeStore } from './store.js'
+import { pwCpaceGenerator, pwContext } from './passwordPake.js'
 
 type Frame = Record<string, unknown>
 
@@ -72,6 +78,25 @@ const RATE_WINDOW_MS = 5 * 60_000
 const RATE_MAX = 3
 const MAX_SESSIONS = 64
 
+// Persistent remote-password linking (`harness remote-password set` + `harness link connect`) — a
+// SEPARATE state machine from PairSlot above: no human "arm" step (a correct password is the only
+// gate), and it must track multiple concurrent connIds since any other account machine could dial in
+// at any time, not just the one browser/device the user is actively pairing. Round timeout is longer
+// than the live-code flow's (30s vs 15s) since this crosses a machine-to-machine relay hop instead of
+// a browser tab that's already open and watching.
+const PW_ROUND_TIMEOUT_MS = 30_000
+
+interface PwPairSlot {
+  connId: string
+  sid: Uint8Array
+  sidB64: string
+  y: bigint
+  Ya: Uint8Array
+  isk?: Uint8Array
+  th?: Uint8Array
+  roundTimer: ReturnType<typeof setTimeout>
+}
+
 export interface E2eeManagerDeps {
   machineId: string
   /** Send a frame targeted at ONE web connection (adapter→web, sets targetConnId on the wire). */
@@ -90,6 +115,7 @@ export class E2eeManager {
   private slot: PairSlot | null = null
   private sessions = new Map<string, Session>()
   private attempts: number[] = [] // timestamps of FAILED pairings — anti online-guessing rate limit
+  private pwSlots = new Map<string, PwPairSlot>() // connId -> in-progress password-PAKE attempt
   private now: () => number
   /** Local dashboard port (loopback) — surfaced to the web in e2e_status so it can link there to
    *  approve pairing. Not sensitive (a localhost port); set by the adapter after the hook server binds. */
@@ -105,6 +131,21 @@ export class E2eeManager {
   fingerprint(): string { return this.store.fingerprint() }
   createSetupToken(machineId = this.deps.machineId): { token: string; expiresAt: number; fingerprint: string } {
     return this.store.createSetupToken(machineId)
+  }
+
+  // ── persistent remote password (`harness remote-password set|clear|status`) ──────────────────────
+  setRemotePassword(password: string): Promise<{ fingerprint: string }> {
+    return this.store.setRemotePassword(this.deps.machineId, password)
+  }
+  clearRemotePassword(): void {
+    this.store.clearRemotePassword()
+  }
+  remotePasswordStatus(): { hasPassword: boolean; fingerprint: string | null; setAt: number | null } {
+    return {
+      hasPassword: this.store.hasRemotePassword(),
+      fingerprint: this.store.remotePasswordFingerprint(),
+      setAt: this.store.remotePasswordSetAt(),
+    }
   }
   hasSession(connId: string): boolean { return this.sessions.has(connId) }
   sessionRole(connId: string): C.PairRole | null { return this.sessions.get(connId)?.role ?? null }
@@ -322,6 +363,8 @@ export class E2eeManager {
       case 'e2e_pair_intent': return this.onPairIntent(connId, payload)
       case 'e2e_pair_cancel': return this.onPairCancel(connId, payload)
       case 'e2e_pake': return this.onPake(connId, payload)
+      case 'e2e_pw_pair_intent': return this.onPwPairIntent(connId, payload)
+      case 'e2e_pw_pake': return this.onPwPake(connId, payload)
       case 'e2e_hello': return this.onHello(connId, payload)
       default: return type.startsWith('e2e_') // consume unknown e2e_* silently
     }
@@ -526,6 +569,119 @@ export class E2eeManager {
     return true
   }
 
+  // ── persistent remote-password pairing (`e2e_pw_pair_intent` / `e2e_pw_pake`) ────────────────────
+  // Structurally the same 5-round CPace dance as onPairIntent/onPake above, but driven by
+  // store.remotePasswordVerifier() instead of a live human-armed code, keyed by connId (pwSlots) so
+  // any number of joiner machines can be mid-handshake at once, with no local "arm" step at all.
+
+  private onPwPairIntent(connId: string, p: Record<string, unknown>): boolean {
+    const requestId = p.requestId
+    const fail = (error: string, extra?: Record<string, unknown>): void => {
+      this.deps.sendTo(connId, { type: 'e2e_pw_pair_result', payload: { requestId, ok: false, error, ...extra } })
+    }
+    if (!this.store.hasRemotePassword()) { fail('NO_REMOTE_PASSWORD'); return true }
+    // Rejected BEFORE any crypto runs — a locked-out caller gets no oracle at all, not even the cost
+    // of one CPace round, while it waits out the lockout.
+    const lockedUntil = this.store.pwLockedUntil()
+    if (lockedUntil) { fail('RATE_LIMITED', { retryAt: lockedUntil }); return true }
+    const sidB64 = typeof p.sid === 'string' ? p.sid : ''
+    if (!sidB64) { fail('BAD_INTENT'); return true }
+    if (this.pwSlots.has(connId)) this.clearPwSlot(connId) // a retry on the same conn replaces the old attempt
+    const verifier = this.store.remotePasswordVerifier()
+    if (!verifier) { fail('NO_REMOTE_PASSWORD'); return true } // race: cleared between the two checks above
+    const sid = C.b64d(sidB64)
+    const ci = pwContext(this.deps.machineId)
+    const g = pwCpaceGenerator(verifier, sid, ci)
+    const { y, Y } = C.cpaceStart(g)
+    const roundTimer = setTimeout(() => this.failPwPair(connId, 'TIMEOUT'), PW_ROUND_TIMEOUT_MS)
+    this.pwSlots.set(connId, { connId, sid, sidB64, y, Ya: Y, roundTimer })
+    // round 1 → the joiner (targeted), no human interaction required on this side
+    this.deps.sendTo(connId, { type: 'e2e_pw_pake', payload: { sid: sidB64, round: 1, ya: C.b64e(Y) } })
+    return true
+  }
+
+  private onPwPake(connId: string, p: Record<string, unknown>): boolean {
+    const slot = this.pwSlots.get(connId)
+    if (!slot) return true
+    if (typeof p.sid !== 'string' || p.sid !== slot.sidB64) return true // not our attempt
+    const round = Number(p.round)
+    const ci = pwContext(this.deps.machineId)
+    try {
+      if (round === 2) {
+        const Yb = C.b64d(String(p.yb))
+        const K = C.cpaceShared(Yb, slot.y)
+        const isk = C.cpaceISK(slot.sid, K, slot.Ya, Yb)
+        const th = C.transcriptHash(slot.sid, ci, slot.Ya, Yb)
+        const kc = C.kcKeys(isk, ci)
+        // Wrong password → wrong generator → this MAC can never verify. Counts toward the lockout;
+        // the error told to the caller never says more than "wrong password".
+        if (!C.macVerify(kc.web, th, C.b64d(String(p.mac)))) { this.failPwPair(connId, 'WRONG_PASSWORD', true); return true }
+        slot.isk = isk
+        slot.th = th
+        const id = this.store.getIdentity()
+        const sealed = C.aeadSeal(C.pairKey(isk, ci), 3, C.utf8('e2e-id'), C.utf8(JSON.stringify({ id: C.b64e(id.pub), sig: C.b64e(C.pairBindSig(id.priv, th)) })))
+        this.resetPwRoundTimer(slot)
+        this.deps.sendTo(connId, { type: 'e2e_pw_pake', payload: { sid: slot.sidB64, round: 3, mac: C.b64e(C.macTag(kc.adapter, th)), enc: C.b64e(sealed) } })
+        return true
+      }
+      if (round === 4) {
+        if (!slot.isk || !slot.th) { this.failPwPair(connId, 'TIMEOUT'); return true }
+        const opened = C.aeadOpen(C.pairKey(slot.isk, ci), 4, C.utf8('e2e-id'), C.b64d(String(p.enc)))
+        if (!opened) { this.failPwPair(connId, 'WRONG_PASSWORD', true); return true }
+        const joinerId = JSON.parse(new TextDecoder().decode(opened)) as { id: string; sig: string }
+        if (!C.pairBindVerify(C.b64d(joinerId.id), slot.th, C.b64d(joinerId.sig))) { this.failPwPair(connId, 'WRONG_PASSWORD', true); return true }
+        // Full success: trust the joiner exactly as if it were a paired browser session (same call/role
+        // onSetupClaim uses) — this is what lets it relay through this machine's data plane.
+        this.store.addPaired(joinerId.id, 'harness link', this.now(), 'web')
+        this.store.notePwSuccess()
+        const fp = this.fingerprint()
+        this.deps.sendTo(connId, { type: 'e2e_pw_pake', payload: { sid: slot.sidB64, round: 5, ok: true, fingerprint: fp } })
+        this.clearPwSlot(connId)
+        return true
+      }
+    } catch {
+      this.failPwPair(connId, 'WRONG_PASSWORD', true)
+    }
+    return true
+  }
+
+  private resetPwRoundTimer(slot: PwPairSlot): void {
+    clearTimeout(slot.roundTimer)
+    slot.roundTimer = setTimeout(() => this.failPwPair(slot.connId, 'TIMEOUT'), PW_ROUND_TIMEOUT_MS)
+  }
+
+  /** `countsAsFailure` is true only for an actual wrong-password verification failure — a timeout or
+   *  protocol hiccup (dropped connection, stale round) doesn't prove anything about a guessing
+   *  attempt and shouldn't cost the caller part of their lockout budget. */
+  private failPwPair(connId: string, error: string, countsAsFailure = false): void {
+    const slot = this.pwSlots.get(connId)
+    if (!slot) return
+    this.clearPwSlot(connId)
+    this.deps.sendTo(connId, { type: 'e2e_pw_pake', payload: { sid: slot.sidB64, round: 5, error } })
+    if (countsAsFailure) {
+      const { lockedUntil } = this.store.notePwFailure()
+      if (lockedUntil) this.notifyRemotePasswordLocked(lockedUntil) // fresh lockout — pwLockedUntil() was
+      // null before this call (onPwPairIntent already rejects while locked), so any non-null result
+      // here is a NOT-locked → locked transition, never a re-notify of an existing one.
+    }
+  }
+
+  private clearPwSlot(connId: string): void {
+    const slot = this.pwSlots.get(connId)
+    if (slot) clearTimeout(slot.roundTimer)
+    this.pwSlots.delete(connId)
+  }
+
+  private notifyRemotePasswordLocked(lockedUntil: number): void {
+    const payload = { machineId: this.deps.machineId, lockedUntil }
+    this.deps.sendUser?.({ type: 'remote_password_locked', payload })
+    for (const [connId, session] of this.sessions.entries()) {
+      if (session.role !== 'web') continue
+      const wrapped = this.wrapTarget(connId, 'remote_password_locked', payload)
+      if (wrapped) this.deps.sendTo(connId, wrapped)
+    }
+  }
+
   private onHello(connId: string, p: Record<string, unknown>): boolean {
     const identityPub = String(p.identityPub ?? '')
     const ephPubB64 = String(p.ephPub ?? '')
@@ -579,8 +735,9 @@ export class E2eeManager {
   }
 
   /** Drop a session when its web connection closes (called from backendSocket on down close is n/a —
-   *  connections are relayed; sessions are pruned by LRU + overwrite-on-new-hello). */
-  dropSession(connId: string): void { this.sessions.delete(connId) }
+   *  connections are relayed; sessions are pruned by LRU + overwrite-on-new-hello). Also cleans up any
+   *  in-progress password-PAKE attempt on this connId — the joiner may have disconnected mid-round. */
+  dropSession(connId: string): void { this.sessions.delete(connId); this.clearPwSlot(connId) }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 

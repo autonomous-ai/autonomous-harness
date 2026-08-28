@@ -413,6 +413,18 @@ export class BackendSocket {
   revokeAll(): ReturnType<E2eeManager['revokeAll']> {
     return this.e2ee.revokeAll()
   }
+  /** `harness remote-password set` — stretch + persist a new persistent remote password. */
+  setRemotePassword(password: string): ReturnType<E2eeManager['setRemotePassword']> {
+    return this.e2ee.setRemotePassword(password)
+  }
+  /** `harness remote-password clear` — remove the persistent remote password. */
+  clearRemotePassword(): void {
+    this.e2ee.clearRemotePassword()
+  }
+  /** `harness remote-password status` — whether one is set, and its fingerprint. */
+  remotePasswordStatus(): ReturnType<E2eeManager['remotePasswordStatus']> {
+    return this.e2ee.remotePasswordStatus()
+  }
 
   connect(): void {
     if (this.closed || this.ws || this.connecting) return

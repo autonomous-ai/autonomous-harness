@@ -8,6 +8,9 @@ import { join } from 'path'
 type Frame = Record<string, unknown>
 let C: typeof import('./core.js')
 let makeManager: typeof import('./manager.js')['E2eeManager']
+let pwCpaceGenerator: typeof import('./passwordPake.js')['pwCpaceGenerator']
+let pwContext: typeof import('./passwordPake.js')['pwContext']
+let stretchPassword: typeof import('./passwordPake.js')['stretchPassword']
 
 const AGENT = 'f2e0383771b734e4fc00f0bc8ccf060f'
 
@@ -15,6 +18,10 @@ beforeAll(async () => {
   process.env.ADAPTER_DATA_DIR = mkdtempSync(join(tmpdir(), 'e2ee-mgr-'))
   C = await import('./core.js')
   makeManager = (await import('./manager.js')).E2eeManager
+  const pw = await import('./passwordPake.js')
+  pwCpaceGenerator = pw.pwCpaceGenerator
+  pwContext = pw.pwContext
+  stretchPassword = pw.stretchPassword
 })
 
 // Fresh persisted store (identity + paired.json) per test — the store is disk-backed and shared by
@@ -88,6 +95,55 @@ class WebPeer {
     const opened = C.aeadOpen(this.session!.s2c, Number(p.n), C.utf8('e2e-rekey'), C.b64d(String(p.enc)))!
     const { groupKey, epoch } = JSON.parse(new TextDecoder().decode(opened)) as { groupKey: string; epoch: string }
     this.session!.groupKey = C.b64d(groupKey); this.session!.epoch = epoch
+  }
+}
+
+/** A minimal remote-password joiner that runs the CPace 'b' role directly against the manager via
+ *  handleFrame — mirrors WebPeer above, but for the persistent remote-password flow: no human "arm"
+ *  step (intent() carries the stretched password straight away), and connId-keyed on the manager side
+ *  instead of a single slot. */
+class PwPeer {
+  identity = C.newIdentity()
+  peerPub?: Uint8Array
+  private pr?: { sid: Uint8Array; sidB64: string; stretched: Uint8Array; y?: bigint; Ya?: Uint8Array; isk?: Uint8Array; th?: Uint8Array }
+
+  async intent(password: string): Promise<Frame> {
+    const sid = C.newPairId()
+    const stretched = await stretchPassword(password, AGENT)
+    this.pr = { sid, sidB64: C.b64e(sid), stretched }
+    return { type: 'e2e_pw_pair_intent', payload: { requestId: 'pwr1', sid: this.pr.sidB64 } }
+  }
+
+  /** Handle an adapter→joiner e2e_pw_pake frame; return the reply frame to feed back (or null on the
+   *  terminal round 5 ok/error). */
+  onPake(frame: Frame): Frame | null {
+    const p = frame.payload as Record<string, unknown>
+    const pr = this.pr!
+    const ci = pwContext(AGENT)
+    const round = Number(p.round)
+    if (round === 1) {
+      const g = pwCpaceGenerator(pr.stretched, pr.sid, ci)
+      const { y, Y } = C.cpaceStart(g)
+      const Ya = C.b64d(String(p.ya))
+      const K = C.cpaceShared(Ya, y)
+      pr.y = y; pr.Ya = Ya
+      pr.isk = C.cpaceISK(pr.sid, K, Ya, Y)
+      pr.th = C.transcriptHash(pr.sid, ci, Ya, Y)
+      const kc = C.kcKeys(pr.isk, ci)
+      return { type: 'e2e_pw_pake', payload: { sid: pr.sidB64, round: 2, yb: C.b64e(Y), mac: C.b64e(C.macTag(kc.web, pr.th)) } }
+    }
+    if (round === 3) {
+      const kc = C.kcKeys(pr.isk!, ci)
+      if (!C.macVerify(kc.adapter, pr.th!, C.b64d(String(p.mac)))) throw new Error('adapter MAC failed')
+      const opened = C.aeadOpen(C.pairKey(pr.isk!, ci), 3, C.utf8('e2e-id'), C.b64d(String(p.enc)))!
+      const adId = JSON.parse(new TextDecoder().decode(opened)) as { id: string; sig: string }
+      if (!C.pairBindVerify(C.b64d(adId.id), pr.th!, C.b64d(adId.sig))) throw new Error('adapter bind sig failed')
+      this.peerPub = C.b64d(adId.id) // pin
+
+      const sealed = C.aeadSeal(C.pairKey(pr.isk!, ci), 4, C.utf8('e2e-id'), C.utf8(JSON.stringify({ id: C.b64e(this.identity.pub), sig: C.b64e(C.pairBindSig(this.identity.priv, pr.th!)) })))
+      return { type: 'e2e_pw_pake', payload: { sid: pr.sidB64, round: 4, enc: C.b64e(sealed) } }
+    }
+    return null // round 5 (ok/error) — nothing to send
   }
 }
 
@@ -340,5 +396,107 @@ describe('E2eeManager revoke', () => {
     const h = machine()
     await fullPair(h, 'q1')
     expect(h.mgr.revoke('ZZZZ')).toEqual({ ok: false, error: 'NOT_FOUND' })
+  })
+})
+
+describe('E2eeManager persistent remote-password pairing', () => {
+  const PASSWORD = 'correct horse battery staple'
+
+  it('NO_REMOTE_PASSWORD when no password has been set', async () => {
+    const { mgr, takeLast } = machine()
+    const joiner = new PwPeer()
+    mgr.handleFrame('pw1', await joiner.intent(PASSWORD))
+    const result = takeLast('e2e_pw_pair_result').payload as Record<string, unknown>
+    expect(result).toMatchObject({ ok: false, error: 'NO_REMOTE_PASSWORD' })
+  })
+
+  it('completes a full password pairing with no human "arm" step, pins the joiner, and reports status', async () => {
+    const { mgr, takeLast } = machine()
+    expect(mgr.remotePasswordStatus()).toEqual({ hasPassword: false, fingerprint: null, setAt: null })
+    const set = await mgr.setRemotePassword(PASSWORD)
+    expect(mgr.remotePasswordStatus()).toMatchObject({ hasPassword: true, fingerprint: set.fingerprint })
+    expect(mgr.remotePasswordStatus().setAt).toEqual(expect.any(Number))
+
+    const joiner = new PwPeer()
+    const conn = 'pw2'
+    mgr.handleFrame(conn, await joiner.intent(PASSWORD)) // → round 1, no local approval needed
+    const r2 = joiner.onPake(takeLast('e2e_pw_pake'))!
+    mgr.handleFrame(conn, r2)                             // → round 3
+    const r4 = joiner.onPake(takeLast('e2e_pw_pake'))!
+    mgr.handleFrame(conn, r4)                             // → round 5
+
+    const final = takeLast('e2e_pw_pake').payload as Record<string, unknown>
+    expect(final).toMatchObject({ round: 5, ok: true, fingerprint: mgr.fingerprint() })
+    // Pinned exactly as onSetupClaim pins a browser — same role, same trust surface.
+    const paired = mgr.listPaired()
+    expect(paired.length).toBe(1)
+    expect(paired[0]).toMatchObject({ fingerprint: C.fingerprint(joiner.identity.pub), label: 'harness link', role: 'web' })
+  })
+
+  it('a wrong password fails the confirmation MAC at round 2 and pins nobody', async () => {
+    const { mgr, takeLast } = machine()
+    await mgr.setRemotePassword(PASSWORD)
+    const joiner = new PwPeer()
+    const conn = 'pw3'
+    mgr.handleFrame(conn, await joiner.intent('not the right password'))
+    const r2 = joiner.onPake(takeLast('e2e_pw_pake'))!
+    mgr.handleFrame(conn, r2)
+    const final = takeLast('e2e_pw_pake').payload as Record<string, unknown>
+    expect(final).toMatchObject({ round: 5, error: 'WRONG_PASSWORD' })
+    expect(mgr.listPaired().length).toBe(0)
+  })
+
+  it('locks out after repeated wrong passwords, rejecting further intents before any crypto runs', async () => {
+    const { mgr, takeLast } = machine()
+    await mgr.setRemotePassword(PASSWORD)
+    for (let i = 0; i < 5; i++) {
+      const joiner = new PwPeer()
+      const conn = `pwbad${i}`
+      mgr.handleFrame(conn, await joiner.intent(`wrong-${i}`))
+      const r2 = joiner.onPake(takeLast('e2e_pw_pake'))!
+      mgr.handleFrame(conn, r2)
+    }
+    // The 6th attempt, even with the CORRECT password, must be rejected as RATE_LIMITED with no
+    // e2e_pw_pake round-1 frame ever sent — proving the lockout is checked before any CPace runs.
+    const joiner = new PwPeer()
+    mgr.handleFrame('pwlocked', await joiner.intent(PASSWORD))
+    const result = takeLast('e2e_pw_pair_result').payload as Record<string, unknown>
+    expect(result).toMatchObject({ ok: false, error: 'RATE_LIMITED' })
+    expect(typeof result.retryAt).toBe('number')
+  })
+
+  it('setting a new password clears an existing lockout', async () => {
+    const { mgr, takeLast } = machine()
+    await mgr.setRemotePassword(PASSWORD)
+    for (let i = 0; i < 5; i++) {
+      const joiner = new PwPeer()
+      const conn = `pwbad2-${i}`
+      mgr.handleFrame(conn, await joiner.intent(`wrong-${i}`))
+      const r2 = joiner.onPake(takeLast('e2e_pw_pake'))!
+      mgr.handleFrame(conn, r2)
+    }
+    const stillLocked = new PwPeer()
+    mgr.handleFrame('pwstilllocked', await stillLocked.intent(PASSWORD))
+    expect((takeLast('e2e_pw_pair_result').payload as Record<string, unknown>).error).toBe('RATE_LIMITED')
+
+    await mgr.setRemotePassword('a brand new remote password')
+    const joiner = new PwPeer()
+    const conn = 'pwfresh'
+    mgr.handleFrame(conn, await joiner.intent('a brand new remote password'))
+    const r2 = joiner.onPake(takeLast('e2e_pw_pake'))!
+    mgr.handleFrame(conn, r2)
+    const r4 = joiner.onPake(takeLast('e2e_pw_pake'))!
+    mgr.handleFrame(conn, r4)
+    expect(takeLast('e2e_pw_pake').payload).toMatchObject({ round: 5, ok: true })
+  })
+
+  it('clearRemotePassword removes it — a subsequent intent gets NO_REMOTE_PASSWORD again', async () => {
+    const { mgr, takeLast } = machine()
+    await mgr.setRemotePassword(PASSWORD)
+    mgr.clearRemotePassword()
+    expect(mgr.remotePasswordStatus()).toEqual({ hasPassword: false, fingerprint: null, setAt: null })
+    const joiner = new PwPeer()
+    mgr.handleFrame('pwcleared', await joiner.intent(PASSWORD))
+    expect(takeLast('e2e_pw_pair_result').payload).toMatchObject({ ok: false, error: 'NO_REMOTE_PASSWORD' })
   })
 })

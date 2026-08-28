@@ -6,10 +6,11 @@
  *
  * This daemon now TERMINATES E2EE on the relay itself (see lib/e2ee/relayClient.ts), playing the
  * "client" role a browser (or the old Flutter app) used to play, toward whichever remote machine
- * `lib/e2ee/machinePeers.ts` has a pinned trust for (established out of band via `harness link
- * create`/`harness link import`). The local app therefore only ever sees plaintext — the exact same
- * shape it already gets for this daemon's own machine — for every machine, relayed or not. A machine
- * with no pinned peer fails the relay with `NO_PEER_LINK` instead of ever reaching pipe mode.
+ * `lib/e2ee/machinePeers.ts` has a pinned trust for (established out of band via `harness
+ * remote-password set` on the target machine + `harness link connect` here). The local app therefore
+ * only ever sees plaintext — the exact same shape it already gets for this daemon's own machine — for
+ * every machine, relayed or not. A machine with no pinned peer fails the relay with `NO_PEER_LINK`
+ * instead of ever reaching pipe mode.
  */
 import { WebSocket, type RawData } from 'ws'
 import type { Frame, LocalClientSink } from '../backendSocket.js'

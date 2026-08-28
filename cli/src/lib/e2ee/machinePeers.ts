@@ -1,12 +1,14 @@
 /**
  * Persistence for the "this machine trusts machine X" relation — a third E2EE trust relation distinct
- * from browser↔this-machine (`E2eeStore`/`paired.json`). Established via `harness link create` (on the
- * peer) + `harness link import <token>` (here), never via the live 6-digit CPace code — see
- * relayClient.ts for the session this pin then bootstraps. Same file-permission conventions as
- * `E2eeStore`: ${ADAPTER_DATA_DIR}/e2e/, 0700 dir / 0600 file.
+ * from browser↔this-machine (`E2eeStore`/`paired.json`). Established via `harness remote-password set`
+ * (on the peer, a persistent shared secret) + `harness link connect <machineId>` (here, which proves
+ * knowledge of that secret via a password-authenticated CPace exchange — see passwordPake.ts), never
+ * via the live 6-digit CPace pairing code — see relayClient.ts for the session this pin then
+ * bootstraps. Same file-permission conventions as `E2eeStore`: ${ADAPTER_DATA_DIR}/e2e/, 0700 dir /
+ * 0600 file.
  *
- * Deliberately NOT cached in memory: `harness link import` runs as its own short-lived process,
- * independent of the daemon — the daemon's `RemoteRelayPool` must see a link the moment `link import`
+ * Deliberately NOT cached in memory: `harness link connect` runs as its own short-lived process,
+ * independent of the daemon — the daemon's `RemoteRelayPool` must see a link the moment `link connect`
  * writes it, not only after a restart. The file is tiny and read rarely (once per fresh relay dial),
  * so reading fresh every time costs nothing.
  */

@@ -83,6 +83,13 @@ export interface HookServerHandlers {
   onRevoke?: (id: string) => PairOutcome
   /** `harness unpair --all` — unpair every browser. */
   onRevokeAll?: () => PairOutcome
+  /** `harness remote-password set` — stretch + persist a new persistent remote password on the
+   *  running daemon's live E2EE state. */
+  onSetRemotePassword?: (password: string) => Promise<PairOutcome>
+  /** `harness remote-password clear` — remove the persistent remote password. */
+  onClearRemotePassword?: () => PairOutcome
+  /** `harness remote-password status` — whether one is set, and its fingerprint. */
+  onRemotePasswordStatus?: () => PairOutcome
   /** Local dashboard status snapshot (GET /api/status). */
   onStatus?: () => Record<string, unknown>
   /** Recent adapter log tail (GET /api/logs). */
@@ -516,6 +523,34 @@ export function startHookServer(
         if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
         if (!handlers.onSetupLink) { json(503, { error: 'UNAVAILABLE' }); return }
         const out = handlers.onSetupLink(); json(out.status, out.body); return
+      }
+
+      // `harness remote-password set` → stretch + persist a new persistent remote password on the
+      // running daemon's live E2EE state (so an in-progress `harness link connect` from another
+      // machine sees it immediately, with no daemon restart needed).
+      if (req.method === 'POST' && url === '/api/remote-password/set') {
+        if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+        if (!handlers.onSetRemotePassword) { json(503, { error: 'UNAVAILABLE' }); return }
+        let body: { password?: string }
+        try { body = JSON.parse(await readBody(req)) as { password?: string } } catch { json(400, { error: 'bad json' }); return }
+        if (!body.password) { json(400, { error: 'MISSING_PASSWORD' }); return }
+        try { const out = await handlers.onSetRemotePassword(body.password); json(out.status, out.body) }
+        catch (e) { json(500, { error: e instanceof Error ? e.message : 'INTERNAL' }) }
+        return
+      }
+
+      // `harness remote-password clear` → remove the persistent remote password.
+      if (req.method === 'POST' && url === '/api/remote-password/clear') {
+        if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+        if (!handlers.onClearRemotePassword) { json(503, { error: 'UNAVAILABLE' }); return }
+        const out = handlers.onClearRemotePassword(); json(out.status, out.body); return
+      }
+
+      // `harness remote-password status` → whether one is set, and its fingerprint. Read-only, same
+      // gating tier as /api/pairs.
+      if (req.method === 'GET' && url === '/api/remote-password/status') {
+        if (!handlers.onRemotePasswordStatus) { json(503, { error: 'UNAVAILABLE' }); return }
+        const out = handlers.onRemotePasswordStatus(); json(out.status, out.body); return
       }
 
       // Local GUI clients (e.g. the desktop app): read the full machine list / rename or delete one /

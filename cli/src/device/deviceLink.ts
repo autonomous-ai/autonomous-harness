@@ -55,9 +55,9 @@ export interface DeviceLinkOpts {
   backendWsBase: string
   computerId: string
   autonomousEnv: string
-  /** This daemon's own E2EE identity — the same one `harness link create/import` signs with. */
+  /** This daemon's own E2EE identity — the same one `harness remote-password set`/`link connect` signs with. */
   identity: Identity
-  /** The pinned key for a machine, read FRESH: `harness link import` runs as a separate process. */
+  /** The pinned key for a machine, read FRESH: `harness link connect` runs as a separate process. */
   peer: (machineId: string) => MachinePeer | null
   /**
    * THIS computer's machineId, or '' before the daemon has resolved one.
@@ -144,7 +144,7 @@ export class DeviceLink {
   /**
    * Bring up the E2EE session for a machine that needs one, IF it does not already have a live one.
    *
-   * The trust anchor is the PINNED key from `harness link import`, never anything the backend hands over:
+   * The trust anchor is the PINNED key from `harness link connect`, never anything the backend hands over:
    * a key directory would make the relay the trust anchor, which is the exact property end-to-end
    * encryption exists to deny it.
    *
@@ -420,7 +420,7 @@ export class DeviceLink {
     if (frame.type === 'e2e_rekey') { this.sessions.get(from)?.handleRekey((frame.payload ?? {}) as Record<string, unknown>); return }
     if (frame.type === 'e2e_denied') {
       // The far end knows this daemon's key and rejected it — the pin is stale, not merely missing.
-      this.opts.log(`device: e2e denied ${from} — re-run \`harness link import\` for this machine`)
+      this.opts.log(`device: e2e denied ${from} — the remote password may have changed or this machine's link was revoked, re-run \`harness link connect ${from}\``)
       this.failCrypto(from, new Error('E2EE_DENIED'))
       return
     }

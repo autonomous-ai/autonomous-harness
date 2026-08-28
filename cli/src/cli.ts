@@ -86,9 +86,9 @@ import {
 import { setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { E2eeStore } from './lib/e2ee/store.js'
-import { b64e, verifySetupToken } from './lib/e2ee/core.js'
+import { b64e } from './lib/e2ee/core.js'
 import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
-import { claimSetupToken } from './lib/e2ee/relayClient.js'
+import { connectWithPassword } from './lib/e2ee/relayClient.js'
 import {
   startSelfUpdater, restore as restoreUpdate, confirm as confirmUpdate,
   fetchManifest, downloadVerified, canary, stage, semverGt,
@@ -226,11 +226,16 @@ Browser end-to-end encryption:
   harness unpair --all         unpair every browser
 
 Machine-to-machine linking (lets this machine's relay reach ANOTHER of your machines with the CLI,
-not the app, terminating E2EE):
-  harness link create          print a token for another machine's \`harness link import\`
-  harness link import <token>  claim a token printed by another machine's \`harness link create\`
-  harness link list            list machines this one has linked
-  harness link unlink <id>     remove a linked machine's trust
+not the app, terminating E2EE). A machine's remote password is persistent — set once, reused for
+every future connect, until you change or clear it:
+  harness remote-password set        set/rotate this machine's persistent remote password
+  harness remote-password status     show whether one is set, and its fingerprint
+  harness remote-password clear      remove this machine's remote password
+  harness link connect <machineId>   join a machine using ITS remote password (fully automatic)
+  harness link list                  list machines this one has linked
+  harness link unlink <id>           remove a linked machine's trust
+  (both \`remote-password set\` and \`link connect\` prompt for the password interactively, or read one
+  line from stdin with --stdin; add --json for NDJSON output instead of the human-readable text)
 
   harness --help
 
@@ -2333,6 +2338,14 @@ async function runForeground(session: AuthSession): Promise<void> {
       return { status: r.error === 'AMBIGUOUS' ? 409 : 404, body: { error: r.error } }
     },
     onRevokeAll: () => ({ status: 200, body: backend.revokeAll() }),
+    // `harness remote-password set|clear|status` — mutate/read the running daemon's live E2EE state
+    // directly, so `harness link connect` from another machine sees a just-set password immediately.
+    onSetRemotePassword: async (password) => {
+      const r = await backend.setRemotePassword(password)
+      return { status: 200, body: r }
+    },
+    onClearRemotePassword: () => { backend.clearRemotePassword(); return { status: 200, body: { ok: true } } },
+    onRemotePasswordStatus: () => ({ status: 200, body: backend.remotePasswordStatus() }),
     // Local dashboard (GET /api/status): adapter health + computer fingerprint + local pairings. It
     // deliberately does NOT expose chat/transcripts — those live in the cloud web (WEB_URL/commander).
     onStatus: () => ({
@@ -2394,8 +2407,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
   })
-  // Same on-disk identity `harness link create`/`import` use (E2eeStore.init() is idempotent per file,
-  // so a separate in-memory instance here just reads the one this machine already has).
+  // Same on-disk identity `harness remote-password set`/`link connect` use (E2eeStore.init() is
+  // idempotent per file, so a separate in-memory instance here just reads the one this machine
+  // already has).
   const relayIdentityStore = new E2eeStore()
   relayIdentityStore.init()
   const relayPool = new RemoteRelayPool(
@@ -3065,10 +3079,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     backendWsBase: env.BACKEND_WS_URL,
     computerId: computerId(),
     autonomousEnv: readAuthSession()?.autonomousEnv ?? session.autonomousEnv,
-    // The SAME identity `harness link create` publishes and `harness link import` verifies against, so
-    // one link ceremony covers the desktop app's relay and the dial's lane alike.
+    // The SAME identity `harness remote-password set` publishes and `harness link connect` proves
+    // knowledge against, so one link ceremony covers the desktop app's relay and the dial's lane alike.
     identity: relayIdentityStore.getIdentity(),
-    // Read FRESH on every attach: `harness link import` runs as a separate process, so a value captured
+    // Read FRESH on every attach: `harness link connect` runs as a separate process, so a value captured
     // at daemon start would keep answering "not linked" until the next restart.
     peer: (machineId) => machinePeers.get(machineId),
     // Read fresh for the same reason `machineId` above is a thunk: it is '' until the daemon has resolved
@@ -3082,7 +3096,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const fleet = new DeviceFleet({
     list: machineList,
     link: deviceLink,
-    // Read FRESH on every call, never cached: `harness link import` runs as a separate process, so a
+    // Read FRESH on every call, never cached: `harness link connect` runs as a separate process, so a
     // cached answer would keep saying "not linked" for as long as this daemon lives.
     hasPeerLink: (machineId) => machinePeers.get(machineId) !== null,
     log: (line) => console.log(`[device] ${line}`),
@@ -3560,63 +3574,222 @@ async function unpairCommand(id: string | undefined, all: boolean): Promise<void
   process.exit(1)
 }
 
-/** `harness link create` — print a reusable setup token this machine's own identity signs, for
- *  ANOTHER MACHINE's `harness link import` to consume — the machine-to-machine counterpart of
- *  `browser-link` (same token mechanism, different consumer). Kept a distinct verb on purpose: `pair`/
- *  `browser-link` stay reserved for the browser↔this-machine relation (see the file header comment). */
-async function linkCreateCommand(): Promise<void> {
+/** Read one line from stdin (used by `--stdin` password input — scripts/GUIs pipe the password in
+ *  directly instead of going through the interactive masked prompt below). Resolves '' on EOF with no
+ *  line, so callers must treat an empty result as "no password provided". */
+function readStdinLine(): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin })
+    let settled = false
+    // Order matters: rl.close() fires the 'close' listener SYNCHRONOUSLY (re-entrantly, from inside
+    // this same call), so `settled` must flip to true before calling it — otherwise the 'close'
+    // handler's resolve('') would run (and win, since a Promise only honors the first resolve() call)
+    // before we ever reach our own resolve(line) on the next line.
+    rl.once('line', (line) => { settled = true; rl.close(); resolve(line) })
+    rl.once('close', () => { if (!settled) resolve('') })
+  })
+}
+
+/** Prompt on stdin with the terminal echo suppressed, for a remote password. Falls back to a plain
+ *  (echoed) prompt when stdin isn't a TTY (piped input, non-interactive shell) — there's no terminal
+ *  to suppress echo on, and readline still works correctly for a single piped line. */
+function promptPassword(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    if (!process.stdin.isTTY) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      rl.question(prompt, (answer) => { rl.close(); resolve(answer) })
+      return
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    // Suppress readline's own echo of typed characters while still letting our prompt text and the
+    // trailing newline through — the standard Node trick for masked input without an extra dependency.
+    const rlWithOutput = rl as unknown as { _writeToOutput?: (s: string) => void }
+    let muted = false
+    rlWithOutput._writeToOutput = (s: string) => { if (!muted) process.stdout.write(s) }
+    process.stdout.write(prompt)
+    muted = true
+    rl.question('', (answer) => {
+      muted = false
+      rl.close()
+      process.stdout.write('\n')
+      resolve(answer)
+    })
+  })
+}
+
+/** `harness remote-password set` — set/rotate this machine's persistent "remote password": the
+ *  shared secret `harness link connect <machineId>` on another machine proves knowledge of, to link
+ *  to this one. Not single-use and does not expire — stays valid until explicitly changed/cleared.
+ *  Prefers the running daemon (so an in-progress `link connect` from elsewhere sees it immediately);
+ *  falls back to writing the disk-backed store directly when no daemon is running, same fallback
+ *  shape as `browserLinkCommand`. `--stdin` reads one line with no confirmation (for scripts/GUIs);
+ *  interactively it prompts twice (masked) and requires the two to match. */
+async function remotePasswordSetCommand(json: boolean, stdin: boolean): Promise<void> {
   const session = readAuthSession()
-  if (!session?.machineId) { console.error('\n  ✗ This computer is not signed in. Run: harness login\n'); process.exit(1) }
-  const setup = createSetupToken(session.machineId)
-  console.log('\n  Machine-link token (valid for 7 days):\n')
-  console.log(`    ${setup.token}\n`)
-  console.log('  Run on the OTHER machine:\n')
-  console.log(`    harness link import ${setup.token}\n`)
-  console.log(`  fingerprint  ${setup.fingerprint}   — verify it matches on the other machine\n`)
+  if (!session?.machineId) {
+    if (json) console.log(JSON.stringify({ ok: false, error: 'NOT_SIGNED_IN' }))
+    else console.error('\n  ✗ This computer is not signed in. Run: harness login\n')
+    process.exit(1)
+    return
+  }
+  let password: string
+  if (stdin) {
+    password = (await readStdinLine()).trim()
+    if (!password) {
+      if (json) console.log(JSON.stringify({ ok: false, error: 'EMPTY_PASSWORD' }))
+      else console.error('\n  ✗ No password read from stdin.\n')
+      process.exit(1)
+      return
+    }
+  } else {
+    const a = await promptPassword('  New remote password: ')
+    const b = await promptPassword('  Confirm remote password: ')
+    if (!a || a !== b) {
+      if (json) console.log(JSON.stringify({ ok: false, error: 'MISMATCH' }))
+      else console.error('\n  ✗ Passwords did not match (or were empty). Nothing changed.\n')
+      process.exit(1)
+      return
+    }
+    password = a
+  }
+  let result: { fingerprint: string } | null = null
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/remote-password/set`, {
+      method: 'POST',
+      headers: { 'x-adapter-local': '1', 'content-type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { fingerprint?: unknown } | null
+      if (typeof body?.fingerprint === 'string') result = { fingerprint: body.fingerprint }
+    }
+  } catch { /* fall back to the disk-backed store below */ }
+  if (!result) {
+    const store = new E2eeStore()
+    store.init()
+    result = await store.setRemotePassword(session.machineId, password)
+  }
+  if (json) { console.log(JSON.stringify({ ok: true, fingerprint: result.fingerprint })); process.exit(0) }
+  console.log('\n  ✓ Remote password set for this machine.')
+  console.log(`    fingerprint  ${result.fingerprint}   — verify it matches on the joining machine after \`harness link connect\`\n`)
+  console.log('  Anyone with this password can link a machine to this one. Keep it private.\n')
+  if (!readPid()) console.log('  Start the adapter with `harness start` if joins are being rejected.\n')
   process.exit(0)
 }
 
-/** `harness link import <token>` — claim another machine's link token, proving THIS machine's own
- *  identity to it. Needs only this computer's own SSO session and network — no running daemon
- *  required. On success this machine can relay through to that machine's data plane with the CLI (not
- *  the app) terminating E2EE — see lib/remoteRelay.ts. */
-async function linkImportCommand(token: string | undefined): Promise<void> {
-  if (!token) { console.error('Usage: harness link import <token>   (from `harness link create` on the other machine)'); process.exit(1) }
-  const session = readAuthSession()
-  if (!session) { console.error('\n  ✗ Not signed in. Run: harness login\n'); process.exit(1) }
-  const verified = verifySetupToken(token)
-  if (!verified || !verified.payload.machineId) {
-    console.error('\n  ✗ That token is invalid, expired, or missing a machine id.\n')
-    process.exit(1)
+/** `harness remote-password clear` — remove the persistent remote password. Until a new one is set,
+ *  `harness link connect` against this machine always fails with NO_REMOTE_PASSWORD. */
+async function remotePasswordClearCommand(json: boolean): Promise<void> {
+  let cleared = false
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/remote-password/clear`, {
+      method: 'POST',
+      headers: { 'x-adapter-local': '1' },
+    })
+    if (res.ok) cleared = true
+  } catch { /* fall back to the disk-backed store below */ }
+  if (!cleared) {
+    const store = new E2eeStore()
+    store.init()
+    store.clearRemotePassword()
   }
-  const targetMachineId = verified.payload.machineId
+  if (json) console.log(JSON.stringify({ ok: true }))
+  else console.log('\n  ✓ Remote password cleared. This machine can no longer be linked by password until a new one is set.\n')
+  process.exit(0)
+}
+
+/** `harness remote-password status` — whether a remote password is set, and its fingerprint. */
+async function remotePasswordStatusCommand(json: boolean): Promise<void> {
+  let status: { hasPassword: boolean; fingerprint: string | null; setAt: number | null } | null = null
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/remote-password/status`, { headers: { 'x-adapter-local': '1' } })
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { hasPassword?: unknown; fingerprint?: unknown; setAt?: unknown } | null
+      if (typeof body?.hasPassword === 'boolean') {
+        status = {
+          hasPassword: body.hasPassword,
+          fingerprint: typeof body.fingerprint === 'string' ? body.fingerprint : null,
+          setAt: typeof body.setAt === 'number' ? body.setAt : null,
+        }
+      }
+    }
+  } catch { /* fall back to the disk-backed store below */ }
+  if (!status) {
+    const store = new E2eeStore()
+    store.init()
+    status = { hasPassword: store.hasRemotePassword(), fingerprint: store.remotePasswordFingerprint(), setAt: store.remotePasswordSetAt() }
+  }
+  if (json) { console.log(JSON.stringify(status)); process.exit(0) }
+  if (!status.hasPassword) { console.log('\n  No remote password set.\n  Run: harness remote-password set\n'); process.exit(0) }
+  console.log('\n  Remote password is set.')
+  console.log(`    fingerprint  ${status.fingerprint}\n`)
+  process.exit(0)
+}
+
+/** `harness link connect <machineId>` — join another machine using ITS persistent remote password
+ *  (`harness remote-password set` on that machine), proving knowledge of the password rather than
+ *  possession of a signed token. Needs only this computer's own SSO session and network — no running
+ *  daemon required, same as the old `link import`. On success this machine can relay through to that
+ *  machine's data plane with the CLI (not the app) terminating E2EE — see lib/remoteRelay.ts. Fully
+ *  automatic on success: no approval step runs on the target machine beyond having set the password. */
+async function linkConnectCommand(machineId: string | undefined, stdin: boolean, json: boolean): Promise<void> {
+  if (!machineId) {
+    if (json) console.log(JSON.stringify({ ok: false, error: 'MISSING_MACHINE_ID' }))
+    else console.error('Usage: harness link connect <machineId>   (the remote password is set on that machine via `harness remote-password set`)')
+    process.exit(1)
+    return
+  }
+  const session = readAuthSession()
+  if (!session) {
+    if (json) console.log(JSON.stringify({ ok: false, error: 'NOT_SIGNED_IN' }))
+    else console.error('\n  ✗ Not signed in. Run: harness login\n')
+    process.exit(1)
+    return
+  }
+  let password: string
+  if (stdin) {
+    password = (await readStdinLine()).trim()
+    if (!password) {
+      if (json) console.log(JSON.stringify({ ok: false, error: 'EMPTY_PASSWORD' }))
+      else console.error('\n  ✗ No password read from stdin.\n')
+      process.exit(1)
+      return
+    }
+  } else {
+    password = await promptPassword(`  Remote password for ${machineId}: `)
+  }
   const auth = new AuthSessionManager(backendHttpBase())
   let accessToken: string
   try {
     accessToken = await auth.accessToken()
   } catch (err) {
-    console.error(`\n  ✗ Could not refresh this computer's SSO session: ${err instanceof Error ? err.message : err}\n`)
+    const message = `Could not refresh this computer's SSO session: ${err instanceof Error ? err.message : err}`
+    if (json) console.log(JSON.stringify({ ok: false, error: 'AUTH_FAILED', message }))
+    else console.error(`\n  ✗ ${message}\n`)
     process.exit(1)
     return
   }
   const store = new E2eeStore()
   store.init()
-  const result = await claimSetupToken({
-    token,
-    targetMachineId,
+  const result = await connectWithPassword({
+    targetMachineId: machineId,
+    password,
     selfIdentity: store.getIdentity(),
     accessToken,
     backendWsBase: env.BACKEND_WS_URL.replace(/\/$/, ''),
     autonomousEnv: session.autonomousEnv,
+    onProgress: json ? (stage) => console.log(JSON.stringify({ stage })) : undefined,
   })
   if (!result.ok) {
-    console.error(`\n  ✗ Link failed: ${result.error}\n`)
+    if (json) console.log(JSON.stringify({ ok: false, error: result.error }))
+    else console.error(`\n  ✗ Link failed: ${result.error}\n`)
     process.exit(1)
     return
   }
-  new MachinePeerStore().pin(targetMachineId, b64e(result.peerPub), 'harness link', Date.now())
-  console.log(`\n  ✓ Linked machine ${targetMachineId}`)
-  console.log(`    fingerprint  ${result.fingerprint}   — verify it matches \`harness link create\`'s output on the other machine\n`)
+  new MachinePeerStore().pin(machineId, b64e(result.peerPub), 'harness link', Date.now())
+  if (json) { console.log(JSON.stringify({ ok: true, fingerprint: result.fingerprint, machineId })); process.exit(0) }
+  console.log(`\n  ✓ Linked machine ${machineId}`)
+  console.log(`    fingerprint  ${result.fingerprint}   — verify it matches \`harness remote-password status\`'s output on the other machine\n`)
   process.exit(0)
 }
 
@@ -3624,7 +3797,7 @@ async function linkImportCommand(token: string | undefined): Promise<void> {
 async function linkListCommand(): Promise<void> {
   const peers = new MachinePeerStore().list()
   if (!peers.length) {
-    console.log('\n  No machines linked yet.\n  Run `harness link create` on another machine and `harness link import <token>` here.\n')
+    console.log('\n  No machines linked yet.\n  Run `harness remote-password set` on the other machine and `harness link connect <machineId>` here.\n')
     process.exit(0)
   }
   console.log('\n  Linked machines:\n')
@@ -3713,11 +3886,16 @@ switch (cmd) {
     pairingsCommand().catch(onError)
     break
   case 'link':
-    if (args[0] === 'create') linkCreateCommand().catch(onError)
-    else if (args[0] === 'import') linkImportCommand(args[1]).catch(onError)
+    if (args[0] === 'connect') linkConnectCommand(args[1], flags.includes('--stdin'), flags.includes('--json')).catch(onError)
     else if (args[0] === 'list') linkListCommand().catch(onError)
     else if (args[0] === 'unlink') linkUnlinkCommand(args[1]).catch(onError)
     else { console.error(`Unknown command: link ${args[0] ?? ''}`); usage(1) }
+    break
+  case 'remote-password':
+    if (args[0] === 'set') remotePasswordSetCommand(flags.includes('--json'), flags.includes('--stdin')).catch(onError)
+    else if (args[0] === 'clear') remotePasswordClearCommand(flags.includes('--json')).catch(onError)
+    else if (args[0] === 'status') remotePasswordStatusCommand(flags.includes('--json')).catch(onError)
+    else { console.error(`Unknown command: remote-password ${args[0] ?? ''}`); usage(1) }
     break
   case 'unpair':
     unpairCommand(args[0], flags.includes('--all') || flags.includes('-a')).catch(onError)

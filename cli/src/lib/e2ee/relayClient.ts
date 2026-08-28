@@ -1,8 +1,9 @@
 /**
  * The "client" (formerly-browser) role of the E2EE session protocol, run by THIS daemon on behalf of a
- * local app relaying through it to a REMOTE machine it has link-imported a setup token for (see
- * machinePeers.ts). Establishes a session via e2e_hello/e2e_welcome, then encrypts outgoing frames /
- * decrypts incoming ones for the lifetime of the relay connection.
+ * local app relaying through it to a REMOTE machine it has `harness link connect`-ed to via that
+ * machine's persistent remote password (see machinePeers.ts). Establishes a session via
+ * e2e_hello/e2e_welcome, then encrypts outgoing frames / decrypts incoming ones for the lifetime of
+ * the relay connection.
  *
  * This is bookkeeping only — every actual crypto primitive comes from core.ts (identical to the one
  * that used to run this same role inside the Flutter desktop app and still runs it in the web app), so
@@ -11,6 +12,7 @@
 import { WebSocket } from 'ws'
 import * as C from './core.js'
 import { deriveTerminalBinaryKey, openTerminalBinary, sealTerminalBinary, type TerminalBinaryClear } from '../terminalBinary.js'
+import { pwCpaceGenerator, pwContext, stretchPassword } from './passwordPake.js'
 
 type Frame = Record<string, unknown>
 
@@ -145,32 +147,43 @@ export class RelaySessionCrypto {
   }
 }
 
-export type ClaimResult =
+export type PwConnectResult =
   | { ok: true; peerPub: Uint8Array; fingerprint: string }
   | { ok: false; error: string }
 
-/** `harness link import <token>`: verify the token offline, open a short-lived authenticated
- *  `/api/web-ws` connection to the target machine (same endpoint RemoteRelayPool dials for the real
- *  relay), and claim it — proving possession of THIS machine's own long-term identity, bound to the
- *  token. On success the caller pins the returned peerPub via MachinePeerStore; no session/relay state
- *  is established here, just the one-time trust pin. */
-export async function claimSetupToken(opts: {
-  token: string
+export type PwConnectProgress = 'connecting' | 'deriving_key' | 'exchanging' | 'verifying'
+
+/** `harness link connect <machineId>`: open a short-lived authenticated `/api/web-ws` connection to
+ *  the target machine (same endpoint RemoteRelayPool dials for the real relay), and run the
+ *  password-PAKE against it as the joiner ('b') role — proving knowledge of the target machine's
+ *  persistent `harness remote-password set` secret, entirely automatically (no approval step on the
+ *  target beyond having set the password). Mirrors manager.ts's onPwPairIntent/onPwPake state machine
+ *  from the other side. On success the caller pins the returned peerPub via MachinePeerStore; no
+ *  session/relay state is established here, just the one-time trust pin — same contract the old
+ *  claimSetupToken() had. */
+export async function connectWithPassword(opts: {
   targetMachineId: string
+  password: string
   selfIdentity: C.Identity
   accessToken: string
   backendWsBase: string
   autonomousEnv: string
+  onProgress?: (stage: PwConnectProgress) => void
   timeoutMs?: number
-}): Promise<ClaimResult> {
-  const verified = C.verifySetupToken(opts.token, Date.now(), opts.targetMachineId)
-  if (!verified) return { ok: false, error: 'BAD_TOKEN' }
+}): Promise<PwConnectResult> {
   const url = `${opts.backendWsBase}/api/web-ws?autonomousEnv=${encodeURIComponent(opts.autonomousEnv)}`
   const ws = new WebSocket(url, [opts.accessToken])
+  const sid = C.newPairId()
+  const sidB64 = C.b64e(sid)
   const requestId = C.b64e(C.newPairId())
-  return new Promise<ClaimResult>((resolve) => {
+  const ci = pwContext(opts.targetMachineId)
+  return new Promise<PwConnectResult>((resolve) => {
     let settled = false
-    const finish = (result: ClaimResult): void => {
+    let stretched: Uint8Array | null = null
+    let isk: Uint8Array | null = null
+    let th: Uint8Array | null = null
+    let peerPub: Uint8Array | null = null
+    const finish = (result: PwConnectResult): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
@@ -178,6 +191,7 @@ export async function claimSetupToken(opts: {
       resolve(result)
     }
     const timeout = setTimeout(() => finish({ ok: false, error: 'TIMEOUT' }), opts.timeoutMs ?? 15_000)
+    opts.onProgress?.('connecting')
     let selected = false
     ws.once('open', () => {
       try { ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId: opts.targetMachineId } })) }
@@ -191,32 +205,68 @@ export async function claimSetupToken(opts: {
       if (!selected) {
         if (frame.type === 'connected' && payload.machineId === opts.targetMachineId) {
           selected = true
-          const sig = C.setupClaimSig(opts.selfIdentity.priv, opts.targetMachineId, opts.token, opts.selfIdentity.pub)
-          ws.send(JSON.stringify({
-            type: 'e2e_setup_claim',
-            payload: {
-              requestId,
-              token: opts.token,
-              identityPub: C.b64e(opts.selfIdentity.pub),
-              sig: C.b64e(sig),
-              label: 'harness link',
-            },
-          }))
+          void (async () => {
+            try {
+              opts.onProgress?.('deriving_key')
+              // scryptAsync completes strictly before this send — the round-1 reply can only arrive
+              // after a network round trip, so `stretched` is always set before it's read below.
+              stretched = await stretchPassword(opts.password, opts.targetMachineId)
+              opts.onProgress?.('exchanging')
+              ws.send(JSON.stringify({ type: 'e2e_pw_pair_intent', payload: { requestId, sid: sidB64 } }))
+            } catch {
+              finish({ ok: false, error: 'DERIVE_FAILED' })
+            }
+          })()
         } else if (frame.type === 'machine_select_error' && payload.machineId === opts.targetMachineId) {
           finish({ ok: false, error: typeof payload.error === 'string' ? payload.error : 'SELECT_FAILED' })
         }
         return
       }
-      if (frame.type === 'e2e_setup_claim_result' && payload.requestId === requestId) {
-        if (payload.ok === true) {
-          finish({
-            ok: true,
-            peerPub: verified.adapterPub,
-            fingerprint: typeof payload.fingerprint === 'string' ? payload.fingerprint : C.fingerprint(verified.adapterPub),
-          })
-        } else {
-          finish({ ok: false, error: typeof payload.error === 'string' ? payload.error : 'CLAIM_FAILED' })
+      if (frame.type === 'e2e_pw_pair_result' && payload.requestId === requestId) {
+        if (payload.ok !== true) finish({ ok: false, error: typeof payload.error === 'string' ? payload.error : 'PAIR_FAILED' })
+        return
+      }
+      if (frame.type !== 'e2e_pw_pake' || payload.sid !== sidB64) return
+      const round = Number(payload.round)
+      try {
+        if (round === 1) {
+          if (payload.error) { finish({ ok: false, error: String(payload.error) }); return }
+          if (!stretched) return // shouldn't happen — see the note above
+          const g = pwCpaceGenerator(stretched, sid, ci)
+          const { y, Y } = C.cpaceStart(g)
+          const receivedYa = C.b64d(String(payload.ya))
+          const K = C.cpaceShared(receivedYa, y)
+          isk = C.cpaceISK(sid, K, receivedYa, Y)
+          th = C.transcriptHash(sid, ci, receivedYa, Y)
+          const kc = C.kcKeys(isk, ci)
+          opts.onProgress?.('verifying')
+          ws.send(JSON.stringify({ type: 'e2e_pw_pake', payload: { sid: sidB64, round: 2, yb: C.b64e(Y), mac: C.b64e(C.macTag(kc.web, th)) } }))
+          return
         }
+        if (round === 3) {
+          if (payload.error) { finish({ ok: false, error: String(payload.error) }); return }
+          if (!isk || !th) { finish({ ok: false, error: 'PROTOCOL_ERROR' }); return }
+          const kc = C.kcKeys(isk, ci)
+          if (!C.macVerify(kc.adapter, th, C.b64d(String(payload.mac)))) { finish({ ok: false, error: 'WRONG_PASSWORD' }); return }
+          const opened = C.aeadOpen(C.pairKey(isk, ci), 3, C.utf8('e2e-id'), C.b64d(String(payload.enc)))
+          if (!opened) { finish({ ok: false, error: 'WRONG_PASSWORD' }); return }
+          const targetId = JSON.parse(new TextDecoder().decode(opened)) as { id: string; sig: string }
+          const targetPub = C.b64d(targetId.id)
+          if (!C.pairBindVerify(targetPub, th, C.b64d(targetId.sig))) { finish({ ok: false, error: 'WRONG_PASSWORD' }); return }
+          peerPub = targetPub
+          const sealed = C.aeadSeal(C.pairKey(isk, ci), 4, C.utf8('e2e-id'), C.utf8(JSON.stringify({ id: C.b64e(opts.selfIdentity.pub), sig: C.b64e(C.pairBindSig(opts.selfIdentity.priv, th)) })))
+          ws.send(JSON.stringify({ type: 'e2e_pw_pake', payload: { sid: sidB64, round: 4, enc: C.b64e(sealed) } }))
+          return
+        }
+        if (round === 5) {
+          if (payload.ok === true && peerPub) {
+            finish({ ok: true, peerPub, fingerprint: typeof payload.fingerprint === 'string' ? payload.fingerprint : C.fingerprint(peerPub) })
+          } else {
+            finish({ ok: false, error: typeof payload.error === 'string' ? payload.error : 'PAIR_FAILED' })
+          }
+        }
+      } catch {
+        finish({ ok: false, error: 'PROTOCOL_ERROR' })
       }
     })
     ws.once('close', (code) => finish({ ok: false, error: `CONNECTION_CLOSED:${code}` }))
