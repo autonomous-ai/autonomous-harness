@@ -2711,15 +2711,23 @@ async function runForeground(session: AuthSession): Promise<void> {
 
     // Close the race between the last scheduled discovery snapshot and the error snapshot below.
     // Claude's native launcher can still identify as its versioned install target during the former,
-    // then become a matchable `claude` process while painting its first-run trust prompt. A fresh,
-    // authoritative process lookup makes that a valid sessionless process-agent instead of reporting
-    // ENGINE_DID_NOT_START. It never sends input to the pane: folder trust remains the user's choice.
+    // then become a matchable `claude` process while painting its first-run trust prompt. This lookup
+    // owns the exact pane just created, so adopt that verified observation directly instead of asking
+    // the best-effort all-terminal inventory to see it one more time. It never sends input to the pane:
+    // folder trust remains the user's choice.
     let engineProcess = paneState && !paneState.dead
       ? await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
       : null
     if (engineProcess) {
-      await agentReconciler.triggerHint(spawned.runtime, engine)
-      const session = registry.byRuntimeEngine(spawned.runtime, engine)
+      const session = await agentReconciler.adoptVerified({
+        engine,
+        cwd,
+        processIdentity: engineProcess,
+        args: command.join(' '),
+        resumeSessionId: null,
+        runtimes: [spawned.runtime],
+        primaryRuntimeKey: terminalRouteKey(spawned.runtime),
+      })
       if (session) {
         await clearPaneRemainOnExit(spawned.runtime.paneId)
         return { ok: true, session }
@@ -2751,6 +2759,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     // reconcile picks up seconds later, and killing it would destroy a working agent.
     if (paneState?.dead) await tmuxBackend.kill(spawned.runtime)
     else await clearPaneRemainOnExit(spawned.runtime.paneId)
+    if (engineProcess) {
+      const detail = `the verified ${engine} process is running, but the local registry rejected its process-agent · ${diagnosis}`
+      console.warn(`[agent] create ${engine} failed · ${detail}`)
+      return { ok: false, error: 'REGISTRATION_FAILED', detail }
+    }
     // A detached daemon and an already-running tmux server do not necessarily have the user's terminal
     // PATH. The launch above therefore used the interactive shell; inspect that same context before
     // claiming a binary is absent. Checking process.env here was a false "not installed" report on

@@ -121,3 +121,60 @@ describe('composite terminal reconciliation', () => {
     expect(onDormant).not.toHaveBeenCalled()
   })
 })
+
+describe('verified process adoption', () => {
+  it('opens a sessionless agent through the normal discovery callback without another inventory scan', async () => {
+    let current: RegisteredSession[] = []
+    const candidate = observed([tmux])
+    const onDiscovered = vi.fn(async () => { current = [session([tmux])] })
+    const probeSnapshot = vi.fn(async () => {
+      throw new Error('verified adoption must not run the general probe')
+    })
+    let transactionCalls = 0
+    const transaction = async <T>(apply: () => T | Promise<T>): Promise<T> => {
+      transactionCalls += 1
+      return await apply()
+    }
+    const reconciler = new TerminalAgentReconciler({
+      current: () => current, backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered, onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(),
+      probe: probeSnapshot, transaction,
+    })
+
+    const adopted = await reconciler.adoptVerified(candidate)
+
+    expect(adopted).toBe(current[0])
+    expect(adopted?.sessionId).toBe('')
+    expect(adopted?.processIdentity).toEqual(identity)
+    expect(onDiscovered).toHaveBeenCalledWith(candidate)
+    expect(transactionCalls).toBe(1)
+    expect(probeSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('refreshes an already adopted process instead of opening a duplicate agent', async () => {
+    const existing = session([tmux])
+    const onDiscovered = vi.fn()
+    const onObserved = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [existing], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered, onObserved, onDormant: vi.fn(), onRemoved: vi.fn(),
+    })
+
+    const adopted = await reconciler.adoptVerified(observed([tmux]))
+
+    expect(adopted).toBe(existing)
+    expect(onObserved).toHaveBeenCalledWith(observed([tmux]), existing)
+    expect(onDiscovered).not.toHaveBeenCalled()
+  })
+
+  it('reports no adopted agent when the registry callback rejects the process', async () => {
+    const onDiscovered = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered, onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(),
+    })
+
+    expect(await reconciler.adoptVerified(observed([tmux]))).toBeUndefined()
+    expect(onDiscovered).toHaveBeenCalledOnce()
+  })
+})

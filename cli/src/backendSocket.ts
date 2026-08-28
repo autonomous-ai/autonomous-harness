@@ -292,7 +292,7 @@ export class BackendSocket {
    *  process and forgets the session. Keeps recap + agent name. */
   onDeleteAgent: ((sessionId: string) => void) | null = null
   /** Called on `agent_create` — cli.ts spawns a fresh tmux session running the requested engine in the
-   *  requested folder and returns the registered session once discovery has picked it up. */
+   *  requested folder and returns its process-agent. Session metadata may bind later through hooks. */
   onCreateAgent: ((input: { engine: AgentEngine; cwd: string; bypassPermission: boolean }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */

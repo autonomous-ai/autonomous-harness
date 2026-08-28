@@ -59,6 +59,25 @@ export class TerminalAgentReconciler {
     return this.trigger()
   }
 
+  /**
+   * Adopt an engine process that a backend-specific, pane-scoped probe already verified.
+   *
+   * New-agent creation has stronger evidence than the periodic inventory scan: it owns the exact
+   * runtime it just created and resolves the requested engine beneath that runtime. Passing that
+   * observation through the same callbacks used by reconciliation keeps process-agent creation and
+   * later session binding on one path, while avoiding a second best-effort inventory snapshot.
+   */
+  async adoptVerified(observed: DiscoveredTerminalAgent): Promise<RegisteredSession | undefined> {
+    const apply = async (): Promise<RegisteredSession | undefined> => {
+      const key = processIdentityKey(observed.engine, observed.processIdentity)
+      const current = this.deps.current().find((candidate) => currentProcessKey(candidate) === key)
+      if (current) await this.deps.onObserved(observed, current)
+      else await this.deps.onDiscovered(observed)
+      return this.deps.current().find((candidate) => currentProcessKey(candidate) === key)
+    }
+    return this.deps.transaction ? this.deps.transaction(apply) : apply()
+  }
+
   /** Hide an explicitly deleted process until an authoritative scan proves that process exited. */
   suppress(session: Pick<RegisteredSession, 'engine' | 'processIdentity'>): void {
     if (session.processIdentity) this.suppressed.add(processIdentityKey(session.engine, session.processIdentity))
