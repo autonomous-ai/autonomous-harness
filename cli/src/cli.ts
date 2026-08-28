@@ -47,7 +47,7 @@ import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { basename } from 'node:path'
-import { captureTmuxPane, clearPaneRemainOnExit, tmuxPaneProcessTree, tmuxPaneState } from './lib/tmux.js'
+import { captureTmuxPane, clearPaneRemainOnExit, tmuxPaneProcessTree, tmuxPaneState, type TmuxPaneState } from './lib/tmux.js'
 import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
@@ -2676,7 +2676,18 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
     }
     const createdAt = Date.now()
-    for (const delayMs of [150, 400, 800]) {
+    // The launch runs the user's INTERACTIVE login shell before `exec`ing the engine, and that shell
+    // is the slow half: ~0.9s on a plain zsh, before the engine has even begun. Engine startup then
+    // lands past 1.3s — measured on one machine, grok at 1.38s, codex at 1.41s, claude at 1.52s. The
+    // ladder here used to total 1.35s, so all three lost the race by tens of milliseconds and a
+    // perfectly good agent was reported as ENGINE_DID_NOT_START, while its pane kept running and the
+    // periodic reconcile registered it seconds later. Dotfile-heavy setups (nvm, oh-my-zsh, asdf)
+    // are slower still. The app waits 20s for this reply, so a budget several times the measured
+    // worst case is free — and a pane that DIES is detected below, not waited out.
+    const DISCOVERY_BUDGET_MS = 8_000
+    let paneState: TmuxPaneState | null = null
+    let delayMs = 150
+    while (true) {
       await new Promise((resolve) => setTimeout(resolve, delayMs))
       await agentReconciler.triggerHint(spawned.runtime, engine)
       const session = registry.byRuntimeEngine(spawned.runtime, engine)
@@ -2686,11 +2697,17 @@ async function runForeground(session: AuthSession): Promise<void> {
         await clearPaneRemainOnExit(spawned.runtime.paneId)
         return { ok: true, session }
       }
+      // Read the pane BEFORE the availability probe further below — that probe spends up to 5s in
+      // the user's login shell, long enough for a dying engine's pane to change under us.
+      paneState = await tmuxPaneState(spawned.runtime.paneId)
+      // An engine that has already exited will never be discovered. Report it now rather than
+      // holding the dialog for the rest of the budget.
+      if (!paneState || paneState.dead) break
+      if (Date.now() - createdAt >= DISCOVERY_BUDGET_MS) break
+      // Cheap fast probes first for an engine that starts instantly, then a steady poll rather than
+      // hammering `ps` for eight seconds.
+      delayMs = Math.min(delayMs * 2, 750)
     }
-
-    // Read the pane BEFORE the availability probe below — that probe spends up to 5s in the user's
-    // login shell, which is long enough for a dying engine's pane to change under us.
-    const paneState = await tmuxPaneState(spawned.runtime.paneId)
     const diagnosis = describeAgentCreateFailure({
       state: paneState,
       output: summarizePaneOutput(
