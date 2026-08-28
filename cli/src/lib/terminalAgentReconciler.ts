@@ -32,6 +32,43 @@ function currentProcessKey(session: RegisteredSession): string | null {
   return session.processIdentity ? processIdentityKey(session.engine, session.processIdentity) : null
 }
 
+function sharesPlacement(
+  current: Pick<RegisteredSession, 'runtimes'>,
+  observed: Pick<DiscoveredTerminalAgent, 'runtimes'>,
+): boolean {
+  const placements = new Set(current.runtimes.map(terminalPlacementKey))
+  return observed.runtimes.some((runtime) => placements.has(terminalPlacementKey(runtime)))
+}
+
+/**
+ * A process-backed agent exists before an engine session does. During that interval the terminal route
+ * is its stable identity: launchers are allowed to exec/fork into the real native binary while painting
+ * a first-run prompt (Claude folder trust is the common case). Once a session binds, process identity is
+ * authoritative again so a different process in the same pane cannot inherit an existing transcript.
+ */
+function unboundRouteOwner(
+  current: readonly RegisteredSession[],
+  observed: DiscoveredTerminalAgent,
+): RegisteredSession | undefined {
+  const matches = current.filter((candidate) => (
+    !candidate.sessionId
+    && candidate.engine === observed.engine
+    && sharesPlacement(candidate, observed)
+  ))
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+function unboundRouteObservation(
+  current: RegisteredSession,
+  observed: readonly DiscoveredTerminalAgent[],
+): DiscoveredTerminalAgent | undefined {
+  if (current.sessionId) return undefined
+  const matches = observed.filter((candidate) => (
+    candidate.engine === current.engine && sharesPlacement(current, candidate)
+  ))
+  return matches.length === 1 ? matches[0] : undefined
+}
+
 /** Serialized, failure-isolated reconciliation across every enabled backend instance. */
 export class TerminalAgentReconciler {
   private readonly misses = new Map<string, number>()
@@ -70,10 +107,14 @@ export class TerminalAgentReconciler {
   async adoptVerified(observed: DiscoveredTerminalAgent): Promise<RegisteredSession | undefined> {
     const apply = async (): Promise<RegisteredSession | undefined> => {
       const key = processIdentityKey(observed.engine, observed.processIdentity)
-      const current = this.deps.current().find((candidate) => currentProcessKey(candidate) === key)
+      const before = this.deps.current()
+      const current = before.find((candidate) => currentProcessKey(candidate) === key)
+        ?? unboundRouteOwner(before, observed)
       if (current) await this.deps.onObserved(observed, current)
       else await this.deps.onDiscovered(observed)
-      return this.deps.current().find((candidate) => currentProcessKey(candidate) === key)
+      const after = this.deps.current()
+      return after.find((candidate) => currentProcessKey(candidate) === key)
+        ?? unboundRouteOwner(after, observed)
     }
     return this.deps.transaction ? this.deps.transaction(apply) : apply()
   }
@@ -130,8 +171,9 @@ export class TerminalAgentReconciler {
       // conflict handling never depends on backend probe completion order.
       for (const current of before) {
         const processKey = currentProcessKey(current)
-        const observed = processKey ? observedByProcess.get(processKey) : undefined
-        if (observed) matchedProcesses.add(processKey!)
+        const observed = (processKey ? observedByProcess.get(processKey) : undefined)
+          ?? unboundRouteObservation(current, probe.agents)
+        if (observed) matchedProcesses.add(processIdentityKey(observed.engine, observed.processIdentity))
 
         let nextRuntimes = current.runtimes
         for (const runtime of current.runtimes) {
@@ -155,7 +197,11 @@ export class TerminalAgentReconciler {
           if (backend && current.processIdentity) {
             const validation = await backend.validate(runtime, {
               engine: current.engine,
-              processIdentity: current.processIdentity,
+              // Before an engine session exists, the pane is the agent. Claude and other native
+              // launchers may replace their process while a first-run prompt is visible; requiring the
+              // earlier PID here deletes a perfectly live sessionless tile. A bound session keeps the
+              // strict PID/start-marker check so another process cannot inherit its transcript.
+              processIdentity: current.sessionId ? current.processIdentity : undefined,
             }).catch((error: unknown) => ({
               state: 'unknown' as const,
               reason: error instanceof Error ? error.message : 'terminal validation failed',

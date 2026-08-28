@@ -787,9 +787,16 @@ class Registry {
     const processAgent = processAgentId ? this.agents.get(processAgentId) : undefined
     const routeAgent = runtimes
       .map((runtime) => this.byRuntimeEngine(runtime, engine))
-      .find((agent) => !agent?.processIdentity || (
-        agent.processIdentity.pid === processIdentity.pid
-        && agent.processIdentity.startMarker === processIdentity.startMarker
+      .find((agent) => agent && (
+        // Before its first engine session, a process-agent is owned by its terminal route. Native
+        // launchers can replace PID/image while showing setup or folder-trust UI; update that agent in
+        // place instead of deleting/recreating its tile. Once bound, process identity remains strict.
+        !agent.sessionId
+        || !agent.processIdentity
+        || (
+          agent.processIdentity.pid === processIdentity.pid
+          && agent.processIdentity.startMarker === processIdentity.startMarker
+        )
       ))
     const existing = processAgent ?? routeAgent
     if (existing) {

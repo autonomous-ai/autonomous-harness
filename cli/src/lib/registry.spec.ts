@@ -765,6 +765,48 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.resolve('s1')?.agentId).toBe('agent-1')
   })
 
+  it('keeps the agent id when an unbound launcher becomes a new process in the same pane', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'agent-1', engine: 'claude', tmuxPane: '%1', cwd: '/tmp/new-folder',
+      processIdentity: processIdentity(101),
+    })
+
+    const replaced = registry.openProcessAgent({
+      engine: 'claude', tmuxPane: '%1', cwd: '/tmp/new-folder', processIdentity: processIdentity(202),
+    })
+
+    expect(replaced?.entry.agentId).toBe('agent-1')
+    expect(replaced?.entry.sessionId).toBe('')
+    expect(replaced?.entry.processIdentity).toEqual(processIdentity(202))
+    expect(replaced?.isNew).toBe(false)
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('does not transfer a bound session to a replacement process in the same pane', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'bound-agent', engine: 'claude', tmuxPane: '%1', cwd: '/tmp/demo',
+      processIdentity: processIdentity(101),
+    })
+    registerProcess(registry, {
+      launcherId: 'bound-agent', sessionId: 's1', transcriptPath: transcript('s1'),
+      tmuxPane: '%1', cwd: '/tmp/demo',
+    })
+
+    const replacement = registry.openProcessAgent({
+      agentId: 'replacement-agent', engine: 'claude', tmuxPane: '%1', cwd: '/tmp/demo',
+      processIdentity: processIdentity(202),
+    })
+
+    expect(replacement?.entry.agentId).toBe('replacement-agent')
+    expect(replacement?.entry.sessionId).toBe('')
+    expect(replacement?.evicted).toBe('s1')
+    expect(registry.resolve('s1')).toBeUndefined()
+  })
+
   it('re-observing the same runtime keeps the session it had already bound', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

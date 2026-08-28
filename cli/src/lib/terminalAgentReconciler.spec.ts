@@ -211,6 +211,51 @@ describe('verified process adoption', () => {
     expect(onDiscovered).not.toHaveBeenCalled()
   })
 
+  it('keeps a sessionless agent when the engine replaces its process inside the same pane', async () => {
+    const existing = session([tmux])
+    const replacement = {
+      ...observed([tmux]),
+      processIdentity: { pid: 84, executable: 'claude', startMarker: 'Sat Aug 15 10:00:02 2026' },
+    }
+    let current = existing
+    const onObserved = vi.fn(async (candidate: DiscoveredTerminalAgent) => {
+      current = { ...current, processIdentity: candidate.processIdentity }
+    })
+    const onDiscovered = vi.fn()
+    const onRemoved = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered, onObserved, onDormant: vi.fn(), onRemoved,
+      probe: async () => probe(
+        [{ instanceId: 'tmux:default', result: { state: 'available', roots: [{ runtime: tmux, rootPid: 1, cwd: '/work' }] } }],
+        [replacement],
+      ),
+    })
+
+    await reconciler.trigger()
+
+    expect(onObserved).toHaveBeenCalledWith(replacement, existing)
+    expect(current.agentId).toBe(existing.agentId)
+    expect(current.processIdentity).toEqual(replacement.processIdentity)
+    expect(onDiscovered).not.toHaveBeenCalled()
+    expect(onRemoved).not.toHaveBeenCalled()
+  })
+
+  it('validates an unbound route by its live engine rather than its provisional process id', async () => {
+    const current = session([tmux])
+    const validate = vi.fn(async () => ({ state: 'alive' as const }))
+    const backend = { instanceId: 'tmux:default', validate } as unknown as TerminalBackend
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [backend], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(),
+      probe: async () => probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }]),
+    })
+
+    await reconciler.trigger()
+
+    expect(validate).toHaveBeenCalledWith(tmux, { engine: 'claude', processIdentity: undefined })
+  })
+
   it('reports no adopted agent when the registry callback rejects the process', async () => {
     const onDiscovered = vi.fn()
     const reconciler = new TerminalAgentReconciler({
