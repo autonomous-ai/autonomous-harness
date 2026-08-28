@@ -71,6 +71,34 @@ describe('tmux snapshot row normalization', () => {
     expect(snapshot).toContain('\u001b[2;5H\u001b[?7h\u001b[?25h')
   })
 
+  it('says which screen it captured, so the receiver can scroll it', () => {
+    // A pane running a full-screen TUI is on the ALTERNATE screen, and that one fact closes both ways
+    // of scrolling when it goes unsaid: the alternate screen has no scrollback to move through (tmux
+    // reports history_size=0), and the emulator only converts the wheel into escapes for the remote
+    // application while it believes it is on that buffer. `ESC c` resets to the normal one, so a
+    // keyframe that stayed silent actively asserted the wrong screen.
+    const meta = {
+      sessionId: '$1', windowId: '@1', windowPanes: 1,
+      windowWidth: 80, windowHeight: 2, paneWidth: 80, paneHeight: 2,
+      cursorX: 0, cursorY: 0, cursorVisible: true,
+      mouseStandard: false, mouseButton: false, mouseAll: false,
+      mouseUtf8: false, mouseSgr: false,
+    }
+    const onAlt = Buffer.from(synthesizeTmuxSnapshot(
+      Buffer.from('row\n'), { ...meta, alternateOn: true },
+    )).toString()
+    expect(onAlt).toContain('\u001b[?1049h')
+    expect(onAlt).not.toContain('\u001b[?1049l')
+
+    // And said in BOTH directions: a pane that has just come out of a TUI must not be left in it, and
+    // whether RIS alone leaves the alternate buffer is emulator-dependent.
+    const onNormal = Buffer.from(synthesizeTmuxSnapshot(
+      Buffer.from('row\n'), { ...meta, alternateOn: false },
+    )).toString()
+    expect(onNormal).toContain('\u001b[?1049l')
+    expect(onNormal).not.toContain('\u001b[?1049h')
+  })
+
   it('preserves a tmux-hidden hardware cursor while restoring its position', () => {
     const snapshot = Buffer.from(synthesizeTmuxSnapshot(
       Buffer.from('painted input\n'),

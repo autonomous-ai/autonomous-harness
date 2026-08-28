@@ -214,8 +214,21 @@ export function synthesizeTmuxSnapshot(
 ): Uint8Array {
   const cursorRow = Math.max(1, Math.min(meta.paneHeight, meta.cursorY + 1))
   const cursorCol = Math.max(1, Math.min(meta.paneWidth, meta.cursorX + 1))
+  // Say WHICH SCREEN this is, right after the reset that would otherwise decide it for us.
+  //
+  // `ESC c` resets to the normal buffer, so a keyframe of a pane running a full-screen TUI used to
+  // arrive describing a normal screen. The receiver believed it, and that one missing fact closed both
+  // ways of scrolling at once: the alternate screen has no scrollback to move through (tmux reports
+  // history_size=0 for it), and the emulator's wheel-to-escape handler only runs while it believes it
+  // is on the alternate buffer — so the wheel reached neither a local scrollback nor the remote
+  // application. Scrolling worked in tmux and did nothing in the window, with no error either side.
+  //
+  // Sent explicitly in both directions rather than leaning on `ESC c` for the normal case: whether RIS
+  // leaves the alternate buffer is emulator-dependent, and a pane that has just come OUT of a TUI must
+  // not be left in it.
+  const screen = meta.alternateOn ? '\u001b[?1049h' : '\u001b[?1049l'
   const prefix = Buffer.from(
-    '\u001bc\u001b[?25l\u001b[?7l\u001b[H\u001b[2J',
+    `\u001bc${screen}\u001b[?25l\u001b[?7l\u001b[H\u001b[2J`,
     'utf8',
   )
   const normalizedHistory = normalizeTmuxHistoryLines(history)
