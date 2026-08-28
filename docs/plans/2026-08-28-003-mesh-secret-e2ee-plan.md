@@ -56,6 +56,14 @@ Verified in code (no backend change needed for any of this):
   only blocks *new* machines from joining with the old secret; it does not
   revoke already-pinned peers. Revoking one peer is `harness mesh unlink
   <machineId>`.
+- **Mesh-secret setup is required right after authentication succeeds**, the
+  first time a machine has no local mesh secret yet — not an optional,
+  deferred step the user might forget. `harness login` must not finish
+  reporting success while this machine holds no mesh secret. This does not
+  retroactively affect already-linked pairs (see the note above: an
+  existing pin from the old `link` flow keeps working with no mesh secret
+  at all) — it only guarantees every machine finishing `login` fresh is
+  mesh-ready without a separate manual step.
 
 ## Dependency graph
 
@@ -213,7 +221,9 @@ is gone.
 that currently provides the only way to link machines).
 
 **Scope in:** new `mesh` command group in `cli.ts`; deletion of the `link`
-command group and all setup-token code it depended on.
+command group and all setup-token code it depended on; enforcing mesh-secret
+setup as part of `loginCommand` so no machine finishes `harness login` with
+no mesh secret.
 
 **Scope out:** none — this phase should leave no dangling references to the
 old flow.
@@ -238,6 +248,12 @@ old flow.
   `validateSetupToken` (confirm nothing else calls them first).
 - `cli/src/lib/e2ee/relayClient.ts` — remove `claimSetupToken`.
 - `cli/src/lib/e2ee/manager.ts` — remove `onSetupClaim`.
+- `cli/src/cli.ts` `loginCommand` (line 351-454) — enforce mesh-secret setup
+  at the two points a login can report success:
+  - Fresh login: after `resolveComputerMachine()` succeeds (line 444) and
+    before the `success` result is emitted (line 449-450).
+  - Already-signed-in re-run (line 354-358, the early return when
+    `readAuthSession() && !force`): same check before returning.
 
 **Steps:**
 1. `rg` across `cli/src` for every removed function/type name to make sure
@@ -247,12 +263,38 @@ old flow.
 3. Delete the old `link` command group and the setup-token functions listed
    above.
 4. Update any CLI help text / `--help` output that still mentions `link`.
+5. Add a `requireMeshSecret()` helper (`cli.ts` or `e2ee/meshStore.ts`)
+   called from both success points in `loginCommand`:
+   - If `MeshSecretStore.get()` already has a secret, no-op.
+   - Else, if interactive (`!json && process.stdin.isTTY`): prompt "Do you
+     already have a mesh secret from another machine? (y/N)" — `y` prompts
+     to paste the secret and validates/saves it via `MeshSecretStore.set`;
+     `N`/default generates a new one via `newMeshSecret()`, saves it, and
+     prints it once with the same "store this like a password" warning as
+     `harness mesh secret generate`.
+   - Else (non-interactive: `--json`, no TTY, e.g. scripted machine
+     provisioning): do **not** silently skip. Require one of two new
+     `login` flags, `--mesh-secret <secret>` (import) or
+     `--mesh-secret-generate` (generate + print in the JSON result). If
+     neither flag is present, fail the login result with
+     `{status:'error', code:'MESH_SECRET_REQUIRED'}` (JSON mode) / a clear
+     stderr message + non-zero exit (non-JSON, non-TTY) naming both flags,
+     rather than leaving the machine half-provisioned.
 
 **Verify:**
 - `npx tsc --noEmit` (or `npm run build`) — no leftover references.
 - Manual: `harness --help` shows `mesh`, not `link`.
+- Manual: fresh `harness login` on a machine with no mesh secret prompts
+  for generate/import before printing "Signed in"; a second `harness login`
+  on an already-signed-in machine that already has a secret does not
+  re-prompt. Non-interactive `harness login --json` with neither
+  `--mesh-secret` nor `--mesh-secret-generate` and no local secret returns
+  `MESH_SECRET_REQUIRED` instead of succeeding.
 
-**Exit criteria:** build is clean; `grep -rn "setupClaim\|SetupTokenPayload\|linkCreateCommand\|linkImportCommand" cli/src` returns nothing.
+**Exit criteria:** build is clean;
+`grep -rn "setupClaim\|SetupTokenPayload\|linkCreateCommand\|linkImportCommand" cli/src`
+returns nothing; no code path exists where `loginCommand` reports success
+while `MeshSecretStore.get()` is empty.
 
 ---
 
