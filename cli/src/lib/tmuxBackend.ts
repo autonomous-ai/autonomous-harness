@@ -205,17 +205,34 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     return legacyActionResult(ok, 'tmux notification')
   }
 
+  /**
+   * Stream a pane's bytes. Deliberately NOT gated on identifying the engine process in it.
+   *
+   * Streaming and injection need different thresholds, and they used to share one. This path
+   * addresses the PANE — `capture-pane -t %N` out, `send-keys -t %N` in — and a tmux pane id is
+   * monotonic and never reused within a server, so the id alone is a safe address. Injection is the
+   * one that types into whatever process owns the pane, and it keeps validating: see
+   * `TerminalBackendCoordinator.validateLease` and the lease dispatch fallbacks. The reaper
+   * (`coordinator.validate`) keeps validating too.
+   *
+   * Requiring a match here made the pane unviewable in exactly the situations where seeing it is the
+   * whole point: an engine that crashed, one stopped at a first-run prompt under a process the
+   * matcher does not cover, or a pane that has fallen back to a bare shell. The agent was listed, and
+   * clicking it produced "TERMINAL FROZEN · no <engine> process under tmux pane" instead of the
+   * screen that would have explained why. A pane that is genuinely gone still fails, one line later:
+   * `TmuxControlStream.open` reads `paneMeta` first and refuses a missing pane and a multi-pane
+   * window. Dropping the check also takes a whole-process-table `ps` scan off every terminal open.
+   *
+   * `expected` stays in the signature because `TerminalBackend` defines it and Herdr may still want
+   * it; it is intentionally unused here.
+   */
   async openStream(
     runtime: TmuxRuntimeRef,
     expected: TerminalProcessExpectation,
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
   ): Promise<TerminalReadResult<TerminalStreamHandle<TmuxRuntimeRef>>> {
-    const validation = await this.validate(runtime, expected)
-    if (validation.state !== 'alive') return {
-      state: 'failed',
-      reason: validation.state === 'gone' ? validation.reason : 'tmux runtime validation failed',
-    }
+    void expected
     return TmuxControlStream.open(runtime.paneId, size, sink)
   }
 }
