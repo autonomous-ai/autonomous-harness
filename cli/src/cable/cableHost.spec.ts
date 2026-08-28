@@ -246,6 +246,31 @@ describe('DaemonCableHost.listAgents across machines', () => {
     expect(fleet.sendTurn).toHaveBeenCalledWith('other', 'r1', 'ship it')
   })
 
+  it('reports a dial focus with the machine that owns the agent', async () => {
+    AGENTS.length = 0
+    const focused = vi.fn()
+    const host = new DaemonCableHost(
+      wiring({ focused }),
+      crossFleet({ other: [{ id: 'r1', name: 'api' }] }),
+    )
+    await settled(host)
+
+    host.focus('r1')
+
+    expect(focused).toHaveBeenCalledWith('other', 'r1')
+  })
+
+  it('does not guess a machine for an unknown dial focus', async () => {
+    AGENTS.length = 0
+    const focused = vi.fn()
+    const host = new DaemonCableHost(wiring({ focused }), crossFleet({ other: [] }))
+    await settled(host)
+
+    host.focus('missing-agent')
+
+    expect(focused).not.toHaveBeenCalled()
+  })
+
   it('keeps a local agent local even while another machine is selected', async () => {
     AGENTS.length = 0
     AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, engine: 'claude' })

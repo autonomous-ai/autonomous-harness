@@ -68,6 +68,12 @@ const FW_WRITES_PER_HOUR = 3
 /** How often the machine list is re-read. Slower than the agent list because it is an HTTP read, not a
  *  map lookup — and because a machine appearing is not something anyone is waiting on a stopwatch for. */
 const MACHINES_POLL_MS = 15_000
+/**
+ * A programmatic focus write may be followed by the dial reporting the tile it was painting just before
+ * that write. Real hardware delivered that stale report 23 ms after the machine switch completed; keep
+ * a short transaction open until the commanded tile echoes, without making the dial feel unresponsive.
+ */
+const APP_FOCUS_SETTLE_MS = 750
 
 /** What a `voice.begin` without an `sr` is assumed to be — firmware old enough not to say. */
 const DEFAULT_VOICE_RATE = 16_000
@@ -228,6 +234,17 @@ export class CableSession {
   private readonly writeLog = new Map<string, number[]>()
   /** The agent the dial is on, as last observed or commanded. See followApp() for why this exists. */
   private dialFocus = ''
+  /**
+   * App-driven machine/focus changes are one transaction. Without this queue, two quick desktop clicks
+   * can interleave their machine lists and let the older click focus last.
+   */
+  private appFocusTail: Promise<void> = Promise.resolve()
+  private appFocusGeneration = 0
+  /** While the app is rebuilding the dial's machine/list state, focus reports describe that rebuild. */
+  private drivingAppFocus = false
+  /** The dial may echo a focus command after its write promise resolves; consume that one echo. */
+  private expectedAppFocusEcho = ''
+  private expectedAppFocusEchoUntil = 0
   /** The same, for the machine wheel. Both reset together on any new port — see `tryOpen`. */
   private lastMachinesKey = ''
   /** Throttle for the machine list, which costs an HTTP read where the agent list costs a map lookup. */
@@ -420,6 +437,10 @@ export class CableSession {
     this.decoder.reset()
     this.greetedMac = null
     this.greetedFw = null
+    this.appFocusGeneration += 1
+    this.drivingAppFocus = false
+    this.expectedAppFocusEcho = ''
+    this.expectedAppFocusEchoUntil = 0
     // A new port is a new dial until proven otherwise; tell it everything.
     this.lastAgentsKey = ''
     this.lastMachinesKey = ''
@@ -442,6 +463,9 @@ export class CableSession {
     this.link = null
     this.greetedMac = null
     this.greetedFw = null
+    this.appFocusGeneration += 1
+    this.expectedAppFocusEcho = ''
+    this.expectedAppFocusEchoUntil = 0
     this.lastAgentsKey = ''
     this.lastMachinesKey = ''
     this.voice = null
@@ -575,10 +599,30 @@ export class CableSession {
       }
       case 'focus':
         if (str('agentId')) {
+          const agentId = str('agentId')!
+          const now = Date.now()
+          const expectationActive = this.expectedAppFocusEcho !== ''
+            && now <= this.expectedAppFocusEchoUntil
+          if (expectationActive) {
+            // Until the commanded tile echoes, every other focus is from the carousel/list repaint that
+            // command caused. Do not even update dialFocus: the daemon already commanded the newer truth.
+            if (agentId === this.expectedAppFocusEcho) {
+              this.expectedAppFocusEcho = ''
+              this.expectedAppFocusEchoUntil = 0
+            }
+            return
+          }
+          if (now > this.expectedAppFocusEchoUntil) {
+            this.expectedAppFocusEcho = ''
+            this.expectedAppFocusEchoUntil = 0
+          }
+          // A machine switch re-paints the carousel and may report its old tile while the new list is in
+          // flight. That is not a hand choosing an agent, so it must not drive the desktop back.
+          if (this.drivingAppFocus) return
           // Remember where the dial IS, not just that it said so: followApp() compares against this to
           // avoid echoing the dial's own move back at it.
-          this.dialFocus = str('agentId')!
-          this.host.focus(str('agentId')!)
+          this.dialFocus = agentId
+          this.host.focus(agentId)
         }
         return
       case 'scroll': {
@@ -997,13 +1041,36 @@ export class CableSession {
    */
   async followApp(machineId: string, agentId: string): Promise<void> {
     if (!this.link?.isOpen || this.greetedMac === null) return
-    if (machineId && machineId !== this.host.selectedMachine()) {
-      this.host.log(`cable: following the app to machine ${machineId}`)
-      await this.selectMachine(machineId)
-    }
-    if (!agentId || agentId === this.dialFocus) return
-    this.host.log(`cable: following the app to agent ${agentId}`)
-    await this.focusAgent(agentId)
+    if (!agentId) return
+
+    const generation = ++this.appFocusGeneration
+    const task = this.appFocusTail.then(async () => {
+      // A newer desktop selection made this queued one obsolete before it started.
+      if (generation !== this.appFocusGeneration) return
+      this.drivingAppFocus = true
+      try {
+        if (machineId && machineId !== this.host.selectedMachine()) {
+          this.host.log(`cable: following the app to machine ${machineId}`)
+          await this.selectMachine(machineId)
+        }
+        // A newer selection can arrive while the remote machine RPC/list push is in flight. Never let
+        // this older transaction focus after it finishes.
+        if (generation !== this.appFocusGeneration || agentId === this.dialFocus) return
+        this.host.log(`cable: following the app to agent ${agentId}`)
+        this.expectedAppFocusEcho = agentId
+        this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
+        await this.focusAgent(agentId)
+      } finally {
+        this.drivingAppFocus = false
+      }
+    })
+    // Keep the queue usable after one transport failure. The local websocket intentionally
+    // fire-and-forgets followApp, so the session log is the only place an unexpected rejection would
+    // otherwise be visible; consume it here rather than creating an unhandled rejection.
+    this.appFocusTail = task.catch((err) => {
+      this.host.log(`cable: could not follow app focus (${(err as Error).message})`)
+    })
+    await this.appFocusTail
   }
   async toast(text: string): Promise<void> {
     await this.send({ t: 'toast', text })

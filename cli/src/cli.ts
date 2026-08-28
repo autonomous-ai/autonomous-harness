@@ -3099,7 +3099,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Both of these are LOCAL-ONLY on purpose (backend.sendLocal, not backend.send): they describe a hand
     // at this desk, not a change in what the machine is doing, and the cloud web audience may be sitting
     // at another computer entirely.
-    focused: (agentId) => backend.sendLocal({ type: 'dial_focus', payload: { agentId } }),
+    focused: (machineId, agentId) => backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
     log: (line) => console.log(`[cable] ${line}`),
   }, fleet)

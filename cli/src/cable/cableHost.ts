@@ -42,8 +42,8 @@ export interface CableHostWiring {
   updateAgent?: (agentId: string, model?: string, effort?: string) => void
   /** The runtime catalog, from the same provider the web and the WiFi device read. */
   listModels?: (agentId: string) => Promise<Array<{ id: string }>>
-  /** The dial moved to another agent — the desktop window should show that one. */
-  focused?: (agentId: string) => void
+  /** The dial moved to another agent — the desktop window should show that agent on its own machine. */
+  focused?: (machineId: string, agentId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
   scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
   log: (line: string) => void
@@ -379,9 +379,15 @@ export class DaemonCableHost implements CableHost {
     // grew panes for remote machines. The hand is still at THIS desk; the pane it wants in front of it
     // may simply belong to a machine somewhere else, and the app is the side that decides what it can do
     // about an agent it does not have.
-    this.wiring.log(`cable: focus ${agentId}`)
-
-    this.wiring.focused?.(agentId)
+    const machineId = this.machineOf(agentId)
+    if (!machineId) {
+      // An agent id without its machine is not routable. Guessing the selected or local machine is how a
+      // remote dial move used to yank the desktop back to a local agent.
+      this.wiring.log(`cable: ignored focus for unknown agent ${agentId}`)
+      return
+    }
+    this.wiring.log(`cable: focus ${machineId}/${agentId}`)
+    this.wiring.focused?.(machineId, agentId)
   }
 
   scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void {

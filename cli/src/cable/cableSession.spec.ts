@@ -317,6 +317,113 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('ignores stale dial focus while the app switches to a remote machine', async () => {
+    let selected = 'mac-local'
+    let finishSelection!: () => void
+    const selectionGate = new Promise<void>((resolve) => { finishSelection = resolve })
+    const host = makeHost({
+      selectedMachine: () => selected,
+      selectMachine: vi.fn(async (machineId: string) => {
+        await selectionGate
+        selected = machineId
+        return { ok: true as const }
+      }),
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    const following = session.followApp('remote-machine', 'r1')
+    await settle()
+    port.say({ t: 'focus', agentId: 'a1' }) // old tile reported while the list is rebuilding
+    await settle()
+    expect(host.focus).not.toHaveBeenCalled()
+
+    finishSelection()
+    await following
+    expect(port.sent.filter((m) => m.t === 'focus').map((m) => m.agentId)).toContain('r1')
+
+    port.say({ t: 'focus', agentId: 'a1' }) // stale old tile, delivered just after the switch completed
+    await settle()
+    expect(host.focus).not.toHaveBeenCalled()
+
+    port.say({ t: 'focus', agentId: 'r1' }) // echo of the app-driven focus
+    await settle()
+    expect(host.focus).not.toHaveBeenCalled()
+
+    port.say({ t: 'focus', agentId: 'r2' }) // a real subsequent dial move
+    await settle()
+    expect(host.focus).toHaveBeenCalledWith('r2')
+    await session.stop()
+  })
+
+  it('does not bounce a local app selection back to the previous remote agent', async () => {
+    let selected = 'remote-machine'
+    let finishSelection!: () => void
+    const selectionGate = new Promise<void>((resolve) => { finishSelection = resolve })
+    const host = makeHost({
+      selectedMachine: () => selected,
+      selectMachine: vi.fn(async (machineId: string) => {
+        await selectionGate
+        selected = machineId
+        return { ok: true as const }
+      }),
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    const following = session.followApp('mac-local', 'a2')
+    await settle()
+    port.say({ t: 'focus', agentId: 'r1' })
+    await settle()
+    expect(host.focus).not.toHaveBeenCalled()
+
+    finishSelection()
+    await following
+    port.say({ t: 'focus', agentId: 'r1' }) // late report from the previous remote tile
+    await settle()
+    expect(host.focus).not.toHaveBeenCalled()
+
+    port.say({ t: 'focus', agentId: 'a2' }) // acknowledgement of the commanded local tile
+    await settle()
+    port.say({ t: 'focus', agentId: 'r2' }) // subsequent physical dial move still works
+    await settle()
+    expect(host.focus).toHaveBeenCalledTimes(1)
+    expect(host.focus).toHaveBeenCalledWith('r2')
+    await session.stop()
+  })
+
+  it('coalesces quick app selections so the newest one focuses last', async () => {
+    let selected = 'mac-local'
+    let finishFirstSelection!: () => void
+    const firstSelectionGate = new Promise<void>((resolve) => { finishFirstSelection = resolve })
+    let selections = 0
+    const host = makeHost({
+      selectedMachine: () => selected,
+      selectMachine: vi.fn(async (machineId: string) => {
+        selections += 1
+        if (selections === 1) await firstSelectionGate
+        selected = machineId
+        return { ok: true as const }
+      }),
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+    port.sent.length = 0
+
+    const oldSelection = session.followApp('remote-machine', 'r1')
+    await settle()
+    const newestSelection = session.followApp('mac-local', 'a2')
+    finishFirstSelection()
+    await Promise.all([oldSelection, newestSelection])
+
+    expect(port.sent.filter((m) => m.t === 'focus').map((m) => m.agentId)).toEqual(['a2'])
+    expect(selected).toBe('mac-local')
+    await session.stop()
+  })
+
   it('forwards a whole stroke, including the reports that carry no travel', async () => {
     // The ends of a stroke are the point of the message, not padding around it: a `down` with nothing in
     // it is what stops a fling still running on the far side, and an `up` with nothing in it is a finger
