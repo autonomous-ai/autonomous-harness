@@ -248,6 +248,34 @@ Either way, two more files:
 process is not the name the user typed — Muse's pane shows `muse-bin-<version>`, and matching only
 the bare name silently finds nothing.
 
+### Process identity matrix
+
+Process discovery is evidence-based and shared by tmux and Herdr. Resolve commands in the same
+interactive shell used to launch them, follow symlinks, then compare the running image by local
+`(device,inode)` identity (`/proc/<pid>/exe` on Linux, batched `lsof` on macOS). Basename and package
+entrypoint rules remain fallbacks for launchers that exec an interpreter or rewrite their process title.
+
+| Engine | Supported runtime evidence |
+|---|---|
+| Claude | installed image; `~/.local/share/claude/versions/<version>`; `@anthropic-ai/claude-code/cli.js` |
+| Codex | installed/Homebrew image; platform release name; `@openai/codex/bin/codex.js` |
+| Cursor | `cursor-agent`; versioned Node launcher; file-owned legacy `agent` alias |
+| OpenCode | `opencode`/`opencode.exe`; `opencode-ai/bin/opencode.exe` |
+| Pi | `pi`; `pi-coding-agent/dist/cli.js` |
+| Hermes | `hermes`; Python/venv `hermes-agent` or `hermes_cli` entrypoint |
+| Command Code | `cmd`/`command-code`; npm entrypoint; rewritten `⌘ <title>` process name |
+| Devin | `devin`; versioned `devin/cli/_versions/<version>/bin/devin` image |
+| Muse | launcher or installed image; exec target `muse-bin-<version>` |
+| Amp | installed image; `~/.amp/bin/amp` |
+| Kilo | `kilo`/`kilocode`/`.kilo`; native platform/baseline image; npm entrypoint |
+| Grok | installed/downloaded image; `~/.grok` layout; file-owned legacy `agent` alias |
+| AGY | native `~/.local/bin/agy`; explicitly rejects the IDE `.app` binary |
+| Copilot | installed native image; `@github/copilot` npm loader/entrypoint |
+
+Never add a bare version or generic executable name as proof. When file identities conflict, leave the
+pane ambiguous rather than registering the wrong engine. A pane-scoped hook may resolve an otherwise
+unknown Cursor/Grok `agent` alias, but it may not override conflicting file/package evidence.
+
 ## Stage C — read the transcript
 
 **This is the actual work, and the only part that is universal.** Claude Code is the default and has

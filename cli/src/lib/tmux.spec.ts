@@ -2,9 +2,11 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { ENGINES } from '../engines/types.js'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import {
   ambiguousAgentProcess,
+  engineProcessMatch,
   engineProcessMatchScore,
   parseProcessRow,
   resumeSessionId,
@@ -82,6 +84,59 @@ describe('tmux process primitives', () => {
     expect(engineProcessMatchScore({ executable: 'devin', args: 'devin' }, 'devin')).toBe(3)
     expect(engineProcessMatchScore({ executable: 'muse-bin-0.1.0-R708.1', args: 'muse-bin-0.1.0-R708.1' }, 'muse')).toBe(3)
     expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(3)
+  })
+
+  it.each([
+    ['codex', 'codex-aarch64-apple-darwin'],
+    ['codex', 'codex-x86_64-unknown-linux-musl'],
+    ['kilo', 'kilo-darwin-arm64'],
+    ['kilo', 'kilo-linux-x64-baseline'],
+    ['grok', 'grok-1.0.5-macos-aarch64'],
+    ['grok', 'grok-linux-x86_64'],
+  ] as const)('recognises the %s standalone release image %s', (engine, executable) => {
+    expect(engineProcessMatchScore({ executable, args: executable }, engine)).toBe(3)
+  })
+
+  it('uses installed executable identity ahead of misleading argv names', () => {
+    const allFiles = new Map([['codex', new Set(['codex-native'])]]) as AgentCommandOwnershipSnapshot['engineFileKeys']
+    const commands: AgentCommandOwnershipSnapshot = {
+      ...ownership(),
+      engineFileKeys: allFiles,
+      engineCandidates: new Map(),
+    }
+    const row = {
+      executable: 'renamed-release-image',
+      args: 'renamed-release-image --some-flag',
+      imagePath: '/custom/native/renamed-release-image',
+      imageFileKey: 'codex-native',
+    }
+    expect(engineProcessMatch(row, 'codex', commands)).toEqual({
+      score: 4,
+      evidence: 'file-identity',
+      imagePath: '/custom/native/renamed-release-image',
+    })
+    expect(engineProcessMatchScore(row, 'claude', commands)).toBe(0)
+  })
+
+  it.each(ENGINES)('recognises a renamed native %s image from installed file identity', (engine) => {
+    const key = `native-${engine}`
+    const commands: AgentCommandOwnershipSnapshot = {
+      ...ownership(),
+      engineFileKeys: new Map([[engine, new Set([key])]]),
+      engineCandidates: new Map(),
+    }
+    expect(engineProcessMatch({
+      executable: 'vendor-rewritten-title',
+      args: 'vendor-rewritten-title',
+      imageFileKey: key,
+    }, engine, commands)).toMatchObject({ score: 4, evidence: 'file-identity' })
+  })
+
+  it('rejects Antigravity IDE binaries even when their basename is agy', () => {
+    expect(engineProcessMatchScore({
+      executable: '/Applications/Antigravity.app/Contents/Resources/bin/agy',
+      args: '/Applications/Antigravity.app/Contents/Resources/bin/agy',
+    }, 'agy')).toBe(0)
   })
 
   it('recognises Claude native installer version targets without accepting a bare semver', () => {

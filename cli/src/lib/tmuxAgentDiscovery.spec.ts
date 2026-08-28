@@ -39,6 +39,8 @@ describe('tmux process agent snapshot discovery', () => {
     ['amp', 'amp', 'amp'],
     ['kilo', 'kilo', 'kilo'],
     ['grok', 'grok', 'grok'],
+    ['agy', 'agy', 'agy'],
+    ['copilot', 'copilot', 'copilot'],
   ]
 
   it.each(fixtures)('recognizes the plain %s CLI process', (engine, executable, args) => {
@@ -122,6 +124,8 @@ describe('tmux process agent snapshot discovery', () => {
     ['amp', 'node', '/opt/.amp/bin/amp'],
     ['kilo', 'node', '/opt/lib/node_modules/@kilocode/cli/bin/kilo'],
     ['grok', 'node', '/opt/.grok/bin/grok'],
+    ['agy', 'agy', '/home/demo/.local/bin/agy'],
+    ['copilot', 'node', '/opt/lib/node_modules/@github/copilot/npm-loader.js'],
   ]
 
   it.each(wrappers)('recognizes the installed/wrapper form for %s', (engine, executable, args) => {

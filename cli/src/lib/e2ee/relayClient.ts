@@ -149,7 +149,7 @@ export class RelaySessionCrypto {
 
 export type PwConnectResult =
   | { ok: true; peerPub: Uint8Array; fingerprint: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; retryAt?: number }
 
 export type PwConnectProgress = 'connecting' | 'deriving_key' | 'exchanging' | 'verifying'
 
@@ -223,7 +223,10 @@ export async function connectWithPassword(opts: {
         return
       }
       if (frame.type === 'e2e_pw_pair_result' && payload.requestId === requestId) {
-        if (payload.ok !== true) finish({ ok: false, error: typeof payload.error === 'string' ? payload.error : 'PAIR_FAILED' })
+        if (payload.ok !== true) {
+          const retryAt = typeof payload.retryAt === 'number' ? payload.retryAt : undefined
+          finish({ ok: false, error: typeof payload.error === 'string' ? payload.error : 'PAIR_FAILED', retryAt })
+        }
         return
       }
       if (frame.type !== 'e2e_pw_pake' || payload.sid !== sidB64) return

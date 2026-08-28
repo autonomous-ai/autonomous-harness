@@ -5,9 +5,10 @@
  * colliding `agent` alias is never assigned from its basename alone.
  */
 
-import { accessSync, constants, realpathSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { accessSync, constants, readlinkSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, isAbsolute, join, normalize, sep } from 'node:path'
+import { basename, delimiter, isAbsolute, join, normalize, sep } from 'node:path'
 import { env } from '../config/env.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
 
@@ -49,6 +50,9 @@ export type AgentAliasOwner = 'cursor' | 'grok' | 'unknown' | 'conflict'
  * order, symlink depth, package-manager prefix, and the name retained in `ps`.
  */
 export interface AgentCommandOwnershipSnapshot {
+  /** Installed command/override identities for every engine, not only the colliding `agent` alias. */
+  engineFileKeys?: ReadonlyMap<AgentEngine, ReadonlySet<string>>
+  engineCandidates?: ReadonlyMap<AgentEngine, readonly ExecutableFileIdentity[]>
   cursorFileKeys: ReadonlySet<string>
   grokFileKeys: ReadonlySet<string>
   conflictingFileKeys: ReadonlySet<string>
@@ -57,8 +61,65 @@ export interface AgentCommandOwnershipSnapshot {
   grokCandidates: readonly ExecutableFileIdentity[]
 }
 
+/** Commands whose public aliases can legitimately identify the same engine. */
+export const ENGINE_CLI_ALIASES: Readonly<Record<AgentEngine, readonly string[]>> = {
+  claude: ['claude'],
+  codex: ['codex'],
+  cursor: ['agent', 'cursor-agent'],
+  opencode: ['opencode'],
+  pi: ['pi'],
+  hermes: ['hermes', 'hermes-agent'],
+  commandcode: ['cmd', 'command-code', 'commandcode'],
+  devin: ['devin'],
+  muse: ['muse'],
+  amp: ['amp'],
+  kilo: ['kilo', 'kilocode'],
+  grok: ['grok', 'agent'],
+  agy: ['agy'],
+  copilot: ['copilot'],
+}
+
+let interactivePathCache: { shell: string; daemonPath: string; value: string[] } | null = null
+
+/**
+ * Resolve commands from the same shell startup context used by New Agent.
+ *
+ * A GUI/launchd/systemd daemon commonly lacks ~/.local/bin, Homebrew, nvm and vendor installer edits.
+ * Looking only at its PATH made an installed native binary impossible to identify even though the pane
+ * launched it successfully. Tests deliberately use their injected PATH and never read a developer's rc.
+ */
+function interactivePathEntries(): string[] {
+  if (process.env.NODE_ENV === 'test') return []
+  const shell = process.env.SHELL
+  if (!shell || !isAbsolute(shell)) return []
+  const daemonPath = process.env.PATH ?? ''
+  if (interactivePathCache?.shell === shell && interactivePathCache.daemonPath === daemonPath) {
+    return interactivePathCache.value
+  }
+  try {
+    const flag = basename(shell).toLowerCase() === 'zsh' ? '-lic' : '-ic'
+    const marker = '__HARNESS_ENGINE_PATH__='
+    const stdout = execFileSync(shell, [flag, `printf '\n${marker}%s\n' "$PATH"`], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    // Shell startup files are allowed to print banners. Read only our final marked line.
+    const path = stdout.split('\n').reverse().find((line) => line.startsWith(marker))?.slice(marker.length) ?? ''
+    const value = path.split(delimiter).filter(Boolean)
+    interactivePathCache = { shell, daemonPath, value }
+    return value
+  } catch {
+    interactivePathCache = { shell, daemonPath, value: [] }
+    return []
+  }
+}
+
 function pathEntries(): string[] {
-  return (process.env.PATH ?? '').split(delimiter).filter(Boolean)
+  return [...new Set([
+    ...(process.env.PATH ?? '').split(delimiter).filter(Boolean),
+    ...interactivePathEntries(),
+  ])]
 }
 
 function looksLikePath(command: string): boolean {
@@ -85,9 +146,15 @@ function commandCandidates(command: string): ExecutableFileIdentity[] {
 /** Stable while a file exists; deliberately local-only and never sent over the wire. */
 export function executableFileIdentity(path: string): ExecutableFileIdentity | null {
   try {
-    const realPath = realpathSync(path)
-    const stat = statSync(realPath)
+    // Stat through the supplied path first. `/proc/<pid>/exe` keeps the running inode reachable even
+    // after an auto-updater replaces its pathname; realpath may then end in "(deleted)" and be
+    // unstatable despite the process image still being valid.
+    const stat = statSync(path)
     if (!stat.isFile()) return null
+    let realPath: string
+    try { realPath = realpathSync(path) } catch {
+      try { realPath = readlinkSync(path) } catch { realPath = normalize(path) }
+    }
     return { path: normalize(path), realPath, fileKey: `${String(stat.dev)}:${String(stat.ino)}` }
   } catch {
     return null
@@ -103,8 +170,50 @@ function addAll(target: Set<string>, identities: readonly ExecutableFileIdentity
   for (const identity of identities) target.add(identity.fileKey)
 }
 
+function vendorFallbackCommands(engine: AgentEngine): string[] {
+  const home = homedir()
+  switch (engine) {
+    case 'claude': return [join(home, '.local', 'bin', 'claude')]
+    case 'cursor': return [join(home, '.local', 'bin', 'agent'), join(home, '.local', 'bin', 'cursor-agent')]
+    case 'opencode': return [join(home, '.opencode', 'bin', 'opencode')]
+    case 'hermes': return [join(home, '.local', 'bin', 'hermes')]
+    case 'devin': return [join(home, '.local', 'bin', 'devin')]
+    case 'muse': return [join(home, '.local', 'bin', 'muse')]
+    case 'amp': return [join(home, '.amp', 'bin', 'amp'), join(home, '.local', 'bin', 'amp')]
+    case 'kilo': return [join(home, '.kilo', 'bin', 'kilo'), join(home, '.local', 'bin', 'kilo')]
+    case 'grok': return [join(env.GROK_HOME, 'bin', 'grok'), join(home, '.local', 'bin', 'grok')]
+    case 'agy': return [join(home, '.local', 'bin', 'agy')]
+    case 'copilot': return [join(home, '.local', 'bin', 'copilot')]
+    default: return []
+  }
+}
+
+function uniqueIdentities(identities: readonly ExecutableFileIdentity[]): ExecutableFileIdentity[] {
+  const seen = new Set<string>()
+  return identities.filter((identity) => {
+    const key = `${identity.path}\0${identity.fileKey}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 /** Build once per process-table pass; callers pass the snapshot through every row comparison. */
-export function agentCommandOwnershipSnapshot(): AgentCommandOwnershipSnapshot {
+export function engineBinaryOwnershipSnapshot(): AgentCommandOwnershipSnapshot {
+  const engineCandidates = new Map<AgentEngine, ExecutableFileIdentity[]>()
+  const engineFileKeys = new Map<AgentEngine, Set<string>>()
+  for (const engine of ENGINES) {
+    const configured = enginePathOverride(engine)
+    const commands = [
+      ...(configured ? [configured] : []),
+      ...ENGINE_CLI_ALIASES[engine],
+      ...vendorFallbackCommands(engine),
+    ]
+    const candidates = uniqueIdentities(commands.flatMap(commandCandidates))
+    engineCandidates.set(engine, candidates)
+    engineFileKeys.set(engine, new Set(candidates.map((candidate) => candidate.fileKey)))
+  }
+
   const agentCandidates = commandCandidates('agent')
   const cursorAgentCandidates = commandCandidates('cursor-agent')
   const grokCandidates = [...commandCandidates('grok')]
@@ -136,7 +245,17 @@ export function agentCommandOwnershipSnapshot(): AgentCommandOwnershipSnapshot {
   const conflictingFileKeys = new Set(
     [...cursorFileKeys].filter((fileKey) => grokFileKeys.has(fileKey)),
   )
+  // `agent` is intentionally present in both public alias lists. Replace the generic sets with the
+  // vendor-qualified ownership derived above so one PATH entry never makes both engines match.
+  engineFileKeys.set('cursor', cursorFileKeys)
+  engineFileKeys.set('grok', grokFileKeys)
+  engineCandidates.set('cursor', (engineCandidates.get('cursor') ?? []).filter((candidate) =>
+    cursorFileKeys.has(candidate.fileKey) && !conflictingFileKeys.has(candidate.fileKey)))
+  engineCandidates.set('grok', (engineCandidates.get('grok') ?? []).filter((candidate) =>
+    grokFileKeys.has(candidate.fileKey) && !conflictingFileKeys.has(candidate.fileKey)))
   return {
+    engineFileKeys,
+    engineCandidates,
     cursorFileKeys,
     grokFileKeys,
     conflictingFileKeys,
@@ -144,6 +263,20 @@ export function agentCommandOwnershipSnapshot(): AgentCommandOwnershipSnapshot {
     cursorAgentCandidates,
     grokCandidates,
   }
+}
+
+/** Historical name retained while callers migrate; the snapshot now covers every engine. */
+export function agentCommandOwnershipSnapshot(): AgentCommandOwnershipSnapshot {
+  return engineBinaryOwnershipSnapshot()
+}
+
+/** Engines owning the observed executable image. Multiple results mean the install itself is ambiguous. */
+export function engineFileOwners(
+  fileKeys: readonly (string | null | undefined)[],
+  snapshot: AgentCommandOwnershipSnapshot,
+): AgentEngine[] {
+  if (!snapshot.engineFileKeys) return []
+  return ENGINES.filter((engine) => fileKeys.some((fileKey) => !!fileKey && snapshot.engineFileKeys!.get(engine)?.has(fileKey)))
 }
 
 export function agentAliasOwner(
@@ -221,6 +354,8 @@ export function installedEngineBin(
   engine: AgentEngine,
   snapshot = agentCommandOwnershipSnapshot(),
 ): string | null {
+  const installed = snapshot.engineCandidates?.get(engine)
+  if (installed?.length && engine !== 'cursor' && engine !== 'grok') return installed[0].path
   const command = engine === 'cursor' ? cursorRuntimeBin(snapshot) : engineBin(engine)
   if (!command) return null
   const candidates = commandCandidates(command)

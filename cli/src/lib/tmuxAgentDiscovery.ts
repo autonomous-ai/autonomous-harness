@@ -21,6 +21,7 @@ import {
   engineProcessMatchScore,
   enrichProcessRows,
   parseProcessRow,
+  processTreePids,
   resumeSessionId,
   setPaneMouseOn,
   type ProcessRow,
@@ -211,7 +212,7 @@ export async function probeTmuxAgents(
   if (!tmux.ok) return { ok: false, error: `tmux list-panes failed: ${tmux.error}` }
   if (!ps.ok) return { ok: false, error: `process table failed: ${ps.error}` }
   const parsed = ps.stdout.split('\n').map(parseProcessRow).filter((row): row is ProcessRow => row !== null)
-  const rows = await enrichProcessRows(parsed)
+  const rows = await enrichProcessRows(parsed, processTreePids(parsed, tmux.panes.map((pane) => pane.rootPid)))
   const probe = discoverTmuxAgentsFromSnapshot(
     tmux.panes,
     rows,

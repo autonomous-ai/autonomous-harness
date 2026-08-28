@@ -16,7 +16,7 @@ import {
   type TerminalProcessExpectation,
   type TerminalReadResult,
 } from './terminalTypes.js'
-import { engineProcessMatchScore, processRows } from './tmux.js'
+import { engineProcessMatchScore, enrichProcessRows, processRows } from './tmux.js'
 import { terminalRouteKey } from './terminalRuntime.js'
 
 interface HerdrPaneInfo {
@@ -242,14 +242,15 @@ export class HerdrBackend implements TerminalBackend<HerdrRuntimeRef> {
       || !Number.isSafeInteger(info.result.process_info?.shell_pid)) {
       return { state: 'unknown', reason: 'Herdr process identity could not be verified' }
     }
-    const expected = rows.find((row) => row.pid === _expected.processIdentity!.pid)
+    const enrichedRows = await enrichProcessRows(rows, new Set([_expected.processIdentity.pid]))
+    const expected = enrichedRows.find((row) => row.pid === _expected.processIdentity!.pid)
     if (!expected || expected.startMarker !== _expected.processIdentity.startMarker) {
       return { state: 'gone', reason: 'Herdr engine process identity changed' }
     }
     if (engineProcessMatchScore(expected, _expected.engine) <= 0) {
       return { state: 'gone', reason: 'Herdr process no longer matches the registered engine' }
     }
-    const byPid = new Map(rows.map((row) => [row.pid, row]))
+    const byPid = new Map(enrichedRows.map((row) => [row.pid, row]))
     const rootPid = info.result.process_info.shell_pid!
     let pid = expected.pid
     const visited = new Set<number>()

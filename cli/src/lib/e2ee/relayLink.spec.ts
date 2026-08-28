@@ -245,7 +245,9 @@ describe('remote-password link + relay session crypto (interop with the real E2e
         autonomousEnv: 'prod',
         timeoutMs: 5_000,
       })
-      expect(locked).toEqual({ ok: false, error: 'RATE_LIMITED' })
+      expect(locked.ok).toBe(false)
+      expect((locked as { error: string }).error).toBe('RATE_LIMITED')
+      expect((locked as { retryAt?: number }).retryAt).toEqual(expect.any(Number))
     } finally {
       await close()
     }
@@ -271,7 +273,8 @@ describe('remote-password link + relay session crypto (interop with the real E2e
         targetMachineId: MACHINE_ID, password: REMOTE_PASSWORD, selfIdentity: C.newIdentity(),
         accessToken: 'unused', backendWsBase: base, autonomousEnv: 'prod', timeoutMs: 5_000,
       })
-      expect(stillLocked).toEqual({ ok: false, error: 'RATE_LIMITED' })
+      expect(stillLocked.ok).toBe(false)
+      expect((stillLocked as { error: string }).error).toBe('RATE_LIMITED')
 
       const NEW_PASSWORD = 'a brand new remote password'
       await manager.setRemotePassword(NEW_PASSWORD)

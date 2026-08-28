@@ -20,7 +20,7 @@ import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { spawn } from 'child_process'
 import { createServer } from 'http'
-import { createInterface } from 'readline'
+import { createInterface, emitKeypressEvents } from 'readline'
 import { homedir, hostname } from 'os'
 import { env } from './config/env.js'
 import { VERSION } from './version.js'
@@ -228,12 +228,12 @@ Browser end-to-end encryption:
 Machine-to-machine linking (lets this machine's relay reach ANOTHER of your machines with the CLI,
 not the app, terminating E2EE). A machine's remote password is persistent — set once, reused for
 every future connect, until you change or clear it:
-  harness remote-password set        set/rotate this machine's persistent remote password
-  harness remote-password status     show whether one is set, and its fingerprint
-  harness remote-password clear      remove this machine's remote password
-  harness link connect <machineId>   join a machine using ITS remote password (fully automatic)
-  harness link list                  list machines this one has linked
-  harness link unlink <id>           remove a linked machine's trust
+  harness remote-password set   set/rotate this machine's persistent remote password
+  harness remote-password status   show whether one is set, and its fingerprint
+  harness remote-password clear   remove this machine's remote password
+  harness link connect <id>    join a machine using ITS remote password (fully automatic)
+  harness link list            list machines this one has linked
+  harness link unlink <id>     remove a linked machine's trust
   (both \`remote-password set\` and \`link connect\` prompt for the password interactively, or read one
   line from stdin with --stdin; add --json for NDJSON output instead of the human-readable text)
 
@@ -3590,30 +3590,50 @@ function readStdinLine(): Promise<string> {
   })
 }
 
-/** Prompt on stdin with the terminal echo suppressed, for a remote password. Falls back to a plain
- *  (echoed) prompt when stdin isn't a TTY (piped input, non-interactive shell) — there's no terminal
- *  to suppress echo on, and readline still works correctly for a single piped line. */
+/** Prompt on stdin with masked input (echoes `*` per keystroke), for a remote password. Reads
+ *  keypress-by-keypress via the PUBLIC `readline.emitKeypressEvents` + `stdin.setRawMode` APIs rather
+ *  than driving a `readline.Interface` and fighting its own internal line-redraw logic through a
+ *  private `_writeToOutput` hook: with both stdio streams as TTYs, `readline.Interface` runs in
+ *  `terminal: true` mode, so every keystroke (and `question()`'s own setup) re-triggers an internal
+ *  `_refreshLine()` redraw that clears and rewrites the current line through that same hook — which,
+ *  if muted to suppress echo, wipes out a manually-written prompt before the user ever sees it and
+ *  leaves nothing on screen at all. Owning the raw keystrokes here means nothing else is redrawing the
+ *  line. Falls back to a plain (unmasked) single-line read when stdin isn't a TTY — there's no
+ *  terminal to suppress echo on regardless; `--stdin` is the supported path for scripted/GUI callers,
+ *  this only guards a caller that piped input without passing it. */
 function promptPassword(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    if (!process.stdin.isTTY) {
-      const rl = createInterface({ input: process.stdin, output: process.stdout })
-      rl.question(prompt, (answer) => { rl.close(); resolve(answer) })
-      return
-    }
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
-    // Suppress readline's own echo of typed characters while still letting our prompt text and the
-    // trailing newline through — the standard Node trick for masked input without an extra dependency.
-    const rlWithOutput = rl as unknown as { _writeToOutput?: (s: string) => void }
-    let muted = false
-    rlWithOutput._writeToOutput = (s: string) => { if (!muted) process.stdout.write(s) }
+  if (!process.stdin.isTTY) {
     process.stdout.write(prompt)
-    muted = true
-    rl.question('', (answer) => {
-      muted = false
-      rl.close()
-      process.stdout.write('\n')
-      resolve(answer)
-    })
+    return readStdinLine().then((line) => { process.stdout.write('\n'); return line })
+  }
+  return new Promise((resolve) => {
+    process.stdout.write(prompt)
+    const stdin = process.stdin
+    emitKeypressEvents(stdin)
+    stdin.setRawMode(true)
+    stdin.resume()
+    let value = ''
+    const cleanup = (): void => {
+      stdin.removeListener('keypress', onKeypress)
+      stdin.setRawMode(false)
+      stdin.pause()
+    }
+    const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean; meta?: boolean }): void => {
+      if (key.ctrl && (key.name === 'c' || key.name === 'd')) { cleanup(); process.stdout.write('\n'); process.exit(130) }
+      if (key.name === 'return' || key.name === 'enter') { cleanup(); process.stdout.write('\n'); resolve(value); return }
+      if (key.name === 'backspace') {
+        if (value.length) { value = value.slice(0, -1); process.stdout.write('\b \b') }
+        return
+      }
+      // Anything else that isn't a single printable character — arrows, tab, escape, function keys,
+      // other ctrl/meta combos — is ignored outright rather than risking its raw bytes landing in the
+      // password buffer.
+      if (str && !key.ctrl && !key.meta && str.length === 1 && str.charCodeAt(0) >= 0x20) {
+        value += str
+        process.stdout.write('*')
+      }
+    }
+    stdin.on('keypress', onKeypress)
   })
 }
 
@@ -3642,6 +3662,8 @@ async function remotePasswordSetCommand(json: boolean, stdin: boolean): Promise<
       return
     }
   } else {
+    console.log(`\n  Set this machine's remote password. Another machine will use it to link here via`)
+    console.log(`  \`harness link connect ${session.machineId}\` — nothing needs approving on this side.\n`)
     const a = await promptPassword('  New remote password: ')
     const b = await promptPassword('  Confirm remote password: ')
     if (!a || a !== b) {
@@ -3670,9 +3692,10 @@ async function remotePasswordSetCommand(json: boolean, stdin: boolean): Promise<
     result = await store.setRemotePassword(session.machineId, password)
   }
   if (json) { console.log(JSON.stringify({ ok: true, fingerprint: result.fingerprint })); process.exit(0) }
-  console.log('\n  ✓ Remote password set for this machine.')
+  console.log(`\n  ✓ Remote password set for this machine (${session.machineId}).`)
   console.log(`    fingerprint  ${result.fingerprint}   — verify it matches on the joining machine after \`harness link connect\`\n`)
-  console.log('  Anyone with this password can link a machine to this one. Keep it private.\n')
+  console.log(`  ▸ Run this on the OTHER machine:  harness link connect ${session.machineId}`)
+  console.log('  ⚠ Anyone with this password can link a machine to this one. Keep it private.\n')
   if (!readPid()) console.log('  Start the adapter with `harness start` if joins are being rejected.\n')
   process.exit(0)
 }
@@ -3693,8 +3716,9 @@ async function remotePasswordClearCommand(json: boolean): Promise<void> {
     store.init()
     store.clearRemotePassword()
   }
-  if (json) console.log(JSON.stringify({ ok: true }))
-  else console.log('\n  ✓ Remote password cleared. This machine can no longer be linked by password until a new one is set.\n')
+  if (json) { console.log(JSON.stringify({ ok: true })); process.exit(0) }
+  console.log('\n  ✓ Remote password cleared. This machine can no longer be linked by password until a new one is set.')
+  console.log('  ▸ Run `harness remote-password set` to set a new one.\n')
   process.exit(0)
 }
 
@@ -3720,7 +3744,11 @@ async function remotePasswordStatusCommand(json: boolean): Promise<void> {
     status = { hasPassword: store.hasRemotePassword(), fingerprint: store.remotePasswordFingerprint(), setAt: store.remotePasswordSetAt() }
   }
   if (json) { console.log(JSON.stringify(status)); process.exit(0) }
-  if (!status.hasPassword) { console.log('\n  No remote password set.\n  Run: harness remote-password set\n'); process.exit(0) }
+  if (!status.hasPassword) {
+    console.log('\n  No remote password set.')
+    console.log('  ▸ Run `harness remote-password set` to allow another machine to link to this one.\n')
+    process.exit(0)
+  }
   console.log('\n  Remote password is set.')
   console.log(`    fingerprint  ${status.fingerprint}\n`)
   process.exit(0)
@@ -3732,10 +3760,42 @@ async function remotePasswordStatusCommand(json: boolean): Promise<void> {
  *  daemon required, same as the old `link import`. On success this machine can relay through to that
  *  machine's data plane with the CLI (not the app) terminating E2EE — see lib/remoteRelay.ts. Fully
  *  automatic on success: no approval step runs on the target machine beyond having set the password. */
+/** Turn a `connectWithPassword` failure code into a full instructive sentence — mirrors `pairCommand`'s
+ *  `messages` map above, extended to handle the two codes that carry extra data (`RATE_LIMITED`'s
+ *  `retryAt`, `CONNECTION_CLOSED:<code>`'s embedded close code). Every branch, including the fallback,
+ *  sentence-wraps the code — a bare code must never reach the terminal. */
+function humanizeLinkError(error: string, machineId: string, retryAt?: number): string {
+  if (error === 'RATE_LIMITED') {
+    if (typeof retryAt === 'number') {
+      const minutes = Math.ceil((retryAt - Date.now()) / 60_000)
+      return minutes > 0
+        ? `Too many wrong attempts on ${machineId}. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`
+        : `Too many wrong attempts on ${machineId}. Try again now.`
+    }
+    return `Too many wrong attempts on ${machineId}. Wait a few minutes and try again.`
+  }
+  if (error.startsWith('CONNECTION_CLOSED:')) {
+    return `The connection closed unexpectedly (code ${error.slice('CONNECTION_CLOSED:'.length)}) before linking finished. Try again.`
+  }
+  const messages: Record<string, string> = {
+    NO_REMOTE_PASSWORD: `Machine ${machineId} has no remote password set. Ask its operator to run \`harness remote-password set\` there first.`,
+    BAD_INTENT: 'The connection request was malformed — this usually means a version mismatch. Update harness on both machines and try again.',
+    WRONG_PASSWORD: 'That password is wrong. Check it against the other machine and try again.',
+    TIMEOUT: `Machine ${machineId} didn't respond in time. Make sure it's running \`harness start\` and reachable, then try again.`,
+    SEND_FAILED: 'Could not reach the relay to start linking. Check your network connection and try again.',
+    DERIVE_FAILED: 'Could not process the password locally. Try again; if it persists, restart harness and retry.',
+    SELECT_FAILED: `Could not find machine ${machineId}, or it isn't reachable right now. Check the id and that it has run \`harness start\`.`,
+    PAIR_FAILED: `Linking failed on ${machineId}'s side. Try again; if it persists, check its status there with \`harness status\`.`,
+    PROTOCOL_ERROR: 'Something unexpected happened during the handshake. Try again; if it persists, update harness on both machines.',
+    CONNECTION_ERROR: 'Could not reach the relay. Check your network connection and try again.',
+  }
+  return messages[error] ?? `Linking failed (${error}). Try again; if it persists, check both machines are on the latest harness version.`
+}
+
 async function linkConnectCommand(machineId: string | undefined, stdin: boolean, json: boolean): Promise<void> {
   if (!machineId) {
     if (json) console.log(JSON.stringify({ ok: false, error: 'MISSING_MACHINE_ID' }))
-    else console.error('Usage: harness link connect <machineId>   (the remote password is set on that machine via `harness remote-password set`)')
+    else console.error('Usage: harness link connect <machineId>   (the remote password is set on that machine via harness remote-password set)')
     process.exit(1)
     return
   }
@@ -3756,6 +3816,9 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
       return
     }
   } else {
+    console.log(`\n  Linking to machine ${machineId}.`)
+    console.log('  Enter the remote password set on THAT machine (`harness remote-password set`) —')
+    console.log('  this proves you know it; nothing needs approving there.\n')
     password = await promptPassword(`  Remote password for ${machineId}: `)
   }
   const auth = new AuthSessionManager(backendHttpBase())
@@ -3763,7 +3826,8 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
   try {
     accessToken = await auth.accessToken()
   } catch (err) {
-    const message = `Could not refresh this computer's SSO session: ${err instanceof Error ? err.message : err}`
+    const detail = err instanceof Error ? err.message : String(err)
+    const message = `Could not refresh this computer's SSO session (${detail}). Run: harness login`
     if (json) console.log(JSON.stringify({ ok: false, error: 'AUTH_FAILED', message }))
     else console.error(`\n  ✗ ${message}\n`)
     process.exit(1)
@@ -3781,8 +3845,11 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
     onProgress: json ? (stage) => console.log(JSON.stringify({ stage })) : undefined,
   })
   if (!result.ok) {
-    if (json) console.log(JSON.stringify({ ok: false, error: result.error }))
-    else console.error(`\n  ✗ Link failed: ${result.error}\n`)
+    if (json) {
+      console.log(JSON.stringify({ ok: false, error: result.error, ...(result.retryAt !== undefined ? { retryAt: result.retryAt } : {}) }))
+    } else {
+      console.error(`\n  ✗ ${humanizeLinkError(result.error, machineId, result.retryAt)}\n`)
+    }
     process.exit(1)
     return
   }
@@ -3797,7 +3864,8 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
 async function linkListCommand(): Promise<void> {
   const peers = new MachinePeerStore().list()
   if (!peers.length) {
-    console.log('\n  No machines linked yet.\n  Run `harness remote-password set` on the other machine and `harness link connect <machineId>` here.\n')
+    console.log('\n  No machines linked yet.')
+    console.log('  ▸ Run `harness remote-password set` on the other machine, then `harness link connect <machineId>` here.\n')
     process.exit(0)
   }
   console.log('\n  Linked machines:\n')
@@ -3812,7 +3880,12 @@ async function linkListCommand(): Promise<void> {
 async function linkUnlinkCommand(machineId: string | undefined): Promise<void> {
   if (!machineId) { console.error('Usage: harness link unlink <machineId>   (see: harness link list)'); process.exit(1) }
   const removed = new MachinePeerStore().unlink(machineId)
-  if (!removed) { console.error(`\n  ✗ No linked machine matches "${machineId}".  Run: harness link list\n`); process.exit(1); return }
+  if (!removed) {
+    console.error(`\n  ✗ No linked machine matches "${machineId}".`)
+    console.error('  ▸ Run `harness link list` to see what\'s linked.\n')
+    process.exit(1)
+    return
+  }
   console.log(`\n  ✓ Unlinked ${machineId}\n`)
   process.exit(0)
 }

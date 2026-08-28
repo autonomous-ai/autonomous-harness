@@ -9,6 +9,7 @@ import { registry, type ProcessIdentity, type RegisteredSession } from './regist
 import {
   agentAliasOwner,
   agentCommandOwnershipSnapshot,
+  engineFileOwners,
   enginePathOverride,
   executableFileIdentity,
   type AgentCommandOwnershipSnapshot,
@@ -181,7 +182,7 @@ export async function processRows(): Promise<ProcessRow[] | null> {
       resolve(rows)
     })
   })
-  return rows ? enrichProcessRows(repairMangledRows(rows)) : null
+  return rows ? repairMangledRows(rows) : null
 }
 
 function execText(command: string, args: string[], timeout: number): Promise<string | null> {
@@ -215,26 +216,41 @@ async function darwinProcessImages(pids: readonly number[]): Promise<Map<number,
 }
 
 /**
- * Attach file identity only to rows that mention the colliding `agent` alias. The normal discovery pass
- * remains one tmux read plus one ps read; Linux uses /proc and macOS adds at most one batched lsof call.
+ * Attach executable-image and entrypoint identity to selected process rows.
+ *
+ * Callers pass only descendants of terminal roots (or one saved PID during validation), so native
+ * binary ownership is available for every engine without asking lsof to inspect the whole machine.
  */
-export async function enrichProcessRows(rows: ProcessRow[]): Promise<ProcessRow[]> {
-  const candidates = rows.filter(agentAliasCandidate)
+export async function enrichProcessRows(
+  rows: ProcessRow[],
+  selectedPids: ReadonlySet<number> = new Set(rows.map((row) => row.pid)),
+): Promise<ProcessRow[]> {
+  const candidates = rows.filter((row) => selectedPids.has(row.pid))
   if (!candidates.length) return rows
   const imagePaths = new Map<number, string>()
+  const imageIdentities = new Map<number, ReturnType<typeof executableFileIdentity>>()
   if (platform() === 'linux') {
     await Promise.all(candidates.map(async (row) => {
-      const path = await readlink(`/proc/${row.pid}/exe`).catch(() => null)
-      if (path) imagePaths.set(row.pid, path)
+      const procImage = `/proc/${row.pid}/exe`
+      const path = await readlink(procImage).catch(() => null)
+      if (path) {
+        imagePaths.set(row.pid, path)
+        // Stat the proc link itself. If an auto-updater replaced the on-disk path, this still identifies
+        // the exact deleted inode executing in the pane rather than the newer file now at that pathname.
+        imageIdentities.set(row.pid, executableFileIdentity(procImage))
+      }
     }))
   } else if (platform() === 'darwin') {
-    for (const [pid, path] of await darwinProcessImages(candidates.map((row) => row.pid))) imagePaths.set(pid, path)
+    for (const [pid, path] of await darwinProcessImages(candidates.map((row) => row.pid))) {
+      imagePaths.set(pid, path)
+      imageIdentities.set(pid, executableFileIdentity(path.replace(/ \(deleted\)$/, '')))
+    }
   }
 
   return rows.map((row) => {
-    if (!agentAliasCandidate(row)) return row
+    if (!selectedPids.has(row.pid)) return row
     const imagePath = imagePaths.get(row.pid)
-    const image = imagePath ? executableFileIdentity(imagePath.replace(/ \(deleted\)$/, '')) : null
+    const image = imageIdentities.get(row.pid) ?? null
     const entrypoint = processEntrypoint(row.args)
     const entrypointIdentity = entrypoint.includes('/') || entrypoint.includes('\\')
       ? executableFileIdentity(entrypoint)
@@ -246,6 +262,25 @@ export async function enrichProcessRows(rows: ProcessRow[]): Promise<ProcessRow[
       ...(entrypointIdentity && { entrypointFileKey: entrypointIdentity.fileKey }),
     }
   })
+}
+
+/** All rows below one or more terminal roots, including the roots themselves. */
+export function processTreePids(rows: readonly ProcessRow[], rootPids: readonly number[]): Set<number> {
+  const children = new Map<number, number[]>()
+  for (const row of rows) {
+    const list = children.get(row.parentPid) ?? []
+    list.push(row.pid)
+    children.set(row.parentPid, list)
+  }
+  const found = new Set<number>()
+  const queue = [...rootPids]
+  while (queue.length) {
+    const pid = queue.shift()!
+    if (found.has(pid)) continue
+    found.add(pid)
+    for (const child of children.get(pid) ?? []) queue.push(child)
+  }
+  return found
 }
 
 
@@ -283,7 +318,72 @@ function claudeNativeInstallPath(value: string): boolean {
   return /(?:^|\/)\.local\/share\/claude\/versions\/[^/]+$/.test(normalized)
 }
 
-export function engineProcessMatchScore(
+interface EngineProcessSignature {
+  basenames: readonly RegExp[]
+  entrypoints: readonly RegExp[]
+}
+
+/** Vendor-supported native names and launcher/package entrypoints, independent of install prefix. */
+export const ENGINE_PROCESS_SIGNATURES: Readonly<Record<RegisteredSession['engine'], EngineProcessSignature>> = {
+  claude: {
+    basenames: [/^claude$/],
+    entrypoints: [/@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/],
+  },
+  codex: {
+    basenames: [/^codex$/, /^codex-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-(?:gnu|musl))$/],
+    entrypoints: [/@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/],
+  },
+  cursor: {
+    basenames: [/^cursor-agent$/],
+    entrypoints: [/cursor-agent[\/\\]versions[\/\\][^/\\]+[\/\\]index\.js$/],
+  },
+  opencode: {
+    basenames: [/^opencode(?:\.exe)?$/],
+    entrypoints: [/opencode-ai[\/\\]bin[\/\\]opencode(?:\.exe)?$/],
+  },
+  pi: {
+    basenames: [/^pi$/],
+    entrypoints: [/pi-coding-agent[\/\\]dist[\/\\]cli\.js$/],
+  },
+  hermes: {
+    basenames: [/^hermes$/, /^hermes-agent$/],
+    entrypoints: [/hermes-agent[\/\\]hermes$/, /(?:^|[\/\\])hermes_cli(?:[\/\\]|\.|$)/],
+  },
+  commandcode: {
+    basenames: [/^cmd$/, /^command-?code$/],
+    entrypoints: [/command-code[\/\\]dist[\/\\]index\.mjs$/],
+  },
+  devin: {
+    basenames: [/^devin$/],
+    entrypoints: [/devin[\/\\]cli[\/\\]_versions[\/\\][^/\\]+[\/\\]bin[\/\\]devin$/],
+  },
+  muse: {
+    basenames: [/^muse$/, /^muse-bin-/],
+    entrypoints: [],
+  },
+  amp: {
+    basenames: [/^amp$/],
+    entrypoints: [/[\/\\]\.amp[\/\\]bin[\/\\]amp$/],
+  },
+  kilo: {
+    basenames: [/^kilo$/, /^kilocode$/, /^\.kilo$/, /^kilo-(?:darwin|linux)-(?:arm64|x64)(?:-baseline)?$/],
+    entrypoints: [/@kilocode[\/\\]cli[\/\\]bin[\/\\](?:\.kilo|kilo|kilocode)$/],
+  },
+  grok: {
+    basenames: [/^grok$/, /^grok(?:-[^-]+)?-(?:macos|linux)-(?:aarch64|x86_64)$/],
+    entrypoints: [/[\/\\]\.grok[\/\\](?:bin[\/\\]grok|downloads[\/\\]grok[^/\\]*)$/],
+  },
+  agy: {
+    basenames: [/^agy$/],
+    entrypoints: [/[\/\\]\.local[\/\\]bin[\/\\]agy$/],
+  },
+  copilot: {
+    basenames: [/^copilot$/],
+    entrypoints: [/@github[\/\\]copilot[\/\\](?:npm-loader\.js|index\.js|bin[\/\\]copilot)$/],
+  },
+}
+
+function heuristicEngineProcessMatchScore(
   row: Pick<ProcessRow, 'executable' | 'args' | 'imageFileKey' | 'entrypointFileKey'>,
   engine: RegisteredSession['engine'],
   ownership = agentCommandOwnershipSnapshot(),
@@ -291,6 +391,9 @@ export function engineProcessMatchScore(
   const executable = basename(row.executable).toLowerCase()
   const entrypoint = processEntrypoint(row.args).toLowerCase()
   const entrybase = basename(entrypoint).toLowerCase()
+  // Antigravity also ships an IDE-side `agy` inside its .app bundle. It is not the terminal engine,
+  // even when an AGY_PATH override happens to use the same basename.
+  if (engine === 'agy' && /\.app[\/\\]Contents[\/\\]/.test(`${row.executable}\n${entrypoint}`)) return 0
   // Only an explicit override is ownership evidence. A default command label is not: both Cursor and
   // Grok ship `agent`, which is exactly the collision this matcher must resolve rather than assume away.
   const configured = enginePathOverride(engine)?.toLowerCase()
@@ -298,95 +401,83 @@ export function engineProcessMatchScore(
   if (configured && configuredBase !== 'agent' && (row.executable.toLowerCase() === configured
     || entrypoint === configured || executable === configuredBase || entrybase === configuredBase
     || commTruncatedPrefixOf(executable, configuredBase))) return 4
-  if (engine === 'codex') {
-    if (executable === 'codex' || entrybase === 'codex') return 3
-    // npm/pnpm/bun global installs may leave node as `comm`; match the package entrypoint without
-    // caring which prefix or package manager store contains it.
-    return /@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/.test(entrypoint) ? 2 : 0
-  }
+
+  // Command Code rewrites argv/comm to a session title, which becomes its only long-lived marker.
+  if (engine === 'commandcode' && (/^\s*⌘(?:\s|$)/.test(row.executable) || /^\s*⌘(?:\s|$)/.test(row.args))) return 3
+
+  // Cursor's launcher can retain argv[0]=agent while the Node package path appears later in argv.
+  if (engine === 'cursor' && hasCursorPackageEntrypoint(row.args)) return 3
+
+  const signature = ENGINE_PROCESS_SIGNATURES[engine]
+  if (signature.basenames.some((pattern) => pattern.test(executable) || pattern.test(entrybase))) return 3
+  if (signature.entrypoints.some((pattern) => pattern.test(entrypoint))) return 2
+
+  // Native Claude exposes a version-only target; only the vendor layout makes that name meaningful.
+  if (engine === 'claude' && (claudeNativeInstallPath(row.executable) || claudeNativeInstallPath(entrypoint))) return 3
+
   if (engine === 'cursor') {
-    if (executable === 'cursor-agent' || entrybase === 'cursor-agent') return 3
-    if (hasCursorPackageEntrypoint(row.args)) return 3
     return agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership) === 'cursor' ? 4 : 0
   }
-  if (engine === 'opencode') {
-    if (executable === 'opencode' || executable === 'opencode.exe' || entrybase === 'opencode' || entrybase === 'opencode.exe') return 3
-    return /opencode-ai[\/\\]bin[\/\\]opencode(?:\.exe)?$/.test(entrypoint) ? 2 : 0
-  }
-  if (engine === 'kilo') {
-    // `@kilocode/cli` installs the same file under both names, and kilo's own installer puts a second
-    // copy at ~/.kilo/bin/kilo. The npm install measured on 2026-08-10 is a shallow
-    // `node /usr/local/bin/kilo` wrapper with a `.kilo` child, so recognize both public command names
-    // in argv while depth selection keeps the wrapper as the process-agent identity.
-    if (executable === 'kilo' || executable === 'kilocode' || executable === '.kilo'
-      || entrybase === 'kilo' || entrybase === 'kilocode' || entrybase === '.kilo') return 3
-    return /@kilocode[\/\\]cli[\/\\]bin[\/\\](?:\.kilo|kilo|kilocode)$/.test(entrypoint) ? 2 : 0
-  }
-  if (engine === 'commandcode') {
-    // The TUI overwrites its own argv within the first second — `ps` shows `⌘ Command Code · <dir>` and
-    // then `⌘ <session title>`, with no trace of the node entrypoint. So the ⌘ (U+2318) prefix is the
-    // only marker present for a pane's whole life; without it a live session fails validateSessionRuntime
-    // and the reaper evicts it. The entrypoint rules below still cover a non-renaming/wrapped launch.
-    if (/^\s*⌘(?:\s|$)/.test(row.executable) || /^\s*⌘(?:\s|$)/.test(row.args)) return 3
-    if (executable === 'cmd' || executable === 'commandcode' || executable === 'command-code'
-      || entrybase === 'cmd' || entrybase === 'commandcode' || entrybase === 'command-code') return 3
-    return /command-code[\/\\]dist[\/\\]index\.mjs$/.test(entrypoint) ? 2 : 0
-  }
-  if (engine === 'devin') {
-    // `~/.local/bin/devin` is a symlink into `…/devin/cli/_versions/<ver>/bin/devin`, but the pane process
-    // keeps the bare `devin` argv (verified live: `ps -o command=` prints exactly `devin`), so the
-    // basename is the primary signal and the versioned path only covers a direct/wrapped launch.
-    if (executable === 'devin' || entrybase === 'devin') return 3
-    return /devin[\/\\]cli[\/\\]_versions[\/\\][^/\\]+[\/\\]bin[\/\\]devin$/.test(entrypoint) ? 2 : 0
-  }
-  if (engine === 'hermes') {
-    // The launcher shim `exec`s away, so the pane process is `…/venv/bin/python …/hermes-agent/hermes`.
-    if (executable === 'hermes' || entrybase === 'hermes') return 3
-    return /hermes-agent[\/\\]hermes$/.test(entrypoint) || /^(?:hermes|hermes_cli)(?:\.|$)/.test(entrypoint) ? 2 : 0
-  }
-  if (engine === 'pi') {
-    // Pi sets process.title = 'pi'; when the platform ignores that it stays `node …/pi-coding-agent/dist/cli.js`.
-    if (executable === 'pi' || entrybase === 'pi') return 3
-    return /pi-coding-agent[\/\\]dist[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
-  }
-  if (engine === 'muse') {
-    // `~/.local/bin/muse` is a bash launcher that `exec`s the real binary, so the pane process is
-    // `muse-bin-<version>` — the bare name only appears before the exec.
-    if (executable === 'muse' || /^muse-bin-/.test(executable) || entrybase === 'muse' || /^muse-bin-/.test(entrybase)) return 3
-    return 0
-  }
-  if (engine === 'amp') {
-    // `~/.local/bin/amp` symlinks to `~/.amp/bin/amp`, a single compiled binary that does NOT re-exec:
-    // measured live, the pane process is `amp` with argv `amp` and no children at all.
-    if (executable === 'amp' || entrybase === 'amp') return 3
-    return /\.amp[\/\\]bin[\/\\]amp$/.test(entrypoint) ? 2 : 0
-  }
   if (engine === 'grok') {
-    // Grok's compiled image may retain `agent`, `grok`, or its downloaded target name. File identity
-    // against the installed `grok` command is stable across all three and across arbitrary prefixes.
-    if (executable === 'grok' || entrybase === 'grok') return 3
     if (agentAliasOwner([row.imageFileKey, row.entrypointFileKey], ownership) === 'grok') return 4
-    return /\.grok[\/\\]bin[\/\\]grok$/.test(entrypoint) ? 2 : 0
   }
-  if (engine === 'agy') {
-    // Two binaries answer to `agy` on a machine with Antigravity installed: the CLI at
-    // ~/.local/bin/agy (a single 177MB Go binary that does NOT re-exec — the pane process stays `agy`)
-    // and ~/.antigravity/antigravity/bin/agy, a symlink into the IDE's app bundle. The IDE one is not
-    // an engine, so an entrypoint inside a `.app` is rejected rather than scored.
-    if (/\.app[\/\\]Contents[\/\\]/.test(entrypoint)) return 0
-    if (executable === 'agy' || entrybase === 'agy') return 3
-    return /[\/\\]\.local[\/\\]bin[\/\\]agy$/.test(entrypoint) ? 2 : 0
+  return 0
+}
+
+export type EngineProcessMatchEvidence =
+  | 'file-identity'
+  | 'explicit-override'
+  | 'native-or-process-name'
+  | 'package-entrypoint'
+  | 'pane-hook-hint'
+  | 'none'
+
+export interface EngineProcessMatch {
+  score: number
+  evidence: EngineProcessMatchEvidence
+  imagePath?: string
+}
+
+/**
+ * Structured engine evidence for discovery and remote diagnostics.
+ * File identity wins; basename/package rules are compatibility fallbacks for launchers and scripts.
+ */
+export function engineProcessMatch(
+  row: Pick<ProcessRow, 'executable' | 'args' | 'imagePath' | 'imageFileKey' | 'entrypointFileKey'>,
+  engine: RegisteredSession['engine'],
+  ownership = agentCommandOwnershipSnapshot(),
+): EngineProcessMatch {
+  const owners = engineFileOwners([row.imageFileKey, row.entrypointFileKey], ownership)
+  if (owners.length === 1) {
+    return owners[0] === engine
+      ? { score: 4, evidence: 'file-identity', ...(row.imagePath && { imagePath: row.imagePath }) }
+      : { score: 0, evidence: 'none', ...(row.imagePath && { imagePath: row.imagePath }) }
   }
-  if (engine === 'copilot') {
-    // Two builds answer to `copilot` on a typical machine: a compiled binary (~160MB, measured) and
-    // the npm loader script that execs it. Both keep the bare `copilot` argv, so the basename is the
-    // signal and the install paths only cover a wrapped launch.
-    if (executable === 'copilot' || entrybase === 'copilot') return 3
-    return /@github[\/\\]copilot[\/\\](?:npm-loader\.js|.*copilot)$/.test(entrypoint) ? 2 : 0
+  // Conflicting identities are never weakened into a basename guess.
+  if (owners.length > 1) return { score: 0, evidence: 'none', ...(row.imagePath && { imagePath: row.imagePath }) }
+
+  const score = heuristicEngineProcessMatchScore(row, engine, ownership)
+  if (score <= 0) return { score: 0, evidence: 'none', ...(row.imagePath && { imagePath: row.imagePath }) }
+  return {
+    score,
+    evidence: score === 4
+      ? 'explicit-override'
+      : score === 2
+        ? 'package-entrypoint'
+        : score === 1
+          ? 'pane-hook-hint'
+          : 'native-or-process-name',
+    ...(row.imagePath && { imagePath: row.imagePath }),
   }
-  if (executable === 'claude' || entrybase === 'claude') return 3
-  if (claudeNativeInstallPath(row.executable) || claudeNativeInstallPath(entrypoint)) return 3
-  return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
+}
+
+/** Compatibility surface for callers that only need ordering. */
+export function engineProcessMatchScore(
+  row: Pick<ProcessRow, 'executable' | 'args' | 'imagePath' | 'imageFileKey' | 'entrypointFileKey'>,
+  engine: RegisteredSession['engine'],
+  ownership = agentCommandOwnershipSnapshot(),
+): number {
+  return engineProcessMatch(row, engine, ownership).score
 }
 
 /** An unresolved top-level `agent` is a barrier: a nested sub-agent must not steal its tmux pane. */
@@ -503,7 +594,8 @@ async function lookupPaneEngineProcess(
   if (!rootPid) return { ok: false, unknown: true, reason: `tmux could not resolve pane ${pane}` }
   const rows = await processRows()
   if (!rows) return { ok: false, unknown: true, reason: 'the process table could not be read' }
-  const process = selectEngineProcess(rows, rootPid, engine)
+  const enrichedRows = await enrichProcessRows(rows, processTreePids(rows, [rootPid]))
+  const process = selectEngineProcess(enrichedRows, rootPid, engine)
   if (!process) return { ok: false, unknown: false, reason: `no ${engine} process under pane ${pane}` }
   return {
     ok: true,

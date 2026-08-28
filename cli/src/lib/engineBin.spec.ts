@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +9,7 @@ import {
   cursorRuntimeBin,
   ENGINE_CLI_COMMANDS,
   ENGINES,
+  executableFileIdentity,
   installedEngineBin,
 } from './engineBin.js'
 
@@ -69,5 +71,26 @@ describe('canonical engine CLI commands', () => {
     expect(agentAliasOwner([snapshot.agentCandidates[0]?.fileKey], snapshot)).toBe('cursor')
     expect(cursorRuntimeBin(snapshot)).toBe('agent')
     expect(installedEngineBin('cursor', snapshot)).toBe(join(cursorBin, 'agent'))
+  })
+
+  const linuxIt = process.platform === 'linux' ? it : it.skip
+  linuxIt('keeps the running native image identity after an updater replaces its pathname', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'engine-bin-deleted-image-'))
+    tempDirs.push(root)
+    const executable = join(root, 'native-agent')
+    copyFileSync('/bin/sleep', executable)
+    const child = spawn(executable, ['30'], { stdio: 'ignore' })
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve)
+      child.once('error', reject)
+    })
+    try {
+      rmSync(executable)
+      const identity = executableFileIdentity(`/proc/${child.pid}/exe`)
+      expect(identity?.fileKey).toMatch(/^\d+:\d+$/)
+      expect(identity?.realPath).toContain('native-agent')
+    } finally {
+      child.kill('SIGKILL')
+    }
   })
 })

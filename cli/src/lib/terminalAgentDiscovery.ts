@@ -10,7 +10,9 @@ import type { TerminalBackend } from './terminalBackend.js'
 import {
   ambiguousAgentProcess,
   engineProcessMatchScore,
+  enrichProcessRows,
   processRows,
+  processTreePids,
   resumeSessionId,
   type ProcessRow,
 } from './tmux.js'
@@ -218,9 +220,10 @@ export async function probeTerminalAgents(
   ])
   if (!rows) return { processTableAvailable: false, targets, agents: [], ambiguousPlacements: new Set() }
   const roots = targets.flatMap((target) => target.result.state === 'available' ? target.result.roots : [])
+  const enrichedRows = await enrichProcessRows(rows, processTreePids(rows, roots.map((root) => root.rootPid)))
   const discovered = discoverTerminalAgentsFromSnapshot(
     roots,
-    rows,
+    enrichedRows,
     daemonPid,
     backendOrder,
     herdrSessionOrder,
