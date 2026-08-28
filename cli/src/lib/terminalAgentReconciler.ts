@@ -146,6 +146,28 @@ export class TerminalAgentReconciler {
             nextRuntimes = mergeTerminalRuntimes(nextRuntimes, [replacement])
             continue
           }
+          // The aggregate inventory/process snapshot is deliberately cheap, but it is not stronger
+          // than a backend-specific check of this exact runtime and saved process identity. New-agent
+          // creation already proved the pane this way; without the same fallback here, one snapshot
+          // miss hid that freshly adopted agent on the very next reconciliation cycle even while its
+          // Claude trust prompt remained alive in tmux.
+          const backend = this.deps.backends.find((candidate) => candidate.instanceId === target.instanceId)
+          if (backend && current.processIdentity) {
+            const validation = await backend.validate(runtime, {
+              engine: current.engine,
+              processIdentity: current.processIdentity,
+            }).catch((error: unknown) => ({
+              state: 'unknown' as const,
+              reason: error instanceof Error ? error.message : 'terminal validation failed',
+            }))
+            if (validation.state === 'alive') {
+              this.misses.delete(missKey)
+              continue
+            }
+            // A timeout/unreadable backend is not evidence that the process exited. Preserve both the
+            // route and its active UI entry, just as a failed whole-process-table read does above.
+            if (validation.state === 'unknown') continue
+          }
           const misses = (this.misses.get(missKey) ?? 0) + 1
           if (misses < MISS_LIMIT) {
             this.misses.set(missKey, misses)
@@ -167,23 +189,22 @@ export class TerminalAgentReconciler {
             runtimes: mergeTerminalRuntimes(unknownRuntimes, [...nextRuntimes, ...observed.runtimes]),
           }
           await this.deps.onObserved(merged, current)
-        } else if (nextRuntimes.length < current.runtimes.length && nextRuntimes.length > 0) {
-          await this.deps.onObserved({
-            engine: current.engine,
-            cwd: current.cwd ?? '',
-            processIdentity: current.processIdentity!,
-            args: current.processIdentity?.executable ?? '',
-            resumeSessionId: null,
-            runtimes: nextRuntimes,
-            primaryRuntimeKey: nextRuntimes.some((runtime) => terminalRouteKey(runtime) === current.primaryRuntimeKey)
-              ? current.primaryRuntimeKey
-              : terminalRouteKey(nextRuntimes[0]),
-          }, current)
-          await this.deps.onDormant(current, 'no terminal runtime currently verifies this process')
-        } else if (nextRuntimes.length === 0) {
-          await this.deps.onRemoved(current, `terminal runtime absent after ${MISS_LIMIT} confirmed scans`)
-        } else {
-          await this.deps.onDormant(current, 'no terminal runtime currently verifies this process')
+        } else if (nextRuntimes.length < current.runtimes.length) {
+          if (nextRuntimes.length === 0) {
+            await this.deps.onRemoved(current, `terminal runtime absent after ${MISS_LIMIT} confirmed scans`)
+          } else {
+            await this.deps.onObserved({
+              engine: current.engine,
+              cwd: current.cwd ?? '',
+              processIdentity: current.processIdentity!,
+              args: current.processIdentity?.executable ?? '',
+              resumeSessionId: null,
+              runtimes: nextRuntimes,
+              primaryRuntimeKey: nextRuntimes.some((runtime) => terminalRouteKey(runtime) === current.primaryRuntimeKey)
+                ? current.primaryRuntimeKey
+                : terminalRouteKey(nextRuntimes[0]),
+            }, current)
+          }
         }
       }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RegisteredSession } from './registry.js'
 import type { DiscoveredTerminalAgent, TerminalAgentProbe } from './terminalAgentDiscovery.js'
+import type { TerminalBackend } from './terminalBackend.js'
 import { TerminalAgentReconciler } from './terminalAgentReconciler.js'
 import { terminalRouteKey } from './terminalRuntime.js'
 import type { TerminalRuntimeRef } from './terminalTypes.js'
@@ -44,7 +45,7 @@ describe('composite terminal reconciliation', () => {
     })
     await reconciler.trigger()
     await reconciler.trigger()
-    expect(onDormant).toHaveBeenCalledTimes(2)
+    expect(onDormant).not.toHaveBeenCalled()
     expect(onRemoved).not.toHaveBeenCalled()
   })
 
@@ -77,8 +78,10 @@ describe('composite terminal reconciliation', () => {
   it('removes only after two successful negative inventories', async () => {
     const current = session([herdr])
     const onRemoved = vi.fn()
+    const validate = vi.fn(async () => ({ state: 'gone' as const, reason: 'process exited' }))
+    const backend = { instanceId: 'herdr:endpoint-a', validate } as unknown as TerminalBackend
     const reconciler = new TerminalAgentReconciler({
-      current: () => [current], backends: [], backendOrder: ['herdr'], herdrSessionOrder: ['default'],
+      current: () => [current], backends: [backend], backendOrder: ['herdr'], herdrSessionOrder: ['default'],
       onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved,
       probe: async () => probe([{ instanceId: 'herdr:endpoint-a', result: { state: 'available', roots: [] } }]),
     })
@@ -86,6 +89,47 @@ describe('composite terminal reconciliation', () => {
     expect(onRemoved).not.toHaveBeenCalled()
     await reconciler.trigger()
     expect(onRemoved).toHaveBeenCalledWith(current, 'terminal runtime absent after 2 confirmed scans')
+    expect(validate).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an agent active when pane-specific validation proves a process missed by the aggregate scan', async () => {
+    const current = session([tmux])
+    const onDormant = vi.fn()
+    const onRemoved = vi.fn()
+    const validate = vi.fn(async () => ({ state: 'alive' as const }))
+    const backend = { instanceId: 'tmux:default', validate } as unknown as TerminalBackend
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [backend], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant, onRemoved,
+      probe: async () => probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }]),
+    })
+
+    await reconciler.trigger()
+    await reconciler.trigger()
+    await reconciler.trigger()
+
+    expect(validate).toHaveBeenCalledTimes(3)
+    expect(onDormant).not.toHaveBeenCalled()
+    expect(onRemoved).not.toHaveBeenCalled()
+  })
+
+  it('keeps an agent active when pane-specific validation is inconclusive', async () => {
+    const current = session([tmux])
+    const onDormant = vi.fn()
+    const onRemoved = vi.fn()
+    const validate = vi.fn(async () => ({ state: 'unknown' as const, reason: 'process table timed out' }))
+    const backend = { instanceId: 'tmux:default', validate } as unknown as TerminalBackend
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [backend], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant, onRemoved,
+      probe: async () => probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }]),
+    })
+
+    await reconciler.trigger()
+    await reconciler.trigger()
+
+    expect(onDormant).not.toHaveBeenCalled()
+    expect(onRemoved).not.toHaveBeenCalled()
   })
 
   it('refreshes a moved Herdr route on the same process without changing agent ownership', async () => {
