@@ -149,6 +149,9 @@ export class TerminalStreamManager {
       case 'terminal_resize':
         await this.resize(connId, payload)
         return true
+      case 'terminal_scroll':
+        await this.scroll(connId, payload)
+        return true
       case 'terminal_resync':
         await this.resyncRequested(connId, payload)
         return true
@@ -397,6 +400,27 @@ export class TerminalStreamManager {
       return
     }
     await this.sendKeyframe(state)
+  }
+
+  /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,
+   *  unlike input, an out-of-order or dropped scroll frame just means one gesture scrolled a little
+   *  more or less than intended, never a corrupted stream. The pane's live output stream (already
+   *  flowing via `sink.onData`) naturally carries the scrolled copy-mode view back to the client, so
+   *  no explicit keyframe push is needed here the way resize needs one. */
+  private async scroll(connId: string, payload: FramePayload): Promise<void> {
+    const state = this.streamFor(connId, payload)
+    if (!state) return
+    const direction = payload.direction
+    const lines = Number(payload.lines)
+    if ((direction !== 'up' && direction !== 'down') || !Number.isSafeInteger(lines) || lines <= 0) {
+      this.sendError(connId, 'TERMINAL_SCROLL_INVALID', { streamId: state.streamId })
+      return
+    }
+    state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    const result = await state.handle.scroll(direction, lines)
+    if (result.state !== 'succeeded') {
+      this.sendError(connId, 'TERMINAL_SCROLL_FAILED', { streamId: state.streamId, message: result.reason })
+    }
   }
 
   private async resyncRequested(connId: string, payload: FramePayload): Promise<void> {

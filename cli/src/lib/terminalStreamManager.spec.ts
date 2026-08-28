@@ -10,6 +10,7 @@ class FakeStream implements TerminalStreamHandle {
   readonly runtime = { backend: 'tmux' as const, paneId: '%1' }
   writes: Uint8Array[] = []
   sizes: Array<{ cols: number; rows: number }> = []
+  scrolls: Array<{ direction: 'up' | 'down'; lines: number }> = []
   closed = false
   snapshots = 0
   snapshotBytes = Buffer.from('\u001bcfixture')
@@ -29,6 +30,7 @@ class FakeStream implements TerminalStreamHandle {
   endSnapshot() { this.snapshotEnds++; this.onEndSnapshot?.() }
   async writeRaw(bytes: Uint8Array) { this.writes.push(bytes); return TERMINAL_ACTION_SUCCEEDED }
   async resize(size: { cols: number; rows: number }) { this.sizes.push(size); return TERMINAL_ACTION_SUCCEEDED }
+  async scroll(direction: 'up' | 'down', lines: number) { this.scrolls.push({ direction, lines }); return TERMINAL_ACTION_SUCCEEDED }
   async pauseOutput() { this.pauses++; return TERMINAL_ACTION_SUCCEEDED }
   async resumeOutput() { this.resumes++; return TERMINAL_ACTION_SUCCEEDED }
   async close(): Promise<void> { this.closed = true }
@@ -156,6 +158,24 @@ describe('TerminalStreamManager', () => {
       streamId, resizeSeq: 0, cols: 140, rows: 50,
     })
     expect(stream.sizes.at(-1)).toEqual({ cols: 140, rows: 50 })
+  })
+
+  it('routes terminal_scroll to the stream handle, and rejects a malformed one', async () => {
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-scroll', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    const streamId = sent[0].payload.streamId as string
+
+    await manager.handleFrame('web-1', 'terminal_scroll', { streamId, direction: 'up', lines: 3 })
+    expect(stream.scrolls.at(-1)).toEqual({ direction: 'up', lines: 3 })
+
+    await manager.handleFrame('web-1', 'terminal_scroll', { streamId, direction: 'sideways', lines: 3 })
+    expect(stream.scrolls).toHaveLength(1)
+    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_SCROLL_INVALID')
+
+    await manager.handleFrame('web-1', 'terminal_scroll', { streamId, direction: 'down', lines: 0 })
+    expect(stream.scrolls).toHaveLength(1)
+    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_SCROLL_INVALID')
   })
 
   it('does not replay pre-snapshot repaint bytes after the authoritative keyframe', async () => {

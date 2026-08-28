@@ -426,6 +426,9 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   private snapshotPostCut: Buffer[] = []
   private snapshotPostCutBytes = 0
   private snapshotLastOutputAt = 0
+  // Set by scroll() when it enters tmux copy-mode. Copy-mode swallows keyboard input for its own
+  // navigation, so writeRaw() must exit it before the next real keystroke — see writeRaw()'s doc.
+  private inCopyMode = false
 
   private constructor(
     paneId: string,
@@ -650,9 +653,18 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
   async writeRaw(bytes: Uint8Array): Promise<TerminalActionResult> {
     if (this.closed) return terminalActionNotStarted('terminal stream is closed')
     if (bytes.length === 0) return TERMINAL_ACTION_SUCCEEDED
+    // scroll() below leaves the pane in copy-mode, which captures all keyboard input for its own
+    // navigation. Cancel it before the very next real keystroke, queued ahead of the input chunks
+    // (the ControlCommandQueue is strict FIFO) so the pane is back to normal by the time tmux
+    // applies them — otherwise the first keystroke after a scroll silently vanishes into copy-mode
+    // instead of reaching the program, trading "can't scroll" for "can't type".
+    const sends: Array<Promise<ControlCommandResult>> = []
+    if (this.inCopyMode) {
+      this.inCopyMode = false
+      sends.push(this.runControlCommand(`send-keys -X -t ${this.runtime.paneId} cancel`))
+    }
     // Every chunk is handed to the queue before any reply is awaited, so a paste costs one
     // round-trip rather than one per chunk. tmux applies them in the order they were written.
-    const sends: Array<Promise<ControlCommandResult>> = []
     for (let offset = 0; offset < bytes.length; offset += INPUT_CHUNK_BYTES) {
       const chunk = bytes.subarray(offset, offset + INPUT_CHUNK_BYTES)
       const hex = [...chunk].map((byte) => byte.toString(16).padStart(2, '0')).join(' ')
@@ -664,6 +676,26 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     return failedAt === 0
       ? terminalActionNotStarted('tmux raw input could not be sent')
       : terminalActionPossiblyExecuted('tmux raw input stopped after a partial write')
+  }
+
+  /** Scroll via tmux's own copy-mode rather than writing bytes into the pty. Some remote CLIs (e.g.
+   *  Claude Code) declare terminal mouse-tracking and correctly handle SGR wheel reports themselves;
+   *  others declare it but don't (confirmed live for Grok: it echoes the raw escape bytes into its
+   *  own prompt as literal characters instead of scrolling) — copy-mode works regardless, since it
+   *  never depends on the program in the pane understanding anything about the bytes at all. */
+  async scroll(direction: 'up' | 'down', lines: number): Promise<TerminalActionResult> {
+    if (this.closed) return terminalActionNotStarted('terminal stream is closed')
+    if (lines <= 0) return TERMINAL_ACTION_SUCCEEDED
+    // Idempotent — safe even if already in copy-mode from a previous scroll.
+    const entered = await this.runControlCommand(`copy-mode -t ${this.runtime.paneId}`)
+    if (!entered.ok) return terminalActionNotStarted('tmux copy-mode could not be entered')
+    this.inCopyMode = true
+    const command = direction === 'up' ? 'scroll-up' : 'scroll-down'
+    const scrolled = await this.runControlCommand(
+      `send-keys -N ${lines} -X -t ${this.runtime.paneId} ${command}`,
+    )
+    if (!scrolled.ok) return terminalActionPossiblyExecuted('tmux scroll did not complete')
+    return TERMINAL_ACTION_SUCCEEDED
   }
 
   async resize(requested: TerminalStreamSize): Promise<TerminalActionResult> {

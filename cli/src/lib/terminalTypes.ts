@@ -148,6 +148,12 @@ export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalR
   endSnapshot(): void
   writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>
   resize(size: TerminalStreamSize): Promise<TerminalActionResult>
+  /** Scroll via the backend's own history mechanism (tmux copy-mode for `TmuxControlStream`) rather
+   *  than writing bytes into the pty — a program that owns terminal mouse-tracking but doesn't
+   *  itself understand SGR wheel reports (confirmed live for Grok: it echoes the raw escape bytes
+   *  into its own prompt instead of scrolling) would otherwise treat wheel input as garbage
+   *  keystrokes. Backends with no such concept (anything not tmux-backed) may no-op. */
+  scroll(direction: 'up' | 'down', lines: number): Promise<TerminalActionResult>
   pauseOutput(): Promise<TerminalActionResult>
   resumeOutput(): Promise<TerminalActionResult>
   close(): Promise<void>

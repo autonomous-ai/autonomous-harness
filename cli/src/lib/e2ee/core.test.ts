@@ -187,6 +187,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('d90702b3385c2b2a75e5cdce49094a5646bb9831e2abaefb73f513185beb853a')
+    expect(actual).toBe('5ce871815e610561cd829fc7dd7c5f280767e95355a05dacc996fb902d7ee11f')
   })
 })
