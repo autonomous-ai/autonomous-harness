@@ -81,7 +81,19 @@ export interface CableAgent {
   engine?: string
   model?: string
   effort?: string
+  /**
+   * The machine this agent lives on, and that machine's name.
+   *
+   * THE CAROUSEL IS NO LONGER ONE MACHINE'S. Every agent on every machine is on it at once, so an agent
+   * that does not say where it lives cannot be driven: the daemon routes each turn, stop and answer by
+   * this id, and the dial prints the name on the switcher's second line where the engine used to be.
+   *
+   * Optional because the WIRE is: a firmware that predates the field simply does not draw it.
+   */
+  machineId?: string
+  machine?: string
 }
+
 
 /**
  * One row of the dial's machine wheel.
@@ -788,8 +800,11 @@ export class CableSession {
    */
   /** What the dial has been told, as one comparable string. */
   private static agentsKey(agents: CableAgent[]): string {
-    return agents.map((a) => `${a.id}:${a.name}:${a.engine ?? ''}:${a.model ?? ''}:${a.effort ?? ''}`).join('|')
+    // `machine` is in the key, not just `machineId`: the dial DRAWS the name, so a machine being renamed
+    // has to reach the screen even though not one agent has changed.
+    return agents.map((a) => `${a.id}:${a.name}:${a.engine ?? ''}:${a.model ?? ''}:${a.effort ?? ''}:${a.machineId ?? ''}:${a.machine ?? ''}`).join('|')
   }
+
 
   /**
    * Send the agent list IF it differs from what the dial was last told.
@@ -813,7 +828,19 @@ export class CableSession {
 
     await this.send({ t: 'agents.begin' })
     for (const a of agents) {
-      await this.send({ t: 'agent', id: a.id, name: a.name, engine: a.engine ?? '', model: a.model ?? '', effort: a.effort ?? '' })
+      await this.send({
+        t: 'agent',
+        id: a.id,
+        name: a.name,
+        engine: a.engine ?? '',
+        model: a.model ?? '',
+        effort: a.effort ?? '',
+        // Where it lives. The id is what the dial sends back for every action, the name is what it draws
+        // on the switcher's second line, and the id is also how a machine row finds its first agent.
+        machineId: a.machineId ?? '',
+        machine: a.machine ?? '',
+      })
+
     }
     await this.send({ t: 'agents.end' })
   }

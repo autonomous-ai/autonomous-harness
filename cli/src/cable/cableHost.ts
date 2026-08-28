@@ -62,6 +62,12 @@ function placeholderId(computerId: string): string {
   return `cable:${computerId}`
 }
 
+/** How often another machine's agent list is re-asked. Far slower than the dial's one-second tick: the
+ *  list changes when a person starts an agent, not continuously. */
+const REMOTE_REFRESH_MS = 5_000
+/** How long a machine's last good list survives failures before its tiles leave the carousel. */
+const REMOTE_GRACE_MS = 30_000
+
 /** Whether an id is that placeholder rather than a machine the backend has heard of. */
 function isPlaceholder(id: string): boolean {
   return id.startsWith('cable:')
@@ -92,6 +98,13 @@ export class DaemonCableHost implements CableHost {
    * remember across a daemon restart either — that is when the registry reloads anyway.
    */
   private selected = ''
+
+  /** Each other machine's agents, as last read. `asked` throttles the round; `at` ages the answer. */
+  private readonly remoteAgents = new Map<string, { agents: CableAgent[]; at: number; asked: number }>()
+  /** Machines with a list RPC in flight, so a slow machine is asked once rather than every tick. */
+  private readonly inFlight = new Set<string>()
+  /** agentId → machineId, rebuilt from the snapshot last handed to the dial. */
+  private agentMachine = new Map<string, string>()
 
   /** `undefined` = no lane to any other machine exists; the wheel is the local row and nothing else. */
   constructor(private readonly wiring: CableHostWiring, private readonly fleet?: MachineFleet) {}
@@ -229,8 +242,8 @@ export class DaemonCableHost implements CableHost {
     return locale.startsWith('vi') ? 'vi' : 'en'
   }
 
-  async listAgents(): Promise<CableAgent[]> {
-    if (!this.isLocalSelected()) return this.fleet!.listAgents(this.selectedMachine())
+  /** This computer's own agents, in the order every other surface reads them in. */
+  private localAgents(): CableAgent[] {
     // `active()`, not `list()` — the SAME set `agents_list` answers the web and the desktop app with. They
     // read one registry and must not disagree about what is on it: a dead agent holding a tile on the dial
     // and nowhere else is a tile that cannot be driven and cannot be explained.
@@ -239,38 +252,135 @@ export class DaemonCableHost implements CableHost {
     // which is Map insertion order and differs between daemon runs. Both producers sort identically, so
     // the dial and the app cannot drift apart while reading the same registry.
     sessions.sort((a, b) => a.registeredAt - b.registeredAt || a.agentId.localeCompare(b.agentId))
+    const machineId = this.localId()
+    const machine = this.wiring.machineName()
     return sessions.map((s) => ({
       id: s.agentId,
       name: projectDisplayName(s),
       engine: s.engine ?? '',
+      machineId,
+      machine,
       ...chipsFromProfile(this.wiring.runtimeProfile?.(s)),
     }))
   }
 
+  /**
+   * EVERY agent on EVERY machine, in the order the desktop app's rail reads them: this computer first,
+   * then each other machine in wheel order, and within a machine whatever order that machine returns.
+   *
+   * Read from a CACHE, never from a live RPC. This is called on the session's one-second tick, and a
+   * naive implementation would fire one cloud round trip per machine per second — the dial would spend
+   * its whole life waiting on the network to answer a question whose answer changes every few minutes.
+   * `refreshRemotes()` does the asking, off to the side, on its own slower clock.
+   */
+  async listAgents(): Promise<CableAgent[]> {
+    const out = this.localAgents()
+    const { machines } = await this.listMachines()
+    for (const m of machines) {
+      if (m.local) continue
+      const entry = this.remoteAgents.get(m.id)
+      if (entry) for (const a of entry.agents) out.push({ ...a, machineId: m.id, machine: m.name })
+    }
+    void this.refreshRemotes(machines)
+    // Rebuilt from the SAME snapshot that is about to be pushed, so the map can never name a machine an
+    // agent has already left. Every action the dial can take is routed through it.
+    const next = new Map<string, string>()
+    for (const a of out) if (a.machineId) next.set(a.id, a.machineId)
+    this.agentMachine = next
+    return out
+  }
+
+  /**
+   * Which machine an agent lives on, or '' if the dial named one this daemon has never listed.
+   *
+   * NEVER falls back to the selected machine. A wrong answer here does not fail — it delivers the user's
+   * turn to a different computer, which is the worst outcome this whole feature can produce.
+   */
+  private machineOf(agentId: string): string {
+    return this.agentMachine.get(agentId) ?? ''
+  }
+
+  /** True when the agent belongs to this computer (or is unknown, which is handled at the call site). */
+  private isLocalAgent(agentId: string): boolean {
+    const machineId = this.machineOf(agentId)
+    return !machineId || machineId === this.localId()
+  }
+
+  /**
+   * Refresh the other machines' agent lists, on their own clock.
+   *
+   * Only `ready` machines are asked. An offline one has nothing to say and an unlinked one cannot be
+   * read at all (no pinned key), and asking either costs a 15-second RPC timeout per machine per round.
+   *
+   * A machine that fails keeps its LAST GOOD list for `REMOTE_GRACE_MS` and only then goes empty. A cloud
+   * blip is the common case, and dropping every one of a machine's tiles off the carousel for a few
+   * seconds — then putting them back — is a far worse lie than briefly showing a list that is a minute
+   * old.
+   */
+  private refreshRemotes(machines: CableMachine[]): void {
+    if (!this.fleet) return
+    const now = Date.now()
+    for (const m of machines) {
+      if (m.local) continue
+      const entry = this.remoteAgents.get(m.id)
+      if (m.state !== 'ready') {
+        // Not an error and not worth a grace period: the machine itself says it has nothing to offer.
+        if (entry && entry.agents.length) this.remoteAgents.set(m.id, { agents: [], at: now, asked: entry.asked })
+        continue
+      }
+      if (entry && now - entry.asked < REMOTE_REFRESH_MS) continue
+      if (this.inFlight.has(m.id)) continue
+      this.inFlight.add(m.id)
+      this.remoteAgents.set(m.id, { agents: entry?.agents ?? [], at: entry?.at ?? 0, asked: now })
+      void this.fleet.listAgents(m.id)
+        .then((agents) => {
+          const before = this.remoteAgents.get(m.id)
+          this.remoteAgents.set(m.id, { agents, at: Date.now(), asked: Date.now() })
+          // One line per TRANSITION, not per round: this runs every few seconds forever, and a healthy
+          // machine that logs each time buries everything else in the file.
+          if (!before || before.agents.length !== agents.length) {
+            this.wiring.log(`cable: ${m.name} → ${agents.length} agents`)
+          }
+        })
+        .catch((err) => {
+          const before = this.remoteAgents.get(m.id)
+          const stale = before && Date.now() - before.at > REMOTE_GRACE_MS
+          if (stale) this.remoteAgents.set(m.id, { agents: [], at: Date.now(), asked: Date.now() })
+          if (before?.agents.length && stale) {
+            this.wiring.log(`cable: ${m.name} dropped off the carousel (${(err as Error).message})`)
+          }
+        })
+        .finally(() => this.inFlight.delete(m.id))
+    }
+  }
+
   sendTurn(agentId: string, text: string): void {
-    if (!this.isLocalSelected()) { this.fleet!.sendTurn(this.selectedMachine(), agentId, text); return }
+    if (!this.isLocalAgent(agentId)) { this.fleet!.sendTurn(this.machineOf(agentId), agentId, text); return }
     this.wiring.sendTurn(agentId, text)
   }
 
   stopTurn(agentId: string): void {
-    if (!this.isLocalSelected()) { this.fleet!.stopTurn(this.selectedMachine(), agentId); return }
+    if (!this.isLocalAgent(agentId)) { this.fleet!.stopTurn(this.machineOf(agentId), agentId); return }
     this.wiring.stopTurn(agentId)
   }
 
   answer(agentId: string, requestId: string, answers: Record<string, string>): void {
-    if (!this.isLocalSelected()) { this.fleet!.answer(this.selectedMachine(), agentId, requestId, answers); return }
+    if (!this.isLocalAgent(agentId)) { this.fleet!.answer(this.machineOf(agentId), agentId, requestId, answers); return }
     this.wiring.answer(agentId, requestId, answers)
   }
+
 
   focus(agentId: string): void {
     // A statement about where the user is looking, and the desktop window follows it: turning the dial to
     // an agent switches the terminal on screen to the same one. The daemon still has no window of its own
     // — it forwards, and the app decides what following means for it.
-    // Local only, and not an oversight: this says where a hand at THIS desk is looking. There is no
-    // window here to move for an agent running on another computer, and moving one there is not what the
-    // person turning the dial asked for.
-    if (!this.isLocalSelected()) return
+    // FORWARDED FOR EVERY AGENT, including one running on another computer. That used to be refused on
+    // the grounds that there was no window here to move — which stopped being true when the desktop app
+    // grew panes for remote machines. The hand is still at THIS desk; the pane it wants in front of it
+    // may simply belong to a machine somewhere else, and the app is the side that decides what it can do
+    // about an agent it does not have.
     this.wiring.log(`cable: focus ${agentId}`)
+
     this.wiring.focused?.(agentId)
   }
 
@@ -280,28 +390,29 @@ export class DaemonCableHost implements CableHost {
     // protocol is most exposed to is a stroke that never CLOSES — the far side then holds a drag forever
     // and its list stops answering the mouse — and that failure is invisible without a matching pair to
     // look for. Two lines per swipe buys the one thing worth seeing.
-    if (!this.isLocalSelected()) return   // same reasoning as focus(): a finger on this glass, this desk
     if (phase !== 'move') {
+
       this.wiring.log(phase === 'down' ? 'cable: scroll ↓' : `cable: scroll ↑ (v=${velocity})`)
     }
     this.wiring.scrolled?.(phase, dy, velocity)
   }
 
   updateAgent(agentId: string, model?: string, effort?: string): void {
-    if (!this.isLocalSelected()) { this.fleet!.updateAgent(this.selectedMachine(), agentId, model, effort); return }
+    if (!this.isLocalAgent(agentId)) { this.fleet!.updateAgent(this.machineOf(agentId), agentId, model, effort); return }
     this.wiring.updateAgent?.(agentId, model, effort)
   }
 
   /** The last few turns, newest first, in the shape the dial's tile draws: a headline and a body. */
   async recentSummaries(agentId: string): Promise<Array<{ recap: string; text: string }>> {
-    const raw = this.isLocalSelected()
+    const raw = this.isLocalAgent(agentId)
       ? this.wiring.recent(agentId, 3)
-      : await this.fleet!.recentSummaries(this.selectedMachine(), agentId)
+      : await this.fleet!.recentSummaries(this.machineOf(agentId), agentId)
     return raw.map((r) => ({ recap: r?.recap ?? '', text: r?.text ?? '' })).filter((s) => s.recap || s.text)
   }
 
   async listModels(agentId: string): Promise<string[]> {
-    if (!this.isLocalSelected()) return this.fleet!.listModels(this.selectedMachine(), agentId)
+    if (!this.isLocalAgent(agentId)) return this.fleet!.listModels(this.machineOf(agentId), agentId)
+
     const models = (await this.wiring.listModels?.(agentId)) ?? []
     return models.map((m) => m.id).filter(Boolean)
   }
@@ -330,13 +441,17 @@ export class DaemonCableHost implements CableHost {
    * which is the whole reason voice on the cable does not inherit the hosted path's failure modes.
    */
   async route(transcript: string, agents: CableAgent[]): Promise<RouteDecision> {
-    // The recaps must come from the SELECTED machine. Scored against this computer's history instead, a
-    // spoken turn meant for a remote agent is routed by what the agents HERE were last doing — which is
-    // both wrong and completely invisible, because the router always answers with something.
+    // Each agent's recaps come from ITS OWN machine — recentSummaries routes by agentId. Scored against
+    // the wrong machine's history, a spoken turn is routed by what some other computer's agents were last
+    // doing, which is both wrong and completely invisible, because the router always answers with
+    // something. The machine name travels too, so two agents with the same name on two computers are
+    // distinguishable by the only thing that separates them.
     const candidates: RouterAgent[] = await Promise.all(agents.map(async (a) => ({
       id: a.id,
       name: a.name,
       engine: a.engine,
+      machine: a.machine,
+
       recentSummary: (await this.recentSummaries(a.id))
         .map((r) => r.recap || r.text || '')
         .filter(Boolean)

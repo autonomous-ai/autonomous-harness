@@ -95,7 +95,10 @@ export class DeviceFleet implements MachineFleet {
       const message = (err as Error).message
       throw new FleetError(this.codeFor(message), this.messageFor(message, row.name))
     }
-    this.recapCache.clear()
+    // ONLY this machine's recaps. Clearing the whole cache was right when a select meant "throw away the
+    // machine you were reading and pick up another one"; now every other machine's tiles are still on the
+    // dial's carousel, and blanking them would make a select look like N agents forgetting their work.
+    for (const key of [...this.recapCache.keys()]) if (key.startsWith(`${machineId}:`)) this.recapCache.delete(key)
     // NOTHING is read over the lane for this computer. Selecting it is an ANNOUNCEMENT — it tells the
     // backend where the dial is — and its agents, turns and recaps all come from this process. Asking the
     // cloud for them instead round-trips to ourselves and, because a computer-backed machine is
@@ -107,79 +110,82 @@ export class DeviceFleet implements MachineFleet {
   }
 
   /**
-   * `immediate` = the dial is gone, so the socket goes with it. Otherwise the dial merely went back to the
-   * local machine: DETACH from the remote one after a linger, but keep the socket — it is still what
-   * keeps the machine wheel's dots live.
+   * `immediate` = the dial is gone, so the socket goes with it. Anything else is a NO-OP, and the reason
+   * is worth stating because this used to detach after a linger.
+   *
+   * Detaching sent `machine_deselect`, which drops the backend's ACTIVE machine pointer — and the backend
+   * refuses `agents_list`/`message` outright while there is no active machine, tagged for another machine
+   * or not (deviceWs's ensureActiveReady). So the linger would have quietly killed the carousel a minute
+   * after the user went back to the local machine. There is also nothing left for it to buy: with the
+   * `multi_machine` cap the backend holds a commander on every machine for as long as the socket lives,
+   * so detaching one of them frees nothing.
    */
   release(immediate = false): void {
     if (this.lingerTimer) { clearTimeout(this.lingerTimer); this.lingerTimer = null }
-    if (immediate) {
-      this.opts.link.release()
-      this.recapCache.clear()
-      return
-    }
-    this.lingerTimer = setTimeout(() => {
-      this.lingerTimer = null
-      this.opts.link.detach()
-      this.recapCache.clear()
-    }, LINGER_MS)
+    if (!immediate) return
+    this.opts.link.release()
+    this.recapCache.clear()
   }
 
+
+  // ── EVERY method below NAMES ITS MACHINE ────────────────────────────────────────────────────────
+  // These used to `void machineId` and let the frame land on whatever machine was attached, because
+  // exactly one ever was. The dial now holds every machine's agents in one carousel, so the machine is
+  // no longer implied by the selection and has to travel with the frame: the backend routes a device
+  // frame by its outer `machineId` tag (deviceWs.handleFrame) and answers from THAT machine's node.
+  // Dropping the tag would not fail loudly — it would quietly ask the wrong computer.
+
   async listAgents(machineId: string): Promise<CableAgent[]> {
-    const res = await this.opts.link.rpc('agents_list', {})
-    void machineId
+    const res = await this.opts.link.rpc('agents_list', {}, machineId)
     const raw = Array.isArray(res.agents) ? res.agents : []
     return raw.map(toCableAgent).filter((a) => a.id)
   }
 
   sendTurn(machineId: string, agentId: string, text: string): void {
-    void machineId
     // `resumeLatest` matches what the backend's own voice path dispatches, so a dial turn and a spoken
     // turn land on the same session rather than one of them starting a new one.
-    this.opts.link.send({ type: 'message', payload: { content: text, agentId, mode: 'auto', resumeLatest: true } })
+    this.tagged(machineId, { type: 'message', payload: { content: text, agentId, mode: 'auto', resumeLatest: true } })
   }
 
   stopTurn(machineId: string, agentId: string): void {
-    void machineId
-    this.opts.link.send({ type: 'cancel', payload: { agentId } })
+    this.tagged(machineId, { type: 'cancel', payload: { agentId } })
   }
 
   answer(machineId: string, agentId: string, requestId: string, answers: Record<string, string>): void {
-    void machineId
-    this.opts.link.send({ type: 'question_response', payload: { agentId, requestId, answers } })
+    this.tagged(machineId, { type: 'question_response', payload: { agentId, requestId, answers } })
   }
 
   updateAgent(machineId: string, agentId: string, model?: string, effort?: string): void {
-    void machineId
     if (!model) return
     // The far end owns what the profile means; this only reassembles the opaque string it round-trips.
-    const row = this.opts.list.find(this.opts.link.selectedMachine)
-    void row
     const selectedModel = `runtime-v1:${agentId}:claude:${model}@${effort || 'auto'}`
-    void this.opts.link.rpc('agent_update', { agentId, selectedModel })
+    void this.opts.link.rpc('agent_update', { agentId, selectedModel }, machineId)
       .catch((err) => this.opts.log(`device: agent_update failed (${(err as Error).message})`))
   }
 
   async listModels(machineId: string, agentId: string): Promise<string[]> {
-    void machineId
+
     // `compact` is what keeps the catalog inside the dial's picker; the backend trims to ≤24 entries.
-    const res = await this.opts.link.rpc('models_list', { agentId, compact: true })
+    const res = await this.opts.link.rpc('models_list', { agentId, compact: true }, machineId)
+
     const raw = Array.isArray(res.models) ? res.models : []
     return raw.map((m) => (typeof m === 'string' ? m : String((m as Record<string, unknown>)?.id ?? ''))).filter(Boolean)
   }
 
   async recentSummaries(machineId: string, agentId: string): Promise<RecentTurn[]> {
-    void machineId
-    const cached = this.recapCache.get(agentId)
+    const key = `${machineId}:${agentId}`
+    const cached = this.recapCache.get(key)
     if (cached) return cached
     try {
-      const res = await this.opts.link.rpc('agent_recent', { agentId, n: 3 })
+      const res = await this.opts.link.rpc('agent_recent', { agentId, n: 3 }, machineId)
+
       const events = Array.isArray(res.events) ? res.events : []
       const turns = events.map((e) => {
         const r = (e ?? {}) as Record<string, unknown>
         return { recap: typeof r.recap === 'string' ? r.recap : '', text: typeof r.text === 'string' ? r.text : '' }
       })
-      this.recapCache.set(agentId, turns)
+      this.recapCache.set(key, turns)
+
       return turns
     } catch (err) {
       this.opts.log(`device: agent_recent ${agentId} failed (${(err as Error).message})`)
@@ -194,7 +200,13 @@ export class DeviceFleet implements MachineFleet {
 
   // ── internals ───────────────────────────────────────────────────────────────────────────────────
 
+  /** Send a frame addressed to one machine. The tag is what the backend routes on. */
+  private tagged(machineId: string, frame: DeviceFrame): void {
+    this.opts.link.send({ ...frame, machineId })
+  }
+
   private async prefetchRecaps(machineId: string): Promise<void> {
+
     try {
       const agents = await this.listAgents(machineId)
       for (const a of agents) await this.recentSummaries(machineId, a.id)
@@ -205,14 +217,15 @@ export class DeviceFleet implements MachineFleet {
 
   private onFrame(frame: DeviceFrame): void {
     const selected = this.opts.link.selectedMachine
-    // `machines_status` is about the whole account, not one machine, so it must not be filtered by the
-    // selection — it arrives while nothing at all is selected.
-    if (frame.type !== 'machines_status') {
-      // The hub stamps `machineId` on every frame it fans out to a commander client. Anything wearing
-      // another machine's tag is a card for a machine the dial is not showing — dropped at the source,
-      // which is what keeps the agent id space flat and unscoped everywhere else.
-      if (frame.machineId && selected && frame.machineId !== selected) return
-    }
+    // WHICH MACHINE SENT IT. The hub stamps `machineId` on every frame it fans out to a commander
+    // client, and since the dial's carousel spans machines, that tag is the answer rather than a filter:
+    // a card from a machine the user is not looking at still belongs to a tile that is on screen.
+    //
+    // This used to DROP anything not wearing the selected machine's tag. That was right when one machine
+    // was attached at a time and is exactly wrong now — it would silence every tile but one, and the
+    // silence would look like agents that simply never finish a turn.
+    const from = typeof frame.machineId === 'string' && frame.machineId ? frame.machineId : selected
+
 
     // OUR OWN cards, come back to us the long way. Selecting the local machine attaches a commander to
     // it, so everything this daemon emits for the dial is fanned back down this socket — and the dial has
@@ -225,8 +238,9 @@ export class DeviceFleet implements MachineFleet {
       const kind = payload.kind
       if (kind !== 'processing' && kind !== 'done' && kind !== 'summary' && kind !== 'error') return
       this.emit({
-        machineId: selected,
+        machineId: from,
         kind,
+
         agentId: frame.agentId,
         text: typeof payload.text === 'string' ? payload.text : '',
         recap: typeof payload.recap === 'string' ? payload.recap : '',
@@ -236,11 +250,13 @@ export class DeviceFleet implements MachineFleet {
     if (frame.type === 'commander_question' && frame.agentId) {
       const requestId = payload.requestId
       if (typeof requestId !== 'string' || !Array.isArray(payload.questions)) return
-      this.emit({ machineId: selected, kind: 'question', agentId: frame.agentId, requestId, questions: payload.questions })
+      this.emit({ machineId: from, kind: 'question', agentId: frame.agentId, requestId, questions: payload.questions })
+
       return
     }
     if (frame.type === 'node_status') {
-      this.emit({ machineId: selected, kind: 'state', state: payload.online === true ? 'ready' : 'offline' })
+      this.emit({ machineId: from, kind: 'state', state: payload.online === true ? 'ready' : 'offline' })
+
       return
     }
     // The live machine list. This is what the held socket buys: without it the wheel's dots are a REST
@@ -248,7 +264,8 @@ export class DeviceFleet implements MachineFleet {
     if (frame.type === 'machines_status') {
       const rows = Array.isArray(payload.statuses) ? payload.statuses : []
       if (this.opts.list.applyLive(rows as Array<{ machineId?: unknown; online?: unknown }>)) {
-        this.emit({ machineId: selected, kind: 'state', state: 'ready' })
+        this.emit({ machineId: from, kind: 'state', state: 'ready' })
+
       }
     }
   }

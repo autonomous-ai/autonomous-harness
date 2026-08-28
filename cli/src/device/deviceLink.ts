@@ -59,6 +59,15 @@ export interface DeviceLinkOpts {
   identity: Identity
   /** The pinned key for a machine, read FRESH: `harness link import` runs as a separate process. */
   peer: (machineId: string) => MachinePeer | null
+  /**
+   * THIS computer's machineId, or '' before the daemon has resolved one.
+   *
+   * Needed because `multi_machine` attaches a commander to every machine INCLUDING this one, so this
+   * socket is subscribed to its own node's cards. They are already delivered in-process; the copy that
+   * comes back around through the cloud is dropped by machineId, and this is how it is recognised.
+   */
+  localMachineId: () => string
+
   log: (line: string) => void
 }
 
@@ -77,14 +86,24 @@ export class DeviceLink {
   /** Resolves when `machine_selected` lands, so callers can await the attach rather than poll for it. */
   private selectWaiter: { resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | null = null
   /**
-   * The session for the attached machine, or null when none is needed.
+   * One session PER MACHINE, keyed by machineId.
    *
    * Only REMOTE machines (another computer running this same daemon) require one: a cloud machine's RPCs
    * are answered by the backend itself and its cards are plaintext, so there is nothing to establish and
    * nobody at the far end to establish it with.
+   *
+   * A MAP RATHER THAN A FIELD because the dial's carousel is no longer one machine's: it holds every
+   * agent on every machine at once, so this daemon is talking to N far ends concurrently and each one
+   * has its own key. Every frame in and out therefore has to say WHICH machine it belongs to before it
+   * can be encrypted or read — which is exactly what the backend's outer `machineId` tag is for
+   * (hub.ts deliverUpLocal tags every commander frame with it).
    */
-  private crypto: RelaySessionCrypto | null = null
-  private cryptoWaiter: { resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | null = null
+  private readonly sessions = new Map<string, RelaySessionCrypto>()
+  private readonly cryptoWaiters = new Map<string, { resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
+  /** In-flight handshakes, so N concurrent callers for one machine send exactly ONE hello. */
+  private readonly handshakes = new Map<string, Promise<void>>()
+
+
 
   constructor(private readonly opts: DeviceLinkOpts) {}
 
@@ -123,28 +142,44 @@ export class DeviceLink {
   }
 
   /**
-   * Bring up the E2EE session for a machine that needs one.
+   * Bring up the E2EE session for a machine that needs one, IF it does not already have a live one.
    *
    * The trust anchor is the PINNED key from `harness link import`, never anything the backend hands over:
    * a key directory would make the relay the trust anchor, which is the exact property end-to-end
    * encryption exists to deny it.
+   *
+   * Idempotent and safe to call before every RPC: a machine whose session is already up returns without
+   * a frame. That is what lets the caller stop tracking handshake state — the aggregated agent list talks
+   * to whichever machines it needs, whenever it needs them, and each one is established on first use.
    */
-  private async establish(machineId: string): Promise<void> {
-    this.crypto = null
+  async establish(machineId: string): Promise<void> {
+    if (!machineId) return
+    if (this.sessions.get(machineId)?.ready) return
+    // A second caller JOINS the first handshake rather than starting a rival one: two `e2e_hello`s for
+    // the same machine race, and the welcome for the loser would resolve against a session that has
+    // already been replaced in the map.
+    const inflight = this.handshakes.get(machineId)
+    if (inflight) return inflight
     const peer = this.opts.peer(machineId)
     if (!peer) return   // a cloud machine, or one whose RPCs the backend answers itself
     const crypto = new RelaySessionCrypto({ machineId, selfIdentity: this.opts.identity, peerPub: b64d(peer.pub) })
-    this.crypto = crypto
-    await new Promise<void>((resolve, reject) => {
+    this.sessions.set(machineId, crypto)
+    const handshake = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.cryptoWaiter = null
+        this.cryptoWaiters.delete(machineId)
         reject(new Error('the machine did not answer the E2EE hello'))
       }, RPC_TIMEOUT_MS)
-      this.cryptoWaiter = { resolve, reject, timer }
-      this.send(crypto.helloFrame() as DeviceFrame)
-    })
+      this.cryptoWaiters.set(machineId, { resolve, reject, timer })
+      // The hello goes in clear AND tagged: the backend routes a device frame by its outer machineId, so
+      // without the tag the handshake for a background machine would be delivered to the active one.
+      this.send({ ...(crypto.helloFrame() as DeviceFrame), machineId })
+    }).finally(() => { this.handshakes.delete(machineId) })
+    this.handshakes.set(machineId, handshake)
+    await handshake
     this.opts.log(`device: e2e session ready ${machineId}`)
   }
+
+
 
   /** Let go of whatever is attached. The socket is closed: nothing else on it is being watched. */
   /** Detach from the machine but KEEP the socket: the dial is still plugged in. */
@@ -176,20 +211,34 @@ export class DeviceLink {
       this.opts.log(`device: dropped ${frame.type ?? '?'} — no link`)
       return
     }
-    // Wrapped only once the session is up. `e2e_*` frames are the handshake itself and must go in clear,
-    // or the far end would need the key to learn the key.
-    const out = this.crypto?.ready && !String(frame.type ?? '').startsWith('e2e_')
-      ? (this.crypto.wrapOutgoing(frame as Record<string, unknown>) as DeviceFrame)
+    // Wrapped only once THAT MACHINE's session is up. `e2e_*` frames are the handshake itself and must go
+    // in clear, or the far end would need the key to learn the key.
+    //
+    // The key is picked by the frame's own `machineId`, falling back to the attached machine for the
+    // frames that predate multi-machine (machine_select, ping). Encrypting with the wrong machine's key
+    // is the one failure here that looks like nothing at all: the far end drops it silently.
+    const session = this.sessions.get(frame.machineId || this.attached)
+    const out = session?.ready && !String(frame.type ?? '').startsWith('e2e_')
+      ? (session.wrapOutgoing(frame as Record<string, unknown>) as DeviceFrame)
       : frame
+
     try { this.ws.send(JSON.stringify(out)) } catch (err) {
       this.opts.log(`device: send ${frame.type ?? '?'} failed (${(err as Error).message})`)
     }
   }
 
-  /** One request/response, correlated by `requestId`. Rejects on timeout or an `error` in the reply. */
-  async rpc(type: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  /**
+   * One request/response, correlated by `requestId`. Rejects on timeout or an `error` in the reply.
+   *
+   * `machineId` names the machine to ask; omitted means the attached one. Passing it is what makes an RPC
+   * to a machine the dial is not currently rendering possible at all — the backend routes a device frame
+   * by its outer tag and answers from that machine's node.
+   */
+  async rpc(type: string, payload: Record<string, unknown> = {}, machineId = ''): Promise<Record<string, unknown>> {
     if (this.ws?.readyState !== WebSocket.OPEN) throw new Error('not connected')
+    if (machineId) await this.establish(machineId)
     const requestId = randomUUID()
+
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
@@ -197,7 +246,8 @@ export class DeviceLink {
         reject(new Error(`${type} timed out`))
       }, RPC_TIMEOUT_MS)
       this.pending.set(requestId, { resolve, reject, timer })
-      this.send({ type, payload: { ...payload, requestId } })
+      this.send(machineId ? { type, machineId, payload: { ...payload, requestId } } : { type, payload: { ...payload, requestId } })
+
     })
   }
 
@@ -238,13 +288,20 @@ export class DeviceLink {
         // RelaySessionCrypto below. Advertising it before that was true would turn a clean
         // E2EE_REQUIRED error into a hang, which is why it went in only once the session did.
         //
-        // `multi_machine` is deliberately NOT advertised: it would attach a commander to EVERY machine,
-        // including this computer's own, whose daemon would then burn an LLM recap on turns nobody is
-        // watching and echo its own cards back to itself through the cloud.
+        // `multi_machine` is what makes the dial's carousel span machines: the backend then holds a
+        // commander client on EVERY machine at once, so each one's node runs its recap and every frame
+        // it sends arrives tagged with its machineId. Without it only the selected machine is attached
+        // and an RPC aimed at any other is answered by the wrong node.
+        //
+        // It also attaches a commander to THIS computer's own machine, which is the reason it was held
+        // back before. Two guards make that harmless: the local machine's own cards are dropped on
+        // arrival (see onMessage), and nothing local is ever ASKED for over this lane — cableHost reads
+        // this computer's agents in-process, exactly as it did.
         this.send({
           type: 'device_hello',
-          payload: { chip: 'harness-cli', firmwareVersion: VERSION, caps: ['e2ee_data'] },
+          payload: { chip: 'harness-cli', firmwareVersion: VERSION, caps: ['e2ee_data', 'multi_machine'] },
         })
+
         this.armPing()
         resolve()
       }
@@ -279,16 +336,20 @@ export class DeviceLink {
     })
   }
 
-  private onWelcome(payload: Record<string, unknown>): void {
-    if (!this.crypto) return
-    if (!this.crypto.handleWelcome(payload)) { this.failCrypto(new Error('E2EE_HANDSHAKE_FAILED')); return }
-    if (this.cryptoWaiter) { clearTimeout(this.cryptoWaiter.timer); this.cryptoWaiter.resolve(); this.cryptoWaiter = null }
+  private onWelcome(machineId: string, payload: Record<string, unknown>): void {
+    const crypto = this.sessions.get(machineId)
+    if (!crypto) return
+    if (!crypto.handleWelcome(payload)) { this.failCrypto(machineId, new Error('E2EE_HANDSHAKE_FAILED')); return }
+    const waiter = this.cryptoWaiters.get(machineId)
+    if (waiter) { clearTimeout(waiter.timer); this.cryptoWaiters.delete(machineId); waiter.resolve() }
   }
 
-  private failCrypto(err: Error): void {
-    this.crypto = null
-    if (this.cryptoWaiter) { clearTimeout(this.cryptoWaiter.timer); this.cryptoWaiter.reject(err); this.cryptoWaiter = null }
+  private failCrypto(machineId: string, err: Error): void {
+    this.sessions.delete(machineId)
+    const waiter = this.cryptoWaiters.get(machineId)
+    if (waiter) { clearTimeout(waiter.timer); this.cryptoWaiters.delete(machineId); waiter.reject(err) }
   }
+
 
   private armPing(): void {
     if (this.pingTimer) clearInterval(this.pingTimer)
@@ -303,7 +364,13 @@ export class DeviceLink {
     for (const [, p] of this.pending) { clearTimeout(p.timer); p.reject(new Error(why)) }
     this.pending.clear()
     if (this.selectWaiter) { clearTimeout(this.selectWaiter.timer); this.selectWaiter.reject(new Error(why)); this.selectWaiter = null }
-    this.failCrypto(new Error(why))
+    // EVERY session, not just the attached machine's. The socket is what carried all of them; a session
+    // left in the map after it dies would encrypt the first frame of the next connection with a key the
+    // far end has already forgotten, and that frame is dropped in silence at the other end.
+    for (const machineId of [...this.cryptoWaiters.keys(), ...this.sessions.keys()]) {
+      this.failCrypto(machineId, new Error(why))
+    }
+
     const ws = this.ws
     this.ws = null
     this.attached = ''
@@ -337,17 +404,31 @@ export class DeviceLink {
     let frame: DeviceFrame
     try { frame = JSON.parse(raw.toString()) as DeviceFrame } catch { return }
 
-    if (frame.type === 'e2e_welcome') { this.onWelcome((frame.payload ?? {}) as Record<string, unknown>); return }
-    if (frame.type === 'e2e_rekey') { this.crypto?.handleRekey((frame.payload ?? {}) as Record<string, unknown>); return }
+    // WHICH MACHINE THIS CAME FROM. The backend tags every commander frame with it (hub.ts
+    // deliverUpLocal), and with N machines attached at once it is the only thing that says which key
+    // opens the payload. Empty means a backend-authored frame with no machine behind it.
+    const from = typeof frame.machineId === 'string' ? frame.machineId : ''
+    // THE ECHO GUARD. `multi_machine` subscribes this socket to this computer's own machine, so every
+    // card its node publishes comes back down here. Every one of them was already delivered in-process
+    // by the local path, and forwarding the cloud copy too would double every turn card on the dial.
+    // RPC replies are exempt: nothing ever ASKS this lane about the local machine, so a `_result` tagged
+    // with it can only be a reply this daemon is genuinely waiting for.
+    if (from && from === this.opts.localMachineId() && !String(frame.type ?? '').endsWith('_result')) return
+
+
+    if (frame.type === 'e2e_welcome') { this.onWelcome(from, (frame.payload ?? {}) as Record<string, unknown>); return }
+    if (frame.type === 'e2e_rekey') { this.sessions.get(from)?.handleRekey((frame.payload ?? {}) as Record<string, unknown>); return }
     if (frame.type === 'e2e_denied') {
       // The far end knows this daemon's key and rejected it — the pin is stale, not merely missing.
-      this.opts.log('device: e2e denied — re-run `harness link import` for this machine')
-      this.failCrypto(new Error('E2EE_DENIED'))
+      this.opts.log(`device: e2e denied ${from} — re-run \`harness link import\` for this machine`)
+      this.failCrypto(from, new Error('E2EE_DENIED'))
       return
     }
 
-    if (this.crypto?.ready) {
-      const plain = this.crypto.unwrapIncoming(frame as Record<string, unknown>)
+    const session = this.sessions.get(from)
+    if (session?.ready) {
+      const plain = session.unwrapIncoming(frame as Record<string, unknown>)
+
       if (!plain) {
         // The single most misleading failure this lane has: an undecryptable card is indistinguishable
         // from no card at all, and the dial just sits through a whole turn showing nothing.

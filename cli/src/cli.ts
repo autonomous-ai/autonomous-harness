@@ -1036,10 +1036,12 @@ async function runForeground(session: AuthSession): Promise<void> {
    * backend-only meant a dial plugged into a machine with no WiFi device saw a turn start in its tmux
    * pane and then nothing at all: the daemon skipped GENERATING the cards, so there was nothing to send.
    */
-  // The cable half is gated on the dial actually LOOKING at this computer. A dial turned to another
-  // machine is watching that machine's cards, not ours, so generating recaps here would spend an LLM call
-  // per turn on something nobody renders.
-  const cableWatchingLocal = (): boolean => cableRef?.isConnected === true && cableHostRef?.isLocalSelected() === true
+  // A PLUGGED-IN DIAL IS ALWAYS WATCHING THIS COMPUTER. It used to be gated on the dial having this
+  // machine selected, because the carousel held one machine's agents at a time; it now holds every
+  // machine's at once, so this computer's tiles are on screen whichever machine the wheel last landed on
+  // and skipping the recap here would leave them permanently blank.
+  const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
+
   const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal()
   const terminalStreams = new TerminalStreamManager({
     terminals,
@@ -3000,8 +3002,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Read FRESH on every attach: `harness link import` runs as a separate process, so a value captured
     // at daemon start would keep answering "not linked" until the next restart.
     peer: (machineId) => machinePeers.get(machineId),
+    // Read fresh for the same reason `machineId` above is a thunk: it is '' until the daemon has resolved
+    // this computer's machine, and the echo guard must start working the moment it is not.
+    localMachineId: () => backend.machineId,
     log: (line) => console.log(`[device] ${line}`),
   })
+
   deviceLinkRef = deviceLink
 
   const fleet = new DeviceFleet({
@@ -3049,11 +3055,11 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.
   backend.onOutboundCommander = (frame) => {
-    // THIS COMPUTER'S cards, by definition. When the dial is showing another machine they must not be
-    // painted: agent ids are bare local UUIDs with no machine component, so the tile they land on is
-    // either the wrong agent's or nobody's.
-    if (!cableHost.isLocalSelected()) return
-    const question = cableQuestionFor(frame as { type?: string; agentId?: string; payload?: { requestId?: string; questions?: unknown } })
+    // THIS COMPUTER'S cards, by definition — and every one of them belongs to a tile that is on the
+    // carousel, because the carousel now spans machines. The old guard dropped them whenever the wheel
+    // was pointed elsewhere, which would now silence this machine's own agents.
+    const question = cableQuestionFor
+(frame as { type?: string; agentId?: string; payload?: { requestId?: string; questions?: unknown } })
     if (question) { void cable.question(question.agentId, question.requestId, question.questions); return }
     const event = cableEventFor(frame as { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string } })
     // Logged at the fork, not at the send: this is the one place that can answer "did the daemon even
@@ -3076,7 +3082,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     // whichever machine is selected. Filtering it with the guard below would freeze the dots the moment
     // the dial came back to this computer, which is where it sits most of the time.
     if (event.kind === 'state') { void cable.syncMachines(); return }
-    if (cableHost.isLocalSelected()) return   // the dial came back to this computer mid-flight
+    // No selection guard. Every machine's agents are on the carousel at once, so a card from a machine
+    // the wheel is not pointed at still belongs to a tile the user can see — and dropping it is what a
+    // tile that never leaves "Working…" looks like from the outside.
+
     if (event.kind === 'question') { void cable.question(event.agentId, event.requestId, event.questions); return }
     if (event.kind === 'processing') void cable.turnStarted(event.agentId, event.text)
     else if (event.kind === 'done') void cable.turnDone(event.agentId)

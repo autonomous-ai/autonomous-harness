@@ -20,6 +20,11 @@ export interface RouterAgent {
   /** Recaps of the agent's last few completed turns (up to 3), joined — a broader, less skewed picture
    *  of what it's working on than a single turn. */
   recentSummary?: string
+  /** The machine it runs on. The candidate list spans every machine the owner has, so this is the only
+   *  thing that separates two agents with the same name on two computers — and it is how a spoken "the
+   *  one on the mac mini" can be answered at all. */
+  machine?: string
+
 }
 
 export interface RouteDecision {
@@ -161,7 +166,8 @@ function logDecision(via: string, agents: RouterAgent[], decision: RouteDecision
 
 export function buildRouterPrompt(transcript: string, agents: RouterAgent[]): string {
   const lines = agents
-    .map((a) => `- id=${a.id} | name="${a.name}" | recent: ${a.recentSummary?.trim() || '(no activity yet)'}`)
+    .map((a) => `- id=${a.id} | name="${a.name}"${a.machine ? ` | machine="${a.machine}"` : ''} | recent: ${a.recentSummary?.trim() || '(no activity yet)'}`)
+
     .join('\n')
   return (
     `You are a ROUTER. Assign ONE incoming voice task to the single best-fit agent from the fixed list ` +

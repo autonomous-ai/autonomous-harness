@@ -198,3 +198,110 @@ describe('the cloud lane follows the CABLE, not the selection', () => {
     await new Promise((r) => setTimeout(r, 0))   // let the rejection land on its catch
   })
 })
+
+describe('DaemonCableHost.listAgents across machines', () => {
+  /** A fleet whose remote agent lists are scripted per machine. */
+  function crossFleet(byMachine: Record<string, Array<{ id: string; name: string }>>, machines = [REMOTE]): MachineFleet {
+    const fleet = fleetOf(machines)
+    fleet.listAgents = vi.fn(async (machineId: string) => (byMachine[machineId] ?? []) as never)
+    fleet.sendTurn = vi.fn()
+    fleet.stopTurn = vi.fn()
+    fleet.recentSummaries = vi.fn(async () => [])
+    return fleet
+  }
+
+  /** Two ticks: the first kicks the background refresh off, the second reads what it wrote. */
+  async function settled(host: DaemonCableHost): Promise<Awaited<ReturnType<DaemonCableHost['listAgents']>>> {
+    await host.listAgents()
+    await new Promise((r) => setTimeout(r, 0))
+    return host.listAgents()
+  }
+
+  it('puts this computer first and every other machine after it, in wheel order', async () => {
+    // The order IS the contract: the dial swipes through it and the desktop app's rail reads top to
+    // bottom in the same order, so the two surfaces can be compared by eye.
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, engine: 'claude' })
+    const second: FleetMachine = { machineId: 'third', name: 'studio', state: 'ready', authMode: 'remote' }
+    const host = new DaemonCableHost(
+      wiring(),
+      crossFleet({ other: [{ id: 'r1', name: 'api' }], third: [{ id: 'r2', name: 'ui' }] }, [REMOTE, second]),
+    )
+    const agents = await settled(host)
+    expect(agents.map((a) => a.id)).toEqual(['local-1', 'r1', 'r2'])
+    expect(agents.map((a) => a.machine)).toEqual(['MacbookPro.local', 'office-imac', 'studio'])
+    expect(agents.map((a) => a.machineId)).toEqual(['mine', 'other', 'third'])
+  })
+
+  it('sends a turn to the agent’s OWN machine, not to the selected one', async () => {
+    // The single worst outcome this feature can produce is a turn delivered to a different computer, so
+    // the routing is asserted with the wheel deliberately pointed somewhere else.
+    AGENTS.length = 0
+    const fleet = crossFleet({ other: [{ id: 'r1', name: 'api' }] })
+    const host = new DaemonCableHost(wiring(), fleet)
+    await settled(host)
+    expect(host.isLocalSelected()).toBe(true)   // the wheel never moved
+
+    host.sendTurn('r1', 'ship it')
+    expect(fleet.sendTurn).toHaveBeenCalledWith('other', 'r1', 'ship it')
+  })
+
+  it('keeps a local agent local even while another machine is selected', async () => {
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, engine: 'claude' })
+    const sendTurn = vi.fn()
+    const fleet = crossFleet({ other: [] })
+    const host = new DaemonCableHost(wiring({ sendTurn }), fleet)
+    await settled(host)
+    await host.selectMachine('other')
+
+    host.sendTurn('local-1', 'hello')
+    expect(sendTurn).toHaveBeenCalledWith('local-1', 'hello')
+    expect(fleet.sendTurn).not.toHaveBeenCalled()
+  })
+
+  it('drops a turn for an agent it has never listed rather than guessing a machine', async () => {
+    // Falling back to the selected machine here is how a turn lands on the wrong computer. The local
+    // wiring is the only safe default: it is the machine the cable can vouch for.
+    AGENTS.length = 0
+    const sendTurn = vi.fn()
+    const fleet = crossFleet({ other: [{ id: 'r1', name: 'api' }] })
+    const host = new DaemonCableHost(wiring({ sendTurn }), fleet)
+    await settled(host)
+    await host.selectMachine('other')
+
+    host.sendTurn('ghost', 'where does this go?')
+    expect(fleet.sendTurn).not.toHaveBeenCalled()
+    expect(sendTurn).toHaveBeenCalledWith('ghost', 'where does this go?')
+  })
+
+  it('holds a machine’s last good list through a failure instead of blanking its tiles', async () => {
+    AGENTS.length = 0
+    const fleet = crossFleet({ other: [{ id: 'r1', name: 'api' }] })
+    const host = new DaemonCableHost(wiring(), fleet)
+    expect((await settled(host)).map((a) => a.id)).toEqual(['r1'])
+
+    ;(fleet.listAgents as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('cloud blip'))
+    // Date.now rather than fake timers: the refresh is paced by wall-clock comparisons, and faking the
+    // whole timer wheel would also freeze the `setTimeout(0)` this test uses to let the refresh land.
+    const real = Date.now
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => real() + 6_000)
+    try {
+      const agents = await settled(host)   // past the refresh cadence, well inside the grace period
+      expect(agents.map((a) => a.id)).toEqual(['r1'])
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+
+  it('asks nothing of a machine that is not ready, and shows none of its agents', async () => {
+    // An offline or unlinked machine costs a 15-second RPC timeout per round to learn nothing.
+    AGENTS.length = 0
+    const unlinked: FleetMachine = { machineId: 'other', name: 'office-imac', state: 'needs-link', authMode: 'remote' }
+    const fleet = crossFleet({ other: [{ id: 'r1', name: 'api' }] }, [unlinked])
+    const host = new DaemonCableHost(wiring(), fleet)
+    expect(await settled(host)).toEqual([])
+    expect(fleet.listAgents).not.toHaveBeenCalled()
+  })
+})

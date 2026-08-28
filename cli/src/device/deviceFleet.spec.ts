@@ -101,18 +101,20 @@ describe('DeviceFleet', () => {
     expect(agents[0]).toMatchObject({ id: 'a1', name: 'api refactor', engine: 'codex', model: 'opus', effort: 'high' })
   })
 
-  it('drops a card tagged for a machine the dial is not showing', () => {
-    // Agent ids are bare UUIDs with no machine component, so a stray card either paints the wrong tile or
-    // none at all — and both look like the dial simply missing a turn.
+  it('delivers a card from a machine the wheel is not pointed at, tagged with its own machine', () => {
+    // The carousel spans machines, so a card from a background machine belongs to a tile that is on
+    // screen. This used to be DROPPED — which, once every machine's agents share one carousel, is what a
+    // tile stuck on "Working…" for a turn that finished minutes ago looks like from the outside.
     const { fleet, say } = make()
     const seen: FleetEvent[] = []
     fleet.onEvent((e) => seen.push(e))
-    say({ type: 'commander_event', machineId: 'other', agentId: 'a1', payload: { kind: 'summary', recap: 'nope' } })
-    expect(seen).toHaveLength(0)
+    say({ type: 'commander_event', machineId: 'other', agentId: 'a1', payload: { kind: 'summary', recap: 'nope', text: 'b' } })
+    expect(seen).toEqual([{ machineId: 'other', kind: 'summary', agentId: 'a1', text: 'b', recap: 'nope' }])
 
     say({ type: 'commander_event', machineId: 'm1', agentId: 'a1', payload: { kind: 'summary', recap: 'yes', text: 'body' } })
-    expect(seen).toEqual([{ machineId: 'm1', kind: 'summary', agentId: 'a1', text: 'body', recap: 'yes' }])
+    expect(seen[1]).toEqual({ machineId: 'm1', kind: 'summary', agentId: 'a1', text: 'body', recap: 'yes' })
   })
+
 
   it('ignores card kinds the dial has no use for', () => {
     const { fleet, say } = make()
