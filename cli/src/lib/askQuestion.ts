@@ -720,11 +720,29 @@ export interface QuestionWatcherDeps {
   hasDevice: () => boolean
   /** A dialog is open on screen. Fires ONCE per distinct question (until it changes or closes). */
   onQuestion: (sessionId: string, requestId: string, questions: ShapedQuestion[]) => void
+  /**
+   * An announced dialog LEFT the screen — answered somewhere else, or abandoned.
+   *
+   * This is the other half of `onQuestion`, and it was missing: a question answered in the app (or in the
+   * pane by hand) simply stopped being on screen, the watcher forgot it, and every OTHER client went on
+   * showing it. On the dial that is a screen you cannot leave without dismissing a question that no longer
+   * exists. The pane is the only source of truth here — there is no server-side question object — so
+   * "gone from the pane" is the only signal there is.
+   */
+  onQuestionGone?: (sessionId: string, requestId: string) => void
+
   /** True while that session's dialog is being keyed by an answer already in flight. */
   isDriving?: (sessionId: string) => boolean
 }
 
 const POLL_MS = 1500
+// Consecutive empty polls before a question is declared gone.
+//
+// NOT 1. A capture taken mid-repaint parses as no-dialog, and announcing a close on that would yank a
+// live question off the dial's screen — the exact failure this feature exists to prevent, inverted.
+// Two ticks costs 1.5s of delay on a real close and makes a flicker unable to cause one.
+const GONE_TICKS = 2
+
 // Amp and codex are here for their PERMISSION prompt, not a question tool — neither has one. That prompt
 // is drawn only in the pane and recorded nowhere, so polling the pane is the only way it is ever seen.
 // Codex needs no parser of its own: it draws numbered rows under a `Press enter to confirm or esc to
@@ -750,7 +768,10 @@ export function pollsQuestions(engine: AgentEngine): boolean {
 export class QuestionWatcher {
   private timers = new Map<string, NodeJS.Timeout>()
   private last = new Map<string, string>() // sessionId → fingerprint of the announced question
+  private lastId = new Map<string, string>()  // sessionId → requestId of the announced question
+  private misses = new Map<string, number>()  // sessionId → consecutive polls with no dialog
   private readonly blocked = new Map<string, string>()
+
 
   constructor(private readonly deps: QuestionWatcherDeps) {}
 
@@ -764,22 +785,65 @@ export class QuestionWatcher {
     this.timers.set(sessionId, setInterval(() => { void this.tick(sessionId) }, POLL_MS))
   }
 
+  /**
+   * Stop polling — and CLOSE any question still outstanding on this session.
+   *
+   * ⚠️ THIS IS THE COMMON CASE, NOT THE EDGE ONE, and leaving it out made the whole close mechanism look
+   * like it did not work. `stop()` is called on turn_ended, and answering the question is precisely what
+   * lets the turn end — so the dialog leaving the pane and the watcher being torn down happen within a
+   * second or two of each other, far inside the two-tick confirmation. Measured on hardware: the answer
+   * landed at ~16:50:19 and the turn ended at 16:50:29 with no close ever announced.
+   *
+   * No confirmation is needed here and none is wanted: the turn is over, so whatever we announced is
+   * definitively not waiting for anybody any more. The same holds for the other callers — an agent that
+   * was removed cannot answer either.
+   */
   stop(sessionId: string): void {
     const timer = this.timers.get(sessionId)
     if (timer) { clearInterval(timer); this.timers.delete(sessionId) }
-    this.last.delete(sessionId)
+    const requestId = this.lastId.get(sessionId)
+    this.forget(sessionId)
+    if (requestId) this.deps.onQuestionGone?.(sessionId, requestId)
   }
+
 
   stopAll(): void {
     for (const timer of this.timers.values()) clearInterval(timer)
     this.timers.clear()
     this.last.clear()
+    this.lastId.clear()
+    this.misses.clear()
   }
 
   /** A device (re)joined: forget what we announced so an open question is pushed again. */
   reset(): void {
     this.last.clear()
+    this.lastId.clear()
+    this.misses.clear()
   }
+
+  private forget(sessionId: string): void {
+    this.last.delete(sessionId)
+    this.lastId.delete(sessionId)
+    this.misses.delete(sessionId)
+  }
+
+  /**
+   * A poll found no dialog. Announce the close once the miss is CONFIRMED, and only if we announced the
+   * question in the first place — a session nobody was told about has nothing to take back.
+   */
+  private noteGone(sessionId: string): void {
+    this.last.delete(sessionId)   // unchanged: a dialog that comes back announces fresh
+    const requestId = this.lastId.get(sessionId)
+    if (!requestId) return
+    const misses = (this.misses.get(sessionId) ?? 0) + 1
+    this.misses.set(sessionId, misses)
+    if (misses < GONE_TICKS) return
+    this.lastId.delete(sessionId)
+    this.misses.delete(sessionId)
+    this.deps.onQuestionGone?.(sessionId, requestId)
+  }
+
 
   private async tick(sessionId: string): Promise<void> {
     const session = this.deps.getSession(sessionId)
@@ -796,21 +860,28 @@ export class QuestionWatcher {
     const engine = this.deps.getSession(sessionId)?.engine ?? 'claude'
     const view = parseEngineQuestionPane(engine, await this.deps.capture(terminalTarget, CAPTURE_LINES) ?? '')
     if (!view || view.kind !== 'question' || !view.question || view.rows.length === 0) {
-      this.last.delete(sessionId) // dialog closed (or moved to review) → the next one announces fresh
+      // Dialog closed, or moved to review. Either way it is no longer waiting on anybody, so the clients
+      // showing it are told to stop — see noteGone for why this is not announced on the first miss.
+      this.noteGone(sessionId)
       return
     }
+    this.misses.delete(sessionId)   // a dialog on screen ends any run of misses
     const fingerprint = `${view.question}|${view.rows.map((r) => r.label).join('|')}|${view.multi}`
     if (this.last.get(sessionId) === fingerprint) return
     this.last.set(sessionId, fingerprint)
+
     // A pane-derived question has no tool_use id. The key only has to round-trip through the device and
     // back (the answer is keyed into the pane, not matched to a tool call), so the question's own text
     // serves as both — and the device dedups a repeated push by this id.
-    this.deps.onQuestion(sessionId, `q_${hash(sessionId + fingerprint)}`, [{
+    const requestId = `q_${hash(sessionId + fingerprint)}`
+    this.lastId.set(sessionId, requestId)
+    this.deps.onQuestion(sessionId, requestId, [{
       key: view.question,
       q: view.question,
       options: view.rows.map((r) => r.label),
       multi: view.multi,
     }])
+
   }
 }
 

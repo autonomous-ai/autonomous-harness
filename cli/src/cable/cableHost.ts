@@ -600,3 +600,20 @@ export function cableQuestionFor(
   if (typeof requestId !== 'string' || !requestId || !Array.isArray(questions)) return null
   return { agentId: frame.agentId, requestId, questions }
 }
+
+/**
+ * Translate one device-bound `commander_question_close` into the dial's `question.close`.
+ *
+ * The other half of `cableQuestionFor`. A question is a TUI dialog in a pane, not a server-side object,
+ * so "somebody answered it" reaches this daemon as "the dialog is no longer on the pane" — and every
+ * client still drawing it has to be told, or it sits waiting for an answer nobody can give any more.
+ */
+export function cableQuestionCloseFor(
+  frame: { type?: string; agentId?: string; payload?: { requestId?: string } },
+): { agentId: string; requestId: string } | null {
+  if (frame.type !== 'commander_question_close' || !frame.agentId) return null
+  const requestId = frame.payload?.requestId
+  if (typeof requestId !== 'string' || !requestId) return null
+  return { agentId: frame.agentId, requestId }
+}
+

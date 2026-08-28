@@ -28,7 +28,8 @@ import { sqlitePreflightMessage } from './lib/sqliteAvailability.js'
 import { warmLoginShellEnvironment } from './lib/loginShellEnv.js'
 import { ensureUtf8Locale } from './lib/childLocale.js'
 import { CableSession } from './cable/cableSession.js'
-import { DaemonCableHost, cableEventFor, cableQuestionFor } from './cable/cableHost.js'
+import { DaemonCableHost, cableEventFor, cableQuestionFor, cableQuestionCloseFor } from './cable/cableHost.js'
+
 import { MachineListCache } from './device/machineList.js'
 import { DeviceLink } from './device/deviceLink.js'
 import { DeviceFleet } from './device/deviceFleet.js'
@@ -1547,7 +1548,20 @@ async function runForeground(session: AuthSession): Promise<void> {
       })
       console.log(`[question] ${sid(sessionId)} asking the user · "${preview(shaped[0]?.q ?? '')}" · req=${requestId}`)
     },
+    // Answered somewhere else — the app, or the pane by hand. Every client drawing it is told to stop
+    // waiting, down the SAME path the question itself took, so the dial and the WiFi device cannot
+    // disagree about whether a question is still open.
+    onQuestionGone: (sessionId, requestId) => {
+      backend.sendCommander({
+        type: 'commander_question_close',
+        agentId: agentIdFor(sessionId),
+        dbSessionId: sessionId,
+        payload: { requestId },
+      })
+      console.log(`[question] ${sid(sessionId)} answered elsewhere · closing on every client · req=${requestId}`)
+    },
   })
+
 
   const mirror = new CommanderMirror({
     send: (frame) => backend.sendCommander(frame),
@@ -3113,7 +3127,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     // THIS COMPUTER'S cards, by definition — and every one of them belongs to a tile that is on the
     // carousel, because the carousel now spans machines. The old guard dropped them whenever the wheel
     // was pointed elsewhere, which would now silence this machine's own agents.
+    const close = cableQuestionCloseFor(frame as { type?: string; agentId?: string; payload?: { requestId?: string } })
+    if (close) { void cable.questionClose(close.agentId, close.requestId); return }
     const question = cableQuestionFor
+
 (frame as { type?: string; agentId?: string; payload?: { requestId?: string; questions?: unknown } })
     if (question) { void cable.question(question.agentId, question.requestId, question.questions); return }
     const event = cableEventFor(frame as { type?: string; agentId?: string; payload?: { kind?: string; text?: string; recap?: string } })

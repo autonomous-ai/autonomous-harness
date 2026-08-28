@@ -250,21 +250,73 @@ describe('QuestionWatcher', () => {
 
   function watcher(captures: string[], opts: { hasDevice?: boolean } = {}): {
     seen: Array<{ requestId: string; questions: ReturnType<typeof shapeQuestions> }>
+    gone: string[]
     tick: () => Promise<void>
     instance: QuestionWatcher
   } {
     let i = 0
     const seen: Array<{ requestId: string; questions: ReturnType<typeof shapeQuestions> }> = []
+    const gone: string[] = []
     const instance = new QuestionWatcher({
       getSession: () => session,
       capture: async () => captures[Math.min(i++, captures.length - 1)],
       hasDevice: () => opts.hasDevice !== false,
       onQuestion: (_s, requestId, questions) => { seen.push({ requestId, questions }) },
+      onQuestionGone: (_s, requestId) => { gone.push(requestId) },
     })
     // tick() is private — exercised the way the interval does.
     const tick = (): Promise<void> => (instance as unknown as { tick: (s: string) => Promise<void> }).tick('s1')
-    return { seen, tick, instance }
+    return { seen, gone, tick, instance }
   }
+
+  it('announces a close once the dialog has really left the pane', async () => {
+    // The whole point of the feature: answered in the app, so every other client has to stop waiting.
+    const w = watcher([fixture('single'), '', ''])
+    await w.tick()
+    expect(w.seen).toHaveLength(1)
+    await w.tick()
+    expect(w.gone).toEqual([])          // one empty capture is not yet evidence
+    await w.tick()
+    expect(w.gone).toEqual([w.seen[0].requestId])
+  })
+
+  it('does NOT close on a single unparseable capture', async () => {
+    // A capture taken mid-repaint reads as no-dialog. Closing on that would pull a LIVE question off the
+    // dial — the bug this feature exists to prevent, inverted, and far harder to notice.
+    const w = watcher([fixture('single'), '', fixture('single'), ''])
+    await w.tick()
+    await w.tick()   // the flicker
+    await w.tick()   // dialog is back
+    await w.tick()   // first real miss
+    expect(w.gone).toEqual([])
+  })
+
+  it('closes an outstanding question when the watcher stops', async () => {
+    // The case that made the whole mechanism look broken on hardware: the turn ends BECAUSE the question
+    // was answered, so stop() lands a second or two after the dialog left — well inside the two-tick
+    // confirmation, which would otherwise swallow the close entirely.
+    const w = watcher([fixture('single')])
+    await w.tick()
+    expect(w.seen).toHaveLength(1)
+    w.instance.stop('s1')
+    expect(w.gone).toEqual([w.seen[0].requestId])
+  })
+
+  it('does not close twice when the dialog was already confirmed gone', async () => {
+    const w = watcher([fixture('single'), '', ''])
+    await w.tick(); await w.tick(); await w.tick()
+    expect(w.gone).toHaveLength(1)
+    w.instance.stop('s1')
+    expect(w.gone).toHaveLength(1)
+  })
+
+  it('says nothing about a question it never announced', async () => {
+
+    const w = watcher(['', '', ''])
+    await w.tick(); await w.tick(); await w.tick()
+    expect(w.gone).toEqual([])
+  })
+
 
   it('announces an open dialog in the device question shape', async () => {
     const w = watcher([fixture('single')])

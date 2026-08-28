@@ -28,7 +28,7 @@ import { FirmwareTransfer } from './fwPush.js'
 import { SerialLink, findDialPort } from './serial.js'
 
 /** Bumped when the VOCABULARY changes. Separate from the frame version, which is the envelope. */
-export const CABLE_PROTO_VERSION = 2
+export const CABLE_PROTO_VERSION = 3   // 3: + question.close (a question answered on another client)
 
 const PING_EVERY_MS = 5_000
 /** No bytes of any kind for this long → the handle is dead. Longer than the dial's own 15 s window, so a
@@ -1020,6 +1020,18 @@ export class CableSession {
   async question(agentId: string, id: string, questions: unknown): Promise<void> {
     await this.send({ t: 'question', agentId, id, questions })
   }
+
+  /**
+   * That question is no longer waiting — answered in the app, or in the pane by hand.
+   *
+   * Carries the id so a dial showing a DIFFERENT question cannot be closed by a stale message: the two
+   * screens are minutes apart on a slow question, and closing the wrong one loses an answer the user was
+   * halfway through giving.
+   */
+  async questionClose(agentId: string, id: string): Promise<void> {
+    await this.send({ t: 'question.close', agentId, id })
+  }
+
   async focusAgent(agentId: string): Promise<void> {
     this.dialFocus = agentId
     await this.send({ t: 'focus', agentId })
