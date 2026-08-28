@@ -270,6 +270,19 @@ function commTruncatedPrefixOf(seen: string, want: string): boolean {
   return Buffer.byteLength(seen) === 15 && want.length > seen.length && want.startsWith(seen)
 }
 
+/**
+ * Claude's native installer exposes `~/.local/bin/claude` as a symlink to a binary whose basename is
+ * only its version (`~/.local/share/claude/versions/2.1.246`). During early startup both `comm` and
+ * argv[0] can still contain that target path, before Claude rewrites either one to `claude`.
+ *
+ * Match the vendor-specific install layout, never a bare semver: an unrelated process called
+ * `2.1.246` is not evidence that Claude is running.
+ */
+function claudeNativeInstallPath(value: string): boolean {
+  const normalized = value.replace(/\\/g, '/').toLowerCase()
+  return /(?:^|\/)\.local\/share\/claude\/versions\/[^/]+$/.test(normalized)
+}
+
 export function engineProcessMatchScore(
   row: Pick<ProcessRow, 'executable' | 'args' | 'imageFileKey' | 'entrypointFileKey'>,
   engine: RegisteredSession['engine'],
@@ -372,6 +385,7 @@ export function engineProcessMatchScore(
     return /@github[\/\\]copilot[\/\\](?:npm-loader\.js|.*copilot)$/.test(entrypoint) ? 2 : 0
   }
   if (executable === 'claude' || entrybase === 'claude') return 3
+  if (claudeNativeInstallPath(row.executable) || claudeNativeInstallPath(entrypoint)) return 3
   return /@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/.test(entrypoint) ? 2 : 0
 }
 

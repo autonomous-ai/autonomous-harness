@@ -28,8 +28,10 @@ export interface AgentCreatePaneFacts {
   engineBin: string
   /** Process name of the wrapper login shell, e.g. `zsh`. Null when no interactive shell was used. */
   shellName: string | null
-  /** Processes found under the pane, shallowest first. Only read when nothing matched the engine. */
+  /** Processes found under the pane, shallowest first, for the remote-readable diagnosis. */
   processes: ReadonlyArray<{ executable: string; args: string }>
+  /** A fresh matcher pass found the requested engine, even though registry adoption did not finish. */
+  engineProcessFound?: boolean
   elapsedMs: number
 }
 
@@ -106,7 +108,7 @@ function withOutput(summary: string, output: string): string {
  * failed: it says what the pane was doing, not what the code checked.
  */
 export function describeAgentCreateFailure(facts: AgentCreatePaneFacts): string {
-  const { state, output, engineBin, shellName, processes, elapsedMs } = facts
+  const { state, output, engineBin, shellName, processes, engineProcessFound = false, elapsedMs } = facts
   const waited = seconds(elapsedMs)
 
   // tmux forgot the pane entirely. `create` asks tmux to keep dead panes, so reaching this means the
@@ -135,9 +137,20 @@ export function describeAgentCreateFailure(facts: AgentCreatePaneFacts): string 
     )
   }
 
+  const tree = summarizeProcessTree(processes)
+  if (engineProcessFound) {
+    const waitingForTrust = /(?:yes,\s*i trust this folder|trust this folder)/i.test(output)
+    return withOutput(
+      waitingForTrust
+        ? `"${engineBin}" is running and waiting for folder trust, but agent registration did not complete after ${waited}`
+        : `"${engineBin}" process was found under the pane, but agent registration did not complete after ${waited}`
+          + (tree ? ` · saw: ${tree}` : ''),
+      output,
+    )
+  }
+
   // Naming only the foreground command is what left the last report unactionable: discovery searches
   // the WHOLE tree under the pane, so "it was running node" does not say what discovery rejected.
-  const tree = summarizeProcessTree(processes)
   return withOutput(
     `after ${waited} the pane was running "${state.command}" but no ${engineBin} process was found under it`
       + (tree ? ` · saw: ${tree}` : ''),

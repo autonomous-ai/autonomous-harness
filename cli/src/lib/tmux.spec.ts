@@ -84,6 +84,18 @@ describe('tmux process primitives', () => {
     expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(3)
   })
 
+  it('recognises Claude native installer version targets without accepting a bare semver', () => {
+    expect(engineProcessMatchScore({
+      executable: '/Users/demo/.local/share/claude/versions/2.1.246',
+      args: '/Users/demo/.local/share/claude/versions/2.1.246',
+    }, 'claude')).toBe(3)
+    expect(engineProcessMatchScore({
+      executable: '2.1.246',
+      args: '/home/demo/.local/share/claude/versions/2.1.246',
+    }, 'claude')).toBe(3)
+    expect(engineProcessMatchScore({ executable: '2.1.246', args: '2.1.246' }, 'claude')).toBe(0)
+  })
+
   it('reads an engine through the ori launcher, before and after its exec', () => {
     // `ori claude` computes an environment and then execve's the vendor binary away, so for all but the
     // first ~100ms the pane row IS `claude` — that case must keep scoring exactly as a bare launch does.

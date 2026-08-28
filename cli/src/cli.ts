@@ -47,7 +47,7 @@ import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { basename } from 'node:path'
-import { captureTmuxPane, clearPaneRemainOnExit, tmuxPaneProcessTree, tmuxPaneState, type TmuxPaneState } from './lib/tmux.js'
+import { captureTmuxPane, clearPaneRemainOnExit, resolvePaneEngineProcess, tmuxPaneProcessTree, tmuxPaneState, type TmuxPaneState } from './lib/tmux.js'
 import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
@@ -2708,16 +2708,37 @@ async function runForeground(session: AuthSession): Promise<void> {
       // hammering `ps` for eight seconds.
       delayMs = Math.min(delayMs * 2, 750)
     }
+
+    // Close the race between the last scheduled discovery snapshot and the error snapshot below.
+    // Claude's native launcher can still identify as its versioned install target during the former,
+    // then become a matchable `claude` process while painting its first-run trust prompt. A fresh,
+    // authoritative process lookup makes that a valid sessionless process-agent instead of reporting
+    // ENGINE_DID_NOT_START. It never sends input to the pane: folder trust remains the user's choice.
+    let engineProcess = paneState && !paneState.dead
+      ? await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
+      : null
+    if (engineProcess) {
+      await agentReconciler.triggerHint(spawned.runtime, engine)
+      const session = registry.byRuntimeEngine(spawned.runtime, engine)
+      if (session) {
+        await clearPaneRemainOnExit(spawned.runtime.paneId)
+        return { ok: true, session }
+      }
+      // Keep the diagnosis tied to the latest pane state if registration itself failed.
+      paneState = await tmuxPaneState(spawned.runtime.paneId)
+      if (!paneState || paneState.dead) engineProcess = null
+    }
     const diagnosis = describeAgentCreateFailure({
       state: paneState,
       output: summarizePaneOutput(
         await captureTmuxPane(spawned.runtime.paneId, 40, { ansi: false }) ?? '',
       ),
       engineBin: command[0],
-      // Only useful when a process IS there and did not match; a dead or vanished pane has no tree.
+      // A dead or vanished pane has no tree; every live failure includes one for remote diagnosis.
       processes: paneState && !paneState.dead
         ? await tmuxPaneProcessTree(spawned.runtime.paneId)
         : [],
+      engineProcessFound: !!engineProcess,
       shellName: (() => {
         const path = interactiveEngineShell()?.path
         return path ? basename(path) : null

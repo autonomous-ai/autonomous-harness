@@ -130,6 +130,17 @@ describe('tmux process agent snapshot discovery', () => {
     expect(result.agents[0].engine).toBe(engine)
   })
 
+  it('discovers a native Claude version target before it rewrites argv to claude', () => {
+    const native = '/home/demo/.local/share/claude/versions/2.1.246'
+    const result = discoverTmuxAgentsFromSnapshot(
+      [pane],
+      [row(1, 0, 'zsh'), row(2, 1, '2.1.246', native)],
+      900,
+    )
+    expect(result.agents).toHaveLength(1)
+    expect(result.agents[0]).toMatchObject({ engine: 'claude', tmuxPane: '%1' })
+  })
+
   const installPrefixes = [
     '/usr/local',
     '/opt/homebrew',

@@ -68,6 +68,31 @@ describe('describeAgentCreateFailure', () => {
     expect(detail).toContain('no codex process was found under it')
   })
 
+  it('reports a matched process whose registry adoption did not finish', () => {
+    const detail = describeAgentCreateFailure({
+      ...base,
+      state: { dead: false, exitStatus: null, command: '2.1.246' },
+      engineBin: 'claude',
+      engineProcessFound: true,
+      processes: [{ executable: 'claude', args: 'claude' }],
+    })
+    expect(detail).toContain('"claude" process was found under the pane')
+    expect(detail).toContain('agent registration did not complete')
+    expect(detail).not.toContain('no claude process')
+  })
+
+  it('names a live Claude trust prompt without treating it as a missing process', () => {
+    const detail = describeAgentCreateFailure({
+      ...base,
+      state: { dead: false, exitStatus: null, command: '2.1.246' },
+      engineBin: 'claude',
+      engineProcessFound: true,
+      output: '1. Yes, I trust this folder · 2. No, exit',
+    })
+    expect(detail).toContain('is running and waiting for folder trust')
+    expect(detail).not.toContain('no claude process')
+  })
+
   it('says so when tmux did not keep the pane, since the output is then unrecoverable', () => {
     const detail = describeAgentCreateFailure({ ...base, state: null })
     expect(detail).toContain('tmux did not keep it')
