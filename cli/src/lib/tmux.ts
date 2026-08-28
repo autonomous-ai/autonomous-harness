@@ -609,6 +609,51 @@ export function setPaneMouseOn(pane: string): Promise<void> {
   })
 }
 
+/** What tmux knows about a pane right now. See `agentCreateDiagnosis.ts` for why this is read. */
+export interface TmuxPaneState {
+  dead: boolean
+  /** Exit status once the process is gone; null while it is still running. */
+  exitStatus: number | null
+  command: string
+}
+
+/**
+ * Pane liveness plus, for a pane kept alive by `remain-on-exit`, how its process ended.
+ *
+ * Returns null when tmux does not know the pane — which is itself the answer: the process exited and
+ * took its window (and, for a one-pane session, the session) with it.
+ */
+export function tmuxPaneState(pane: string): Promise<TmuxPaneState | null> {
+  return new Promise((resolve) => {
+    const format = '#{pane_dead}|#{pane_dead_status}|#{pane_current_command}'
+    execFile('tmux', ['display-message', '-p', '-t', pane, format], { timeout: 2_000 }, (err, stdout) => {
+      if (err) { resolve(null); return }
+      const fields = stdout.trim().split('|')
+      if (fields.length < 3) { resolve(null); return }
+      const status = Number(fields[1])
+      resolve({
+        dead: fields[0] === '1',
+        exitStatus: fields[1] !== '' && Number.isSafeInteger(status) ? status : null,
+        // A command name cannot contain `|`, but rejoining costs nothing and keeps a surprising
+        // one from silently truncating the field.
+        command: fields.slice(2).join('|'),
+      })
+    })
+  })
+}
+
+/**
+ * Hand a pane back to tmux's default disposal after `create()` asked tmux to keep it when dead.
+ *
+ * Called as soon as a created pane becomes a real agent: from then on it must vanish when its engine
+ * exits, exactly like a pane the user started themselves, rather than lingering as a dead pane.
+ */
+export function clearPaneRemainOnExit(pane: string): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('tmux', ['set-option', '-w', '-t', pane, 'remain-on-exit', 'off'], { timeout: 2_000 }, () => resolve())
+  })
+}
+
 function tmuxDeleteBuffer(name: string): Promise<void> {
   return new Promise((resolve) => {
     execFile('tmux', ['delete-buffer', '-b', name], { timeout: 2_000 }, () => resolve())

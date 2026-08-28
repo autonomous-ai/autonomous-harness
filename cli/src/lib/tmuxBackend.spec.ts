@@ -38,7 +38,10 @@ esac
     if (created.state !== 'succeeded') return
     await expect(backend.kill(created.runtime)).resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
-      'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test',
+      // `remain-on-exit` is chained into the SAME invocation, not sent after it: an engine that
+      // exits immediately would otherwise take its session down before a follow-up call landed,
+      // and its error text with it.
+      'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test ; set-option -w remain-on-exit on',
       'set-option -t %42 mouse on',
       'display-message -p -t %42 #{session_id}',
       'kill-session -t $7',

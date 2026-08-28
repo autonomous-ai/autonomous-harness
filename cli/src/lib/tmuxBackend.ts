@@ -79,6 +79,13 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     // Trailing args after this point become the session's shell-command. tmux execs them directly
     // (no shell interposed) when given as separate argv elements, so no quoting/escaping is needed.
     if (request.command?.length) args.push(...request.command)
+    // Keep the pane when its process dies, so an engine that exits immediately (not logged in, bad
+    // config) still has its error text readable afterwards instead of taking the whole session down
+    // with it. Chained into THIS tmux invocation on purpose: an engine can exit in under a
+    // millisecond, and a second `set-option` call loses that race — measured, the session was
+    // already gone before the follow-up command could reach the server.
+    // Whoever created the pane owns turning this back off; see `clearPaneRemainOnExit`.
+    args.push(';', 'set-option', '-w', 'remain-on-exit', 'on')
     // `killed`/`signal` come from execFile's own error shape, which ErrnoException alone does not declare.
     type ExecError = NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals | null }
     const result = await new Promise<{ error: ExecError | null; stdout: string; stderr: string }>((resolve) => {

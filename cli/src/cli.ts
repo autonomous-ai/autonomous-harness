@@ -46,6 +46,9 @@ import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessi
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
+import { basename } from 'node:path'
+import { captureTmuxPane, clearPaneRemainOnExit, tmuxPaneState } from './lib/tmux.js'
+import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
   discoverRunningHerdrSessions,
@@ -2670,25 +2673,58 @@ async function runForeground(session: AuthSession): Promise<void> {
         detail: spawned.reason,
       }
     }
+    const createdAt = Date.now()
     for (const delayMs of [150, 400, 800]) {
       await new Promise((resolve) => setTimeout(resolve, delayMs))
       await agentReconciler.triggerHint(spawned.runtime, engine)
       const session = registry.byRuntimeEngine(spawned.runtime, engine)
-      if (session) return { ok: true, session }
+      if (session) {
+        // A real agent now: give the pane back tmux's normal disposal so it vanishes when the engine
+        // exits, like every organically started one does.
+        await clearPaneRemainOnExit(spawned.runtime.paneId)
+        return { ok: true, session }
+      }
     }
+
+    // Read the pane BEFORE the availability probe below — that probe spends up to 5s in the user's
+    // login shell, which is long enough for a dying engine's pane to change under us.
+    const paneState = await tmuxPaneState(spawned.runtime.paneId)
+    const diagnosis = describeAgentCreateFailure({
+      state: paneState,
+      output: summarizePaneOutput(
+        await captureTmuxPane(spawned.runtime.paneId, 40, { ansi: false }) ?? '',
+      ),
+      engineBin: command[0],
+      shellName: (() => {
+        const path = interactiveEngineShell()?.path
+        return path ? basename(path) : null
+      })(),
+      elapsedMs: Date.now() - createdAt,
+    })
+    // A dead pane exists only because `create` asked tmux to keep it, and its output has now been
+    // read. Dispose of it so a failed create leaves nothing behind, as it did before. A pane that is
+    // still ALIVE is deliberately left alone: it is usually a slow engine that the periodic
+    // reconcile picks up seconds later, and killing it would destroy a working agent.
+    if (paneState?.dead) await tmuxBackend.kill(spawned.runtime)
+    else await clearPaneRemainOnExit(spawned.runtime.paneId)
     // A detached daemon and an already-running tmux server do not necessarily have the user's terminal
     // PATH. The launch above therefore used the interactive shell; inspect that same context before
     // claiming a binary is absent. Checking process.env here was a false "not installed" report on
     // macOS and Ubuntu whenever the CLI lived in .zshrc/.bashrc (nvm, asdf, vendor installers).
     const bin = command[0]
+    // `detail` rides back to the New Agent dialog, which already renders it. That is the whole point:
+    // the machine that knows why is frequently not the machine the person is sitting at, and the
+    // error code alone sent them to a log file they cannot open.
     if (!await commandAvailableInInteractiveShell(bin)) {
       const shell = interactiveEngineShell()
-      console.warn(`[agent] create ${engine} failed · "${bin}" is unavailable from the user's ${shell?.label ?? 'daemon PATH'}`)
-      return { ok: false, error: 'ENGINE_NOT_INSTALLED' }
+      const detail = `"${bin}" is not on PATH in the user's ${shell?.label ?? 'daemon PATH'} · ${diagnosis}`
+      console.warn(`[agent] create ${engine} failed · ${detail}`)
+      return { ok: false, error: 'ENGINE_NOT_INSTALLED', detail }
     }
     const shell = interactiveEngineShell()
-    console.warn(`[agent] create ${engine} failed · "${bin}" resolved from the user's ${shell?.label ?? 'daemon PATH'} but no engine process appeared in the pane`)
-    return { ok: false, error: 'ENGINE_DID_NOT_START' }
+    const detail = `"${bin}" resolves from the user's ${shell?.label ?? 'daemon PATH'} · ${diagnosis}`
+    console.warn(`[agent] create ${engine} failed · ${detail}`)
+    return { ok: false, error: 'ENGINE_DID_NOT_START', detail }
   }
 
   /**
