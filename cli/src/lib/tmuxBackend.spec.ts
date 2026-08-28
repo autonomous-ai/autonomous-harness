@@ -45,6 +45,39 @@ esac
     ])
   })
 
+  it('carries tmux\'s own refusal into the failure reason', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-refusal-'))
+    dirs.push(dir)
+    const tmux = join(dir, 'tmux')
+    // What a real tmux does when the session name is taken: exit 1, reason on stderr, nothing on
+    // stdout. Swallowing that turned every distinct cause into one bare SPAWN_FAILED.
+    writeFileSync(tmux, `#!/bin/sh
+printf 'duplicate session: harness-test\\n' >&2
+exit 1
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+
+    const created = await new TmuxBackend().create({ cwd: '/tmp/work', label: 'harness-test' })
+
+    expect(created.state).not.toBe('succeeded')
+    if (created.state === 'succeeded') return
+    expect(created.reason).toContain('duplicate session: harness-test')
+  })
+
+  it('still reports a missing tmux as unavailable rather than a refusal', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-absent-'))
+    dirs.push(dir)
+    // An empty directory as the ENTIRE path: nothing named tmux is resolvable, so execFile ENOENTs.
+    process.env.PATH = dir
+
+    const created = await new TmuxBackend().create({ cwd: '/tmp/work', label: 'harness-test' })
+
+    expect(created.state).not.toBe('succeeded')
+    if (created.state === 'succeeded') return
+    expect(created.reason).toBe('tmux is unavailable')
+  })
+
   it('displays a bounded message in the addressed pane without a shell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-notify-'))
     dirs.push(dir)

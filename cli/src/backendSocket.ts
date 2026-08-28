@@ -294,7 +294,7 @@ export class BackendSocket {
   /** Called on `agent_create` — cli.ts spawns a fresh tmux session running the requested engine in the
    *  requested folder and returns the registered session once discovery has picked it up. */
   onCreateAgent: ((input: { engine: AgentEngine; cwd: string; bypassPermission: boolean }) =>
-    Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string }>) | null = null
+    Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -1270,7 +1270,12 @@ export class BackendSocket {
           if (!cwd || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const result = await this.onCreateAgent({ engine, cwd, bypassPermission: payload.bypassPermission === true })
-          if (!result.ok) { reply(type, requestId, { error: result.error }); return }
+          // `detail` carries the underlying cause (tmux's own message) so the person who clicked
+          // Create can read it, rather than having to open a log on the machine that failed.
+          if (!result.ok) {
+            reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
+            return
+          }
           reply(type, requestId, { agent: await this.toProject(result.session) })
           return
         }

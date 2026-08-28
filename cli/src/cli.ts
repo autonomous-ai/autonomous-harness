@@ -2647,7 +2647,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const spawned = await tmuxBackend.create({ cwd, label, command: argv })
     if (spawned.state !== 'succeeded') {
       console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
-      return { ok: false, error: 'SPAWN_FAILED' }
+      return { ok: false, error: 'SPAWN_FAILED', detail: spawned.reason }
     }
     for (const delayMs of [150, 400, 800]) {
       await new Promise((resolve) => setTimeout(resolve, delayMs))

@@ -79,16 +79,26 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     // Trailing args after this point become the session's shell-command. tmux execs them directly
     // (no shell interposed) when given as separate argv elements, so no quoting/escaping is needed.
     if (request.command?.length) args.push(...request.command)
-    const result = await new Promise<{ error: NodeJS.ErrnoException | null; stdout: string }>((resolve) => {
-      execFile('tmux', args, { timeout: 5_000 }, (error, stdout) => resolve({
-        error: error as NodeJS.ErrnoException | null,
+    // `killed`/`signal` come from execFile's own error shape, which ErrnoException alone does not declare.
+    type ExecError = NodeJS.ErrnoException & { killed?: boolean; signal?: NodeJS.Signals | null }
+    const result = await new Promise<{ error: ExecError | null; stdout: string; stderr: string }>((resolve) => {
+      execFile('tmux', args, { timeout: 5_000 }, (error, stdout, stderr) => resolve({
+        error: error as ExecError | null,
         stdout,
+        stderr,
       }))
     })
     if (result.error) {
-      return result.error.code === 'ENOENT'
-        ? terminalActionNotStarted('tmux is unavailable')
-        : terminalActionPossiblyExecuted('tmux session creation did not complete')
+      if (result.error.code === 'ENOENT') return terminalActionNotStarted('tmux is unavailable')
+      // tmux says exactly why it refused — "duplicate session", "protocol version mismatch",
+      // a .tmux.conf error, a directory it cannot enter. Dropping stderr here turned every one of
+      // those into the same unactionable SPAWN_FAILED, diagnosable only by reading the daemon log
+      // on the machine that failed, which does not have the reason either.
+      const detail = result.stderr.trim().split('\n')[0]?.slice(0, 200)
+        // execFile reports a timeout kill as SIGTERM with no stderr — the one failure whose cause
+        // is not in tmux's own output.
+        || (result.error.killed ? 'tmux did not answer within 5s' : result.error.message.slice(0, 200))
+      return terminalActionPossiblyExecuted(`tmux session creation did not complete: ${detail}`)
     }
     const paneId = result.stdout.trim()
     if (!/^%\d+$/.test(paneId)) {
