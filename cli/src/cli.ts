@@ -35,6 +35,7 @@ import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
+import { ensureTmuxOnPath } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
@@ -710,6 +711,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     return herdrSessionsExplicit
       ? resolveConfiguredHerdrSessions(terminalConfig.herdrSessions, () => listInstalledHerdrSessions(env.HERDR_BIN))
       : discoverRunningHerdrSessions(env.HERDR_BIN)
+  }
+  // Before ANY tmux call: a daemon that came up outside a terminal (the usual shape after a reboot)
+  // has a minimal PATH, and every `execFile('tmux', …)` below would ENOENT. Ask the user's own login
+  // shell where tmux is and adopt that directory, the same way the engine launch already consults it.
+  if (terminalConfig.backends.includes('tmux')) {
+    const tmuxPath = await ensureTmuxOnPath()
+    if (tmuxPath.state === 'adopted') {
+      console.log(`[tmux] not on the daemon PATH · adopted ${tmuxPath.from} from the user's login shell`)
+    } else if (tmuxPath.state === 'absent') {
+      console.warn(`[tmux] unavailable · ${tmuxPath.reason} · new agents cannot be created`)
+    }
   }
   const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend() : null
   const herdrTargets = await resolveHerdrTargets()
@@ -2647,7 +2659,16 @@ async function runForeground(session: AuthSession): Promise<void> {
     const spawned = await tmuxBackend.create({ cwd, label, command: argv })
     if (spawned.state !== 'succeeded') {
       console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
-      return { ok: false, error: 'SPAWN_FAILED', detail: spawned.reason }
+      // `tmuxBackend` exists whenever the CONFIG lists tmux — it is never a probe of the binary. So a
+      // daemon that cannot resolve `tmux` at all (a login context whose PATH lacks Homebrew's bin,
+      // the usual shape after a reboot) reported the same SPAWN_FAILED as a tmux that answered and
+      // refused. They need different fixes, so they get different codes.
+      const missing = spawned.reason === 'tmux is unavailable'
+      return {
+        ok: false,
+        error: missing ? 'TMUX_UNAVAILABLE' : 'SPAWN_FAILED',
+        detail: spawned.reason,
+      }
     }
     for (const delayMs of [150, 400, 800]) {
       await new Promise((resolve) => setTimeout(resolve, delayMs))
