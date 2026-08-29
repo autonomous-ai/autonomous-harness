@@ -2702,7 +2702,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     } catch {
       return { ok: false, error: 'CWD_NOT_FOUND' }
     }
-    const label = `${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
+    // retaining the engine and a collision-resistant creation suffix for diagnostics.
+    const label = `harness-${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
     const launchOptions = { bypassPermission }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
