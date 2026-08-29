@@ -190,7 +190,11 @@ export class TerminalBackendCoordinator {
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
   ): Promise<TerminalReadResult<TerminalStreamHandle>> {
-    if (!session.active) return { state: 'failed', reason: 'terminal agent is dormant' }
+    // `active` describes whether the engine process was discovered, not whether the retained
+    // terminal runtime is still viewable. A dormant agent can legitimately be waiting at setup,
+    // trust, or a shell prompt. Let each backend authoritatively check whether its pane still
+    // exists. Engine-targeted operations (capture, leases, and submit helpers) keep their active
+    // guards elsewhere in this coordinator; the opened stream may still carry raw terminal input.
     let reason = 'TERMINAL_RUNTIME_UNAVAILABLE'
     for (const runtime of this.orderedRuntimes(session)) {
       const backend = this.backendFor(runtime)

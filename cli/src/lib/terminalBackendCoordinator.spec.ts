@@ -3,7 +3,7 @@ import type { RegisteredSession } from './registry.js'
 import type { TerminalBackend } from './terminalBackend.js'
 import { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { terminalRouteKey } from './terminalRuntime.js'
-import type { TerminalRuntimeRef } from './terminalTypes.js'
+import type { TerminalRuntimeRef, TerminalStreamHandle, TerminalStreamSink } from './terminalTypes.js'
 
 const tmux: TerminalRuntimeRef = { backend: 'tmux', paneId: '%1' }
 const herdr: TerminalRuntimeRef = {
@@ -30,7 +30,59 @@ function backend(instanceId: string, submit: TerminalBackend['submitText']): Ter
   }
 }
 
+function streamHandle(): TerminalStreamHandle {
+  return {
+    runtime: tmux,
+    beginSnapshot: vi.fn(),
+    snapshot: vi.fn(async () => ({
+      state: 'succeeded' as const,
+      value: { bytes: new Uint8Array(), cols: 80, rows: 24 },
+    })),
+    endSnapshot: vi.fn(),
+    writeRaw: vi.fn(),
+    resize: vi.fn(),
+    scroll: vi.fn(),
+    pauseOutput: vi.fn(),
+    resumeOutput: vi.fn(),
+    close: vi.fn(),
+  }
+}
+
 describe('TerminalBackendCoordinator', () => {
+  it('opens a retained terminal runtime even when engine discovery marked the agent dormant', async () => {
+    const tmuxBackend = backend('tmux:default', vi.fn())
+    const handle = streamHandle()
+    tmuxBackend.openStream = vi.fn(async () => ({ state: 'succeeded' as const, value: handle }))
+    const coordinator = new TerminalBackendCoordinator([tmuxBackend], ['tmux'], ['default'])
+    const current = session()
+    current.active = false
+    const sink: TerminalStreamSink = { onData: vi.fn(), onClose: vi.fn() }
+
+    await expect(coordinator.openStream(current, { cols: 80, rows: 24 }, sink)).resolves.toEqual({
+      state: 'succeeded', value: handle,
+    })
+    expect(tmuxBackend.openStream).toHaveBeenCalledWith(
+      tmux,
+      { engine: 'claude', processIdentity: current.processIdentity },
+      { cols: 80, rows: 24 },
+      sink,
+    )
+  })
+
+  it('reports the backend failure when a dormant agent no longer has a terminal pane', async () => {
+    const tmuxBackend = backend('tmux:default', vi.fn())
+    tmuxBackend.openStream = vi.fn(async () => ({ state: 'failed' as const, reason: 'tmux pane is unavailable' }))
+    const coordinator = new TerminalBackendCoordinator([tmuxBackend], ['tmux'], ['default'])
+    const current = session()
+    current.active = false
+
+    await expect(coordinator.openStream(
+      current,
+      { cols: 80, rows: 24 },
+      { onData: vi.fn(), onClose: vi.fn() },
+    )).resolves.toEqual({ state: 'failed', reason: 'tmux pane is unavailable' })
+  })
+
   it('merges backend-scoped title snapshots and prefers the primary runtime title', async () => {
     const first = backend('tmux:default', vi.fn())
     first.titles = vi.fn(async () => ({ state: 'succeeded' as const, value: new Map([[terminalRouteKey(tmux), 'tmux title']]) }))
