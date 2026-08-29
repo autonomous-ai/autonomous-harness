@@ -6,6 +6,7 @@ import type { RegisteredSession } from './registry.js'
 import {
   TmuxAgentReconciler,
   discoverTmuxAgentsFromSnapshot,
+  parsePanes,
   runtimeKey,
   type DiscoveredTmuxAgent,
   type TmuxAgentProbe,
@@ -23,6 +24,13 @@ const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwne
   agentCandidates: [],
   cursorAgentCandidates: [],
   grokCandidates: [],
+})
+
+it('parses printable tmux separators without truncating a pipe in cwd', () => {
+  expect(parsePanes('%1|42|/work/a|b\n%2|84|/tmp\n')).toEqual([
+    { tmuxPane: '%1', rootPid: 42, cwd: '/work/a|b' },
+    { tmuxPane: '%2', rootPid: 84, cwd: '/tmp' },
+  ])
 })
 
 describe('tmux process agent snapshot discovery', () => {

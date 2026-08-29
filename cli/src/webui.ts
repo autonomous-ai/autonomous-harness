@@ -258,7 +258,9 @@ function render(s){
   d.innerHTML = '<span class="dot '+(deviceOnline?'on':deviceTransport?'idle':'off')+'"></span> <span class="mut">device '+(deviceOnline?'connected':deviceTransport?'pairing':'offline')+'</span>';
   document.getElementById('agent').textContent = (s.agentId||'').slice(0,8) || '—';
   const nAgents = (s.sessions||[]).length;
-  document.getElementById('agents').textContent = nAgents === 0 ? 'no agents' : nAgents + (nAgents === 1 ? ' agent' : ' agents');
+  document.getElementById('agents').textContent = s.discoveryReady === false
+    ? 'discovering terminal agents…'
+    : nAgents === 0 ? 'no agents' : nAgents + (nAgents === 1 ? ' agent' : ' agents');
   document.getElementById('uptime').textContent = fmtDur(s.uptimeSec);
   document.getElementById('fp').textContent = s.fingerprint || '—';
   const wl = document.getElementById('weblink');
@@ -266,9 +268,11 @@ function render(s){
 
   // sessions
   const se = document.getElementById('sessions');
-  se.innerHTML = (s.sessions&&s.sessions.length) ? s.sessions.map(x =>
+  se.innerHTML = s.discoveryReady === false
+    ? '<div class="empty">Discovering terminal agents…</div>'
+    : (s.sessions&&s.sessions.length) ? s.sessions.map(x =>
     '<div class="row"><div class="main"><div class="name">'+esc(x.name)+'</div><div class="sub">'+esc(x.cwd||'')+'  ·  '+esc((x.terminal&&x.terminal.primary)||x.tmuxPane||'')+'</div></div><div class="mut" style="font-size:12px">'+fmtWhen(x.updatedAt)+'</div></div>'
-  ).join('') : '<div class="empty">No active terminal agents.</div>';
+  ).join('') : '<div class="empty">'+(s.discoveryError ? esc('Terminal discovery unavailable: '+s.discoveryError) : 'No terminal agents.')+'</div>';
 
   // pairs
   const pe = document.getElementById('pairs');

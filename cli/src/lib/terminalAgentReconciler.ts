@@ -21,6 +21,8 @@ export interface TerminalAgentReconcilerDeps {
   onObserved: (agent: DiscoveredTerminalAgent, current: RegisteredSession) => void | Promise<void>
   onDormant: (current: RegisteredSession, reason: string) => void | Promise<void>
   onRemoved: (current: RegisteredSession, reason: string) => void | Promise<void>
+  onTerminalAvailability?: (current: RegisteredSession, available: boolean) => void | Promise<void>
+  onProbeStatus?: (status: { ready: true; error: string | null }) => void
   transaction?: <T>(apply: () => T | Promise<T>) => Promise<T>
   /** Refresh configured backend instances before each immutable probe cycle. */
   beforeProbe?: () => void | Promise<void>
@@ -72,6 +74,7 @@ function unboundRouteObservation(
 /** Serialized, failure-isolated reconciliation across every enabled backend instance. */
 export class TerminalAgentReconciler {
   private readonly misses = new Map<string, number>()
+  private readonly engineMisses = new Map<string, number>()
   private readonly suppressed = new Set<string>()
   private readonly hints = new Map<string, AgentEngine>()
   private pending = false
@@ -80,8 +83,8 @@ export class TerminalAgentReconciler {
 
   constructor(private readonly deps: TerminalAgentReconcilerDeps) {}
 
-  start(intervalMs: number): void {
-    void this.trigger()
+  async start(intervalMs: number): Promise<void> {
+    await this.trigger()
     this.timer = setInterval(() => { void this.trigger() }, intervalMs)
     this.timer.unref?.()
   }
@@ -110,6 +113,7 @@ export class TerminalAgentReconciler {
       const before = this.deps.current()
       const current = before.find((candidate) => currentProcessKey(candidate) === key)
         ?? unboundRouteOwner(before, observed)
+      if (current) await this.deps.onTerminalAvailability?.(current, true)
       if (current) await this.deps.onObserved(observed, current)
       else await this.deps.onDiscovered(observed)
       const after = this.deps.current()
@@ -149,8 +153,30 @@ export class TerminalAgentReconciler {
         this.deps.daemonPid ?? process.pid,
         hints,
       ))
+    const availableTargets = probe.targets.filter((target) => target.result.state === 'available')
+    const livePlacements = new Set(availableTargets.flatMap((target) =>
+      target.result.state === 'available'
+        ? target.result.roots.map((root) => terminalPlacementKey(root.runtime))
+        : []))
+    const probeError = !probe.processTableAvailable
+      ? 'process table unavailable'
+      : probe.targets.length > 0 && availableTargets.length === 0
+        ? probe.targets.map((target) => `${target.instanceId}: ${target.result.state === 'available' ? 'available' : target.result.reason}`).join('; ')
+        : null
+    // Terminal placement liveness does not depend on finding an engine process. This is what keeps a
+    // retained trust/setup/shell pane visible after restart, including when `ps` itself is unavailable.
+    const markVerifiedPlacements = async (): Promise<void> => {
+      for (const current of this.deps.current()) {
+        if (current.runtimes.some((runtime) => livePlacements.has(terminalPlacementKey(runtime)))) {
+          await this.deps.onTerminalAvailability?.(current, true)
+        }
+      }
+    }
+    if (this.deps.transaction) await this.deps.transaction(markVerifiedPlacements)
+    else await markVerifiedPlacements()
     if (!probe.processTableAvailable) {
       console.warn('[discovery] process table unavailable; keeping existing terminal agents')
+      this.deps.onProbeStatus?.({ ready: true, error: probeError })
       return
     }
     this.hints.clear()
@@ -176,16 +202,26 @@ export class TerminalAgentReconciler {
         if (observed) matchedProcesses.add(processIdentityKey(observed.engine, observed.processIdentity))
 
         let nextRuntimes = current.runtimes
+        let terminalVerified = current.runtimes.some((runtime) => livePlacements.has(terminalPlacementKey(runtime)))
         for (const runtime of current.runtimes) {
           const target = targetForRuntime(probe, runtime)
           if (!target || target.result.state !== 'available') continue
           const placement = terminalPlacementKey(runtime)
-          if (probe.ambiguousPlacements.has(placement)) continue
           const replacement = observed?.runtimes.find((candidate) => terminalPlacementKey(candidate) === placement)
           const missKey = `${current.agentId}\u0000${placement}`
+          // Inventory is the authority for terminal existence. A live pane without a recognized engine
+          // is a dormant but still viewable agent, not a missing runtime.
+          if (livePlacements.has(placement)) {
+            this.misses.delete(missKey)
+            terminalVerified = true
+            if (replacement) nextRuntimes = mergeTerminalRuntimes(nextRuntimes, [replacement])
+            continue
+          }
+          if (probe.ambiguousPlacements.has(placement)) continue
           if (replacement) {
             this.misses.delete(missKey)
             nextRuntimes = mergeTerminalRuntimes(nextRuntimes, [replacement])
+            terminalVerified = true
             continue
           }
           // The aggregate inventory/process snapshot is deliberately cheap, but it is not stronger
@@ -197,17 +233,16 @@ export class TerminalAgentReconciler {
           if (backend && current.processIdentity) {
             const validation = await backend.validate(runtime, {
               engine: current.engine,
-              // Before an engine session exists, the pane is the agent. Claude and other native
-              // launchers may replace their process while a first-run prompt is visible; requiring the
-              // earlier PID here deletes a perfectly live sessionless tile. A bound session keeps the
-              // strict PID/start-marker check so another process cannot inherit its transcript.
-              processIdentity: current.sessionId ? current.processIdentity : undefined,
+              // This check answers only whether the terminal placement still exists. Engine/process
+              // identity is reconciled independently from the aggregate process snapshot below.
+              processIdentity: undefined,
             }).catch((error: unknown) => ({
               state: 'unknown' as const,
               reason: error instanceof Error ? error.message : 'terminal validation failed',
             }))
             if (validation.state === 'alive') {
               this.misses.delete(missKey)
+              terminalVerified = true
               continue
             }
             // A timeout/unreadable backend is not evidence that the process exited. Preserve both the
@@ -221,6 +256,20 @@ export class TerminalAgentReconciler {
           }
           this.misses.delete(missKey)
           nextRuntimes = nextRuntimes.filter((candidate) => terminalPlacementKey(candidate) !== placement)
+        }
+
+        if (terminalVerified) await this.deps.onTerminalAvailability?.(current, true)
+        if (observed) {
+          this.engineMisses.delete(current.agentId)
+        } else if (current.active && terminalVerified && !current.runtimes.some((runtime) =>
+          probe.ambiguousPlacements.has(terminalPlacementKey(runtime)))) {
+          const misses = (this.engineMisses.get(current.agentId) ?? 0) + 1
+          if (misses >= MISS_LIMIT) {
+            this.engineMisses.delete(current.agentId)
+            await this.deps.onDormant(current, `engine process absent after ${MISS_LIMIT} confirmed scans`)
+          } else {
+            this.engineMisses.set(current.agentId, misses)
+          }
         }
 
         if (observed) {
@@ -237,6 +286,7 @@ export class TerminalAgentReconciler {
           await this.deps.onObserved(merged, current)
         } else if (nextRuntimes.length < current.runtimes.length) {
           if (nextRuntimes.length === 0) {
+            await this.deps.onTerminalAvailability?.(current, false)
             await this.deps.onRemoved(current, `terminal runtime absent after ${MISS_LIMIT} confirmed scans`)
           } else {
             await this.deps.onObserved({
@@ -262,5 +312,8 @@ export class TerminalAgentReconciler {
 
     if (this.deps.transaction) await this.deps.transaction(apply)
     else await apply()
+    // Readiness is published last: clients must never observe ready=true between the inventory read and
+    // the authoritative availability/registry update.
+    this.deps.onProbeStatus?.({ ready: true, error: probeError })
   }
 }

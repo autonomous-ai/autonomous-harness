@@ -201,7 +201,8 @@ describe('BackendSocket outbound queue', () => {
       lastHookAt: 1,
       lastTranscriptAt: 1,
     }
-    vi.spyOn(registry, 'active').mockReturnValue([session])
+    vi.spyOn(registry, 'advertised').mockReturnValue([session])
+    vi.spyOn(registry, 'terminalAvailable').mockReturnValue(true)
     const socket = new BackendSocket('token')
     socket.connect()
     const ws = wsMock.instances[0]
@@ -221,7 +222,10 @@ describe('BackendSocket outbound queue', () => {
 
     await vi.waitFor(() => {
       expect(wrapReply).toHaveBeenCalledWith('web-1', 'agents_list_result', 'agents-1', {
-        agents: [expect.objectContaining({ id: 'agent-1', sessionId: 'session-1', engine: 'codex' })],
+        agents: [expect.objectContaining({
+          id: 'agent-1', sessionId: 'session-1', engine: 'codex',
+          terminal: expect.objectContaining({ available: true }),
+        })],
       })
     })
     await socket.stop()

@@ -27,13 +27,15 @@ function cleanPaneTitle(title: string): string | null {
 /** Current tmux pane titles keyed by pane id. AI CLIs update this with their live session title. */
 export function listPaneTitles(): Promise<Map<string, string>> {
   return new Promise((resolve) => {
-    execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_title}'], { timeout: 2000 }, (err, stdout) => {
+    execFile('tmux', ['list-panes', '-a', '-F', '#{pane_id}|#{pane_title}'], { timeout: 2000 }, (err, stdout) => {
       const titles = new Map<string, string>()
       if (err) { resolve(titles); return }
       for (const line of stdout.split('\n')) {
-        const [pane, ...titleParts] = line.split('\t')
+        const separator = line.indexOf('|')
+        if (separator < 0) continue
+        const pane = line.slice(0, separator)
         if (!/^%\d+$/.test(pane)) continue
-        const title = cleanPaneTitle(titleParts.join('\t'))
+        const title = cleanPaneTitle(line.slice(separator + 1))
         if (title) titles.set(pane, title)
       }
       resolve(titles)

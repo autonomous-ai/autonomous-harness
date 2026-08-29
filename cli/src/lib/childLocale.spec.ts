@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ensureUtf8Locale } from './childLocale.js'
 
-const linux = process.platform === 'linux'
+const supported = process.platform === 'linux' || process.platform === 'darwin'
 
 describe('ensureUtf8Locale', () => {
   /**
@@ -11,19 +11,19 @@ describe('ensureUtf8Locale', () => {
    * ZERO panes, so discovery has nowhere to attach the engine process it did find and no agent is ever
    * created. Under LC_ALL=C.UTF-8 the same call returns real tabs.
    */
-  it.skipIf(!linux)('supplies a UTF-8 locale when the environment has none', () => {
+  it.skipIf(!supported)('supplies a UTF-8 locale when the environment has none', () => {
     const env: NodeJS.ProcessEnv = {}
     ensureUtf8Locale(env)
     expect(env.LC_ALL).toBe('C.UTF-8')
   })
 
-  it.skipIf(!linux)('overrides a non-UTF-8 locale', () => {
+  it.skipIf(!supported)('overrides a non-UTF-8 locale', () => {
     const env: NodeJS.ProcessEnv = { LANG: 'POSIX' }
     ensureUtf8Locale(env)
     expect(env.LC_ALL).toBe('C.UTF-8')
   })
 
-  it.skipIf(!linux)('leaves a UTF-8 locale the user configured alone', () => {
+  it.skipIf(!supported)('leaves a UTF-8 locale the user configured alone', () => {
     for (const key of ['LC_ALL', 'LC_CTYPE', 'LANG'] as const) {
       const env: NodeJS.ProcessEnv = { [key]: 'en_US.UTF-8' }
       ensureUtf8Locale(env)
@@ -34,9 +34,7 @@ describe('ensureUtf8Locale', () => {
     expect(lowercase.LC_ALL).toBeUndefined()
   })
 
-  // macOS passes every byte through regardless of locale (verified: default, C.UTF-8 and POSIX all
-  // return `⌘` intact from ps), so there is nothing to fix and nothing to risk changing.
-  it.skipIf(linux)('does nothing off Linux', () => {
+  it.skipIf(supported)('does nothing on unsupported platforms', () => {
     const env: NodeJS.ProcessEnv = {}
     ensureUtf8Locale(env)
     expect(env.LC_ALL).toBeUndefined()

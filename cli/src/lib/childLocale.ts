@@ -1,5 +1,5 @@
 /**
- * Give this process (and therefore every child it spawns) a UTF-8 locale on Linux.
+ * Give this process (and therefore every child it spawns) a UTF-8 locale on macOS and Linux.
  *
  * Linux tools sanitize bytes they cannot represent in the current locale, and a daemon usually has NO
  * locale at all: `LANG` is unset under systemd, under `docker run`, and in an ssh session that forwards
@@ -21,7 +21,7 @@
  * not exist glibc falls back to C, i.e. no worse than doing nothing.
  */
 export function ensureUtf8Locale(env: NodeJS.ProcessEnv = process.env): void {
-  if (process.platform !== 'linux') return
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return
   const configured = env.LC_ALL || env.LC_CTYPE || env.LANG
   if (configured && /utf-?8/i.test(configured)) return
   env.LC_ALL = 'C.UTF-8'

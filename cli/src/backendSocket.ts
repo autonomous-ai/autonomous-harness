@@ -916,7 +916,7 @@ export class BackendSocket {
         }
 
         case 'agents_list': {
-          const projects = await Promise.all(registry.active().map((s) => this.toProject(s)))
+          const projects = await Promise.all(registry.advertised().map((s) => this.toProject(s)))
           // Ordered by creation time, oldest → newest — a stable tab order that doesn't reshuffle as
           // sessions become active (createdAt = the session's registeredAt). The id breaks a tie so the
           // order is TOTAL: without it two agents registered in the same millisecond fall through to array
@@ -1216,7 +1216,7 @@ export class BackendSocket {
             reply(type, requestId, { error: 'MISSING_TRANSCRIPT' })
             return
           }
-          const projects = (await Promise.all(registry.active().map((s) => this.toProject(s)))).slice(0, 24) // cap the router prompt (mirror the hosted runtime path)
+          const projects = (await Promise.all(registry.advertised().map((s) => this.toProject(s)))).slice(0, 24) // cap the router prompt (mirror the hosted runtime path)
           const agents = projects.map((p) => {
             // Use the last 3 turns' recaps (not just 1) — a single turn can misrepresent what the agent is
             // actually working on; 3 gives the router a more stable picture.
@@ -1405,7 +1405,7 @@ export class BackendSocket {
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */
   private async toProject(s: RegisteredSession): Promise<{
     id: string; sessionId: string; userId: string; name: string; status: string
-    createdAt: string; updatedAt: string; tmuxPane: string | null; terminal: { primary: string; runtimes: RegisteredSession['runtimes'] }; engine: RegisteredSession['engine']; selectedModel: string | null
+    createdAt: string; updatedAt: string; tmuxPane: string | null; terminal: { available: boolean; primary: string; runtimes: RegisteredSession['runtimes'] }; engine: RegisteredSession['engine']; selectedModel: string | null
   }> {
     const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
     return {
@@ -1417,7 +1417,7 @@ export class BackendSocket {
       createdAt: new Date(s.registeredAt).toISOString(),
       updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
       tmuxPane: s.tmuxPane || null,
-      terminal: { primary: s.primaryRuntimeKey, runtimes: s.runtimes },
+      terminal: { available: registry.terminalAvailable(s.agentId), primary: s.primaryRuntimeKey, runtimes: s.runtimes },
       engine: s.engine,
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
     }

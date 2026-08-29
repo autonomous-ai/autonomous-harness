@@ -75,10 +75,14 @@ function execText(command: string, args: string[], timeout: number): Promise<{ o
 export function parsePanes(stdout: string): TmuxPaneSnapshot[] {
   const panes: TmuxPaneSnapshot[] = []
   for (const line of stdout.split('\n')) {
-    const [tmuxPane, pidText, ...cwdParts] = line.split('\t')
+    const first = line.indexOf('|')
+    const second = first < 0 ? -1 : line.indexOf('|', first + 1)
+    if (first < 0 || second < 0) continue
+    const tmuxPane = line.slice(0, first)
+    const pidText = line.slice(first + 1, second)
     const rootPid = Number(pidText)
     if (!/^%\d+$/.test(tmuxPane) || !Number.isSafeInteger(rootPid) || rootPid <= 0) continue
-    panes.push({ tmuxPane, rootPid, cwd: cwdParts.join('\t') })
+    panes.push({ tmuxPane, rootPid, cwd: line.slice(second + 1) })
   }
   return panes
 }
@@ -89,7 +93,9 @@ export type TmuxPaneInventory =
 
 /** One bounded tmux inventory read, shared by discovery and the neutral backend adapter. */
 export async function listTmuxPanes(): Promise<TmuxPaneInventory> {
-  const result = await execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_path}'], 2_000)
+  // Printable delimiters survive tmux's POSIX-locale output sanitiser. Split only the two fixed
+  // separators so a legitimate `|` in pane_current_path remains part of the path.
+  const result = await execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}|#{pane_pid}|#{pane_current_path}'], 2_000)
   return result.ok ? { ok: true, panes: parsePanes(result.stdout) } : result
 }
 

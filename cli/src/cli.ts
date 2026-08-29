@@ -650,7 +650,7 @@ async function projectFrame(s: RegisteredSession, selectedModel: string | null):
     createdAt: new Date(s.registeredAt).toISOString(),
     updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
     tmuxPane: s.tmuxPane || null,
-    terminal: { primary: s.primaryRuntimeKey, runtimes: s.runtimes },
+    terminal: { available: registry.terminalAvailable(s.agentId), primary: s.primaryRuntimeKey, runtimes: s.runtimes },
     engine: s.engine,
     selectedModel,
   }
@@ -673,6 +673,8 @@ async function statBirthMs(path: string): Promise<number> {
 async function runForeground(session: AuthSession): Promise<void> {
   installTimestampedConsole() // daemon-only: every harness.log line gets a wall-clock timestamp
   const startedAt = Date.now()
+  let discoveryReady = false
+  let discoveryError: string | null = null
 
   // Claim the pid file for OURSELVES, first thing. It used to be written by whoever spawned us — the
   // update-restart's parent, after supervising the handover — so a parent that died mid-handover (a
@@ -980,6 +982,11 @@ async function runForeground(session: AuthSession): Promise<void> {
   // server may fall back to a free port if env.PORT is taken, and the hooks must point at the real one.
 
   const syncSession = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
+    if (!registry.terminalAvailable(s.agentId)) {
+      backendRef?.send({ type: 'agent_deleted', payload: { agentId: s.agentId } })
+      if (opts.device !== false) backendRef?.sendCommander({ type: 'agent_deleted', payload: { agentId: s.agentId } })
+      return
+    }
     void projectFrame(s, runtimeProfiles.selectedModel(s))
       .then((project) => {
         const frame = { type: 'agent_synced', payload: { agent: project } }
@@ -1023,7 +1030,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const auth = new AuthSessionManager(backendHttpBase())
   const backend = new BackendSocket(session.machineId ?? session.computerId, auth, (connected) => {
     if (!connected) return
-    const sessions = registry.active()
+    const sessions = registry.advertised()
     console.log(`[cli] connected · ${sessions.length} agent(s) registered`)
     void fullReconcile(true).catch((err) => {
       console.error('[runtime-profile] connect reconcile failed:', err instanceof Error ? err.message : err)
@@ -2024,12 +2031,20 @@ async function runForeground(session: AuthSession): Promise<void> {
         stopHeartbeat(agent.sessionId)
       }
       console.log(`[discovery] ${sid(agent.agentId)} dormant · ${reason}`)
-      backend.send({ type: 'agent_deleted', payload: { agentId: agent.agentId } })
-      backend.sendCommander({ type: 'agent_deleted', payload: { agentId: agent.agentId } })
+      announceSession(agent)
     },
     onRemoved: (agent, reason) => {
       console.log(`[discovery] ${sid(agent.agentId)} removed · ${reason}`)
       forgetSession(agent.agentId, { force: true })
+    },
+    onTerminalAvailability: (agent, available) => {
+      const changed = registry.terminalAvailable(agent.agentId) !== available
+      registry.setTerminalAvailable(agent.agentId, available)
+      if (available && changed) announceSession(agent)
+    },
+    onProbeStatus: (status) => {
+      discoveryReady = status.ready
+      discoveryError = status.error
     },
   })
 
@@ -2364,6 +2379,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       deviceTransportConnected: backend.hasCommander(),
       deviceE2eeConnected: backend.deviceE2eeConnected(),
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+      discoveryReady,
+      discoveryError,
       fingerprint: backend.e2eeFingerprint(),
       config: {
         watching: `${terminalConfig.backends.join(' + ')} terminals across all supported engines`,
@@ -2385,14 +2402,14 @@ async function runForeground(session: AuthSession): Promise<void> {
         dataDir: tildify(env.ADAPTER_DATA_DIR),
         port: daemonPort(),
       },
-      sessions: registry.active().map((s) => ({
+      sessions: registry.advertised().map((s) => ({
         id: s.agentId,
         sessionId: s.sessionId,
         name: projectDisplayName(s),
         engine: s.engine,
         cwd: tildify(s.cwd ?? ''),
         tmuxPane: s.tmuxPane || null,
-        terminal: { primary: s.primaryRuntimeKey, runtimes: s.runtimes },
+        terminal: { available: registry.terminalAvailable(s.agentId), primary: s.primaryRuntimeKey, runtimes: s.runtimes },
         updatedAt: s.updatedAt,
       })),
       pairs: backend.listPairs(),
@@ -2550,7 +2567,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   watcher.start()
   await cursorDiscovery.start()
-  agentReconciler.start(env.TERMINAL_RECONCILE_INTERVAL_MS ?? env.TMUX_REAP_INTERVAL_MS)
+  await agentReconciler.start(env.TERMINAL_RECONCILE_INTERVAL_MS ?? env.TMUX_REAP_INTERVAL_MS)
   for (const task of await loadCursorPendingTasks(env.ADAPTER_DATA_DIR)) {
     onCursorTaskStart(task.sessionId, task.toolUseId, task.input)
   }
@@ -2565,9 +2582,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (reconcileInFlight) return reconcileInFlight
     reconcileInFlight = (async () => {
       await runtimeProfiles.withoutChangeEvents(async () => {
-        await Promise.all(registry.list().map((session) => runtimeProfiles.ingestConfig(session, true)))
+        await Promise.all(registry.advertised().map((session) => runtimeProfiles.ingestConfig(session, true)))
         await watcher.pollAll()
-        await Promise.all(registry.list().map(async (session) => {
+        await Promise.all(registry.advertised().map(async (session) => {
           const capture = await captureTerminal(session.agentId, 120)
           if (capture) runtimeProfiles.ingestPane(session, capture, true)
         }))
@@ -2575,7 +2592,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       await syncTerminalTitles()
       const includeDevice = reconcileNeedsDeviceAnnouncement
       reconcileNeedsDeviceAnnouncement = false
-      for (const session of registry.list()) {
+      for (const session of registry.advertised()) {
         if (includeDevice) announceSession(session)
         else syncSession(session)
       }
@@ -3195,18 +3212,24 @@ async function runForeground(session: AuthSession): Promise<void> {
  * makes the version one too. Falls back to the local constant when the daemon cannot be reached, which is
  * exactly the case where the printing process IS the only build there is.
  */
-async function runningDaemonVersion(): Promise<string> {
+async function runningDaemonStatus(): Promise<{ version: string; sessions: number } | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/status`, {
       signal: AbortSignal.timeout(1_500),
     })
-    if (!res.ok) return VERSION
+    if (!res.ok) return null
     const body: unknown = await res.json()
-    const version = (body as { version?: unknown } | null)?.version
-    return typeof version === 'string' && version ? version : VERSION
+    const status = body as { version?: unknown; sessions?: unknown } | null
+    const version = typeof status?.version === 'string' && status.version ? status.version : VERSION
+    const sessions = Array.isArray(status?.sessions) ? status.sessions.length : 0
+    return { version, sessions }
   } catch {
-    return VERSION
+    return null
   }
+}
+
+async function runningDaemonVersion(): Promise<string> {
+  return (await runningDaemonStatus())?.version ?? VERSION
 }
 
 // `status` is a definitive state — `launch` only prints this after "[backend] connected" (so it's
@@ -3229,7 +3252,7 @@ function printInfoBlock(opts: {
   console.log(row('version', `v${opts.version}`))
   console.log(row('backend', env.BACKEND_WS_URL))
   console.log(row('watching', tildify(env.CLAUDE_PROJECTS_DIR)))
-  console.log(row('agents', `${opts.sessions} running`))
+  console.log(row('agents', `${opts.sessions} available`))
   console.log(row('pid', String(opts.pid)))
   console.log(row('logs', tildify(LOG_FILE)))
   console.log(row('dashboard', `http://127.0.0.1:${daemonPort()}`))
@@ -3389,13 +3412,13 @@ async function launch(foreground: boolean): Promise<void> {
     process.exit(0) // daemon stays alive
   }
 
-  registry.load()
+  const daemonStatus = await runningDaemonStatus()
   printInfoBlock({
     status: '● connected',
     pid: child.pid ?? 0,
     machineId: session.machineId,
-    sessions: registry.list().length,
-    version: await runningDaemonVersion(),
+    sessions: daemonStatus?.sessions ?? 0,
+    version: daemonStatus?.version ?? VERSION,
   })
   process.exit(0)
 }
@@ -3896,14 +3919,15 @@ async function status(): Promise<void> {
   const alive = pid != null && isAlive(pid)
   const session = readAuthSession()
   if (!session) { console.log('machine: not signed in. Run: harness login'); process.exit(0) }
-  registry.load()
+  const daemonStatus = alive ? await runningDaemonStatus() : null
+  if (!alive) registry.load()
   printInfoBlock({
     status: alive ? '● running' : '○ stopped',
     pid: pid ?? 0,
     machineId: session.machineId,
-    sessions: registry.list().length,
+    sessions: daemonStatus?.sessions ?? 0,
     // A stopped daemon answers nothing, so this falls back to the local build — which is what will run.
-    version: alive ? await runningDaemonVersion() : VERSION,
+    version: daemonStatus?.version ?? VERSION,
   })
   process.exit(0)
 }

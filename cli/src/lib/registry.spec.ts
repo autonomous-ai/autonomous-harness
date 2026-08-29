@@ -754,6 +754,7 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(opened?.isNew).toBe(true)
     expect(opened?.entry.sessionId).toBe('')
     expect(registry.unbound().map((s) => s.agentId)).toEqual(['agent-1'])
+    expect(registry.advertised().map((s) => s.agentId)).toEqual(['agent-1'])
     expect(registry.resolve('agent-1')?.agentId).toBe('agent-1')
     expect(projectDisplayName(opened!.entry)).toContain('demo')   // nameable while unbound
 
@@ -763,6 +764,20 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.list()).toHaveLength(1)
     expect(registry.unbound()).toHaveLength(0)
     expect(registry.resolve('s1')?.agentId).toBe('agent-1')
+  })
+
+  it('does not advertise persisted terminal locators before this daemon verifies them', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({ agentId: 'agent-1', engine: 'claude', tmuxPane: '%1', cwd: '/tmp/demo', processIdentity: processIdentity(101) })
+    expect(registry.advertised()).toHaveLength(1)
+
+    registry.load()
+
+    expect(registry.list()).toHaveLength(1)
+    expect(registry.advertised()).toHaveLength(0)
+    registry.setTerminalAvailable('agent-1', true)
+    expect(registry.advertised().map((s) => s.agentId)).toEqual(['agent-1'])
   })
 
   it('keeps the agent id when an unbound launcher becomes a new process in the same pane', async () => {

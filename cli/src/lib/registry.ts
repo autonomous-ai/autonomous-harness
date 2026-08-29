@@ -58,7 +58,7 @@ function modelString(value: unknown): string | null {
 export interface RegisteredSession {
   /** Per-row marker; the top-level array is retained for backward-reader safety. */
   schemaVersion: 2
-  /** Dormant records retain identity/bindings but are not advertised until a runtime is verified again. */
+  /** Whether the supported engine process is currently identified; terminal liveness is tracked separately. */
   active: boolean
   /**
    * THE AGENT. Public identity: this is what web tabs, device tiles and every inbound frame address.
@@ -329,6 +329,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
   const row = value as Partial<RegisteredSession>
   const runtimes = normalizedRuntimes(row.runtimes, row.tmuxPane)
   const primary = typeof row.primaryRuntimeKey === 'string' ? row.primaryRuntimeKey : ''
+  const normalizedPrimary = selectedRuntimeKey(runtimes, primary)
   const active = row.active === true
   const projectedTmuxPane = tmuxProjection(runtimes)
   if (row.schemaVersion !== 2
@@ -340,8 +341,10 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     || typeof row.primaryRuntimeKey !== 'string'
     || !Array.isArray(row.runtimes) || runtimes.length !== row.runtimes.length || !runtimes.length
     || (projectedTmuxPane ? row.tmuxPane !== projectedTmuxPane : row.tmuxPane !== undefined)
-    || (active && !runtimes.some((runtime) => terminalRouteKey(runtime) === primary))
-    || (!active && primary !== '')
+    || (primary !== '' && !runtimes.some((runtime) => terminalRouteKey(runtime) === primary))
+    // Older dormant rows intentionally persisted an empty primary. Accept and repair those once; new
+    // rows keep terminal routing independent from engine activity.
+    || (active && primary === '')
     || (row.processIdentity !== null && !validProcessIdentity(row.processIdentity))) return null
   const placements = runtimes.map(terminalPlacementKey)
   if (new Set(placements).size !== placements.length) return null
@@ -357,7 +360,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     projectDir: row.projectDir,
     cwd: typeof row.cwd === 'string' ? row.cwd : null,
     runtimes,
-    primaryRuntimeKey: primary,
+    primaryRuntimeKey: normalizedPrimary,
     tmuxPane: projectedTmuxPane,
     source: typeof row.source === 'string' ? row.source : null,
     title: typeof row.title === 'string' ? row.title : null,
@@ -533,6 +536,12 @@ class Registry {
   private runtimeIndex = new Map<string, string>()
   /** engine + PID start marker → agentId. This is authoritative across nested multiplexers. */
   private processIndex = new Map<string, string>()
+  /**
+   * Ephemeral terminal liveness, deliberately not persisted. A locator loaded from disk is only a hint
+   * until this daemon has seen the backend placement again. Engine activity and terminal availability
+   * are separate: a trust/setup/shell prompt can remain viewable after the engine process goes dormant.
+   */
+  private terminalAvailableAgents = new Set<string>()
   private transactionDepth = 0
   private savePending = false
   /** Root corruption/unknown schemas are read-only until the operator restores valid bytes. */
@@ -581,6 +590,7 @@ class Registry {
     this.sessionIndex.clear()
     this.runtimeIndex.clear()
     this.processIndex.clear()
+    this.terminalAvailableAgents.clear()
     this.writeBlocked = false
     this.persistedBaseline.clear()
     try {
@@ -702,7 +712,7 @@ class Registry {
               : (bound ? rawSessionId : agentId),
           tmuxPane: pane,
           runtimes,
-          primaryRuntimeKey: active ? selectedRuntimeKey(runtimes, raw.primaryRuntimeKey) : '',
+          primaryRuntimeKey: selectedRuntimeKey(runtimes, raw.primaryRuntimeKey),
           cwd: typeof raw.cwd === 'string' ? raw.cwd : null,
           source: bound && typeof raw.source === 'string' ? raw.source : null,
           cliVersion: typeof raw.cliVersion === 'string' ? raw.cliVersion : null,
@@ -812,6 +822,7 @@ class Registry {
       if (input.gateway !== undefined) existing.gateway = input.gateway
       existing.updatedAt = Date.now()
       this.index(existing)
+      this.terminalAvailableAgents.add(existing.agentId)
       this.save()
       return { entry: existing, isNew: false, evicted: null }
     }
@@ -828,6 +839,7 @@ class Registry {
       other.primaryRuntimeKey = selectedRuntimeKey(other.runtimes, other.primaryRuntimeKey)
       other.active = other.runtimes.length > 0
       if (other.runtimes.length) this.index(other)
+      else this.terminalAvailableAgents.delete(other.agentId)
       evicted ??= other.sessionId || other.agentId
     }
     const now = Date.now()
@@ -856,6 +868,7 @@ class Registry {
       lastTranscriptAt: now,
     }
     this.index(entry)
+    this.terminalAvailableAgents.add(entry.agentId)
     this.save()
     return { entry, isNew: true, evicted }
   }
@@ -978,6 +991,7 @@ class Registry {
     const entry = this.bySession(sessionId)
     if (!entry) return false
     this.drop(entry)
+    this.terminalAvailableAgents.delete(entry.agentId)
     this.save()
     return true
   }
@@ -997,6 +1011,7 @@ class Registry {
     const entry = this.agents.get(agentId)
     if (!entry) return false
     this.drop(entry)
+    this.terminalAvailableAgents.delete(agentId)
     this.save()
     return true
   }
@@ -1040,6 +1055,7 @@ class Registry {
     entry.active = true
     entry.updatedAt = Date.now()
     this.index(entry)
+    this.terminalAvailableAgents.add(entry.agentId)
     this.save()
     return true
   }
@@ -1048,10 +1064,21 @@ class Registry {
     const entry = this.agents.get(agentId)
     if (!entry || entry.active === active) return !!entry
     entry.active = active
-    entry.primaryRuntimeKey = active ? selectedRuntimeKey(entry.runtimes, entry.primaryRuntimeKey) : ''
     entry.updatedAt = Date.now()
     this.save()
     return true
+  }
+
+  /** Mark whether at least one backend placement was verified by this daemon process. */
+  setTerminalAvailable(agentId: string, available: boolean): boolean {
+    if (!this.agents.has(agentId)) return false
+    if (available) this.terminalAvailableAgents.add(agentId)
+    else this.terminalAvailableAgents.delete(agentId)
+    return true
+  }
+
+  terminalAvailable(agentId: string): boolean {
+    return this.terminalAvailableAgents.has(agentId)
   }
 
   /** The one lookup for anything that arrives from outside: web and device address an agent by `agentId`
@@ -1136,6 +1163,11 @@ class Registry {
 
   active(): RegisteredSession[] {
     return this.list().filter((entry) => entry.active)
+  }
+
+  /** The one public list: a verified terminal pane is sufficient even when its engine is dormant. */
+  advertised(): RegisteredSession[] {
+    return this.list().filter((entry) => this.terminalAvailableAgents.has(entry.agentId))
   }
 
   async transaction<T>(apply: () => T | Promise<T>): Promise<T> {

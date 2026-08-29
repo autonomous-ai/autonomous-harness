@@ -34,6 +34,65 @@ function probe(targets: TerminalAgentProbe['targets'], agents: DiscoveredTermina
 }
 
 describe('composite terminal reconciliation', () => {
+  it('advertises a retained pane even when no engine process is observed', async () => {
+    const current = { ...session([tmux]), active: false }
+    const onTerminalAvailability = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(),
+      onTerminalAvailability,
+      probe: async () => probe([
+        { instanceId: 'tmux:default', result: { state: 'available', roots: [{ runtime: tmux, rootPid: 1, cwd: '/work' }] } },
+      ]),
+    })
+
+    await reconciler.trigger()
+
+    expect(onTerminalAvailability).toHaveBeenCalledWith(current, true)
+  })
+
+  it('still verifies retained panes when the process table is unavailable', async () => {
+    const current = { ...session([tmux]), active: false }
+    const onTerminalAvailability = vi.fn()
+    const onProbeStatus = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(),
+      onTerminalAvailability, onProbeStatus,
+      probe: async () => ({
+        processTableAvailable: false,
+        targets: [{ instanceId: 'tmux:default', result: { state: 'available', roots: [{ runtime: tmux, rootPid: 1, cwd: '/work' }] } }],
+        agents: [], ambiguousPlacements: new Set(),
+      }),
+    })
+
+    await reconciler.trigger()
+
+    expect(onTerminalAvailability).toHaveBeenCalledWith(current, true)
+    expect(onProbeStatus).toHaveBeenCalledWith({ ready: true, error: 'process table unavailable' })
+  })
+
+  it('awaits the initial discovery pass before start resolves', async () => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    const probed = vi.fn(async () => {
+      await pending
+      return probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }])
+    })
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(), probe: probed,
+    })
+    let started = false
+    const start = reconciler.start(60_000).then(() => { started = true })
+    await Promise.resolve()
+    expect(started).toBe(false)
+    release()
+    await start
+    expect(started).toBe(true)
+    reconciler.stop()
+  })
+
   it('does not count an unavailable endpoint as a confirmed miss', async () => {
     const current = session([herdr])
     const onDormant = vi.fn()
@@ -92,7 +151,7 @@ describe('composite terminal reconciliation', () => {
     expect(validate).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps an agent active when pane-specific validation proves a process missed by the aggregate scan', async () => {
+  it('keeps a pane advertised but marks its missing engine dormant after two scans', async () => {
     const current = session([tmux])
     const onDormant = vi.fn()
     const onRemoved = vi.fn()
@@ -109,7 +168,8 @@ describe('composite terminal reconciliation', () => {
     await reconciler.trigger()
 
     expect(validate).toHaveBeenCalledTimes(3)
-    expect(onDormant).not.toHaveBeenCalled()
+    expect(onDormant).toHaveBeenCalledTimes(1)
+    expect(onDormant).toHaveBeenCalledWith(current, 'engine process absent after 2 confirmed scans')
     expect(onRemoved).not.toHaveBeenCalled()
   })
 

@@ -244,10 +244,10 @@ export class DaemonCableHost implements CableHost {
 
   /** This computer's own agents, in the order every other surface reads them in. */
   private localAgents(): CableAgent[] {
-    // `active()`, not `list()` — the SAME set `agents_list` answers the web and the desktop app with. They
+    // `advertised()`, not `list()` — the SAME set `agents_list` answers the web and the desktop app with. They
     // read one registry and must not disagree about what is on it: a dead agent holding a tile on the dial
     // and nowhere else is a tile that cannot be driven and cannot be explained.
-    const sessions = registry.active()
+    const sessions = registry.advertised()
     // Oldest → newest, and TOTAL: the id breaks a tie so the order cannot fall through to array position,
     // which is Map insertion order and differs between daemon runs. Both producers sort identically, so
     // the dial and the app cannot drift apart while reading the same registry.
@@ -616,4 +616,3 @@ export function cableQuestionCloseFor(
   if (typeof requestId !== 'string' || !requestId) return null
   return { agentId: frame.agentId, requestId }
 }
-

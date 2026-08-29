@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { DaemonCableHost, type CableHostWiring } from './cableHost.js'
 import type { FleetMachine, MachineFleet } from './machineFleet.js'
 
-const AGENTS: Array<{ agentId: string; registeredAt: number; active: boolean; engine: string }> = []
+const AGENTS: Array<{ agentId: string; registeredAt: number; active: boolean; terminalAvailable: boolean; engine: string }> = []
 vi.mock('../lib/registry.js', () => ({
   registry: {
     list: () => AGENTS,
     active: () => AGENTS.filter((a) => a.active),
+    advertised: () => AGENTS.filter((a) => a.terminalAvailable),
   },
   projectDisplayName: (s: { agentId: string }) => s.agentId,
 }))
@@ -89,17 +90,21 @@ describe('DaemonCableHost.listMachines', () => {
 })
 
 describe('DaemonCableHost.listAgents', () => {
-  const set = (rows: Array<{ agentId: string; registeredAt: number; active?: boolean }>): void => {
+  const set = (rows: Array<{ agentId: string; registeredAt: number; active?: boolean; terminalAvailable?: boolean }>): void => {
     AGENTS.length = 0
-    for (const r of rows) AGENTS.push({ engine: 'claude', active: true, ...r })
+    for (const r of rows) AGENTS.push({ engine: 'claude', active: true, terminalAvailable: true, ...r })
   }
 
-  it('lists only ACTIVE agents — the same set the web and the app are given', async () => {
+  it('lists only terminal-available agents — including a dormant engine with a live pane', async () => {
     // Two surfaces reading one registry must not disagree about what is on it. A dead agent holding a tile
     // on the dial and nowhere else is a tile that cannot be driven and cannot be explained.
-    set([{ agentId: 'a', registeredAt: 1 }, { agentId: 'b', registeredAt: 2, active: false }])
+    set([
+      { agentId: 'a', registeredAt: 1 },
+      { agentId: 'b', registeredAt: 2, active: false },
+      { agentId: 'stale', registeredAt: 3, terminalAvailable: false },
+    ])
     const host = new DaemonCableHost(wiring())
-    expect((await host.listAgents()).map((a) => a.id)).toEqual(['a'])
+    expect((await host.listAgents()).map((a) => a.id)).toEqual(['a', 'b'])
   })
 
   it('orders oldest first', async () => {
@@ -221,7 +226,7 @@ describe('DaemonCableHost.listAgents across machines', () => {
     // The order IS the contract: the dial swipes through it and the desktop app's rail reads top to
     // bottom in the same order, so the two surfaces can be compared by eye.
     AGENTS.length = 0
-    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, engine: 'claude' })
+    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
     const second: FleetMachine = { machineId: 'third', name: 'studio', state: 'ready', authMode: 'remote' }
     const host = new DaemonCableHost(
       wiring(),
@@ -273,7 +278,7 @@ describe('DaemonCableHost.listAgents across machines', () => {
 
   it('keeps a local agent local even while another machine is selected', async () => {
     AGENTS.length = 0
-    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, engine: 'claude' })
+    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
     const sendTurn = vi.fn()
     const fleet = crossFleet({ other: [] })
     const host = new DaemonCableHost(wiring({ sendTurn }), fleet)
