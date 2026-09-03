@@ -788,7 +788,22 @@ class Registry {
     processIdentity: ProcessIdentity
     gateway?: 'ori' | null
   }):
-    { entry: RegisteredSession; isNew: boolean; evicted: string | null } | null {
+    {
+      entry: RegisteredSession
+      isNew: boolean
+      /**
+       * The agent this one took a terminal from, once it has no terminal left.
+       *
+       * BOTH IDS, because by the time the caller reads this the agent is ALREADY
+       * GONE from the registry — `drop()` removes it and the loop below only
+       * re-indexes it if it still owns a runtime — so nothing can look either id
+       * up afterwards. Clients key on the agentId and the daemon's per-session
+       * state keys on the sessionId, and the caller needs both to finish the
+       * removal it was never told to do.
+       */
+      evicted: { agentId: string; sessionId: string } | null
+    } | null {
+
     if (this.writeBlocked) return null
     const { engine, processIdentity } = input
     const runtimes = normalizedRuntimes(input.runtimes, input.tmuxPane)
@@ -828,7 +843,8 @@ class Registry {
     }
 
     const agentId = input.agentId || randomUUID()
-    let evicted: string | null = null
+    let evicted: { agentId: string; sessionId: string } | null = null
+
     for (const runtime of runtimes) {
       const otherId = this.runtimeIndex.get(terminalRouteKey(runtime))
       const other = otherId ? this.agents.get(otherId) : undefined
@@ -840,7 +856,12 @@ class Registry {
       other.active = other.runtimes.length > 0
       if (other.runtimes.length) this.index(other)
       else this.terminalAvailableAgents.delete(other.agentId)
-      evicted ??= other.sessionId || other.agentId
+      // Only when it has nothing left. An agent that still owns another pane is
+      // alive and simply narrower; it must not be announced as deleted.
+      if (!other.runtimes.length) {
+        evicted ??= { agentId: other.agentId, sessionId: other.sessionId }
+      }
+
     }
     const now = Date.now()
     const entry: RegisteredSession = {
@@ -885,7 +906,25 @@ class Registry {
    * showing two tiles. Returns { entry, isNew, evicted } — isNew=false on a re-register (so callers
    * can skip re-announcing), evicted = the sessionId displaced from this pane (caller removes it).
    */
-  register(input: RegisterInput): { entry: RegisteredSession; isNew: boolean; evicted: string | null; rebound: string | null } | null {
+  register(input: RegisterInput): {
+    entry: RegisteredSession
+    isNew: boolean
+    evicted: string | null
+    rebound: string | null
+    /**
+     * An agent left with NOTHING by this bind, and therefore removed here.
+     *
+     * `claude --resume` in a second pane moves the engine session to the new
+     * agent. If the old one still has a live engine it is a real, separate
+     * agent and is left alone — it merely became unbound. But if its engine is
+     * already gone (the usual case: you quit it in order to resume it
+     * elsewhere) it now has no session AND no process, and the only thing it
+     * can still do is sit in the list as a second row for the same work that
+     * cannot be opened. The caller announces the removal.
+     */
+    orphaned: { agentId: string; sessionId: string } | null
+  } | null {
+
     if (this.writeBlocked) return null
     const transcriptPath = input.transcriptPath
     const sessionId =
@@ -925,11 +964,19 @@ class Registry {
     const evicted: string | null = rebound
     // The same engine session cannot belong to two agents — `claude --resume X` in a second pane. The
     // newest bind wins; the old process agent remains visible but becomes unbound.
+    let orphaned: { agentId: string; sessionId: string } | null = null
     const stolenFrom = this.bySession(sessionId)
     if (stolenFrom && stolenFrom.agentId !== agentId) {
       console.log(`[registry] session ${sessionId.slice(0, 8)} moved from agent ${stolenFrom.agentId.slice(0, 8)} to ${agentId.slice(0, 8)}`)
+      const wasDormant = !stolenFrom.active
       this.releaseBinding(stolenFrom)
+      if (wasDormant) {
+        orphaned = { agentId: stolenFrom.agentId, sessionId }
+        this.drop(stolenFrom)
+        this.terminalAvailableAgents.delete(stolenFrom.agentId)
+      }
     }
+
 
     // Command Code announces SessionStart BEFORE writing its transcript, and validTranscriptPath stats the
     // file — so a real path is rejected at that moment and only arrives with the first Stop hook, AFTER the
@@ -984,7 +1031,7 @@ class Registry {
     if (rebound) this.sessionIndex.delete(rebound)
     this.index(entry)
     this.save()
-    return { entry, isNew, evicted, rebound }
+    return { entry, isNew, evicted, rebound, orphaned }
   }
 
   remove(sessionId: string): boolean {

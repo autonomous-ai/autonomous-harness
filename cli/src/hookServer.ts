@@ -49,7 +49,18 @@ export interface PairOutcome {
 }
 
 export interface HookServerHandlers {
-  onRegistered: (entry: RegisteredSession, meta: { isNew: boolean; evicted: string | null; rebound: string | null; hookEvent?: string }) => void
+  onRegistered: (
+    entry: RegisteredSession,
+    meta: {
+      isNew: boolean
+      evicted: string | null
+      rebound: string | null
+      /** An agent this bind left with no session and no process — see registry.register. */
+      orphaned?: { agentId: string; sessionId: string } | null
+      hookEvent?: string
+    },
+  ) => void
+
   /** SessionEnd — a reconciliation hint only; it is never process-lifetime authority. */
   onSessionEnd: (sessionId: string, reason: string | undefined) => void
   /** Ensure a matching process-owned agent exists before a hook binds its mutable engine session. */
@@ -276,7 +287,7 @@ async function awaitTranscript(body: RegisterInput, handlers: HookServerHandlers
     if (!result) return
     console.log(`[hooks] ${sid(result.entry.sessionId)} ${body.hookEvent ?? 'session-start'} · engine=${result.entry.engine}`
       + ` · isNew=${result.isNew} · after waiting ${((i + 1) * TRANSCRIPT_WAIT_MS) / 1000}s for its transcript`)
-    handlers.onRegistered(result.entry, { isNew: result.isNew, evicted: result.evicted, rebound: result.rebound, hookEvent: body.hookEvent })
+    handlers.onRegistered(result.entry, { isNew: result.isNew, evicted: result.evicted, rebound: result.rebound, orphaned: result.orphaned, hookEvent: body.hookEvent })
     return
   }
   console.warn(`[hooks] ${sid(body.sessionId ?? '?')} announced a transcript that never appeared: ${body.transcriptPath}`)
@@ -304,7 +315,7 @@ async function awaitHermesKind(body: RegisterInput, handlers: HookServerHandlers
   const result = registry.register(body)
   if (!result) return
   console.log(`[hooks] ${sid(result.entry.sessionId)} ${body.hookEvent ?? 'session-start'} · engine=hermes · isNew=${result.isNew} · after a source check`)
-  handlers.onRegistered(result.entry, { isNew: result.isNew, evicted: result.evicted, rebound: result.rebound, hookEvent: body.hookEvent })
+  handlers.onRegistered(result.entry, { isNew: result.isNew, evicted: result.evicted, rebound: result.rebound, orphaned: result.orphaned, hookEvent: body.hookEvent })
 }
 
 export function startHookServer(
@@ -424,7 +435,7 @@ export function startHookServer(
           return
         }
         console.log(`[hooks] ${sid(result.entry.sessionId)} ${body.hookEvent ?? 'session-start'} · engine=${result.entry.engine} · isNew=${result.isNew}`)
-        handlers.onRegistered(result.entry, { isNew: result.isNew, evicted: result.evicted, rebound: result.rebound, hookEvent: body.hookEvent })
+        handlers.onRegistered(result.entry, { isNew: result.isNew, evicted: result.evicted, rebound: result.rebound, orphaned: result.orphaned, hookEvent: body.hookEvent })
         json(200, { ok: true })
         return
       }

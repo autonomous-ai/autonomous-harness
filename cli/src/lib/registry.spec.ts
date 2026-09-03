@@ -33,7 +33,9 @@ function registerProcess(
       isNew: boolean
       evicted: string | null
       rebound: string | null
+      orphaned: { agentId: string; sessionId: string } | null
     } | null
+
   },
   input: RegisterInput,
 ) {
@@ -818,9 +820,103 @@ describe('agent identity: the process owns the agent, the session is bound to it
 
     expect(replacement?.entry.agentId).toBe('replacement-agent')
     expect(replacement?.entry.sessionId).toBe('')
-    expect(replacement?.evicted).toBe('s1')
+    // BOTH ids, because the caller has to finish a removal the registry only
+    // half did: the agent is already gone from here, so the agentId is the only
+    // thing clients can be told to drop, and the sessionId the only thing the
+    // daemon's own per-session state can be cleaned by.
+    expect(replacement?.evicted).toEqual({
+      agentId: 'bound-agent',
+      sessionId: 's1',
+    })
     expect(registry.resolve('s1')).toBeUndefined()
   })
+
+  it('removes an agent a resume left with no session and no process', async () => {
+    // `claude --resume` in a second pane after quitting the first: the session
+    // moves, and the agent it moved from has nothing left to be. Kept, it is a
+    // second row for the same work that can never be opened — which is exactly
+    // the "Terminal frozen" tile this removes.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'old-agent', engine: 'claude', tmuxPane: '%1', cwd: '/tmp/demo',
+      processIdentity: processIdentity(401),
+    })
+    registerProcess(registry, {
+      launcherId: 'old-agent', sessionId: 's-resume', transcriptPath: transcript('s-resume'),
+      tmuxPane: '%1', cwd: '/tmp/demo',
+    })
+    registry.setActive('old-agent', false) // its engine was quit before the resume
+
+    registry.openProcessAgent({
+      agentId: 'new-agent', engine: 'claude', tmuxPane: '%2', cwd: '/tmp/demo',
+      processIdentity: processIdentity(402),
+    })
+    const bound = registerProcess(registry, {
+      launcherId: 'new-agent', sessionId: 's-resume', transcriptPath: transcript('s-resume'),
+      tmuxPane: '%2', cwd: '/tmp/demo',
+    })
+
+    expect(bound?.orphaned).toEqual({ agentId: 'old-agent', sessionId: 's-resume' })
+    expect(registry.byAgent('old-agent')).toBeUndefined()
+    expect(registry.byAgent('new-agent')?.sessionId).toBe('s-resume')
+  })
+
+  it('leaves a still-running agent alone when its session is resumed elsewhere', async () => {
+    // Its engine is alive, so it is a real second agent that merely became
+    // unbound. Removing it would take a working tile off the screen.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'live-agent', engine: 'claude', tmuxPane: '%1', cwd: '/tmp/demo',
+      processIdentity: processIdentity(501),
+    })
+    registerProcess(registry, {
+      launcherId: 'live-agent', sessionId: 's-live', transcriptPath: transcript('s-live'),
+      tmuxPane: '%1', cwd: '/tmp/demo',
+    })
+
+    registry.openProcessAgent({
+      agentId: 'other-agent', engine: 'claude', tmuxPane: '%2', cwd: '/tmp/demo',
+      processIdentity: processIdentity(502),
+    })
+    const bound = registerProcess(registry, {
+      launcherId: 'other-agent', sessionId: 's-live', transcriptPath: transcript('s-live'),
+      tmuxPane: '%2', cwd: '/tmp/demo',
+    })
+
+    expect(bound?.orphaned).toBeNull()
+    expect(registry.byAgent('live-agent')).toBeDefined()
+    expect(registry.byAgent('live-agent')?.sessionId).toBe('')
+  })
+
+  it('reports no eviction when the displaced agent still owns another pane', async () => {
+
+    // It lost a terminal, not its life. Announcing it as deleted would take a
+    // working tile off every client.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openProcessAgent({
+      agentId: 'two-panes',
+      engine: 'claude',
+      runtimes: [
+        { backend: 'tmux', paneId: '%1' },
+        { backend: 'tmux', paneId: '%2' },
+      ],
+
+      cwd: '/tmp/demo',
+      processIdentity: processIdentity(301),
+    })
+
+    const replacement = registry.openProcessAgent({
+      agentId: 'takes-pane-1', engine: 'codex', tmuxPane: '%1', cwd: '/tmp/demo',
+      processIdentity: processIdentity(302),
+    })
+
+    expect(replacement?.evicted).toBeNull()
+    expect(registry.byAgent('two-panes')?.runtimes).toHaveLength(1)
+  })
+
 
   it('re-observing the same runtime keeps the session it had already bound', async () => {
     const { registry } = await loadRegistryModule()

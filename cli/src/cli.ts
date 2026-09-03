@@ -1764,12 +1764,23 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
   /** Release a mutable session binding, or remove the process-owned agent everywhere. */
-  const forgetSession = (id: string, opts: { force?: boolean; keepAgent?: boolean } = {}): void => {
+  const forgetSession = (
+    id: string,
+    opts: { force?: boolean; keepAgent?: boolean; agentId?: string } = {},
+  ): void => {
     const doomed = registry.resolve(id)
     const sessionId = doomed?.sessionId || id
+    // Clients key on the AGENT id. Normally it is read off the entry, but an
+    // agent already removed from the registry cannot be looked up — and
+    // announcing its sessionId instead is silently useless: the app takes
+    // payload.agentId verbatim, matches nothing, and leaves the dead row on
+    // screen. Callers who know the id pass it.
+    const announceId = doomed?.agentId ?? opts.agentId ?? sessionId
+
     console.log(opts.keepAgent
-      ? `[agent] ${sid(doomed?.agentId ?? sessionId)} released session ${sid(sessionId)}`
-      : `[agent] ${sid(doomed?.agentId ?? sessionId)} forgotten`)
+      ? `[agent] ${sid(announceId)} released session ${sid(sessionId)}`
+      : `[agent] ${sid(announceId)} forgotten`)
+
     if (opts.keepAgent) registry.unbindSession(sessionId)
     else if (doomed) registry.removeAgent(doomed.agentId)
     else registry.remove(sessionId)
@@ -1809,16 +1820,19 @@ async function runForeground(session: AuthSession): Promise<void> {
     input.forget(doomed?.agentId ?? sessionId)
     mirror.forget(sessionId) // aborts any in-flight recap + clears busy; KEEPS the persisted summary
     if (opts.keepAgent) return
-    backend.send({ type: 'agent_deleted', payload: { agentId: doomed?.agentId ?? sessionId } }) // web tab
-    backend.sendCommander({ type: 'agent_deleted', payload: { agentId: doomed?.agentId ?? sessionId } })
+    backend.send({ type: 'agent_deleted', payload: { agentId: announceId } }) // web tab
+    backend.sendCommander({ type: 'agent_deleted', payload: { agentId: announceId } })
+
   }
 
   type RegisteredMeta = {
     isNew: boolean
     evicted: string | null
     rebound: string | null
+    orphaned?: { agentId: string; sessionId: string } | null
     hookEvent?: string
   }
+
 
   const handleRegistered = async (entry: RegisteredSession, meta: RegisteredMeta): Promise<void> => {
     if (meta.rebound) {
@@ -1828,8 +1842,23 @@ async function runForeground(session: AuthSession): Promise<void> {
       backend.send({ type: 'session_reset', payload: { staleSessionId: meta.rebound } })
       console.log(`[agent] ${sid(entry.agentId)} rebound ${sid(meta.rebound)} → ${sid(entry.sessionId)}`)
     } else if (meta.evicted) {
+
       forgetSession(meta.evicted, { force: true })
     }
+    // The agent this bind emptied out — `claude --resume` in a second pane, with
+    // the first one's engine already gone. The registry dropped it; without this
+    // the app kept showing it until someone hit Reload machines by hand, and
+    // opening it landed on TERMINAL FROZEN because it has nothing left to open.
+    //
+    // Not part of the chain above: a rebound bind can orphan an agent too, so
+    // this has to be asked independently of which branch ran.
+    if (meta.orphaned) {
+      forgetSession(meta.orphaned.agentId, {
+        force: true,
+        agentId: meta.orphaned.agentId,
+      })
+    }
+
     // agy is excluded for the same reason as cursor, arriving by a different road: it has no
     // session-start event at all. The closest thing is `PreInvocation`, which fires before EVERY model
     // round-trip — four to seven times in one measured turn — and each one re-folded the transcript and
@@ -1998,7 +2027,21 @@ async function runForeground(session: AuthSession): Promise<void> {
         gateway: observed.gateway,
       })
       if (!opened) return
-      if (opened.evicted) console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted)}`)
+      if (opened.evicted) {
+        console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted.agentId)}`)
+        // ⚠️ THE REGISTRY ALREADY DROPPED IT; NOBODY HAD TOLD THE CLIENTS. That
+        // is the whole bug behind "two sessions, one of them frozen": resuming
+        // an engine in a pane another agent owned takes the pane away, and an
+        // agent with no pane can never be opened again — but the app kept the
+        // row until someone hit Reload machines by hand, and opening it landed
+        // on TERMINAL FROZEN. This is the same call the hook path already makes
+        // for the same situation (see onRegistered below).
+        forgetSession(opened.evicted.sessionId || opened.evicted.agentId, {
+          force: true,
+          agentId: opened.evicted.agentId,
+        })
+      }
+
       if (opened.isNew) {
         console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · terminal=${observed.primaryRuntimeKey}`)
         announceSession(opened.entry)
