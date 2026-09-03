@@ -43,7 +43,7 @@ import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
-import { buildGridEngineEnv, describeGridLaunch } from './lib/gridLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch } from './lib/gridLaunch.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
@@ -2709,9 +2709,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // A grid is the user's answer to "where should this run", so every way of not honouring it is a
     // refusal rather than a fallback — an agent silently started on the engine's own login spends the
     // wrong account and looks identical to one that worked.
-    let gridEnv: Record<string, string> | undefined
+    let gridLaunch: { env: Record<string, string>; args: string[] } | undefined
     if (grid) {
-      const built = buildGridEngineEnv(engine, grid)
+      const built = buildGridEngineLaunch(engine, grid)
       if (!built.ok) {
         console.warn(`[agent] create ${engine} refused · ${built.detail}`)
         return { ok: false, error: built.error, detail: built.detail }
@@ -2724,7 +2724,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         console.warn(`[agent] create ${engine} refused · ${detail}`)
         return { ok: false, error: 'TMUX_TOO_OLD_FOR_GRID', detail }
       }
-      gridEnv = built.env
+      gridLaunch = built.launch
       // Named in the log because the pane itself gives nothing away: the engine looks exactly like a
       // normally launched one. The key is never printed.
       console.log(describeGridLaunch(engine, grid))
@@ -2732,10 +2732,15 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
     // retaining the engine and a collision-resistant creation suffix for diagnostics.
     const label = `harness-${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
-    const launchOptions = { bypassPermission }
+    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
-    const spawned = await tmuxBackend.create({ cwd, label, command: argv, ...(gridEnv ? { env: gridEnv } : {}) })
+    const spawned = await tmuxBackend.create({
+      cwd,
+      label,
+      command: argv,
+      ...(gridLaunch ? { env: gridLaunch.env } : {}),
+    })
     if (spawned.state !== 'succeeded') {
       console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
       // `tmuxBackend` exists whenever the CONFIG lists tmux — it is never a probe of the binary. So a
@@ -2877,7 +2882,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Only tmux panes can be respawned. A Herdr-hosted agent has no equivalent, and saying so is better
     // than a generic failure the user cannot act on.
     if (!pane) return { ok: false, error: 'RETARGET_UNSUPPORTED_BACKEND', detail: `${session.engine} is not running in a tmux pane` }
-    const built = buildGridEngineEnv(session.engine, grid)
+    const built = buildGridEngineLaunch(session.engine, grid)
     if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
     if (!(await tmuxSupportsSessionEnv())) {
       return {
@@ -2898,11 +2903,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     const release = acquireTerminalControl(session.agentId)
     if (!release) return { ok: false, error: 'AGENT_BUSY' }
     try {
-      const launchOptions = { resumeSessionId: session.sessionId || null }
+      const launchOptions = { resumeSessionId: session.sessionId || null, extraArgs: built.launch.args }
       const respawned = await tmuxBackend.respawn(pane, {
         ...(session.cwd ? { cwd: session.cwd } : {}),
         command: buildEngineLaunchArgv(session.engine, launchOptions),
-        env: built.env,
+        env: built.launch.env,
       })
       if (respawned.state !== 'succeeded') {
         console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${respawned.reason}`)
@@ -2935,7 +2940,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         // Both are read from the one cached environment of the new pid, so this costs no extra `ps`.
         const [gateway, assignment] = await Promise.all([
           probeGatewayRuntime(identity),
-          probeGridAssignment(identity),
+          probeGridAssignment(identity, session.engine, identity.executable),
         ])
         registry.updateProcessIdentity(session.agentId, identity, gateway.kind, assignment)
         adopted = true

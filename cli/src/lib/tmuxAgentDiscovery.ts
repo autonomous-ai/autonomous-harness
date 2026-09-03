@@ -238,7 +238,7 @@ export async function probeTmuxAgents(
   await Promise.all(probe.agents.map(async (agent) => {
     const runtime = await probeGatewayRuntime(agent.processIdentity, agent.args)
     agent.gateway = runtime.kind
-    agent.grid = await probeGridAssignment(agent.processIdentity)
+    agent.grid = await probeGridAssignment(agent.processIdentity, agent.engine, agent.args)
   }))
   return probe
 }

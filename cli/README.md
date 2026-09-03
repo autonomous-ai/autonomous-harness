@@ -128,11 +128,18 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
   `payload.grid` (relay base URL, a key minted for that launch, and optionally a model) on
   `agent_create`; the daemon turns it into the engine's own environment and gives the new tmux
   session that environment with `new-session -e`, so the credential never appears in the engine's
-  argv. Only Claude Code is supported today (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` /
-  `ANTHROPIC_MODEL`) — every other engine is **refused** with `GRID_ENGINE_UNSUPPORTED` rather than
-  quietly started on its own login, because the Codex CLI and friends are configured by a file
-  rather than the environment. Needs tmux ≥ 3.2; an older one is refused as `TMUX_TOO_OLD_FOR_GRID`.
-  See `src/lib/gridLaunch.ts`.
+  argv. Six engines have a documented way to be pointed somewhere else and are supported through it:
+  **claude** (`ANTHROPIC_BASE_URL`), **codex** (`-c model_providers.grid.*`, key via `env_key`),
+  **opencode** and **hermes** (`OPENAI_BASE_URL`), **grok** (`GROK_MODELS_BASE_URL`) and **copilot**
+  (`COPILOT_PROVIDER_BASE_URL`). Every other engine is **refused** with `GRID_ENGINE_UNSUPPORTED`
+  and a reason specific to it — some talk only to their own service, some need a provider block
+  written into a dotfile this daemon will not edit — rather than quietly started on its own login.
+  Needs tmux ≥ 3.2; an older one is refused as `TMUX_TOO_OLD_FOR_GRID`. See `src/lib/gridLaunch.ts`.
+- **A running agent can be moved to a grid** (`agent_retarget`): `respawn-pane -k -e` re-execs the
+  pane's engine with the new launch and `--resume`, keeping the pane, its id and its scrollback, and
+  the new process is adopted onto the same agent record. A pane mid-turn is refused (`AGENT_BUSY`)
+  rather than interrupted. Which grid an agent is on is read off its live process
+  (`src/lib/gridAssignment.ts`), never bookkept.
 - **Mirror-all**: every JSONL line streams up — prompts typed directly in the terminal render in
   the web identically to web-sent ones (`turn_started`/`turn_ended` are derived from the file).
 - **Compaction (`/compact` or auto-compact):** claude does an **in-file** compact — the JSONL keeps

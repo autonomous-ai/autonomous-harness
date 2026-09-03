@@ -1,21 +1,28 @@
 /**
- * Pointing a newly created agent at an Autonomous Grid instead of the engine's own login.
+ * Pointing an agent at an Autonomous Grid instead of the engine's own login.
  *
  * The desktop app lets a user pick a grid (and optionally a model), mints a short-lived relay key for
- * it, and sends the result as `payload.grid` on `agent_create`. Nothing about that reaches an engine
- * by itself: this CLI is what spawns the engine, so this module turns that payload into the
- * environment the engine is launched with.
+ * it, and sends the result as `payload.grid` on `agent_create` / `agent_retarget`. Nothing about that
+ * reaches an engine by itself: this CLI is what spawns the engine, so this module turns that payload
+ * into the launch — environment, and where the vendor demands it, argv.
  *
- * ## The relay is OpenAI-compatible, and that is not enough
+ * ## Every entry here is the vendor's own documented contract
  *
- * Every engine here can in principle be pointed somewhere else, but only through the mechanism its
- * own vendor supports, and those genuinely differ — Claude Code reads environment variables, while
- * the Codex CLI needs a `[model_providers.*]` block in `~/.codex/config.toml` (verified in the grid
- * repo's `docs/codex-quickstart.md`; `wire_api = "responses"` is mandatory there and has no
- * environment-only spelling). Writing another tool's config file on a user's behalf is a side effect
- * that outlives the agent, so this module does not do it, and an engine whose contract we have not
- * verified is refused rather than guessed at — the same rule `BYPASS_PERMISSION_FLAGS` already
- * follows in `engineLaunch.ts`.
+ * The relay speaks two dialects — Anthropic Messages at `<grid>/relay`, and OpenAI
+ * chat/completions + responses at `<grid>/relay/v1` — so an engine can be pointed at it only if the
+ * engine itself offers a way to change its endpoint. Those ways differ, and none of them is
+ * guessable: `ANTHROPIC_BASE_URL` for Claude Code, `-c model_providers.*` argv for Codex,
+ * `GROK_MODELS_BASE_URL` for Grok, `COPILOT_PROVIDER_BASE_URL` for Copilot. Each entry below cites
+ * where it was read from.
+ *
+ * An engine with no entry is REFUSED, and the refusal names why for that engine specifically. Two
+ * shapes of "no" appear repeatedly and are worth telling apart:
+ *
+ *   * **Config-file only** (pi, kilo, agy's non-Gemini path): the provider block has to be written
+ *     into the user's own dotfile. Editing another tool's configuration on someone's behalf is a
+ *     side effect that outlives the agent, so this module does not do it.
+ *   * **Vendor-bound** (cursor, amp, devin): the app talks to its own service and has no notion of
+ *     an endpoint. There is nothing to set.
  *
  * Refusing is the point. Silently launching against the engine's own login would put the agent
  * somewhere other than where the user said, spend the wrong account, and look like it worked.
@@ -30,10 +37,10 @@ export interface GridLaunchOverride {
   networkName: string
   /**
    * The grid's OpenAI-compatible relay root, as the control plane reports it: `<grid>/relay/v1`.
-   * Per-engine forms are derived from this; see `anthropicBaseUrl`.
+   * Per-engine forms are derived from this; see [relayBaseUrl] and [anthropicBaseUrl].
    */
   baseUrl: string
-  /** Short-lived, minted per launch. Never logged. */
+  /** Short-lived, minted per launch. Never logged, and never placed in argv. */
   apiKey: string
   /** Absent means "whatever the engine asks for" — the relay's own default. */
   model?: string
@@ -46,8 +53,8 @@ export type GridOverrideParse =
 
 /**
  * Control characters have no place in a URL, a token or a model id, and every one of these values
- * ends up in a process environment. Rejecting them keeps a malformed frame from producing an engine
- * whose environment is subtly not what either side thinks it is.
+ * ends up in a process environment or an argv. Rejecting them keeps a malformed frame from producing
+ * an engine whose launch is subtly not what either side thinks it is.
  */
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/
 
@@ -107,8 +114,14 @@ export function parseGridLaunchOverride(raw: unknown): GridOverrideParse {
   }
 }
 
+/** The OpenAI-compatible relay root — what every engine here wants except Claude Code. */
+export function relayBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '')
+  return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+}
+
 /**
- * The relay root Claude Code wants, from the OpenAI-compatible one the control plane hands out.
+ * The relay root Claude Code wants.
  *
  * The app appends `/v1/messages` itself, so the `/v1` an OpenAI SDK needs would 404 every request
  * here — the same one-character difference that makes `grid launch claude --print-env` a separate
@@ -120,70 +133,177 @@ export function anthropicBaseUrl(baseUrl: string): string {
   return trimmed.endsWith('/v1') ? trimmed.slice(0, -'/v1'.length) : trimmed
 }
 
+/** How one engine is launched against a grid. */
+export interface GridEngineLaunch {
+  /** Layered over the engine's inherited environment. This is where the key goes, always. */
+  env: Record<string, string>
+  /** Appended to the engine's argv. Never carries the key — `ps` is world-readable. */
+  args: string[]
+}
+
+interface GridEngineContract {
+  build: (override: GridLaunchOverride) => GridEngineLaunch
+  /** The engine cannot start against a grid without being told which model to ask for. */
+  requiresModel?: boolean
+}
+
+/** The variable Codex is told to read the key from — its own `env_key` indirection. */
+const CODEX_KEY_VAR = 'GRID_API_KEY'
+
 /**
- * How each engine is pointed at a grid through its environment alone — `null` where no such
- * mechanism is confirmed to exist.
+ * Every engine that can be pointed at a grid, and how.
  *
- * `null` is a refusal, not a gap to be filled in later with a plausible guess; see the module
- * comment. The one entry here is the one the grid CLI itself ships as a launch target
- * (`autonomous-grid/shared/launch/claude.py`), so these variable names are the vendor's own contract
- * rather than this repo's reading of it.
+ * `undefined` is a refusal with a reason attached in [GRID_ENGINE_REFUSALS]; see the module comment
+ * for why a missing entry is never filled in with a plausible-looking guess.
  */
-export const GRID_ENGINE_ENV: Readonly<
-  Record<AgentEngine, ((override: GridLaunchOverride) => Record<string, string>) | null>
-> = {
-  claude: (override) => ({
-    ANTHROPIC_BASE_URL: anthropicBaseUrl(override.baseUrl),
-    // The bearer variable, and ONLY it. Claude Code warns when ANTHROPIC_AUTH_TOKEN and
-    // ANTHROPIC_API_KEY are both set, and the relay prefers the Bearer header anyway — so
-    // ANTHROPIC_API_KEY would decide nothing, while colliding with the variable a user's own
-    // Anthropic key lives in.
-    ANTHROPIC_AUTH_TOKEN: override.apiKey,
-    // `grid launch claude` deliberately sets no model variable, on the grounds that a launcher has no
-    // standing to choose a user's model. That reasoning does not carry here: the desktop app ASKED,
-    // and this is the answer. Left unset when the user picked no model, which leaves the app's own
-    // defaults, `settings.json` and `/model` in charge exactly as before.
-    ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
-  }),
-  // Config-file only: `[model_providers.grid]` with `wire_api = "responses"` in ~/.codex/config.toml.
-  codex: null,
-  // Unverified — do not guess an environment contract for a CLI we have not checked.
-  cursor: null,
-  opencode: null,
-  pi: null,
-  hermes: null,
-  commandcode: null,
-  devin: null,
-  muse: null,
-  amp: null,
-  kilo: null,
-  grok: null,
-  agy: null,
-  copilot: null,
+const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = {
+  // The grid CLI's own launch target (`autonomous-grid/shared/launch/claude.py`), so these are the
+  // vendor's names as that team verified them rather than this repo's reading of them.
+  claude: {
+    build: (override) => ({
+      env: {
+        ANTHROPIC_BASE_URL: anthropicBaseUrl(override.baseUrl),
+        // The bearer variable, and ONLY it. Claude Code warns when ANTHROPIC_AUTH_TOKEN and
+        // ANTHROPIC_API_KEY are both set, and the relay prefers the Bearer header anyway — so
+        // ANTHROPIC_API_KEY would decide nothing, while colliding with the variable a user's own
+        // Anthropic key lives in.
+        ANTHROPIC_AUTH_TOKEN: override.apiKey,
+        // `grid launch claude` deliberately sets no model variable, on the grounds that a launcher
+        // has no standing to choose a user's model. That reasoning does not carry here: the desktop
+        // app ASKED, and this is the answer. Left unset when the user picked no model.
+        ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
+      },
+      args: [],
+    }),
+  },
+
+  // Codex configures its provider entirely on the command line — `-c key=value` overrides anything
+  // `~/.codex/config.toml` would have said, which is how `ori codex` points it at OpenRouter without
+  // touching a dotfile (see `gatewayRuntime.ts`). Key names verified against the grid repo's
+  // `docs/codex-quickstart.md` and `-c` against codex-cli 0.144.6 on this machine.
+  //
+  // The key travels in the environment under `env_key`, never in argv.
+  codex: {
+    build: (override) => ({
+      env: { [CODEX_KEY_VAR]: override.apiKey },
+      args: [
+        '-c', 'model_provider="grid"',
+        '-c', 'model_providers.grid.name="Autonomous Grid"',
+        '-c', `model_providers.grid.base_url="${relayBaseUrl(override.baseUrl)}"`,
+        '-c', `model_providers.grid.env_key="${CODEX_KEY_VAR}"`,
+        // Mandatory: Codex speaks the Responses dialect and rejects `wire_api = "chat"`.
+        '-c', 'model_providers.grid.wire_api="responses"',
+        // The relay streams HTTP SSE, not WebSocket.
+        '-c', 'model_providers.grid.supports_websockets=false',
+        ...(override.model ? ['-m', override.model] : []),
+      ],
+    }),
+  },
+
+  // opencode's simplest documented custom provider: the OpenAI-compatible pair
+  // (https://opencode.ai/docs/providers). The model is left to the app — its `--model` wants a
+  // `provider/model` pair whose provider id is not documented for the env-var route, and inventing
+  // one would send it looking for a model that does not exist.
+  opencode: {
+    build: (override) => ({
+      env: {
+        OPENAI_BASE_URL: relayBaseUrl(override.baseUrl),
+        OPENAI_API_KEY: override.apiKey,
+      },
+      args: [],
+    }),
+  },
+
+  // Nous Research's documented trio for a custom OpenAI-compatible endpoint
+  // (hermes-agent/website/docs/reference/environment-variables.md).
+  hermes: {
+    build: (override) => ({
+      env: {
+        OPENAI_BASE_URL: relayBaseUrl(override.baseUrl),
+        OPENAI_API_KEY: override.apiKey,
+        ...(override.model ? { HERMES_INFERENCE_MODEL: override.model } : {}),
+      },
+      args: [],
+    }),
+  },
+
+  // xAI's own Grok CLI (the one this repo discovers under `~/.grok`, whose transcripts carry the
+  // `_x.ai/session/update` method). Its docs: "Grok fetches the model list from {base_url}/models",
+  // and "when you set models_base_url, Grok uses API key auth instead of session auth" — which is
+  // exactly the swap being asked for here. The model has no documented variable, so it goes in argv.
+  grok: {
+    build: (override) => ({
+      env: {
+        GROK_MODELS_BASE_URL: relayBaseUrl(override.baseUrl),
+        XAI_API_KEY: override.apiKey,
+      },
+      args: override.model ? ['-m', override.model] : [],
+    }),
+  },
+
+  // GitHub's documented BYOK path for Copilot CLI (docs.github.com … /use-byok-models). Copilot
+  // will not start against a custom provider without being told the model, so that is enforced
+  // here rather than left to fail inside the app.
+  copilot: {
+    requiresModel: true,
+    build: (override) => ({
+      env: {
+        COPILOT_PROVIDER_BASE_URL: relayBaseUrl(override.baseUrl),
+        COPILOT_PROVIDER_API_KEY: override.apiKey,
+        ...(override.model ? { COPILOT_MODEL: override.model } : {}),
+      },
+      args: [],
+    }),
+  },
 }
 
-/** Engines that can be pointed at a grid today, so error text can name what to pick instead. */
+/**
+ * Why an engine cannot be pointed at a grid, in words the person who picked it can act on.
+ *
+ * Every engine without a contract has an entry: "unsupported" on its own tells a user nothing about
+ * whether to wait for a release, change a setting, or pick another engine.
+ */
+const GRID_ENGINE_REFUSALS: Partial<Record<AgentEngine, string>> = {
+  cursor: 'Cursor Agent talks only to Cursor\'s own service — it has no endpoint setting',
+  amp: 'Amp talks only to its own service — it has no endpoint setting',
+  devin: 'Devin runs on its own hosted service — it has no endpoint setting',
+  pi: 'Pi needs a provider block written into ~/.pi/agent/models.json, which this will not edit for you',
+  kilo: 'the Kilo CLI has no OpenAI-compatible provider option yet (its own issues #5840, #6315)',
+  agy: 'Antigravity speaks the Gemini API, which this grid\'s relay does not serve',
+  muse: 'Muse Code documents no way to change its endpoint',
+  commandcode: 'Command Code documents no way to change its endpoint',
+}
+
+/** Engines that can be pointed at a grid today, for error text that names what to pick instead. */
 export function gridCapableEngines(): AgentEngine[] {
-  return (Object.keys(GRID_ENGINE_ENV) as AgentEngine[]).filter((engine) => GRID_ENGINE_ENV[engine] !== null)
+  return Object.keys(GRID_ENGINE_CONTRACTS) as AgentEngine[]
 }
 
-export type GridEnvResult =
-  | { ok: true; env: Record<string, string> }
+export type GridLaunchResult =
+  | { ok: true; launch: GridEngineLaunch }
   | { ok: false; error: string; detail: string }
 
-/** The environment `engine` must be launched with to reach `override`, or why it cannot be. */
-export function buildGridEngineEnv(engine: AgentEngine, override: GridLaunchOverride): GridEnvResult {
-  const build = GRID_ENGINE_ENV[engine]
-  if (!build) {
+/** How `engine` must be launched to reach `override`, or why it cannot be. */
+export function buildGridEngineLaunch(engine: AgentEngine, override: GridLaunchOverride): GridLaunchResult {
+  const contract = GRID_ENGINE_CONTRACTS[engine]
+  if (!contract) {
+    const reason = GRID_ENGINE_REFUSALS[engine] ?? 'it has no known way to change its endpoint'
     return {
       ok: false,
       error: 'GRID_ENGINE_UNSUPPORTED',
-      detail: `${engine} cannot be pointed at a grid through its environment, so it would have run on `
-        + `its own login instead of grid ${override.networkName}. `
-        + `Engines that can: ${gridCapableEngines().join(', ')}.`,
+      detail: `${engine} cannot run on grid ${override.networkName}: ${reason}. `
+        + `It would have run on its own login instead. Engines that can: ${gridCapableEngines().join(', ')}.`,
     }
   }
-  return { ok: true, env: build(override) }
+  if (contract.requiresModel && !override.model) {
+    return {
+      ok: false,
+      error: 'GRID_MODEL_REQUIRED',
+      detail: `${engine} will not start against a grid without a model. `
+        + `Pick one for ${override.networkName} and try again.`,
+    }
+  }
+  return { ok: true, launch: contract.build(override) }
 }
 
 /** One log line naming where an agent was sent — grid, model, engine. Never the key. */

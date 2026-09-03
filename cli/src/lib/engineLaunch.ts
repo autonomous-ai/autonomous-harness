@@ -51,6 +51,14 @@ export interface LaunchCommandOptions {
    * flag could attach a DIFFERENT agent's conversation from the same folder.
    */
   resumeSessionId?: string | null
+  /**
+   * Extra argv the caller has already composed, appended last.
+   *
+   * Exists for engines whose endpoint is configured on the command line rather than through the
+   * environment — Codex's `-c model_providers.*`, Grok's `-m`. See `gridLaunch.ts`; a credential
+   * never travels this way.
+   */
+  extraArgs?: readonly string[]
 }
 
 /** The executable argv, before the interactive-shell wrapper is applied. */
@@ -62,6 +70,7 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
   }
   const resumeFlag = opts.resumeSessionId ? RESUME_FLAGS[engine] : undefined
   if (resumeFlag) argv.push(resumeFlag, opts.resumeSessionId as string)
+  if (opts.extraArgs?.length) argv.push(...opts.extraArgs)
   return argv
 }
 
