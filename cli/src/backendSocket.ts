@@ -385,7 +385,12 @@ export class BackendSocket {
     // `?v=<VERSION>` is our own version, which the backend stores on the machine at every connect (the
     // analytics report also carries it, but that path is opt-in, so this is the reliable one).
     const base = `${env.BACKEND_WS_URL.replace(/\/$/, '')}/api/adapter-ws?label=${encodeURIComponent(hostname())}&v=${encodeURIComponent(VERSION)}&autonomousEnv=${encodeURIComponent(autonomousEnv)}`
-    this.url = computerId ? `${base}&computer=${encodeURIComponent(computerId)}` : base
+    // `?machine=<id>` is the machine this daemon still believes it is. The backend uses it to tell a
+    // REVOKED daemon — one whose machine was deleted while it was offline — apart from a first-time
+    // pairing, and answers 403 instead of quietly minting a replacement machine. Guarded on shape
+    // because in test mode the first constructor argument carries a token, not a machine id.
+    const claim = /^[a-f0-9]{32}$/.test(machineId) ? `&machine=${encodeURIComponent(machineId)}` : ''
+    this.url = (computerId ? `${base}&computer=${encodeURIComponent(computerId)}` : base) + claim
     this.onStatus = onStatus
     this.machineId = machineId
     this.e2ee = new E2eeManager({

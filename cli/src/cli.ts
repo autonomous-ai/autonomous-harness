@@ -228,6 +228,8 @@ Machine:
   harness stop                 stop the background adapter (keeps the SSO session)
   harness reset                stop the adapter and clear local CLI state
   harness status               show whether it's running (+ version)
+  harness machines             list the machines on this account (this computer's is marked)
+  harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
   harness version              print the installed version (v${VERSION})
   harness update               update to the latest build now (it also self-updates in the background)
   harness flash [flags]        re-flash a plugged-in circle device over USB. Flags go straight to the
@@ -299,18 +301,45 @@ function setupBrowserLink(machineId: string, token: string): string {
   return u.toString()
 }
 
-/** POST JSON to the backend and return its `data` envelope; throws on a non-2xx / bad body. */
-async function postJson<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
+/** One control-plane call, returning the backend's `data` envelope; throws on a non-2xx / bad body. */
+async function requestJson<T>(
+  method: 'GET' | 'POST' | 'DELETE',
+  path: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<T> {
+  // A GET/DELETE with no body must not carry a content-type — some proxies reject that pairing.
   const res = await fetch(`${backendHttpBase()}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
+    method,
+    headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   const json = (await res.json().catch(() => ({}))) as { success?: boolean; data?: T; error?: { message?: string } }
   if (!res.ok || json.success === false) {
     throw new Error(json.error?.message || `HTTP ${res.status}`)
   }
   return json.data as T
+}
+
+/** POST JSON to the backend and return its `data` envelope; throws on a non-2xx / bad body. */
+async function postJson<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
+  return requestJson<T>('POST', path, body, headers)
+}
+
+/**
+ * Bearer + environment headers for a control-plane call, refreshing a stale SSO token first.
+ *
+ * Returns the session too, because every caller also needs `machineId` to tell THIS computer's
+ * machine apart from the others in the answer.
+ */
+async function controlPlaneAuth(): Promise<{ session: AuthSession; headers: Record<string, string> }> {
+  const session = readAuthSession()
+  if (!session) throw new Error('Not signed in. Run `harness login`.')
+  const accessToken = await new AuthSessionManager(backendHttpBase()).accessToken()
+  return {
+    session,
+    headers: { authorization: `Bearer ${accessToken}`, 'x-autonomous-env': session.autonomousEnv },
+  }
 }
 
 /** Resolve the canonical machine for the durable computer id without ever using a machine API key. */
@@ -322,6 +351,9 @@ async function resolveComputerMachine(): Promise<AuthSession> {
   const result = await postJson<{ machine?: { machineId?: string } }>('/api/machines/resolve-computer', {
     computerId: current.computerId,
     label: hostname(),
+    // Same claim the adapter-ws dial carries: a machine deleted while this computer was offline must
+    // come back as 403, not as a quietly minted replacement.
+    ...(current.machineId ? { machineId: current.machineId } : {}),
   }, {
     authorization: `Bearer ${accessToken}`,
     'x-autonomous-env': current.autonomousEnv,
@@ -4055,6 +4087,130 @@ async function linkUnlinkCommand(machineId: string | undefined): Promise<void> {
   process.exit(0)
 }
 
+/** One row of `GET /api/machines`. Only the fields this CLI shows are declared. */
+interface OwnerMachineRow {
+  machineId: string
+  name: string | null
+  hostname: string | null
+  status: string
+  agentCount: number
+}
+
+/** The caller's machines, newest first. The backend already excludes deleted ones. */
+async function fetchMachines(headers: Record<string, string>): Promise<OwnerMachineRow[]> {
+  const data = await requestJson<{ machines?: OwnerMachineRow[] }>('GET', '/api/machines', undefined, headers)
+  return data.machines ?? []
+}
+
+/** A machine's own name, else the hostname of the computer that last connected it. */
+function machineLabel(machine: OwnerMachineRow): string {
+  return machine.name?.trim() || machine.hostname?.trim() || '(unnamed)'
+}
+
+/** True when `id` names this machine — accepts the short prefix the list prints, not just the full id. */
+function matchesMachineId(machineId: string, id: string): boolean {
+  return machineId === id || machineId.startsWith(id)
+}
+
+/** `harness machines` — every machine on this account, with this computer's own marked. */
+async function machinesListCommand(json: boolean): Promise<void> {
+  const { session, headers } = await controlPlaneAuth()
+  const machines = await fetchMachines(headers)
+  if (json) {
+    for (const machine of machines) {
+      console.log(JSON.stringify({ ...machine, current: machine.machineId === session.machineId }))
+    }
+    process.exit(0)
+  }
+  if (!machines.length) {
+    console.log('\n  No machines on this account yet.\n  Run `harness start` to connect this computer as one.\n')
+    process.exit(0)
+  }
+  const rows = machines.map((machine) => ({
+    id: machine.machineId.slice(0, 8),
+    name: machineLabel(machine),
+    status: machine.status || 'unknown',
+    agents: String(machine.agentCount ?? 0),
+    current: machine.machineId === session.machineId,
+  }))
+  const nameWidth = Math.max(4, ...rows.map((row) => row.name.length))
+  const statusWidth = Math.max(6, ...rows.map((row) => row.status.length))
+  console.log('')
+  console.log(`  ${'MACHINE'.padEnd(8)}  ${'NAME'.padEnd(nameWidth)}  ${'STATUS'.padEnd(statusWidth)}  AGENTS`)
+  for (const row of rows) {
+    const line = `  ${row.id.padEnd(8)}  ${row.name.padEnd(nameWidth)}  ${row.status.padEnd(statusWidth)}  ${row.agents.padStart(6)}`
+    console.log(row.current ? `${line}   ← this computer` : line)
+  }
+  console.log('\n  Delete one:  harness machines delete <machine>\n')
+  process.exit(0)
+}
+
+/**
+ * `harness machines delete <machine>` — remove ANOTHER of your machines from this account.
+ *
+ * Deleting the machine this CLI is running as is refused, and refused BEFORE any network call. That
+ * delete revokes the very credential the command is authenticating with: the daemon would be told to
+ * wipe its session and stop while the command that asked for it is still running, and the operation
+ * the user actually wants there has its own name — `harness logout` detaches this computer and stops
+ * the daemon cleanly. The web UI can still delete this machine; that path is the one the daemon's
+ * revoke handling exists for.
+ */
+async function machinesDeleteCommand(id: string | undefined, assumeYes: boolean): Promise<void> {
+  if (!id) {
+    console.error('Usage: harness machines delete <machine>   (see: harness machines)')
+    process.exit(1)
+    return
+  }
+  // Read the session straight off disk for this first check: refusing THIS machine must not depend on
+  // a token refresh, which is a network round trip that can fail or hang. The refusal is a local fact.
+  const local = readAuthSession()
+  const refuseSelf = (): never => {
+    console.error('\n  ✗ That is THIS computer\'s machine — refusing to delete it from here.')
+    console.error('  ▸ To sign this computer out:      harness logout')
+    console.error('  ▸ To also clear its local state:  harness reset\n')
+    process.exit(1)
+  }
+  if (local?.machineId && matchesMachineId(local.machineId, id)) refuseSelf()
+
+  const { session, headers } = await controlPlaneAuth()
+  const machines = await fetchMachines(headers)
+  const matches = machines.filter((machine) => matchesMachineId(machine.machineId, id))
+  if (!matches.length) {
+    console.error(`\n  ✗ No machine matches "${id}".`)
+    console.error('  ▸ Run `harness machines` to see them.\n')
+    process.exit(1)
+    return
+  }
+  if (matches.length > 1) {
+    console.error(`\n  ✗ "${id}" matches ${matches.length} machines:\n`)
+    for (const machine of matches) console.error(`     ${machine.machineId.slice(0, 8)}  ${machineLabel(machine)}`)
+    console.error('\n  ▸ Use more characters of the id.\n')
+    process.exit(1)
+    return
+  }
+  const target = matches[0]
+  // Re-checked against the RESOLVED id: a short prefix that missed the session's machineId above can
+  // still resolve to this computer's machine here.
+  if (session.machineId === target.machineId) refuseSelf()
+
+  if (!assumeYes) {
+    process.stdout.write(
+      `\n  Delete machine ${target.machineId.slice(0, 8)} (${machineLabel(target)})?`
+      + ' Its agents stop being reachable and the computer running it signs out.'
+      + '\n  Type the short id to confirm: ',
+    )
+    const answer = (await readStdinLine()).trim()
+    if (answer !== target.machineId.slice(0, 8)) {
+      console.log('\n  Cancelled — nothing was deleted.\n')
+      process.exit(1)
+    }
+  }
+  await requestJson('DELETE', `/api/machines/${target.machineId}`, undefined, headers)
+  console.log(`\n  ✓ Deleted ${target.machineId.slice(0, 8)} (${machineLabel(target)}).`)
+  console.log('    If that computer is running the daemon it signs out and stops on its own.\n')
+  process.exit(0)
+}
+
 /** `harness status` — print the info block with the current running state. */
 async function status(): Promise<void> {
   const pid = readPid()
@@ -4123,6 +4279,13 @@ switch (cmd) {
     break
   case 'pairings':
     pairingsCommand().catch(onError)
+    break
+  case 'machines':
+    if (!args[0]) machinesListCommand(flags.includes('--json')).catch(onError)
+    else if (args[0] === 'list') machinesListCommand(flags.includes('--json')).catch(onError)
+    else if (args[0] === 'delete' || args[0] === 'rm') {
+      machinesDeleteCommand(args[1], flags.includes('--yes')).catch(onError)
+    } else { console.error(`Unknown command: machines ${args[0]}`); usage(1) }
     break
   case 'link':
     if (args[0] === 'connect') linkConnectCommand(args[1], flags.includes('--stdin'), flags.includes('--json')).catch(onError)

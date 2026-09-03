@@ -666,3 +666,20 @@ describe('Grok session_get history', () => {
     expect(paginated).toMatchObject({ hasMore: false, oldestCursor: null })
   })
 })
+
+describe('adapter-ws dial url', () => {
+  const dialUrl = (socket: BackendSocket): string => (socket as unknown as { url: string }).url
+
+  it('carries the machine id this daemon still holds, so a revoked one gets 403 not a new machine', () => {
+    const machineId = 'b'.repeat(32)
+
+    expect(dialUrl(new BackendSocket(machineId, undefined, () => {}, 'computer-1')))
+      .toContain(`&machine=${machineId}`)
+  })
+
+  it('omits the claim when the first argument is a test token rather than a machine id', () => {
+    // Constructed without an AuthSessionManager, the first argument is a token — sending it as a
+    // machine id would be a lie the backend then has to reject.
+    expect(dialUrl(new BackendSocket('token', undefined, () => {}, 'computer-1'))).not.toContain('&machine=')
+  })
+})
