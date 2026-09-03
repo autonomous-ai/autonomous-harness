@@ -15,14 +15,23 @@
  * `GROK_MODELS_BASE_URL` for Grok, `COPILOT_PROVIDER_BASE_URL` for Copilot. Each entry below cites
  * where it was read from.
  *
- * An engine with no entry is REFUSED, and the refusal names why for that engine specifically. Two
- * shapes of "no" appear repeatedly and are worth telling apart:
+ * An engine with no entry is REFUSED, and the refusal names why for that engine specifically. Three
+ * shapes of "no" appear, and they are worth telling apart because only one of them could ever change
+ * on our side:
  *
- *   * **Config-file only** (pi, kilo, agy's non-Gemini path): the provider block has to be written
- *     into the user's own dotfile. Editing another tool's configuration on someone's behalf is a
- *     side effect that outlives the agent, so this module does not do it.
- *   * **Vendor-bound** (cursor, amp, devin): the app talks to its own service and has no notion of
- *     an endpoint. There is nothing to set.
+ *   * **Wrong protocol.** The engine CAN be re-pointed, but at its own vendor's API rather than an
+ *     OpenAI- or Anthropic-shaped one. Cursor Agent reads `CURSOR_API_ENDPOINT` (default
+ *     `https://api2.cursor.sh`, read out of the shipped bundle) and Antigravity reads
+ *     `GOOGLE_GEMINI_BASE_URL` — handing either the relay would send it a dialect the relay does not
+ *     serve (grid ADR 0012 lists Gemini as a future data edit, not a served endpoint). A knob
+ *     existing is not the same as a knob that helps, and pointing one of these at a grid would fail
+ *     inside the app with an error naming neither.
+ *   * **Config-file only** (pi, kilo): the provider block has to be written into the user's own
+ *     dotfile. Editing another tool's configuration on someone's behalf is a side effect that
+ *     outlives the agent, so this module does not do it.
+ *   * **Nothing documented** (muse, commandcode, amp, devin): no vendor documentation describes an
+ *     endpoint override. These are the entries that could gain a contract tomorrow — with a cited
+ *     source, not a plausible-looking variable name.
  *
  * Refusing is the point. Silently launching against the engine's own login would put the agent
  * somewhere other than where the user said, spend the wrong account, and look like it worked.
@@ -264,12 +273,13 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
  * whether to wait for a release, change a setting, or pick another engine.
  */
 const GRID_ENGINE_REFUSALS: Partial<Record<AgentEngine, string>> = {
-  cursor: 'Cursor Agent talks only to Cursor\'s own service — it has no endpoint setting',
-  amp: 'Amp talks only to its own service — it has no endpoint setting',
-  devin: 'Devin runs on its own hosted service — it has no endpoint setting',
+  cursor: 'Cursor Agent can only be re-pointed at another Cursor API (CURSOR_API_ENDPOINT), '
+    + 'not at an OpenAI-compatible relay',
+  agy: 'Antigravity speaks the Gemini API, which this relay does not serve',
   pi: 'Pi needs a provider block written into ~/.pi/agent/models.json, which this will not edit for you',
   kilo: 'the Kilo CLI has no OpenAI-compatible provider option yet (its own issues #5840, #6315)',
-  agy: 'Antigravity speaks the Gemini API, which this grid\'s relay does not serve',
+  amp: 'Amp documents no way to change where it sends inference',
+  devin: 'Devin runs on its own hosted service and documents no endpoint override',
   muse: 'Muse Code documents no way to change its endpoint',
   commandcode: 'Command Code documents no way to change its endpoint',
 }
