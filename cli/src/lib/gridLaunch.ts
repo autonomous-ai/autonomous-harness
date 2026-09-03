@@ -37,7 +37,14 @@
  * somewhere other than where the user said, spend the wrong account, and look like it worked.
  */
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
+
+/** Where Pi keeps the skills the user manages, handed back through our own settings.json. */
+function userPiSkillsDir(): string {
+  return join(homedir(), '.pi', 'agent', 'skills')
+}
 
 /** What the desktop sends, once validated. Mirrors `GridAgentOverride` in the desktop app. */
 export interface GridLaunchOverride {
@@ -142,12 +149,30 @@ export function anthropicBaseUrl(baseUrl: string): string {
   return trimmed.endsWith('/v1') ? trimmed.slice(0, -'/v1'.length) : trimmed
 }
 
+/** One file to write into the per-agent config directory a launch is given. */
+export interface GridConfigFile {
+  /** File name inside the directory. Never a path — this writes one flat directory. */
+  name: string
+  content: string
+}
+
 /** How one engine is launched against a grid. */
 export interface GridEngineLaunch {
   /** Layered over the engine's inherited environment. This is where the key goes, always. */
   env: Record<string, string>
   /** Appended to the engine's argv. Never carries the key — `ps` is world-readable. */
   args: string[]
+  /**
+   * For an engine that reads its provider out of a config directory rather than an environment
+   * variable: files the daemon writes into a directory IT owns, and the variable that points the
+   * engine at that directory.
+   *
+   * This is not "editing the user's dotfiles" — the point of the indirection is that it never
+   * touches them. The engine gets a private configuration for this agent, the user's own stays
+   * exactly as they left it, and deleting the directory undoes everything. No file written here may
+   * contain the key; Pi's provider block references an environment variable instead.
+   */
+  configDir?: { envVar: string; files: GridConfigFile[] }
 }
 
 interface GridEngineContract {
@@ -156,8 +181,62 @@ interface GridEngineContract {
   requiresModel?: boolean
 }
 
-/** The variable Codex is told to read the key from — its own `env_key` indirection. */
-const CODEX_KEY_VAR = 'GRID_API_KEY'
+/**
+ * The variable an engine is told to read the key from, where the engine supports that indirection.
+ *
+ * Codex names it in `env_key`; Pi's `models.json` writes it as a `$VAR` reference. Both exist so the
+ * credential can stay in the environment while the configuration that points at it is not secret.
+ */
+const GRID_KEY_VAR = 'GRID_API_KEY'
+
+/** The provider id our generated config declares. Pi selects it as `--model <id>/<model>`. */
+const GRID_PROVIDER_ID = 'grid'
+
+/**
+ * Pi's provider block, as the Grid app shipped and unit-tested it
+ * (`autonomous-grid-app`, `pi_grid_config.dart` at 36d00c95, before Pi was dropped from that app for
+ * reasons about ITS chat UI — a fourth agent nobody reached for, and a 180 MB private Node
+ * toolchain — none of which apply here, where the user installs Pi themselves).
+ *
+ * `api: openai-completions` makes Pi post to `<base>/chat/completions`, which is what the relay
+ * serves. The context/cost numbers are Pi's own bookkeeping for its display; the grid decides what
+ * the model really takes.
+ */
+function piModelsJson(baseUrl: string, model: string): string {
+  return JSON.stringify({
+    providers: {
+      [GRID_PROVIDER_ID]: {
+        name: 'Autonomous Grid',
+        baseUrl,
+        api: 'openai-completions',
+        // An env reference, not the key — nothing secret is written to disk.
+        apiKey: `$${GRID_KEY_VAR}`,
+        models: [{
+          id: model,
+          name: model,
+          reasoning: false,
+          input: ['text'],
+          contextWindow: 200000,
+          maxTokens: 8192,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }],
+      },
+    },
+  }, null, 2)
+}
+
+/**
+ * Pi's settings for the directory we own, which exists to hand back the one thing the redirection
+ * takes away: the skills the user keeps in their real `~/.pi/agent/skills`.
+ *
+ * Deliberately NOT `defaultProjectTrust: always`. The Grid app set it because it drove Pi headless,
+ * one process per turn, with nobody there to answer a prompt. Here the user is sitting in front of
+ * an interactive pane, and silently pre-trusting every folder they open an agent in would be this
+ * daemon deciding something it was not asked to decide.
+ */
+function piSettingsJson(userSkillsDir: string): string {
+  return JSON.stringify({ skills: [userSkillsDir] }, null, 2)
+}
 
 /**
  * Every engine that can be pointed at a grid, and how.
@@ -194,12 +273,12 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // The key travels in the environment under `env_key`, never in argv.
   codex: {
     build: (override) => ({
-      env: { [CODEX_KEY_VAR]: override.apiKey },
+      env: { [GRID_KEY_VAR]: override.apiKey },
       args: [
         '-c', 'model_provider="grid"',
         '-c', 'model_providers.grid.name="Autonomous Grid"',
         '-c', `model_providers.grid.base_url="${relayBaseUrl(override.baseUrl)}"`,
-        '-c', `model_providers.grid.env_key="${CODEX_KEY_VAR}"`,
+        '-c', `model_providers.grid.env_key="${GRID_KEY_VAR}"`,
         // Mandatory: Codex speaks the Responses dialect and rejects `wire_api = "chat"`.
         '-c', 'model_providers.grid.wire_api="responses"',
         // The relay streams HTTP SSE, not WebSocket.
@@ -250,6 +329,27 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
     }),
   },
 
+  // Pi reads its providers out of a config DIRECTORY, and `PI_CODING_AGENT_DIR` moves that
+  // directory. So it gets a private one per agent: the provider block lands there, the user's
+  // ~/.pi/agent/models.json is never opened, and their skills are handed back through settings.json.
+  //
+  // The model is not optional — the provider block has to name the model it serves, and Pi selects
+  // it as `grid/<model>`.
+  pi: {
+    requiresModel: true,
+    build: (override) => ({
+      env: { [GRID_KEY_VAR]: override.apiKey },
+      args: ['--model', `${GRID_PROVIDER_ID}/${override.model as string}`],
+      configDir: {
+        envVar: 'PI_CODING_AGENT_DIR',
+        files: [
+          { name: 'models.json', content: piModelsJson(relayBaseUrl(override.baseUrl), override.model as string) },
+          { name: 'settings.json', content: piSettingsJson(userPiSkillsDir()) },
+        ],
+      },
+    }),
+  },
+
   // GitHub's documented BYOK path for Copilot CLI (docs.github.com … /use-byok-models). Copilot
   // will not start against a custom provider without being told the model, so that is enforced
   // here rather than left to fail inside the app.
@@ -273,10 +373,11 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
  * whether to wait for a release, change a setting, or pick another engine.
  */
 const GRID_ENGINE_REFUSALS: Partial<Record<AgentEngine, string>> = {
+  // NOTE: pi is NOT here — it is supported through a private config directory. Kilo is, because its
+  // CLI has no OpenAI-compatible provider to configure at all, in any directory.
   cursor: 'Cursor Agent can only be re-pointed at another Cursor API (CURSOR_API_ENDPOINT), '
     + 'not at an OpenAI-compatible relay',
   agy: 'Antigravity speaks the Gemini API, which this relay does not serve',
-  pi: 'Pi needs a provider block written into ~/.pi/agent/models.json, which this will not edit for you',
   kilo: 'the Kilo CLI has no OpenAI-compatible provider option yet (its own issues #5840, #6315)',
   amp: 'Amp documents no way to change where it sends inference',
   devin: 'Devin runs on its own hosted service and documents no endpoint override',

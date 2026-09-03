@@ -136,11 +136,48 @@ describe('the launch each engine gets', () => {
     })
   })
 
-  it('never puts the key in argv, for any engine', () => {
+  it('gives Pi a config directory of ours, never the user\'s own', () => {
+    const launch = launchOf('pi')
+    expect(launch.env).toEqual({ GRID_API_KEY: WIRE.apiKey })
+    expect(launch.args).toEqual(['--model', 'grid/GLM-4.7-Flash'])
+    const configDir = launch.configDir
+    expect(configDir?.envVar).toBe('PI_CODING_AGENT_DIR')
+    const models = configDir?.files.find((file) => file.name === 'models.json')
+    expect(models).toBeDefined()
+    const parsed = JSON.parse(models!.content) as {
+      providers: Record<string, { baseUrl: string; api: string; apiKey: string }>
+    }
+    expect(parsed.providers.grid.baseUrl).toBe(RELAY_V1)
+    // `openai-completions` makes Pi post to <base>/chat/completions, which the relay serves.
+    expect(parsed.providers.grid.api).toBe('openai-completions')
+    // An env REFERENCE. Writing the key itself would put a live credential on disk, outliving the
+    // agent and every reason it existed.
+    expect(parsed.providers.grid.apiKey).toBe('$GRID_API_KEY')
+    expect(models!.content).not.toContain(WIRE.apiKey)
+  })
+
+  it('hands Pi back the skills the redirection would otherwise hide', () => {
+    const settings = launchOf('pi').configDir?.files.find((file) => file.name === 'settings.json')
+    const parsed = JSON.parse(settings!.content) as Record<string, unknown>
+    expect((parsed.skills as string[])[0]).toContain('.pi')
+    // The Grid app set `defaultProjectTrust: always` because it drove Pi headless with nobody there
+    // to answer. Here a person is sitting in front of the pane, so the trust prompt stays theirs.
+    expect(parsed).not.toHaveProperty('defaultProjectTrust')
+  })
+
+  it('refuses Pi without a model — its provider block has to name one', () => {
+    expect(buildGridEngineLaunch('pi', OVERRIDE)).toMatchObject({ ok: false, error: 'GRID_MODEL_REQUIRED' })
+  })
+
+  it('never puts the key in argv, or on disk, for any engine', () => {
     // `ps` is world-readable for the life of the process; the environment is not.
     for (const engine of gridCapableEngines()) {
-      expect(launchOf(engine).args.join(' ')).not.toContain(WIRE.apiKey)
-      expect(Object.values(launchOf(engine).env)).toContain(WIRE.apiKey)
+      const launch = launchOf(engine)
+      expect(launch.args.join(' '), engine).not.toContain(WIRE.apiKey)
+      expect(Object.values(launch.env), engine).toContain(WIRE.apiKey)
+      for (const file of launch.configDir?.files ?? []) {
+        expect(file.content, `${engine}/${file.name}`).not.toContain(WIRE.apiKey)
+      }
     }
   })
 
@@ -176,7 +213,7 @@ describe('the engines that cannot', () => {
 
   it('lists exactly the engines with a verified vendor contract', () => {
     expect([...gridCapableEngines()].sort())
-      .toEqual(['claude', 'codex', 'copilot', 'grok', 'hermes', 'opencode'])
+      .toEqual(['claude', 'codex', 'copilot', 'grok', 'hermes', 'opencode', 'pi'])
   })
 })
 

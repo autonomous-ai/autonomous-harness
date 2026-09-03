@@ -44,6 +44,7 @@ import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
 import { buildGridEngineLaunch, describeGridLaunch } from './lib/gridLaunch.js'
+import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
@@ -2706,6 +2707,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     } catch {
       return { ok: false, error: 'CWD_NOT_FOUND' }
     }
+    // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
+    // retaining the engine and a collision-resistant creation suffix for diagnostics. Computed
+    // before the grid block because a file-configured engine keys its config directory on it.
+    const label = `harness-${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
     // A grid is the user's answer to "where should this run", so every way of not honouring it is a
     // refusal rather than a fallback — an agent silently started on the engine's own login spends the
     // wrong account and looks identical to one that worked.
@@ -2724,14 +2729,23 @@ async function runForeground(session: AuthSession): Promise<void> {
         console.warn(`[agent] create ${engine} refused · ${detail}`)
         return { ok: false, error: 'TMUX_TOO_OLD_FOR_GRID', detail }
       }
-      gridLaunch = built.launch
+      gridLaunch = { env: { ...built.launch.env }, args: built.launch.args }
+      // An engine whose provider lives in a file gets a directory this daemon owns, never the
+      // user's own dotfiles. The label is unique per creation, so two agents never share one.
+      if (built.launch.configDir) {
+        const { envVar, files } = built.launch.configDir
+        try {
+          gridLaunch.env[envVar] = await writeGridConfigDir(label, files)
+        } catch (error) {
+          const detail = `could not write ${engine}'s grid configuration · ${error instanceof Error ? error.message : error}`
+          console.warn(`[agent] create ${engine} refused · ${detail}`)
+          return { ok: false, error: 'GRID_CONFIG_FAILED', detail }
+        }
+      }
       // Named in the log because the pane itself gives nothing away: the engine looks exactly like a
       // normally launched one. The key is never printed.
       console.log(describeGridLaunch(engine, grid))
     }
-    // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
-    // retaining the engine and a collision-resistant creation suffix for diagnostics.
-    const label = `harness-${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
     const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
@@ -2902,12 +2916,24 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Nothing may type into the pane while it is being replaced.
     const release = acquireTerminalControl(session.agentId)
     if (!release) return { ok: false, error: 'AGENT_BUSY' }
+    const gridEnv: Record<string, string> = { ...built.launch.env }
+    if (built.launch.configDir) {
+      // Keyed on the agent, so moving the same agent between grids rewrites one directory rather
+      // than leaving a trail of them.
+      const { envVar, files } = built.launch.configDir
+      try {
+        gridEnv[envVar] = await writeGridConfigDir(session.agentId, files)
+      } catch (error) {
+        const detail = `could not write ${session.engine}'s grid configuration · ${error instanceof Error ? error.message : error}`
+        return { ok: false, error: 'GRID_CONFIG_FAILED', detail }
+      }
+    }
     try {
       const launchOptions = { resumeSessionId: session.sessionId || null, extraArgs: built.launch.args }
       const respawned = await tmuxBackend.respawn(pane, {
         ...(session.cwd ? { cwd: session.cwd } : {}),
         command: buildEngineLaunchArgv(session.engine, launchOptions),
-        env: built.launch.env,
+        env: gridEnv,
       })
       if (respawned.state !== 'succeeded') {
         console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${respawned.reason}`)

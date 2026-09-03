@@ -130,8 +130,9 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
   session that environment with `new-session -e`, so the credential never appears in the engine's
   argv. Six engines have a documented way to be pointed somewhere else and are supported through it:
   **claude** (`ANTHROPIC_BASE_URL`), **codex** (`-c model_providers.grid.*`, key via `env_key`),
-  **opencode** and **hermes** (`OPENAI_BASE_URL`), **grok** (`GROK_MODELS_BASE_URL`) and **copilot**
-  (`COPILOT_PROVIDER_BASE_URL`). Every other engine is **refused** with `GRID_ENGINE_UNSUPPORTED`
+  **opencode** and **hermes** (`OPENAI_BASE_URL`), **grok** (`GROK_MODELS_BASE_URL`), **copilot**
+  (`COPILOT_PROVIDER_BASE_URL`) and **pi** (a private config directory via `PI_CODING_AGENT_DIR`,
+  so the user's own `~/.pi` is never touched). Every other engine is **refused** with `GRID_ENGINE_UNSUPPORTED`
   and a reason specific to it — some talk only to their own service, some need a provider block
   written into a dotfile this daemon will not edit — rather than quietly started on its own login.
   Needs tmux ≥ 3.2; an older one is refused as `TMUX_TOO_OLD_FOR_GRID`. See `src/lib/gridLaunch.ts`.

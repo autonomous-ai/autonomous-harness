@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { assignmentMatches, classifyGridAssignment } from './gridAssignment.js'
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { assignmentMatches, classifyGridAssignment, readPiGridAssignment } from './gridAssignment.js'
 import { buildGridEngineLaunch, gridCapableEngines, type GridLaunchOverride } from './gridLaunch.js'
-import { parsePsEnviron } from './processEnv.js'
+import { clearProcessEnvCache, parsePsEnviron } from './processEnv.js'
 
 const NETWORK_ID = 'grid-3378218621364f16'
 const RELAY = `https://grid.autonomous.ai/${NETWORK_ID}/relay`
@@ -20,6 +23,9 @@ describe('classifyGridAssignment', () => {
     // The point of the round trip: the probe and the launcher must use the SAME knob per engine, or
     // an agent that IS on a grid reports as being on none and gets pointlessly restarted.
     for (const engine of gridCapableEngines()) {
+      // Pi's endpoint is in a file rather than the process, so it round-trips through the probe
+      // below instead — this one only covers what a process carries.
+      if (engine === 'pi') continue
       const built = buildGridEngineLaunch(engine, OVERRIDE)
       expect(built.ok).toBe(true)
       if (!built.ok) continue
@@ -33,6 +39,7 @@ describe('classifyGridAssignment', () => {
 
   it('never carries the credential out of the process', () => {
     for (const engine of gridCapableEngines()) {
+      if (engine === 'pi') continue
       const built = buildGridEngineLaunch(engine, OVERRIDE)
       if (!built.ok) continue
       const assignment = classifyGridAssignment(engine, built.launch.env, built.launch.args.join(' '))
@@ -73,6 +80,60 @@ describe('classifyGridAssignment', () => {
 
   it('has no answer for an engine that cannot be on a grid at all', () => {
     expect(classifyGridAssignment('cursor', { ANTHROPIC_BASE_URL: RELAY })).toBeNull()
+  })
+})
+
+describe('Pi, whose endpoint lives in a file', () => {
+  const dirs: string[] = []
+  afterEach(() => {
+    clearProcessEnvCache()
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** Writes the launch's own config files where the probe will look for them. */
+  function materialize(): { dir: string; args: string } {
+    const built = buildGridEngineLaunch('pi', OVERRIDE)
+    if (!built.ok) throw new Error(built.detail)
+    const dir = mkdtempSync(join(tmpdir(), 'pi-grid-'))
+    dirs.push(dir)
+    for (const file of built.launch.configDir!.files) writeFileSync(join(dir, file.name), file.content)
+    return { dir, args: `pi ${built.launch.args.join(' ')}` }
+  }
+
+  it('round-trips: what the launcher wrote is what the probe reads back', async () => {
+    const { dir, args } = materialize()
+    // Parsed from a real macOS `ps eww` line — argv first, then the environment — so the shape the
+    // probe is handed at runtime is the shape under test.
+    const env = parsePsEnviron(`${args} PI_CODING_AGENT_DIR=${dir} GRID_API_KEY=gridkey-secret`)
+    await expect(readPiGridAssignment(env, args)).resolves.toEqual({
+      baseUrl: RELAY_V1,
+      model: 'GLM-4.7-Flash',
+    })
+    await expect(readPiGridAssignment(env, args)).resolves.toSatisfy(
+      (a: { baseUrl: string; model: string | null }) => assignmentMatches(a, NETWORK_ID, 'GLM-4.7-Flash'),
+    )
+  })
+
+  it('a config directory that is gone reads as unknown, not as fine', async () => {
+    const { dir, args } = materialize()
+    const env = parsePsEnviron(`${args} PI_CODING_AGENT_DIR=${dir}`)
+    rmSync(dir, { recursive: true, force: true })
+    // Nothing to read → null → the app offers a move rather than claiming the agent is in place.
+    await expect(readPiGridAssignment(env, args)).resolves.toBeNull()
+  })
+
+  it('reads nothing when the pane was never given a config directory', async () => {
+    const { args } = materialize()
+    await expect(readPiGridAssignment({}, args)).resolves.toBeNull()
+  })
+
+  it('will not call a provider pointed somewhere else a grid', async () => {
+    const { dir, args } = materialize()
+    writeFileSync(join(dir, 'models.json'), JSON.stringify({
+      providers: { grid: { baseUrl: 'https://api.openai.com/v1' } },
+    }))
+    const env = parsePsEnviron(`${args} PI_CODING_AGENT_DIR=${dir}`)
+    await expect(readPiGridAssignment(env, args)).resolves.toBeNull()
   })
 })
 

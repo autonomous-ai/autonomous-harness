@@ -18,6 +18,8 @@
  * endpoint and the model, both of which the app already knows because it chose them.
  */
 
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import { readProcessEnv } from './processEnv.js'
 import type { ProcessIdentity } from './registry.js'
@@ -48,6 +50,15 @@ const MODEL_VAR: Partial<Record<AgentEngine, string>> = {
 
 /** Engines whose model was written into argv as `-m <model>` rather than an environment variable. */
 const MODEL_IN_ARGV = new Set<AgentEngine>(['codex', 'grok'])
+
+/**
+ * Pi's endpoint is in neither its environment nor its argv — it is in the `models.json` inside the
+ * config directory `PI_CODING_AGENT_DIR` points at. So that is where it is read from, because the
+ * alternative is to trust a note we wrote ourselves about what we did.
+ */
+const PI_CONFIG_DIR_VAR = 'PI_CODING_AGENT_DIR'
+/** `--model grid/<model>` — how Pi is told which provider and model to use. */
+const PI_ARGV_MODEL = /(?:^|\s)--model\s+([A-Za-z0-9_-]+)\/(\S+)/
 
 /** `-c model_providers.<name>.base_url="…"` — how Codex's endpoint is written, so how it is read. */
 const CODEX_BASE_URL = /model_providers\.[A-Za-z0-9_-]+\.base_url=(?:"([^"]+)"|(\S+))/
@@ -91,6 +102,36 @@ export function classifyGridAssignment(
 }
 
 /**
+ * Pi's provider block, read out of the config directory its process was pointed at.
+ *
+ * Exported so a spec can drive the real read against real files: the process half of the probe
+ * cannot be faked (an environment is fixed at exec), and a round trip that re-implemented this
+ * would prove nothing about the code that runs.
+ *
+ * Every failure lands on null — an unreadable or rewritten directory is "we cannot tell", which the
+ * caller already treats as "not on the grid you picked".
+ */
+export async function readPiGridAssignment(
+  processEnv: Record<string, string>,
+  args: string,
+): Promise<GridAssignment | null> {
+  const dir = processEnv[PI_CONFIG_DIR_VAR]?.trim()
+  if (!dir) return null
+  const model = PI_ARGV_MODEL.exec(args)
+  if (!model) return null
+  try {
+    const raw = JSON.parse(await readFile(join(dir, 'models.json'), 'utf8')) as {
+      providers?: Record<string, { baseUrl?: unknown }>
+    }
+    const baseUrl = raw.providers?.[model[1]]?.baseUrl
+    if (typeof baseUrl !== 'string' || !isGridUrl(baseUrl)) return null
+    return { baseUrl, model: model[2] }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Read one live engine process's grid.
  *
  * Null covers both "not on a grid" and "could not look", deliberately: the caller renders an agent
@@ -104,7 +145,9 @@ export async function probeGridAssignment(
   args = '',
 ): Promise<GridAssignment | null> {
   const processEnv = await readProcessEnv(identity)
-  return processEnv ? classifyGridAssignment(engine, processEnv, args) : null
+  if (!processEnv) return null
+  if (engine === 'pi') return await readPiGridAssignment(processEnv, args)
+  return classifyGridAssignment(engine, processEnv, args)
 }
 
 /** Is this agent already where `networkId` is served, on `model`? */
