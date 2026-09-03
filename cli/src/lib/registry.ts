@@ -36,6 +36,7 @@ import { uptime } from 'os'
 import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
+import type { GridAssignment } from './gridAssignment.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
@@ -85,6 +86,11 @@ export interface RegisteredSession {
    * discovery, so a pane restarted without the wrapper drops it on the next scan.
    */
   gateway?: 'ori' | null
+  /**
+   * The grid this pane's engine is pointed at, if any — read off the live process on every discovery
+   * exactly like `gateway`, never declared. See `gridAssignment.ts`. Carries no credential.
+   */
+  grid?: GridAssignment | null
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -787,6 +793,7 @@ class Registry {
     cwd?: string | null
     processIdentity: ProcessIdentity
     gateway?: 'ori' | null
+    grid?: GridAssignment | null
   }):
     { entry: RegisteredSession; isNew: boolean; evicted: string | null } | null {
     if (this.writeBlocked) return null
@@ -820,6 +827,7 @@ class Registry {
       // Only a successful read speaks: an undefined probe (ps failed, /proc unreadable) keeps whatever
       // the last good one said rather than silently downgrading a gateway agent to a vendor one.
       if (input.gateway !== undefined) existing.gateway = input.gateway
+      if (input.grid !== undefined) existing.grid = input.grid
       existing.updatedAt = Date.now()
       this.index(existing)
       this.terminalAvailableAgents.add(existing.agentId)
@@ -851,6 +859,7 @@ class Registry {
       boundAt: null,
       engine,
       gateway: input.gateway ?? null,
+      grid: input.grid ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -1091,7 +1100,12 @@ class Registry {
     return this.bySession(sessionId)
   }
 
-  updateProcessIdentity(sessionId: string, processIdentity: ProcessIdentity, gateway?: 'ori' | null): boolean {
+  updateProcessIdentity(
+    sessionId: string,
+    processIdentity: ProcessIdentity,
+    gateway?: 'ori' | null,
+    grid?: GridAssignment | null,
+  ): boolean {
     const session = this.resolve(sessionId)
     if (!session || !validProcessIdentity(processIdentity)) return false
     this.drop(session)
@@ -1099,6 +1113,9 @@ class Registry {
     // A record written before gateways existed, or by a pass whose probe failed, learns it here — the
     // env cannot change under a running process, so a successful read is always the truth for this pid.
     if (gateway !== undefined) session.gateway = gateway
+    // The grid is read from the same environment and follows the same rule. It matters most right
+    // after a retarget: the respawned pane is a new pid, and this is where its new grid lands.
+    if (grid !== undefined) session.grid = grid
     session.updatedAt = Date.now()
     this.index(session)
     this.save()

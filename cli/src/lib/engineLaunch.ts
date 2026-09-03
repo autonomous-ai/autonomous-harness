@@ -28,8 +28,29 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
   copilot: null,
 }
 
+/**
+ * How to name an existing session on the command line, for the engines that need it here.
+ *
+ * Deliberately separate from `RESUME_ARGS` in `tmux.ts`, which reads argv the other way round to
+ * recover an id and omits claude on purpose. This table is for WRITING a launch, and it exists for
+ * one caller: moving a running agent to a grid re-execs it, and an engine that came back empty would
+ * have thrown away the conversation the user was in the middle of. Only engines that can be pointed
+ * at a grid at all need an entry — see `GRID_ENGINE_ENV` in `gridLaunch.ts`.
+ */
+export const RESUME_FLAGS: Partial<Record<AgentEngine, string>> = {
+  claude: '--resume',
+}
+
 export interface LaunchCommandOptions {
   bypassPermission?: boolean
+  /**
+   * Resume this engine session instead of starting a new conversation.
+   *
+   * Ignored when the engine has no entry in [RESUME_FLAGS], and callers pass null for an agent that
+   * has not bound a session yet — there is nothing to resume, and guessing with a `--continue` style
+   * flag could attach a DIFFERENT agent's conversation from the same folder.
+   */
+  resumeSessionId?: string | null
 }
 
 /** The executable argv, before the interactive-shell wrapper is applied. */
@@ -39,6 +60,8 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
     const flags = BYPASS_PERMISSION_FLAGS[engine]
     if (flags) argv.push(...flags)
   }
+  const resumeFlag = opts.resumeSessionId ? RESUME_FLAGS[engine] : undefined
+  if (resumeFlag) argv.push(resumeFlag, opts.resumeSessionId as string)
   return argv
 }
 

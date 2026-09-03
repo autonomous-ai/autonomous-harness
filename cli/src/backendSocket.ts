@@ -302,6 +302,15 @@ export class BackendSocket {
     grid: GridLaunchOverride | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  /**
+   * Called on `agent_retarget` — cli.ts re-execs an EXISTING agent's pane against a different grid.
+   *
+   * Separate from `onCreateAgent` because it is a different promise: the pane, its id and its
+   * scrollback survive, and only the process is replaced. A running process's environment cannot be
+   * edited, so there is no gentler way to move an agent that is already up.
+   */
+  onRetargetAgent: ((input: { agentId: string; grid: GridLaunchOverride }) =>
+    Promise<{ ok: true } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -1309,6 +1318,32 @@ export class BackendSocket {
           return
         }
 
+        // Move a RUNNING agent onto a grid. The pane survives; its process is re-exec'd with the
+        // engine's grid environment and, when one is bound, `--resume <session>` so the conversation
+        // comes back. Refused rather than half-applied: see cli.ts for what it checks first.
+        case 'agent_retarget': {
+          const agentId = (payload.agentId as string | undefined) || (payload.sessionId as string | undefined)
+          if (!agentId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
+          if (!this.onRetargetAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const target = parseGridLaunchOverride(payload.grid)
+          // Unlike agent_create, an absent grid is meaningless here: this frame exists only to move an
+          // agent somewhere, so nowhere is a malformed request rather than "leave it alone".
+          if (target.state !== 'ok') {
+            reply(type, requestId, {
+              error: 'INVALID_GRID',
+              detail: target.state === 'invalid' ? target.reason : 'grid is required',
+            })
+            return
+          }
+          const moved = await this.onRetargetAgent({ agentId, grid: target.override })
+          if (!moved.ok) {
+            reply(type, requestId, moved.detail ? { error: moved.error, detail: moved.detail } : { error: moved.error })
+            return
+          }
+          reply(type, requestId, { retargeted: true })
+          return
+        }
+
         // Delete an agent: signal its validated engine process and drop it from the list. Idempotent — an already
         // gone target still acks + re-emits agent_deleted so the web/device converge. E2EE-gated (the
         // frame arrived decrypted). Keeps the persisted recap + agent name for a later resume.
@@ -1423,6 +1458,7 @@ export class BackendSocket {
   private async toProject(s: RegisteredSession): Promise<{
     id: string; sessionId: string; userId: string; name: string; status: string
     createdAt: string; updatedAt: string; tmuxPane: string | null; terminal: { available: boolean; primary: string; runtimes: RegisteredSession['runtimes'] }; engine: RegisteredSession['engine']; selectedModel: string | null
+    grid: { baseUrl: string; model: string | null } | null
   }> {
     const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
     return {
@@ -1437,6 +1473,9 @@ export class BackendSocket {
       terminal: { available: registry.terminalAvailable(s.agentId), primary: s.primaryRuntimeKey, runtimes: s.runtimes },
       engine: s.engine,
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
+      // Where this agent's inference actually goes, so the app can tell which agents a newly picked
+      // grid has left behind. Read off the live process by discovery; carries no credential.
+      grid: s.grid ?? null,
     }
   }
 }

@@ -17,9 +17,12 @@
  * The key is held in memory only: never written to the registry, never logged, never sent to the backend.
  */
 
-import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readProcessEnv } from './processEnv.js'
 import type { ProcessIdentity } from './registry.js'
+
+// Moved to processEnv.ts once the grid probe needed the same read; re-exported so the callers and
+// specs that already knew them here keep working.
+export { parseEnviron, parsePsEnviron } from './processEnv.js'
 
 export interface GatewayRuntime {
   /** 'ori' ⇔ an OpenRouter endpoint is in play. null = a normal vendor login, or we could not look. */
@@ -90,48 +93,6 @@ export function argvNamesOpenRouterProvider(args: string): boolean {
     || /model_providers\.openrouter\./.test(args)
 }
 
-/** NUL-separated `/proc/<pid>/environ`. */
-export function parseEnviron(blob: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const entry of blob.split('\0')) {
-    const eq = entry.indexOf('=')
-    if (eq > 0) out[entry.slice(0, eq)] = entry.slice(eq + 1)
-  }
-  return out
-}
-
-/**
- * macOS `ps eww -p <pid> -o command=`: argv first, then `KEY=VALUE` pairs, all space-separated with no
- * quoting. A value containing spaces is therefore only recoverable by reading up to the next token that
- * starts a new variable — which is exactly what this does. Leading argv is skipped by the same rule
- * (`--flag=x` cannot start a variable), and the keys we care about never carry spaces anyway.
- */
-export function parsePsEnviron(line: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  let key: string | null = null
-  for (const token of line.trim().split(/\s+/)) {
-    const eq = token.indexOf('=')
-    if (eq > 0 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(token.slice(0, eq))) {
-      key = token.slice(0, eq)
-      out[key] = token.slice(eq + 1)
-    } else if (key) {
-      out[key] += ` ${token}`
-    }
-  }
-  return out
-}
-
-function readProcessEnv(pid: number): Promise<Record<string, string> | null> {
-  if (process.platform === 'linux') {
-    return readFile(`/proc/${pid}/environ`, 'utf8').then(parseEnviron).catch(() => null)
-  }
-  return new Promise((resolve) => {
-    execFile('ps', ['eww', '-p', String(pid), '-o', 'command='], { timeout: 2_000, maxBuffer: 4 << 20 }, (err, stdout) => {
-      resolve(err && !stdout ? null : parsePsEnviron(stdout))
-    })
-  })
-}
-
 /** Classify an already-read env + argv. Exported for fixtures; the probe below adds I/O and caching. */
 export function classifyGatewayRuntime(processEnv: Record<string, string>, args = ''): GatewayRuntime {
   const routed = BASE_URL_VARS.some((name) => isOpenRouterUrl(processEnv[name]))
@@ -151,7 +112,7 @@ export async function probeGatewayRuntime(identity: ProcessIdentity, args = ''):
   const hit = cache.get(key)
   if (hit && (hit.runtime.kind !== null || Date.now() - hit.at < NEGATIVE_TTL_MS)) return hit.runtime
 
-  const processEnv = await readProcessEnv(identity.pid)
+  const processEnv = await readProcessEnv(identity)
   if (!processEnv) return argvNamesOpenRouterProvider(args) ? { kind: 'ori' } : NONE
 
   const runtime = classifyGatewayRuntime(processEnv, args)

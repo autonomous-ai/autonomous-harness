@@ -6,6 +6,7 @@ import {
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
+import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
 import type { TerminalBackend } from './terminalBackend.js'
 import {
   ambiguousAgentProcess,
@@ -43,6 +44,13 @@ export interface DiscoveredTerminalAgent {
    * gateway launch is recognized identically under tmux and under Herdr.
    */
   gateway?: 'ori' | null
+  /**
+   * The grid this engine process is pointed at, read from the same environment. null = a vendor login
+   * or an unreadable probe — `gridAssignment.ts` explains why those share an answer.
+   *
+   * Backend-agnostic for the same reason `gateway` is: it is a fact about the process, not the pane.
+   */
+  grid?: GridAssignment | null
 }
 
 export interface TerminalTargetProbe {
@@ -235,6 +243,8 @@ export async function probeTerminalAgents(
   await Promise.all(discovered.agents.map(async (agent) => {
     const runtime = await probeGatewayRuntime(agent.processIdentity, agent.args)
     agent.gateway = runtime.kind
+    // Same process, same cached read — the grid costs no extra `ps`.
+    agent.grid = await probeGridAssignment(agent.processIdentity)
   }))
   return { processTableAvailable: true, targets, ...discovered }
 }

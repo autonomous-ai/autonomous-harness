@@ -133,4 +133,48 @@ printf '%%42\\n'
       + ' /bin/zsh -lic exec "$@" harness-engine claude ; set-option -w remain-on-exit on',
     )
   })
+  it('respawns a pane in place with a new environment, keeping the pane id', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-'))
+    dirs.push(dir)
+    const calls = join(dir, 'calls')
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    process.env.TMUX_BACKEND_CALLS = calls
+
+    const moved = await new TmuxBackend().respawn({ backend: 'tmux', paneId: '%42' }, {
+      cwd: '/tmp/work',
+      env: { ANTHROPIC_BASE_URL: 'https://relay.example/relay', ANTHROPIC_MODEL: 'GLM-4.7-Flash' },
+      command: ['/bin/zsh', '-lic', 'exec "$@"', 'harness-engine', 'claude', '--resume', 'sess-1'],
+    })
+
+    expect(moved).toEqual({ state: 'succeeded', dispatch: 'executed' })
+    // `remain-on-exit` is chained BEFORE the respawn, not after: an engine handed a rejected key can
+    // exit before a follow-up call lands, taking its own error message down with it.
+    expect(readFileSync(calls, 'utf8').trim()).toBe(
+      'set-option -w -t %42 remain-on-exit on ; respawn-pane -k -c /tmp/work'
+      + ' -e ANTHROPIC_BASE_URL=https://relay.example/relay -e ANTHROPIC_MODEL=GLM-4.7-Flash'
+      + ' -t %42 /bin/zsh -lic exec "$@" harness-engine claude --resume sess-1',
+    )
+  })
+
+  it('never reports a failed respawn as untouched, because -k already killed the old process', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-fail-'))
+    dirs.push(dir)
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+printf 'no such pane: %%99\\n' >&2
+exit 1
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+
+    const moved = await new TmuxBackend().respawn({ backend: 'tmux', paneId: '%99' }, { command: ['claude'] })
+    expect(moved.state).toBe('unknown')
+    expect(moved).toMatchObject({ dispatch: 'possibly_executed' })
+    if (moved.state === 'unknown') expect(moved.reason).toContain('no such pane')
+  })
 })

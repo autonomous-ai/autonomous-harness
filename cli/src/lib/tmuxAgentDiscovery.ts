@@ -15,6 +15,7 @@ import {
 } from './engineBin.js'
 import type { AgentEngine } from '../engines/types.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
+import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
 import type { ProcessIdentity, RegisteredSession } from './registry.js'
 import {
   ambiguousAgentProcess,
@@ -46,6 +47,11 @@ export interface DiscoveredTmuxAgent {
    * could not read the process; the registry then keeps whatever it already knew.
    */
   gateway?: 'ori' | null
+  /**
+   * The grid this pane's engine is actually talking to, read off the same environment. null = a normal
+   * vendor login, or the read failed; see `gridAssignment.ts` for why those share an answer.
+   */
+  grid?: GridAssignment | null
 }
 
 export type TmuxAgentProbe =
@@ -226,11 +232,13 @@ export async function probeTmuxAgents(
     agentCommandOwnershipSnapshot(),
     hints,
   )
-  // Which endpoint each agent is pointed at. Cached per live process, so this is one read per agent for
-  // its whole life, not one per pass — and a failed read leaves `gateway` undefined rather than false.
+  // Which endpoint each agent is pointed at, and which grid. Both read the same process environment
+  // through the same cache, so this stays one read per agent for its whole life rather than one per
+  // pass — and a failed read leaves `gateway` undefined rather than false.
   await Promise.all(probe.agents.map(async (agent) => {
     const runtime = await probeGatewayRuntime(agent.processIdentity, agent.args)
     agent.gateway = runtime.kind
+    agent.grid = await probeGridAssignment(agent.processIdentity)
   }))
   return probe
 }

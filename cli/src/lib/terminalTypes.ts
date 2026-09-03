@@ -73,6 +73,19 @@ export interface TerminalCreateRequest {
   env?: Record<string, string>
 }
 
+/**
+ * Re-exec an EXISTING terminal's process, keeping the terminal itself.
+ *
+ * The pane, its id and its scrollback survive, which is the whole point: moving a running agent to a
+ * grid must not look to the user like the agent was replaced. Only the process is replaced, because
+ * its environment is the thing being changed and a process's environment cannot be edited in place.
+ */
+export interface TerminalRespawnRequest {
+  cwd?: string
+  command: string[]
+  env?: Record<string, string>
+}
+
 export type TerminalCreateResult<Ref extends TerminalRuntimeRef = TerminalRuntimeRef> =
   | { state: 'succeeded'; dispatch: 'executed'; runtime: Ref }
   | { state: 'failed'; dispatch: 'not_started' | 'rejected'; reason: string }

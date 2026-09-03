@@ -12,6 +12,7 @@ import {
   type TerminalLogicalKey,
   type TerminalProcessExpectation,
   type TerminalReadResult,
+  type TerminalRespawnRequest,
   type TerminalStreamHandle,
   type TerminalStreamSink,
   type TerminalStreamSize,
@@ -117,6 +118,33 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     }
     await setPaneMouseOn(paneId)
     return { state: 'succeeded', dispatch: 'executed', runtime: { backend: 'tmux', paneId } }
+  }
+
+  /**
+   * Replace the process running in an existing pane, with a different environment.
+   *
+   * `-k` kills what is there first; without it tmux refuses a live pane. `remain-on-exit` is turned on
+   * in the SAME invocation and for the same reason as in `create`: a respawned engine that dies
+   * immediately (a rejected key, a model the grid does not serve) must leave its error on screen
+   * instead of taking the pane down with it. Whoever calls this owns turning it back off.
+   */
+  async respawn(runtime: TmuxRuntimeRef, request: TerminalRespawnRequest): Promise<TerminalActionResult> {
+    const args = ['set-option', '-w', '-t', runtime.paneId, 'remain-on-exit', 'on', ';', 'respawn-pane', '-k']
+    if (request.cwd) args.push('-c', request.cwd)
+    for (const [key, value] of Object.entries(request.env ?? {})) args.push('-e', `${key}=${value}`)
+    args.push('-t', runtime.paneId, ...request.command)
+    const result = await new Promise<{ error: NodeJS.ErrnoException | null; stderr: string }>((resolve) => {
+      execFile('tmux', args, { timeout: 5_000 }, (error, _stdout, stderr) => resolve({
+        error: error as NodeJS.ErrnoException | null,
+        stderr,
+      }))
+    })
+    if (!result.error) return TERMINAL_ACTION_SUCCEEDED
+    if (result.error.code === 'ENOENT') return terminalActionNotStarted('tmux is unavailable')
+    // `-k` means the old process may already be gone even though the new one never started, so this
+    // cannot be reported as "nothing happened".
+    const detail = result.stderr.trim().split('\n')[0]?.slice(0, 200) || result.error.message.slice(0, 200)
+    return terminalActionPossiblyExecuted(`tmux could not respawn the pane: ${detail}`)
   }
 
   async kill(runtime: TmuxRuntimeRef): Promise<TerminalActionResult> {

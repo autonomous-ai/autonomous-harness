@@ -66,7 +66,7 @@ import { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
-import { terminalActionNotStarted, type HookTerminalHint, type TerminalActionResult, type TerminalRuntimeRef } from './lib/terminalTypes.js'
+import { terminalActionNotStarted, type HookTerminalHint, type TerminalActionResult, type TerminalRuntimeRef, type TmuxRuntimeRef } from './lib/terminalTypes.js'
 import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
@@ -128,10 +128,11 @@ import {
   lastCommandCodeTurnText,
 } from './engines/commandcode/normalizer.js'
 import { probeGatewayRuntime } from './lib/gatewayRuntime.js'
+import { probeGridAssignment } from './lib/gridAssignment.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager } from './lib/runtimeProfile.js'
-import { RuntimeProfileController } from './lib/runtimeProfileController.js'
+import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
 
@@ -1998,6 +1999,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         cwd: observed.cwd,
         processIdentity: observed.processIdentity,
         gateway: observed.gateway,
+        grid: observed.grid,
       })
       if (!opened) return
       if (opened.evicted) console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted)}`)
@@ -2010,7 +2012,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onObserved: async (observed, current) => {
       const wasDormant = !current.active
       registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
-      registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway)
+      registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
       await bindObservedAgent(observed)
       if (wasDormant) {
         const active = registry.byAgent(current.agentId)
@@ -2854,6 +2856,102 @@ async function runForeground(session: AuthSession): Promise<void> {
     const detail = `"${bin}" resolves from the user's ${shell?.label ?? 'daemon PATH'} · ${diagnosis}`
     console.warn(`[agent] create ${engine} failed · ${detail}`)
     return { ok: false, error: 'ENGINE_DID_NOT_START', detail }
+  }
+
+  /**
+   * Move a RUNNING agent onto a grid (`agent_retarget`).
+   *
+   * A process's environment is fixed at `execve`, so there is no way to re-point a live engine short of
+   * replacing the process. `respawn-pane -k` does exactly that and keeps the pane, which keeps the pane
+   * id, which keeps the agent's identity, its tile and its scrollback — the user sees their agent
+   * restart, not a new agent appear. `--resume` brings the conversation back.
+   *
+   * Every check below refuses instead of doing something partial, because a half-applied move is
+   * indistinguishable from a working one until the bill arrives.
+   */
+  backend.onRetargetAgent = async ({ agentId, grid }) => {
+    if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
+    const session = registry.resolve(agentId)
+    if (!session) return { ok: false, error: 'AGENT_NOT_FOUND' }
+    const pane = session.runtimes.find((runtime): runtime is TmuxRuntimeRef => runtime.backend === 'tmux')
+    // Only tmux panes can be respawned. A Herdr-hosted agent has no equivalent, and saying so is better
+    // than a generic failure the user cannot act on.
+    if (!pane) return { ok: false, error: 'RETARGET_UNSUPPORTED_BACKEND', detail: `${session.engine} is not running in a tmux pane` }
+    const built = buildGridEngineEnv(session.engine, grid)
+    if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
+    if (!(await tmuxSupportsSessionEnv())) {
+      return {
+        ok: false,
+        error: 'TMUX_TOO_OLD_FOR_GRID',
+        detail: `this machine's tmux is older than ${TMUX_SESSION_ENV_MIN.major}.${TMUX_SESSION_ENV_MIN.minor}, `
+          + 'which is the first version that can give a respawned pane its own environment.',
+      }
+    }
+    // Mid-turn is the one state where restarting costs real work: the conversation comes back but
+    // whatever the engine was doing does not. The app is told which agents these are so the user can
+    // move them once they are done, rather than being asked to choose between losing a turn and losing
+    // the grid.
+    const capture = await captureTerminal(session.agentId, 100)
+    if (!capture) return { ok: false, error: 'TMUX_FAILED' }
+    if (!inspectRuntimePane(session.engine, capture).idle) return { ok: false, error: 'AGENT_BUSY' }
+    // Nothing may type into the pane while it is being replaced.
+    const release = acquireTerminalControl(session.agentId)
+    if (!release) return { ok: false, error: 'AGENT_BUSY' }
+    try {
+      const launchOptions = { resumeSessionId: session.sessionId || null }
+      const respawned = await tmuxBackend.respawn(pane, {
+        ...(session.cwd ? { cwd: session.cwd } : {}),
+        command: buildEngineLaunchArgv(session.engine, launchOptions),
+        env: built.env,
+      })
+      if (respawned.state !== 'succeeded') {
+        console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${respawned.reason}`)
+        return { ok: false, error: 'RESPAWN_FAILED', detail: respawned.reason }
+      }
+      console.log(`${describeGridLaunch(session.engine, grid)} · retargeted ${sid(session.agentId)}`)
+    } finally {
+      release()
+    }
+    // ⚠️ THE AGENT MUST ADOPT THE NEW PROCESS, OR IT STOPS BEING THE SAME AGENT.
+    //
+    // Identity in this daemon is keyed on the PROCESS, not the pane: the reconciler matches an
+    // existing record to an observation by pid + start marker (`currentProcessKey`), and its
+    // same-pane fallback only applies to an agent with no bound engine session. A respawn changes
+    // the pid, so left to discovery the new process is an unmatched observation — `onDiscovered`
+    // mints a NEW agent id, and the record the user was looking at becomes a ghost that the app
+    // still lists, still counts as "on an older target", and still offers to move. Moving it
+    // respawns the same pane again. That loop is what this adoption prevents.
+    //
+    // The wait is the same one `onCreateAgent` measured: a freshly exec'd engine is not in `ps` the
+    // instant tmux returns, because the user's interactive login shell runs first.
+    const previousPid = session.processIdentity?.pid
+    const deadline = Date.now() + 8_000
+    let delayMs = 150
+    let adopted = false
+    while (!adopted && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      const identity = await resolvePaneEngineProcess(pane.paneId, session.engine)
+      if (identity && identity.pid !== previousPid) {
+        // Both are read from the one cached environment of the new pid, so this costs no extra `ps`.
+        const [gateway, assignment] = await Promise.all([
+          probeGatewayRuntime(identity),
+          probeGridAssignment(identity),
+        ])
+        registry.updateProcessIdentity(session.agentId, identity, gateway.kind, assignment)
+        adopted = true
+        break
+      }
+      delayMs = Math.min(delayMs * 2, 750)
+    }
+    if (!adopted) {
+      // The respawn itself succeeded — only the adoption ran out of patience, and the periodic
+      // reconcile will pick the pane up. Reporting a failure would send the user to redo something
+      // that already happened.
+      console.warn(`[grid] retarget ${sid(session.agentId)} · respawned, but its new process was not adopted in time`)
+    }
+    await agentReconciler.triggerHint({ backend: 'tmux', paneId: pane.paneId }, session.engine)
+    await clearPaneRemainOnExit(pane.paneId)
+    return { ok: true }
   }
 
   /**
