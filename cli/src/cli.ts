@@ -43,6 +43,8 @@ import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
+import { buildGridEngineEnv, describeGridLaunch } from './lib/gridLaunch.js'
+import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
 import { findLiveSession } from './lib/sessionRepair.js'
@@ -2695,12 +2697,35 @@ async function runForeground(session: AuthSession): Promise<void> {
    * The freshly-exec'd engine process may not be visible to `ps` the instant tmux returns, so one probe
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
     } catch {
       return { ok: false, error: 'CWD_NOT_FOUND' }
+    }
+    // A grid is the user's answer to "where should this run", so every way of not honouring it is a
+    // refusal rather than a fallback — an agent silently started on the engine's own login spends the
+    // wrong account and looks identical to one that worked.
+    let gridEnv: Record<string, string> | undefined
+    if (grid) {
+      const built = buildGridEngineEnv(engine, grid)
+      if (!built.ok) {
+        console.warn(`[agent] create ${engine} refused · ${built.detail}`)
+        return { ok: false, error: built.error, detail: built.detail }
+      }
+      if (!(await tmuxSupportsSessionEnv())) {
+        const detail = `this machine's tmux is older than `
+          + `${TMUX_SESSION_ENV_MIN.major}.${TMUX_SESSION_ENV_MIN.minor}, which is the first version that can `
+          + `give a new session its own environment — so ${engine} could not have been pointed at grid `
+          + `${grid.networkName}. Upgrade tmux, or create this agent without a grid selected.`
+        console.warn(`[agent] create ${engine} refused · ${detail}`)
+        return { ok: false, error: 'TMUX_TOO_OLD_FOR_GRID', detail }
+      }
+      gridEnv = built.env
+      // Named in the log because the pane itself gives nothing away: the engine looks exactly like a
+      // normally launched one. The key is never printed.
+      console.log(describeGridLaunch(engine, grid))
     }
     // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
     // retaining the engine and a collision-resistant creation suffix for diagnostics.
@@ -2708,7 +2733,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const launchOptions = { bypassPermission }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
-    const spawned = await tmuxBackend.create({ cwd, label, command: argv })
+    const spawned = await tmuxBackend.create({ cwd, label, command: argv, ...(gridEnv ? { env: gridEnv } : {}) })
     if (spawned.state !== 'succeeded') {
       console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
       // `tmuxBackend` exists whenever the CONFIG lists tmux — it is never a probe of the binary. So a

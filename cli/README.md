@@ -124,6 +124,15 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
 - **Live agent sync** to web + device: discovery emits `agent_synced` immediately, even with no session;
   binding later emits session sync, and confirmed process exit emits one `agent_deleted`. A sessionless
   agent returns an empty `sessions_list`, accepts input by `agentId`, and binds after the first turn.
+- **A new agent can be pointed at a grid.** When the desktop app has a grid selected it sends
+  `payload.grid` (relay base URL, a key minted for that launch, and optionally a model) on
+  `agent_create`; the daemon turns it into the engine's own environment and gives the new tmux
+  session that environment with `new-session -e`, so the credential never appears in the engine's
+  argv. Only Claude Code is supported today (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` /
+  `ANTHROPIC_MODEL`) — every other engine is **refused** with `GRID_ENGINE_UNSUPPORTED` rather than
+  quietly started on its own login, because the Codex CLI and friends are configured by a file
+  rather than the environment. Needs tmux ≥ 3.2; an older one is refused as `TMUX_TOO_OLD_FOR_GRID`.
+  See `src/lib/gridLaunch.ts`.
 - **Mirror-all**: every JSONL line streams up — prompts typed directly in the terminal render in
   the web identically to web-sent ones (`turn_started`/`turn_ended` are derived from the file).
 - **Compaction (`/compact` or auto-compact):** claude does an **in-file** compact — the JSONL keeps

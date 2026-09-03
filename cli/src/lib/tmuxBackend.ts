@@ -76,6 +76,10 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     const args = ['new-session', '-d', '-P', '-F', '#{pane_id}']
     if (request.cwd) args.push('-c', request.cwd)
     if (request.label) args.push('-s', request.label)
+    // `-e` (tmux 3.2+) puts these in the SESSION environment rather than the launch argv, so a grid
+    // relay key never lands in `ps` output for the life of the agent. Callers gate on
+    // `tmuxSupportsSessionEnv()`; an older tmux answers the flag with its usage text.
+    for (const [key, value] of Object.entries(request.env ?? {})) args.push('-e', `${key}=${value}`)
     // Trailing args after this point become the session's shell-command. tmux execs them directly
     // (no shell interposed) when given as separate argv elements, so no quoting/escaping is needed.
     if (request.command?.length) args.push(...request.command)

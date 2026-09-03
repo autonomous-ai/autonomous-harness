@@ -102,4 +102,35 @@ printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
       'display-message -t %7 -- Build status: Ready; touch /tmp/must-not-run',
     )
   })
+  it('hands the session its own environment, before the command it launches', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-env-'))
+    dirs.push(dir)
+    const calls = join(dir, 'calls')
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
+printf '%%42\\n'
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    process.env.TMUX_BACKEND_CALLS = calls
+
+    const created = await new TmuxBackend().create({
+      cwd: '/tmp/work',
+      label: 'harness-test',
+      // A grid relay key. It goes here rather than into `command` precisely so it stays out of the
+      // engine's argv, where `ps` would expose it for the life of the agent.
+      env: { ANTHROPIC_BASE_URL: 'https://relay.example/relay', ANTHROPIC_AUTH_TOKEN: 'gridkey-abc123' },
+      command: ['/bin/zsh', '-lic', 'exec "$@"', 'harness-engine', 'claude'],
+    })
+
+    expect(created.state).toBe('succeeded')
+    // Order is load-bearing: everything after the first non-flag argument is the session's
+    // shell-command, so an `-e` placed after `command` would be handed to the engine instead of tmux.
+    expect(readFileSync(calls, 'utf8').trim().split('\n')[0]).toBe(
+      'new-session -d -P -F #{pane_id} -c /tmp/work -s harness-test'
+      + ' -e ANTHROPIC_BASE_URL=https://relay.example/relay -e ANTHROPIC_AUTH_TOKEN=gridkey-abc123'
+      + ' /bin/zsh -lic exec "$@" harness-engine claude ; set-option -w remain-on-exit on',
+    )
+  })
 })

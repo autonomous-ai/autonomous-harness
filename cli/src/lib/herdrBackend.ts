@@ -135,7 +135,7 @@ export class HerdrBackend implements TerminalBackend<HerdrRuntimeRef> {
       ...(request.cwd ? { cwd: request.cwd } : {}),
       focus: false,
       ...(request.label ? { label: request.label } : {}),
-      env: {},
+      env: request.env ?? {},
     }, { mutation: 'other' })
     if (!result.ok) {
       if (result.dispatch === 'not_started') return terminalActionNotStarted(result.reason)

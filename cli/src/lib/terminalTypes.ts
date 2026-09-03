@@ -64,6 +64,13 @@ export interface TerminalCreateRequest {
   label?: string
   /** argv (binary first) to run instead of the backend's default shell, e.g. an engine CLI launch. */
   command?: string[]
+  /**
+   * Extra environment for the created terminal, layered over whatever it would otherwise inherit.
+   *
+   * Deliberately not part of `command`: these values are credentials (a grid relay key, see
+   * `gridLaunch.ts`), and argv is world-readable through `ps` for as long as the process lives.
+   */
+  env?: Record<string, string>
 }
 
 export type TerminalCreateResult<Ref extends TerminalRuntimeRef = TerminalRuntimeRef> =

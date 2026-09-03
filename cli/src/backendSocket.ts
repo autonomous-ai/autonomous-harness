@@ -22,6 +22,7 @@ import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
+import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -293,7 +294,13 @@ export class BackendSocket {
   onDeleteAgent: ((sessionId: string) => void) | null = null
   /** Called on `agent_create` — cli.ts spawns a fresh tmux session running the requested engine in the
    *  requested folder and returns its process-agent. Session metadata may bind later through hooks. */
-  onCreateAgent: ((input: { engine: AgentEngine; cwd: string; bypassPermission: boolean }) =>
+  onCreateAgent: ((input: {
+    engine: AgentEngine
+    cwd: string
+    bypassPermission: boolean
+    /** A grid to point this agent at instead of the engine's own login; null when none was chosen. */
+    grid: GridLaunchOverride | null
+  }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
@@ -1281,7 +1288,17 @@ export class BackendSocket {
           if (!engine || !ENGINES.includes(engine)) { reply(type, requestId, { error: 'INVALID_ENGINE' }); return }
           if (!cwd || !isAbsolute(cwd)) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
-          const result = await this.onCreateAgent({ engine, cwd, bypassPermission: payload.bypassPermission === true })
+          // Absent is the ordinary case and stays indistinguishable from a client that predates grids;
+          // present-but-malformed is refused here rather than half-applied at launch, because an agent
+          // that quietly ran on the engine's own login would look like it worked.
+          const grid = parseGridLaunchOverride(payload.grid)
+          if (grid.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: grid.reason }); return }
+          const result = await this.onCreateAgent({
+            engine,
+            cwd,
+            bypassPermission: payload.bypassPermission === true,
+            grid: grid.state === 'ok' ? grid.override : null,
+          })
           // `detail` carries the underlying cause (tmux's own message) so the person who clicked
           // Create can read it, rather than having to open a log on the machine that failed.
           if (!result.ok) {
