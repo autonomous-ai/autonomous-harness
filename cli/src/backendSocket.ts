@@ -295,6 +295,15 @@ export class BackendSocket {
    *  requested folder and returns its process-agent. Session metadata may bind later through hooks. */
   onCreateAgent: ((input: { engine: AgentEngine; cwd: string; bypassPermission: boolean }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  /** Called on `agent_restart` — cli.ts stops the agent's live engine process and relaunches it in the
+   *  SAME tmux pane, keeping the SAME agentId and (best-effort) resuming the same engine session.
+   *  `resumed` tells the caller whether the relaunch actually resumed the prior conversation or had to
+   *  fall back to a fresh one under the same agent/pane. */
+  onRestartAgent: ((agentId: string) =>
+    Promise<
+      { ok: true; session: RegisteredSession; resumed: boolean }
+      | { ok: false; error: string; detail?: string }
+    >) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -1300,6 +1309,21 @@ export class BackendSocket {
           if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           this.onDeleteAgent?.(target)
           reply(type, requestId, { deleted: true })
+          return
+        }
+
+        // Restart an agent: exit its live engine process and relaunch it in the SAME tmux pane, keeping
+        // the SAME agentId. Follows agent_create/agent_delete's exact validate → delegate → reply shape.
+        case 'agent_restart': {
+          const target = payload.agentId as string | undefined
+          if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
+          if (!this.onRestartAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const result = await this.onRestartAgent(target)
+          if (!result.ok) {
+            reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
+            return
+          }
+          reply(type, requestId, { agent: await this.toProject(result.session), resumed: result.resumed })
           return
         }
 

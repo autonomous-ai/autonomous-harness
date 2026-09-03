@@ -44,11 +44,20 @@ import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
-import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
+import { terminateDeletedAgent, checkPidRuntime } from './lib/deleteAgentFallback.js'
+import { restartAgent } from './lib/restartAgent.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { basename } from 'node:path'
-import { captureTmuxPane, clearPaneRemainOnExit, resolvePaneEngineProcess, tmuxPaneProcessTree, tmuxPaneState, type TmuxPaneState } from './lib/tmux.js'
+import {
+  bypassPermissionActive,
+  captureTmuxPane,
+  clearPaneRemainOnExit,
+  resolvePaneEngineProcess,
+  tmuxPaneProcessTree,
+  tmuxPaneState,
+  type TmuxPaneState,
+} from './lib/tmux.js'
 import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
@@ -64,7 +73,13 @@ import { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
-import { terminalActionNotStarted, type HookTerminalHint, type TerminalActionResult, type TerminalRuntimeRef } from './lib/terminalTypes.js'
+import {
+  terminalActionNotStarted,
+  type HookTerminalHint,
+  type TerminalActionResult,
+  type TerminalRuntimeRef,
+  type TmuxRuntimeRef,
+} from './lib/terminalTypes.js'
 import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
@@ -2894,16 +2909,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     forgetSession(sessionId, { force: true })
     if (!s) return
     void terminateDeletedAgent(s, {
-      checkRuntime: async (session) => {
-        const expected = session.processIdentity
-        if (!expected) return { state: 'gone', reason: 'agent has no saved process identity' }
-        const rows = await processRows()
-        if (!rows) return { state: 'unknown', reason: 'process table is unavailable' }
-        const live = rows.find((row) => row.pid === expected.pid)
-        return live && live.startMarker === expected.startMarker && live.executable === expected.executable
-          ? { state: 'alive' }
-          : { state: 'gone', reason: 'saved process identity is no longer running' }
-      },
+      checkRuntime: checkPidRuntime,
       kill: (pid, signal) => process.kill(pid, signal),
       sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.() }),
       log: (message) => console.log(message),
@@ -2915,6 +2921,97 @@ async function runForeground(session: AuthSession): Promise<void> {
     }).catch((err) => {
       console.error('[delete] process termination failed:', err instanceof Error ? err.message : err)
     })
+  }
+
+  /**
+   * Web or device restarted an agent (`agent_restart`): exit the live engine process and relaunch it in
+   * the SAME tmux pane, keeping the SAME agentId/session — restart must never look like delete+create to
+   * the registry or the UI. Two things guard that identity:
+   *
+   *  - `remain-on-exit` is re-armed on the pane before the old process is killed (mirrors what
+   *    `create()` does at spawn time), or tmux would tear the pane — and with it the whole one-pane
+   *    session — down the instant that process exits.
+   *  - the periodic reconciler is told to ignore this pane's ROUTE for the duration of the swap
+   *    (`agentReconciler.holdRoute`/`releaseRoute`), or it would either flicker the agent dormant
+   *    mid-kill, or — worse — mint a brand-new agent for the relaunched process the instant it appears,
+   *    before this handler gets to rebind it.
+   *
+   * The bypass-permission mode is read from the LIVE process argv before anything is signalled (there is
+   * nowhere else to read it from once the process is dead); the sessionId to resume comes from the
+   * registry's live-synced field, not from the original launch argv (the user may have resumed/switched
+   * sessions from inside the engine's own terminal since launch).
+   */
+  backend.onRestartAgent = async (agentId) => {
+    const session = registry.resolve(agentId)
+    if (!session) return { ok: false, error: 'AGENT_NOT_FOUND' }
+    if (!session.tmuxPane || !tmuxBackend) return { ok: false, error: 'RESTART_UNSUPPORTED_BACKEND' }
+    if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
+    const pane = session.tmuxPane
+    const engine = session.engine
+    const runtime: TmuxRuntimeRef = { backend: 'tmux', paneId: pane }
+    const routeKey = terminalRouteKey(runtime)
+
+    agentReconciler.holdRoute(routeKey)
+    try {
+      const rows = await processRows()
+      const row = rows?.find((candidate) =>
+        candidate.pid === session.processIdentity!.pid && candidate.startMarker === session.processIdentity!.startMarker)
+      const bypassPermission = row ? bypassPermissionActive(engine, row.args) : false
+
+      const outcome = await restartAgent({ engine, sessionId: session.sessionId }, bypassPermission, {
+        holdOpen: async () => {
+          const result = await tmuxBackend!.holdOpen(runtime)
+          return result.state === 'succeeded'
+            ? { ok: true }
+            : { ok: false, reason: 'reason' in result ? result.reason : 'could not re-arm remain-on-exit' }
+        },
+        terminate: (checkAfterMs) => terminateDeletedAgent(session, {
+          checkRuntime: checkPidRuntime,
+          kill: (pid, signal) => process.kill(pid, signal),
+          sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.() }),
+          log: (message) => console.log(message),
+        }, checkAfterMs),
+        respawn: async (argv) => {
+          const result = await tmuxBackend!.respawn(runtime, argv, session.cwd)
+          return result.state === 'succeeded'
+            ? { ok: true }
+            : { ok: false, reason: 'reason' in result ? result.reason : 'tmux respawn-pane did not complete' }
+        },
+        waitForProcess: async () => {
+          // Mirrors onCreateAgent's own discovery budget/backoff shape for the same reason: the engine's
+          // interactive-login-shell startup, not the tmux call, is the slow half.
+          const RESTART_DISCOVERY_BUDGET_MS = 8_000
+          let delayMs = 150
+          let waited = 0
+          while (waited < RESTART_DISCOVERY_BUDGET_MS) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
+            waited += delayMs
+            const found = await resolvePaneEngineProcess(pane, engine)
+            if (found) return found
+            delayMs = Math.min(delayMs * 2, 750)
+          }
+          return null
+        },
+        buildArgv: (opts) => buildEngineLaunchArgv(engine, opts),
+        log: (message) => console.log(message),
+      })
+
+      if (!outcome.ok) return { ok: false, error: 'RESTART_FAILED', detail: outcome.detail }
+
+      // Address the CANONICAL agentId from the resolved session, not the raw RPC input — `resolve()`
+      // accepts either an agentId or a bare sessionId, but `setActive`/`byAgent` only ever key on the
+      // real agentId.
+      registry.updateProcessIdentity(session.agentId, outcome.processIdentity)
+      registry.setActive(session.agentId, true)
+      await clearPaneRemainOnExit(pane)
+      const refreshed = registry.byAgent(session.agentId)
+      if (!refreshed) return { ok: false, error: 'RESTART_FAILED', detail: 'agent vanished from the registry mid-restart' }
+      announceSession(refreshed)
+      console.log(`[restart] ${sid(session.agentId)} ${engine} · ${outcome.resumed ? 'resumed' : 'fresh session'}`)
+      return { ok: true, session: refreshed, resumed: outcome.resumed }
+    } finally {
+      agentReconciler.releaseRoute(routeKey)
+    }
   }
 
   backend.onMessage = (id, content) => {

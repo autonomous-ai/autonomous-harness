@@ -129,6 +129,40 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     return legacyActionResult(ok, 'tmux session close')
   }
 
+  /**
+   * Re-arm `remain-on-exit` on an already-live pane, mirroring what `create()` does at spawn time.
+   *
+   * Restart must call this BEFORE killing the pane's engine process. `clearPaneRemainOnExit` turns
+   * this off the moment an agent is first confirmed (see `cli.ts`'s `onCreateAgent`), so without
+   * re-arming it here tmux destroys the pane — and, being its only pane, the whole session — the
+   * instant the old process exits.
+   */
+  async holdOpen(runtime: TmuxRuntimeRef): Promise<TerminalActionResult> {
+    const ok = await new Promise<boolean>((resolve) => {
+      execFile('tmux', ['set-option', '-w', '-t', runtime.paneId, 'remain-on-exit', 'on'], { timeout: 2_000 }, (error) => {
+        resolve(!error)
+      })
+    })
+    return legacyActionResult(ok, 'tmux remain-on-exit re-arm')
+  }
+
+  /**
+   * Replace the process running in an existing pane IN PLACE, preserving the pane/session — the tmux
+   * primitive restart needs. `-k` is always passed: harmless on an already-dead pane (the normal case,
+   * since the caller kills the old process itself first), and a safety net against anything that kill
+   * sequence did not reach. Same unquoted-argv convention as `create()` — no shell interposition, so
+   * engine paths/flags cannot be interpolated.
+   */
+  async respawn(runtime: TmuxRuntimeRef, command: string[], cwd: string | null): Promise<TerminalActionResult> {
+    const args = ['respawn-pane', '-k', '-t', runtime.paneId]
+    if (cwd) args.push('-c', cwd)
+    args.push(...command)
+    const ok = await new Promise<boolean>((resolve) => {
+      execFile('tmux', args, { timeout: 5_000 }, (error) => resolve(!error))
+    })
+    return legacyActionResult(ok, 'tmux respawn-pane')
+  }
+
   async titles(): Promise<TerminalReadResult<Map<string, string>>> {
     const titles = await listPaneTitles()
     return {

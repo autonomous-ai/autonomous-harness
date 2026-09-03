@@ -768,6 +768,45 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(registry.resolve('s1')?.agentId).toBe('agent-1')
   })
 
+  it('restart contract: updateProcessIdentity swaps ONLY the process, keeping agentId/sessionId/runtimes', async () => {
+    // This is the primitive a restart handler relies on: exit the engine process, relaunch it in the
+    // same pane, and rebind the SAME agent to the new process — never look like delete+create.
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registerProcess(registry, { launcherId: 'agent-1', sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%1', cwd: '/tmp/demo' })
+    const before = registry.resolve('agent-1')!
+    // Registry entries are mutated in place (resolve() returns the live object), so the "before"
+    // snapshot has to be copied — not just referenced — ahead of the swap.
+    const beforeRuntimes = [...before.runtimes]
+    const beforePrimary = before.primaryRuntimeKey
+    const beforeIdentity = { ...before.processIdentity }
+
+    const replacement = processIdentity(999)
+    const ok = registry.updateProcessIdentity('agent-1', replacement)
+
+    expect(ok).toBe(true)
+    const after = registry.resolve('agent-1')!
+    expect(after.agentId).toBe('agent-1')
+    expect(after.sessionId).toBe('s1')
+    expect(after.runtimes).toEqual(beforeRuntimes)
+    expect(after.primaryRuntimeKey).toBe(beforePrimary)
+    expect(after.processIdentity).toEqual(replacement)
+    expect(after.processIdentity).not.toEqual(beforeIdentity)
+    // Both lookups still resolve to the one record — swapping the process never splits the agent.
+    expect(registry.resolve('s1')?.agentId).toBe('agent-1')
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('restart contract: updateProcessIdentity also resolves by bare sessionId', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registerProcess(registry, { launcherId: 'agent-1', sessionId: 's1', transcriptPath: transcript('s1'), tmuxPane: '%1', cwd: '/tmp/demo' })
+
+    expect(registry.updateProcessIdentity('s1', processIdentity(999))).toBe(true)
+
+    expect(registry.byAgent('agent-1')?.processIdentity).toEqual(processIdentity(999))
+  })
+
   it('does not advertise persisted terminal locators before this daemon verifies them', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

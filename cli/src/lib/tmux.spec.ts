@@ -6,6 +6,7 @@ import { ENGINES } from '../engines/types.js'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import {
   ambiguousAgentProcess,
+  bypassPermissionActive,
   engineProcessMatch,
   engineProcessMatchScore,
   parseProcessRow,
@@ -216,6 +217,32 @@ describe('tmux process primitives', () => {
     expect(resumeSessionId('claude', 'claude --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
     expect(resumeSessionId('codex', 'codex resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
     expect(resumeSessionId('devin', 'devin --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
+  })
+
+  it('reads bypass-permission mode from a live process argv via exact token match', () => {
+    expect(bypassPermissionActive('claude', '/usr/local/bin/claude --dangerously-skip-permissions'))
+      .toBe(true)
+    expect(bypassPermissionActive('codex', 'codex --dangerously-bypass-approvals-and-sandbox'))
+      .toBe(true)
+    expect(bypassPermissionActive('cursor', 'cursor-agent --force')).toBe(true)
+    expect(bypassPermissionActive('opencode', 'opencode --auto')).toBe(true)
+  })
+
+  it('does not false-positive on a flag that only appears as a substring', () => {
+    // The flag text can legitimately appear inside a prompt/argument; only an exact token counts.
+    expect(bypassPermissionActive('claude', 'claude "please avoid --dangerously-skip-permissions for now"'))
+      .toBe(false)
+    expect(bypassPermissionActive('claude', 'claude --dangerously-skip-permissions-explained')).toBe(false)
+  })
+
+  it('reads false when the confirmed flag is absent', () => {
+    expect(bypassPermissionActive('claude', 'claude --resume abc')).toBe(false)
+  })
+
+  it('always reads false for engines with no confirmed bypass flag — never guesses', () => {
+    expect(bypassPermissionActive('pi', 'pi --dangerously-skip-permissions')).toBe(false)
+    expect(bypassPermissionActive('hermes', 'hermes --dangerously-skip-permissions')).toBe(false)
+    expect(bypassPermissionActive('devin', 'devin --dangerously-skip-permissions')).toBe(false)
   })
 
   it('maps neutral visible/history and ANSI capture options to tmux flags', () => {

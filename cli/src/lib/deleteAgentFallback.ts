@@ -1,13 +1,33 @@
 /** Stop the exact discovered engine process while leaving the user's tmux pane and shell alive. */
 
 import type { RegisteredSession } from './registry.js'
-import type { RuntimeCheck } from './tmux.js'
+import { processRows, type RuntimeCheck } from './tmux.js'
 
 /** Delete has already removed the UI entry; signal the saved process immediately. */
 export const TERMINATE_CHECK_MS = 0
 /** After SIGTERM. Matches the daemon's own stop sequence rather than inventing a tighter one. */
 export const FALLBACK_KILL_GRACE_MS = 3_000
 const POLL_MS = 250
+
+/**
+ * Exact PID + start-marker + executable validation — the PID-reuse guard shared by delete and restart.
+ * Deliberately PID-only, not pane-based (unlike tmux.ts's `checkSessionRuntime`): by the time either
+ * caller runs, the pane's UI entry may already be gone (delete) or is about to host a brand-new process
+ * on purpose (restart), so nothing here should care whether a `tmux` pane still shows the expected
+ * engine — only whether the exact saved process is still the one running.
+ */
+export async function checkPidRuntime(
+  session: Pick<RegisteredSession, 'engine' | 'processIdentity'>,
+): Promise<RuntimeCheck> {
+  const expected = session.processIdentity
+  if (!expected) return { state: 'gone', reason: 'agent has no saved process identity' }
+  const rows = await processRows()
+  if (!rows) return { state: 'unknown', reason: 'process table is unavailable' }
+  const live = rows.find((row) => row.pid === expected.pid)
+  return live && live.startMarker === expected.startMarker && live.executable === expected.executable
+    ? { state: 'alive' }
+    : { state: 'gone', reason: 'saved process identity is no longer running' }
+}
 
 export type TerminateOutcome =
   /** It left before or during signalling. */

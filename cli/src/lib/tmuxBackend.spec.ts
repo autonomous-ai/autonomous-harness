@@ -81,6 +81,47 @@ exit 1
     expect(created.reason).toBe('tmux is unavailable')
   })
 
+  it('re-arms remain-on-exit on an already-live pane for holdOpen', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-holdopen-'))
+    dirs.push(dir)
+    const calls = join(dir, 'calls')
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    process.env.TMUX_BACKEND_CALLS = calls
+
+    await expect(new TmuxBackend().holdOpen({ backend: 'tmux', paneId: '%9' }))
+      .resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
+    expect(readFileSync(calls, 'utf8').trim()).toBe('set-option -w -t %9 remain-on-exit on')
+  })
+
+  it('respawns a pane in place with -k, an optional cwd, and the exact argv, no shell', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-'))
+    dirs.push(dir)
+    const calls = join(dir, 'calls')
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+    process.env.TMUX_BACKEND_CALLS = calls
+
+    const backend = new TmuxBackend()
+    await expect(backend.respawn({ backend: 'tmux', paneId: '%9' }, ['claude', '--resume', 'abc; rm -rf /'], '/tmp/work'))
+      .resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
+    await expect(backend.respawn({ backend: 'tmux', paneId: '%9' }, ['claude'], null))
+      .resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
+      // The `;` inside an argv element is never shell-interpreted — it lands as one literal token.
+      'respawn-pane -k -t %9 -c /tmp/work claude --resume abc; rm -rf /',
+      'respawn-pane -k -t %9 claude',
+    ])
+  })
+
   it('displays a bounded message in the addressed pane without a shell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-notify-'))
     dirs.push(dir)

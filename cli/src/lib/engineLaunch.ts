@@ -30,14 +30,61 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
 
 export interface LaunchCommandOptions {
   bypassPermission?: boolean
+  /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
+  resumeSessionId?: string
+}
+
+/**
+ * Best-known "resume this session id" launch flag per engine — kept SEPARATE from tmux.ts's
+ * `RESUME_ARGS` (parsing-only, reverse-engineered from an already-running process's argv, never proven
+ * as a launch argument). `claude` and `codex` are populated here from confirmed real invocations (see
+ * the `resumeSessionId` test fixtures in tmux.spec.ts: `'claude --resume <id>'`, `'codex resume <id>'`)
+ * even though `RESUME_ARGS` has no entry for either — that map's silence reflects that neither engine
+ * ever needed argv-based repair (both fire their own SessionStart hook on resume), not an absent flag.
+ * `amp` needs its full subcommand chain (`amp threads continue <id>`, confirmed by the same fixture
+ * file) rather than the bare `continue` alternative `RESUME_ARGS` also accepts for parsing purposes.
+ *
+ * A wrong or unsupported entry here is not fatal: restart (cli.ts's `onRestartAgent`) falls back to a
+ * fresh, no-resume relaunch automatically if the flagged relaunch doesn't produce a recognizable
+ * process within budget — a working agent under a fresh session beats a dead pane.
+ *
+ * A leading token that does NOT start with `-` is a SUBCOMMAND (`resume`, `threads continue`) and must
+ * be the first argv after the binary, ahead of any other flag — `buildEngineCommandArgv` branches on
+ * this. `devin` has no known resume flag at all (not even for `RESUME_ARGS` parsing) and is
+ * deliberately omitted, so no resume is ever attempted for it.
+ */
+export const LAUNCH_RESUME_FLAG: Readonly<Partial<Record<AgentEngine, string[]>>> = {
+  claude: ['--resume'],
+  codex: ['resume'],
+  cursor: ['--resume'],
+  opencode: ['--session'],
+  kilo: ['--session'],
+  pi: ['--session'],
+  hermes: ['--resume'],
+  commandcode: ['--resume'],
+  muse: ['resume'],
+  amp: ['threads', 'continue'],
+  grok: ['--resume'],
+  agy: ['--conversation'],
+  copilot: ['--resume'],
 }
 
 /** The executable argv, before the interactive-shell wrapper is applied. */
 export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandOptions = {}): string[] {
   const argv = [engineBin(engine)]
+  const resumeFlag = opts.resumeSessionId ? LAUNCH_RESUME_FLAG[engine] : undefined
+  const resumeIsSubcommand = !!resumeFlag?.length && !resumeFlag[0].startsWith('-')
+  // Subcommand-style resume (`codex resume <id>`, `amp threads continue <id>`, `muse resume <id>`) is
+  // parsed positionally and must be the first argv after the binary, ahead of any other flag.
+  if (resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
+    argv.push(...resumeFlag, opts.resumeSessionId)
+  }
   if (opts.bypassPermission) {
     const flags = BYPASS_PERMISSION_FLAGS[engine]
     if (flags) argv.push(...flags)
+  }
+  if (!resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
+    argv.push(...resumeFlag, opts.resumeSessionId)
   }
   return argv
 }

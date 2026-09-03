@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   BYPASS_PERMISSION_FLAGS,
+  LAUNCH_RESUME_FLAG,
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
@@ -49,6 +50,39 @@ describe('buildEngineLaunchArgv', () => {
     for (const engine of ENGINES) {
       expect(Object.prototype.hasOwnProperty.call(BYPASS_PERMISSION_FLAGS, engine)).toBe(true)
     }
+  })
+
+  it('appends a flag-style resume argument after the binary', () => {
+    expect(buildEngineCommandArgv('claude', { resumeSessionId: 'abc-123' }))
+      .toEqual([engineBin('claude'), '--resume', 'abc-123'])
+    expect(buildEngineCommandArgv('opencode', { resumeSessionId: 'ses_1' }))
+      .toEqual([engineBin('opencode'), '--session', 'ses_1'])
+  })
+
+  it('puts a subcommand-style resume FIRST, ahead of any other flag', () => {
+    expect(buildEngineCommandArgv('codex', { resumeSessionId: 'abc-123' }))
+      .toEqual([engineBin('codex'), 'resume', 'abc-123'])
+    expect(buildEngineCommandArgv('codex', { resumeSessionId: 'abc-123', bypassPermission: true }))
+      .toEqual([engineBin('codex'), 'resume', 'abc-123', '--dangerously-bypass-approvals-and-sandbox'])
+    expect(buildEngineCommandArgv('amp', { resumeSessionId: 'T-1' }))
+      .toEqual([engineBin('amp'), 'threads', 'continue', 'T-1'])
+  })
+
+  it('still applies bypassPermission with no resume requested (regression)', () => {
+    expect(buildEngineCommandArgv('claude', { bypassPermission: true }))
+      .toEqual([engineBin('claude'), '--dangerously-skip-permissions'])
+  })
+
+  it('is a no-op when resumeSessionId is set but the engine has no known launch resume flag', () => {
+    expect(buildEngineCommandArgv('devin', { resumeSessionId: 'abc-123' })).toEqual([engineBin('devin')])
+  })
+
+  it('has a launch resume flag for every engine RESUME_ARGS also covers, plus claude/codex', () => {
+    for (const engine of ['claude', 'codex', 'cursor', 'opencode', 'kilo', 'pi', 'hermes', 'commandcode',
+      'muse', 'amp', 'grok', 'agy', 'copilot'] as const) {
+      expect(LAUNCH_RESUME_FLAG[engine]?.length).toBeGreaterThan(0)
+    }
+    expect(LAUNCH_RESUME_FLAG.devin).toBeUndefined()
   })
 })
 

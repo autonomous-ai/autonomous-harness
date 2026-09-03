@@ -466,6 +466,128 @@ describe('BackendSocket outbound queue', () => {
   })
 })
 
+describe('agent_restart RPC', () => {
+  afterEach(() => {
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  const BASE_SESSION: RegisteredSession = {
+    schemaVersion: 2,
+    active: true,
+    agentId: 'agent-1',
+    sessionId: 'session-1',
+    boundAt: 1,
+    engine: 'claude',
+    transcriptPath: null,
+    projectDir: 'workspace',
+    cwd: '/tmp/workspace',
+    runtimes: [],
+    primaryRuntimeKey: '',
+    tmuxPane: '%1',
+    source: null,
+    title: 'Agent one',
+    model: null,
+    cliVersion: null,
+    processIdentity: null,
+    registeredAt: 1,
+    updatedAt: 1,
+    lastHookAt: 1,
+    lastTranscriptAt: 1,
+  }
+
+  function localSocket(): { socket: BackendSocket; frames: Array<Record<string, unknown>> } {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:restart', {
+      sendFrame: (frame) => { frames.push(frame); return true },
+      sendBinary: () => true,
+    })
+    return { socket, frames }
+  }
+
+  it('replies MISSING_AGENT_ID when no agentId is given', async () => {
+    const { socket, frames } = localSocket()
+    socket.handleLocalFrame('local:restart', { type: 'agent_restart', payload: { requestId: 'r1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'agent_restart_result', payload: { requestId: 'r1', error: 'MISSING_AGENT_ID' },
+    }))
+    await socket.unregisterLocalClient('local:restart')
+    await socket.stop()
+  })
+
+  it('replies UNSUPPORTED_ON_REMOTE when no handler is wired', async () => {
+    const { socket, frames } = localSocket()
+    socket.handleLocalFrame('local:restart', { type: 'agent_restart', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'agent_restart_result', payload: { requestId: 'r1', error: 'UNSUPPORTED_ON_REMOTE' },
+    }))
+    await socket.unregisterLocalClient('local:restart')
+    await socket.stop()
+  })
+
+  it('delegates to onRestartAgent and replies with the agent projection and the resumed flag on success', async () => {
+    const { socket, frames } = localSocket()
+    let seenAgentId: string | undefined
+    socket.onRestartAgent = async (agentId) => {
+      seenAgentId = agentId
+      return { ok: true, session: BASE_SESSION, resumed: true }
+    }
+    socket.handleLocalFrame('local:restart', { type: 'agent_restart', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => {
+      const result = frames.find((f) => f.type === 'agent_restart_result')
+      expect(result).toMatchObject({
+        type: 'agent_restart_result',
+        payload: {
+          requestId: 'r1',
+          resumed: true,
+          agent: expect.objectContaining({ id: 'agent-1', sessionId: 'session-1', engine: 'claude' }),
+        },
+      })
+    })
+    expect(seenAgentId).toBe('agent-1')
+    await socket.unregisterLocalClient('local:restart')
+    await socket.stop()
+  })
+
+  it('reports a fresh (non-resumed) relaunch through the same resumed flag', async () => {
+    const { socket, frames } = localSocket()
+    socket.onRestartAgent = async () => ({ ok: true, session: BASE_SESSION, resumed: false })
+    socket.handleLocalFrame('local:restart', { type: 'agent_restart', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => {
+      const result = frames.find((f) => f.type === 'agent_restart_result')
+      expect(result).toMatchObject({ payload: { requestId: 'r1', resumed: false } })
+    })
+    await socket.unregisterLocalClient('local:restart')
+    await socket.stop()
+  })
+
+  it('replies with error+detail on failure, matching agent_create/agent_delete\'s reply shape', async () => {
+    const { socket, frames } = localSocket()
+    socket.onRestartAgent = async () => (
+      { ok: false, error: 'RESTART_FAILED', detail: 'claude did not come back up after restart' }
+    )
+    socket.handleLocalFrame('local:restart', { type: 'agent_restart', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'agent_restart_result',
+      payload: { requestId: 'r1', error: 'RESTART_FAILED', detail: 'claude did not come back up after restart' },
+    }))
+    await socket.unregisterLocalClient('local:restart')
+    await socket.stop()
+  })
+
+  it('omits detail on failure when the handler did not supply one', async () => {
+    const { socket, frames } = localSocket()
+    socket.onRestartAgent = async () => ({ ok: false, error: 'AGENT_NOT_FOUND' })
+    socket.handleLocalFrame('local:restart', { type: 'agent_restart', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'agent_restart_result', payload: { requestId: 'r1', error: 'AGENT_NOT_FOUND' },
+    }))
+    await socket.unregisterLocalClient('local:restart')
+    await socket.stop()
+  })
+})
+
 describe('compact runtime picker catalog', () => {
   const models = [
     { id: 'runtime-v1:s1:codex:gpt-5.6-sol@auto', displayName: 'Sol / Auto' },
