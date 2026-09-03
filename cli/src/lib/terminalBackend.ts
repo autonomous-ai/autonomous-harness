@@ -8,6 +8,7 @@ import type {
   TerminalLogicalKey,
   TerminalProcessExpectation,
   TerminalReadResult,
+  TerminalRespawnRequest,
   TerminalRuntimeRef,
   TerminalStreamHandle,
   TerminalStreamSink,
@@ -40,4 +41,11 @@ export interface TerminalBackend<Ref extends TerminalRuntimeRef = TerminalRuntim
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
   ): Promise<TerminalReadResult<TerminalStreamHandle<Ref>>>
+
+  /** Restart's two primitives. Optional per backend — only tmux (a real multiplexer pane) supports an
+   *  in-place process swap; a backend without them makes restart report RESTART_UNSUPPORTED_BACKEND. */
+  /** Re-arm a pane's "keep it when the process dies" behavior ahead of killing that process. */
+  holdOpen?(runtime: Ref): Promise<TerminalActionResult>
+  /** Replace the process occupying an existing pane/session in place, preserving its identity. */
+  respawn?(runtime: Ref, request: TerminalRespawnRequest): Promise<TerminalActionResult>
 }

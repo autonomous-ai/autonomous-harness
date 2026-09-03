@@ -226,6 +226,82 @@ describe('composite terminal reconciliation', () => {
   })
 })
 
+describe('restart route hold', () => {
+  it('skips dormant-detection for a held route while a restart is in progress', async () => {
+    const current = session([tmux])
+    const onDormant = vi.fn()
+    const onRemoved = vi.fn()
+    // Same shape as "keeps a pane advertised but marks its missing engine dormant after two scans"
+    // above: the pane's terminal placement validates alive, but no engine process is ever observed —
+    // ordinarily that drives the agent dormant after MISS_LIMIT scans.
+    const validate = vi.fn(async () => ({ state: 'alive' as const }))
+    const backend = { instanceId: 'tmux:default', validate } as unknown as TerminalBackend
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [backend], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant, onRemoved,
+      probe: async () => probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }]),
+    })
+    reconciler.holdRoute(terminalRouteKey(tmux))
+
+    await reconciler.trigger()
+    await reconciler.trigger()
+    await reconciler.trigger()
+
+    expect(onDormant).not.toHaveBeenCalled()
+    expect(onRemoved).not.toHaveBeenCalled()
+    expect(validate).not.toHaveBeenCalled()
+  })
+
+  it('does not open the replacement process as a new agent while its route is held', async () => {
+    const current = session([tmux])
+    const replacement = {
+      ...observed([tmux]),
+      processIdentity: { pid: 99, executable: 'claude', startMarker: 'Sat Aug 15 10:05:00 2026' },
+    }
+    const onDiscovered = vi.fn()
+    const onObserved = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered, onObserved, onDormant: vi.fn(), onRemoved: vi.fn(),
+      probe: async () => probe(
+        [{ instanceId: 'tmux:default', result: { state: 'available', roots: [{ runtime: tmux, rootPid: 1, cwd: '/work' }] } }],
+        [replacement],
+      ),
+    })
+    reconciler.holdRoute(terminalRouteKey(tmux))
+
+    await reconciler.trigger()
+
+    expect(onDiscovered).not.toHaveBeenCalled()
+    // The pre-existing agent isn't rebound through ordinary observation either — the restart handler
+    // owns that via `registry.updateProcessIdentity` once it confirms the new process itself.
+    expect(onObserved).not.toHaveBeenCalled()
+  })
+
+  it('resumes normal reconciliation once the route is released', async () => {
+    const current = session([tmux])
+    const onDormant = vi.fn()
+    const validate = vi.fn(async () => ({ state: 'alive' as const }))
+    const backend = { instanceId: 'tmux:default', validate } as unknown as TerminalBackend
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [backend], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant, onRemoved: vi.fn(),
+      probe: async () => probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }]),
+    })
+    const routeKey = terminalRouteKey(tmux)
+    reconciler.holdRoute(routeKey)
+    await reconciler.trigger()
+    expect(onDormant).not.toHaveBeenCalled()
+    expect(validate).not.toHaveBeenCalled()
+
+    reconciler.releaseRoute(routeKey)
+    await reconciler.trigger()
+    await reconciler.trigger()
+
+    expect(onDormant).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('verified process adoption', () => {
   it('opens a sessionless agent through the normal discovery callback without another inventory scan', async () => {
     let current: RegisteredSession[] = []

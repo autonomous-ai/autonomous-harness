@@ -308,9 +308,21 @@ export class BackendSocket {
    * Separate from `onCreateAgent` because it is a different promise: the pane, its id and its
    * scrollback survive, and only the process is replaced. A running process's environment cannot be
    * edited, so there is no gentler way to move an agent that is already up.
+   *
+   * Separate from `onRestartAgent` because that one puts the agent back exactly as it was; this one
+   * puts it back somewhere else. They share the swap underneath and differ in what they hand it.
    */
   onRetargetAgent: ((input: { agentId: string; grid: GridLaunchOverride }) =>
     Promise<{ ok: true } | { ok: false; error: string; detail?: string }>) | null = null
+  /** Called on `agent_restart` — cli.ts stops the agent's live engine process and relaunches it in the
+   *  SAME tmux pane, keeping the SAME agentId and (best-effort) resuming the same engine session.
+   *  `resumed` tells the caller whether the relaunch actually resumed the prior conversation or had to
+   *  fall back to a fresh one under the same agent/pane. */
+  onRestartAgent: ((agentId: string) =>
+    Promise<
+      { ok: true; session: RegisteredSession; resumed: boolean }
+      | { ok: false; error: string; detail?: string }
+    >) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -1352,6 +1364,21 @@ export class BackendSocket {
           if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           this.onDeleteAgent?.(target)
           reply(type, requestId, { deleted: true })
+          return
+        }
+
+        // Restart an agent: exit its live engine process and relaunch it in the SAME tmux pane, keeping
+        // the SAME agentId. Follows agent_create/agent_delete's exact validate → delegate → reply shape.
+        case 'agent_restart': {
+          const target = payload.agentId as string | undefined
+          if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
+          if (!this.onRestartAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const result = await this.onRestartAgent(target)
+          if (!result.ok) {
+            reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
+            return
+          }
+          reply(type, requestId, { agent: await this.toProject(result.session), resumed: result.resumed })
           return
         }
 

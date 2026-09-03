@@ -14,6 +14,7 @@ import {
   executableFileIdentity,
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
+import { BYPASS_PERMISSION_FLAGS } from './engineLaunch.js'
 
 function cleanPaneTitle(title: string): string | null {
   const cleaned = title
@@ -52,7 +53,7 @@ export interface ProcessRow extends ProcessIdentity {
   entrypointFileKey?: string
 }
 
-function argvTokens(args: string): string[] {
+export function argvTokens(args: string): string[] {
   return (args.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((token) => {
     const quoted = (token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))
     return quoted ? token.slice(1, -1) : token
@@ -562,6 +563,21 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
   // `copilot --resume=<id>` and `--session-id <id>`; bare `--resume`/`--continue` name nothing and
   // fall through to the directory scan in sessionRepair.
   copilot: { flags: ['--resume', '--session-id'], id: /^[0-9a-f-]{16,}$/i },
+}
+
+/**
+ * Whether a live process's argv already contains every flag this engine's confirmed bypass-permission
+ * mode requires — read from the running process BEFORE restart signals it, so the relaunch can reapply
+ * the exact autonomy mode the agent had (there is nowhere else to read it from once the process is
+ * dead). Token-exact via `argvTokens`, not a substring `.includes()` check on the raw string, so a
+ * prompt or argument that merely CONTAINS the flag text cannot false-positive. Engines with no
+ * confirmed bypass flag (`BYPASS_PERMISSION_FLAGS[engine] === null`) always read false — never guess.
+ */
+export function bypassPermissionActive(engine: RegisteredSession['engine'], args: string): boolean {
+  const flags = BYPASS_PERMISSION_FLAGS[engine]
+  if (!flags) return false
+  const tokens = argvTokens(args)
+  return flags.every((flag) => tokens.includes(flag))
 }
 
 /** The session id an engine was told to resume, or null when argv does not name one. */

@@ -77,6 +77,11 @@ export class TerminalAgentReconciler {
   private readonly engineMisses = new Map<string, number>()
   private readonly suppressed = new Set<string>()
   private readonly hints = new Map<string, AgentEngine>()
+  /** Terminal routes currently mid an in-place process swap (restart). Held by ROUTE, not by process
+   *  identity like `suppressed` — the replacement process's identity is not known until the swap
+   *  finishes, so there is nothing to key a process-identity suppression on yet. */
+  private readonly heldRoutes = new Set<string>()
+  private readonly heldRouteTimers = new Map<string, NodeJS.Timeout>()
   private pending = false
   private inFlight: Promise<void> | null = null
   private timer: NodeJS.Timeout | null = null
@@ -126,6 +131,40 @@ export class TerminalAgentReconciler {
   /** Hide an explicitly deleted process until an authoritative scan proves that process exited. */
   suppress(session: Pick<RegisteredSession, 'engine' | 'processIdentity'>): void {
     if (session.processIdentity) this.suppressed.add(processIdentityKey(session.engine, session.processIdentity))
+  }
+
+  /**
+   * Hide one terminal route from BOTH halves of reconciliation — the existing-agent liveness/dormant
+   * loop and new-process discovery — for the duration of an in-place process swap (restart). Without
+   * this, the old process going away can flicker the agent dormant mid-kill, and the replacement
+   * process appearing in the same pane before the restart handler rebinds it would otherwise be opened
+   * as a brand-new agent (`onDiscovered` mints a fresh `agentId`).
+   *
+   * `autoReleaseMs` is a belt-and-suspenders bound: the caller is expected to `releaseRoute` in a
+   * `finally`, but a future refactor that drops that `finally` must not leave a route permanently
+   * invisible to reconciliation.
+   */
+  holdRoute(routeKey: string, autoReleaseMs = 30_000): void {
+    this.heldRoutes.add(routeKey)
+    const existing = this.heldRouteTimers.get(routeKey)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => this.releaseRoute(routeKey), autoReleaseMs)
+    timer.unref?.()
+    this.heldRouteTimers.set(routeKey, timer)
+  }
+
+  /** Resume normal reconciliation for a route held by `holdRoute`. Idempotent. */
+  releaseRoute(routeKey: string): void {
+    this.heldRoutes.delete(routeKey)
+    const timer = this.heldRouteTimers.get(routeKey)
+    if (timer) {
+      clearTimeout(timer)
+      this.heldRouteTimers.delete(routeKey)
+    }
+  }
+
+  private routeHeld(runtimes: readonly TerminalRuntimeRef[]): boolean {
+    return runtimes.some((runtime) => this.heldRoutes.has(terminalRouteKey(runtime)))
   }
 
   trigger(): Promise<void> {
@@ -196,6 +235,10 @@ export class TerminalAgentReconciler {
       // Refresh existing process identities first. New route owners are opened afterwards so split/merge
       // conflict handling never depends on backend probe completion order.
       for (const current of before) {
+        // A restart in progress on this route: leave it untouched. The old process going dormant here
+        // and the new one being adopted by the discovery loop below are both races restart's `holdRoute`
+        // exists to prevent — see the class-level comment on `heldRoutes`.
+        if (this.routeHeld(current.runtimes)) continue
         const processKey = currentProcessKey(current)
         const observed = (processKey ? observedByProcess.get(processKey) : undefined)
           ?? unboundRouteObservation(current, probe.agents)
@@ -306,7 +349,11 @@ export class TerminalAgentReconciler {
 
       for (const observed of probe.agents) {
         const key = processIdentityKey(observed.engine, observed.processIdentity)
-        if (!matchedProcesses.has(key)) await this.deps.onDiscovered(observed)
+        if (matchedProcesses.has(key)) continue
+        // The replacement process for a restart in progress: the restart handler will bind it via
+        // `updateProcessIdentity` itself once confirmed, not through ordinary discovery.
+        if (this.routeHeld(observed.runtimes)) continue
+        await this.deps.onDiscovered(observed)
       }
     }
 

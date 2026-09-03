@@ -47,11 +47,20 @@ import { buildGridEngineLaunch, describeGridLaunch } from './lib/gridLaunch.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
-import { terminateDeletedAgent } from './lib/deleteAgentFallback.js'
+import { terminateDeletedAgent, checkPidRuntime } from './lib/deleteAgentFallback.js'
+import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { basename } from 'node:path'
-import { captureTmuxPane, clearPaneRemainOnExit, resolvePaneEngineProcess, tmuxPaneProcessTree, tmuxPaneState, type TmuxPaneState } from './lib/tmux.js'
+import {
+  bypassPermissionActive,
+  captureTmuxPane,
+  clearPaneRemainOnExit,
+  resolvePaneEngineProcess,
+  tmuxPaneProcessTree,
+  tmuxPaneState,
+  type TmuxPaneState,
+} from './lib/tmux.js'
 import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
@@ -67,7 +76,13 @@ import { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
-import { terminalActionNotStarted, type HookTerminalHint, type TerminalActionResult, type TerminalRuntimeRef, type TmuxRuntimeRef } from './lib/terminalTypes.js'
+import {
+  terminalActionNotStarted,
+  type HookTerminalHint,
+  type TerminalActionResult,
+  type TerminalRuntimeRef,
+  type TmuxRuntimeRef,
+} from './lib/terminalTypes.js'
 import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/terminalConfigSnapshot.js'
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
@@ -1768,12 +1783,23 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
   /** Release a mutable session binding, or remove the process-owned agent everywhere. */
-  const forgetSession = (id: string, opts: { force?: boolean; keepAgent?: boolean } = {}): void => {
+  const forgetSession = (
+    id: string,
+    opts: { force?: boolean; keepAgent?: boolean; agentId?: string } = {},
+  ): void => {
     const doomed = registry.resolve(id)
     const sessionId = doomed?.sessionId || id
+    // Clients key on the AGENT id. Normally it is read off the entry, but an
+    // agent already removed from the registry cannot be looked up — and
+    // announcing its sessionId instead is silently useless: the app takes
+    // payload.agentId verbatim, matches nothing, and leaves the dead row on
+    // screen. Callers who know the id pass it.
+    const announceId = doomed?.agentId ?? opts.agentId ?? sessionId
+
     console.log(opts.keepAgent
-      ? `[agent] ${sid(doomed?.agentId ?? sessionId)} released session ${sid(sessionId)}`
-      : `[agent] ${sid(doomed?.agentId ?? sessionId)} forgotten`)
+      ? `[agent] ${sid(announceId)} released session ${sid(sessionId)}`
+      : `[agent] ${sid(announceId)} forgotten`)
+
     if (opts.keepAgent) registry.unbindSession(sessionId)
     else if (doomed) registry.removeAgent(doomed.agentId)
     else registry.remove(sessionId)
@@ -1813,16 +1839,19 @@ async function runForeground(session: AuthSession): Promise<void> {
     input.forget(doomed?.agentId ?? sessionId)
     mirror.forget(sessionId) // aborts any in-flight recap + clears busy; KEEPS the persisted summary
     if (opts.keepAgent) return
-    backend.send({ type: 'agent_deleted', payload: { agentId: doomed?.agentId ?? sessionId } }) // web tab
-    backend.sendCommander({ type: 'agent_deleted', payload: { agentId: doomed?.agentId ?? sessionId } })
+    backend.send({ type: 'agent_deleted', payload: { agentId: announceId } }) // web tab
+    backend.sendCommander({ type: 'agent_deleted', payload: { agentId: announceId } })
+
   }
 
   type RegisteredMeta = {
     isNew: boolean
     evicted: string | null
     rebound: string | null
+    orphaned?: { agentId: string; sessionId: string } | null
     hookEvent?: string
   }
+
 
   const handleRegistered = async (entry: RegisteredSession, meta: RegisteredMeta): Promise<void> => {
     if (meta.rebound) {
@@ -1832,8 +1861,23 @@ async function runForeground(session: AuthSession): Promise<void> {
       backend.send({ type: 'session_reset', payload: { staleSessionId: meta.rebound } })
       console.log(`[agent] ${sid(entry.agentId)} rebound ${sid(meta.rebound)} → ${sid(entry.sessionId)}`)
     } else if (meta.evicted) {
+
       forgetSession(meta.evicted, { force: true })
     }
+    // The agent this bind emptied out — `claude --resume` in a second pane, with
+    // the first one's engine already gone. The registry dropped it; without this
+    // the app kept showing it until someone hit Reload machines by hand, and
+    // opening it landed on TERMINAL FROZEN because it has nothing left to open.
+    //
+    // Not part of the chain above: a rebound bind can orphan an agent too, so
+    // this has to be asked independently of which branch ran.
+    if (meta.orphaned) {
+      forgetSession(meta.orphaned.agentId, {
+        force: true,
+        agentId: meta.orphaned.agentId,
+      })
+    }
+
     // agy is excluded for the same reason as cursor, arriving by a different road: it has no
     // session-start event at all. The closest thing is `PreInvocation`, which fires before EVERY model
     // round-trip — four to seven times in one measured turn — and each one re-folded the transcript and
@@ -2003,7 +2047,21 @@ async function runForeground(session: AuthSession): Promise<void> {
         grid: observed.grid,
       })
       if (!opened) return
-      if (opened.evicted) console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted)}`)
+      if (opened.evicted) {
+        console.log(`[discovery] ${observed.primaryRuntimeKey} replaced ${sid(opened.evicted.agentId)}`)
+        // ⚠️ THE REGISTRY ALREADY DROPPED IT; NOBODY HAD TOLD THE CLIENTS. That
+        // is the whole bug behind "two sessions, one of them frozen": resuming
+        // an engine in a pane another agent owned takes the pane away, and an
+        // agent with no pane can never be opened again — but the app kept the
+        // row until someone hit Reload machines by hand, and opening it landed
+        // on TERMINAL FROZEN. This is the same call the hook path already makes
+        // for the same situation (see onRegistered below).
+        forgetSession(opened.evicted.sessionId || opened.evicted.agentId, {
+          force: true,
+          agentId: opened.evicted.agentId,
+        })
+      }
+
       if (opened.isNew) {
         console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · terminal=${observed.primaryRuntimeKey}`)
         announceSession(opened.entry)
@@ -2878,6 +2936,75 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
   /**
+   * The dependencies a pane-process swap needs, for both callers that do one.
+   *
+   * Restart and retarget are the same mechanism pointed at different ends: kill the engine, respawn it
+   * in the pane it was already in, wait for the new process. They differ only in what the replacement
+   * is launched WITH — retarget adds the grid's environment and the argv that configures it — so that
+   * is the only thing this takes. Written once because two copies of a kill sequence drift, and the
+   * half that drifts is the half nobody ran today.
+   */
+  const paneSwapDeps = (
+    session: RegisteredSession,
+    runtime: TmuxRuntimeRef,
+    launch: { env?: Record<string, string>; extraArgs?: readonly string[] } = {},
+  ): RestartAgentDeps => ({
+    holdOpen: async () => {
+      const result = await tmuxBackend!.holdOpen(runtime)
+      return result.state === 'succeeded'
+        ? { ok: true }
+        : { ok: false, reason: 'reason' in result ? result.reason : 'could not re-arm remain-on-exit' }
+    },
+    terminate: (checkAfterMs) => terminateDeletedAgent(session, {
+      checkRuntime: checkPidRuntime,
+      kill: (pid, signal) => process.kill(pid, signal),
+      sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.() }),
+      log: (message) => console.log(message),
+    }, checkAfterMs),
+    respawn: async (argv) => {
+      const result = await tmuxBackend!.respawn(runtime, {
+        command: argv,
+        ...(session.cwd ? { cwd: session.cwd } : {}),
+        ...(launch.env ? { env: launch.env } : {}),
+      })
+      return result.state === 'succeeded'
+        ? { ok: true }
+        : { ok: false, reason: 'reason' in result ? result.reason : 'tmux respawn-pane did not complete' }
+    },
+    waitForProcess: async () => {
+      // Mirrors onCreateAgent's own discovery budget/backoff shape for the same reason: the engine's
+      // interactive-login-shell startup, not the tmux call, is the slow half.
+      const SWAP_DISCOVERY_BUDGET_MS = 8_000
+      let delayMs = 150
+      let waited = 0
+      while (waited < SWAP_DISCOVERY_BUDGET_MS) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        waited += delayMs
+        const found = await resolvePaneEngineProcess(runtime.paneId, session.engine)
+        if (found) return found
+        delayMs = Math.min(delayMs * 2, 750)
+      }
+      return null
+    },
+    buildArgv: (opts) => buildEngineLaunchArgv(session.engine, {
+      ...opts,
+      ...(launch.extraArgs?.length ? { extraArgs: launch.extraArgs } : {}),
+    }),
+    log: (message) => console.log(message),
+  })
+
+  /** The bypass-permission mode the LIVE process was launched with — there is nowhere to read it from
+   *  once that process is dead, so both swap paths read it before signalling anything. */
+  const liveBypassPermission = async (session: RegisteredSession): Promise<boolean> => {
+    const identity = session.processIdentity
+    if (!identity) return false
+    const rows = await processRows()
+    const row = rows?.find((candidate) =>
+      candidate.pid === identity.pid && candidate.startMarker === identity.startMarker)
+    return row ? bypassPermissionActive(session.engine, row.args) : false
+  }
+
+  /**
    * Move a RUNNING agent onto a grid (`agent_retarget`).
    *
    * A process's environment is fixed at `execve`, so there is no way to re-point a live engine short of
@@ -2896,6 +3023,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Only tmux panes can be respawned. A Herdr-hosted agent has no equivalent, and saying so is better
     // than a generic failure the user cannot act on.
     if (!pane) return { ok: false, error: 'RETARGET_UNSUPPORTED_BACKEND', detail: `${session.engine} is not running in a tmux pane` }
+    // The swap kills a process it has validated by pid + start marker. Without one there is nothing to
+    // validate, and respawning over a pane whose occupant we cannot identify is how you replace
+    // something that was not ours.
+    if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
     const built = buildGridEngineLaunch(session.engine, grid)
     if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
     if (!(await tmuxSupportsSessionEnv())) {
@@ -2924,65 +3055,52 @@ async function runForeground(session: AuthSession): Promise<void> {
       try {
         gridEnv[envVar] = await writeGridConfigDir(session.agentId, files)
       } catch (error) {
+        release()
         const detail = `could not write ${session.engine}'s grid configuration · ${error instanceof Error ? error.message : error}`
         return { ok: false, error: 'GRID_CONFIG_FAILED', detail }
       }
     }
-    try {
-      const launchOptions = { resumeSessionId: session.sessionId || null, extraArgs: built.launch.args }
-      const respawned = await tmuxBackend.respawn(pane, {
-        ...(session.cwd ? { cwd: session.cwd } : {}),
-        command: buildEngineLaunchArgv(session.engine, launchOptions),
-        env: gridEnv,
-      })
-      if (respawned.state !== 'succeeded') {
-        console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${respawned.reason}`)
-        return { ok: false, error: 'RESPAWN_FAILED', detail: respawned.reason }
-      }
-      console.log(`${describeGridLaunch(session.engine, grid)} · retargeted ${sid(session.agentId)}`)
-    } finally {
-      release()
-    }
+
     // ⚠️ THE AGENT MUST ADOPT THE NEW PROCESS, OR IT STOPS BEING THE SAME AGENT.
     //
-    // Identity in this daemon is keyed on the PROCESS, not the pane: the reconciler matches an
-    // existing record to an observation by pid + start marker (`currentProcessKey`), and its
-    // same-pane fallback only applies to an agent with no bound engine session. A respawn changes
-    // the pid, so left to discovery the new process is an unmatched observation — `onDiscovered`
-    // mints a NEW agent id, and the record the user was looking at becomes a ghost that the app
-    // still lists, still counts as "on an older target", and still offers to move. Moving it
-    // respawns the same pane again. That loop is what this adoption prevents.
-    //
-    // The wait is the same one `onCreateAgent` measured: a freshly exec'd engine is not in `ps` the
-    // instant tmux returns, because the user's interactive login shell runs first.
-    const previousPid = session.processIdentity?.pid
-    const deadline = Date.now() + 8_000
-    let delayMs = 150
-    let adopted = false
-    while (!adopted && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-      const identity = await resolvePaneEngineProcess(pane.paneId, session.engine)
-      if (identity && identity.pid !== previousPid) {
-        // Both are read from the one cached environment of the new pid, so this costs no extra `ps`.
-        const [gateway, assignment] = await Promise.all([
-          probeGatewayRuntime(identity),
-          probeGridAssignment(identity, session.engine, identity.executable),
-        ])
-        registry.updateProcessIdentity(session.agentId, identity, gateway.kind, assignment)
-        adopted = true
-        break
+    // Identity in this daemon is keyed on the PROCESS, not the pane: the reconciler matches an existing
+    // record to an observation by pid + start marker (`currentProcessKey`), and its same-pane fallback
+    // only applies to an agent with no bound engine session. A respawn changes the pid, so left to
+    // discovery the new process is an unmatched observation — `onDiscovered` mints a NEW agent id, and
+    // the record the user was looking at becomes a ghost that the app still lists, still counts as "on
+    // an older target", and still offers to move. Moving it respawns the same pane again. Holding the
+    // route shuts the reconciler out for the duration; rebinding below is what ends the swap.
+    const routeKey = terminalRouteKey(pane)
+    agentReconciler.holdRoute(routeKey)
+    try {
+      const outcome = await restartAgent(
+        { engine: session.engine, sessionId: session.sessionId },
+        await liveBypassPermission(session),
+        paneSwapDeps(session, pane, { env: gridEnv, extraArgs: built.launch.args }),
+      )
+      if (!outcome.ok) {
+        console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${outcome.detail}`)
+        return { ok: false, error: 'RESPAWN_FAILED', detail: outcome.detail }
       }
-      delayMs = Math.min(delayMs * 2, 750)
+      // Both are read from the one cached environment of the new pid, so this costs no extra `ps`.
+      const [gateway, assignment] = await Promise.all([
+        probeGatewayRuntime(outcome.processIdentity),
+        probeGridAssignment(outcome.processIdentity, session.engine, outcome.processIdentity.executable),
+      ])
+      registry.updateProcessIdentity(session.agentId, outcome.processIdentity, gateway.kind, assignment)
+      registry.setActive(session.agentId, true)
+      await clearPaneRemainOnExit(pane.paneId)
+      const refreshed = registry.byAgent(session.agentId)
+      // The app decides whether to still offer a move from what it is told here, so a silent success
+      // would leave the banner up over an agent that had already been moved.
+      if (refreshed) announceSession(refreshed)
+      const how = outcome.resumed ? 'resumed' : 'fresh session'
+      console.log(`${describeGridLaunch(session.engine, grid)} · retargeted ${sid(session.agentId)} · ${how}`)
+      return { ok: true }
+    } finally {
+      release()
+      agentReconciler.releaseRoute(routeKey)
     }
-    if (!adopted) {
-      // The respawn itself succeeded — only the adoption ran out of patience, and the periodic
-      // reconcile will pick the pane up. Reporting a failure would send the user to redo something
-      // that already happened.
-      console.warn(`[grid] retarget ${sid(session.agentId)} · respawned, but its new process was not adopted in time`)
-    }
-    await agentReconciler.triggerHint({ backend: 'tmux', paneId: pane.paneId }, session.engine)
-    await clearPaneRemainOnExit(pane.paneId)
-    return { ok: true }
   }
 
   /**
@@ -3005,16 +3123,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     forgetSession(sessionId, { force: true })
     if (!s) return
     void terminateDeletedAgent(s, {
-      checkRuntime: async (session) => {
-        const expected = session.processIdentity
-        if (!expected) return { state: 'gone', reason: 'agent has no saved process identity' }
-        const rows = await processRows()
-        if (!rows) return { state: 'unknown', reason: 'process table is unavailable' }
-        const live = rows.find((row) => row.pid === expected.pid)
-        return live && live.startMarker === expected.startMarker && live.executable === expected.executable
-          ? { state: 'alive' }
-          : { state: 'gone', reason: 'saved process identity is no longer running' }
-      },
+      checkRuntime: checkPidRuntime,
       kill: (pid, signal) => process.kill(pid, signal),
       sleep: (ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.() }),
       log: (message) => console.log(message),
@@ -3026,6 +3135,61 @@ async function runForeground(session: AuthSession): Promise<void> {
     }).catch((err) => {
       console.error('[delete] process termination failed:', err instanceof Error ? err.message : err)
     })
+  }
+
+  /**
+   * Web or device restarted an agent (`agent_restart`): exit the live engine process and relaunch it in
+   * the SAME tmux pane, keeping the SAME agentId/session — restart must never look like delete+create to
+   * the registry or the UI. Two things guard that identity:
+   *
+   *  - `remain-on-exit` is re-armed on the pane before the old process is killed (mirrors what
+   *    `create()` does at spawn time), or tmux would tear the pane — and with it the whole one-pane
+   *    session — down the instant that process exits.
+   *  - the periodic reconciler is told to ignore this pane's ROUTE for the duration of the swap
+   *    (`agentReconciler.holdRoute`/`releaseRoute`), or it would either flicker the agent dormant
+   *    mid-kill, or — worse — mint a brand-new agent for the relaunched process the instant it appears,
+   *    before this handler gets to rebind it.
+   *
+   * The bypass-permission mode is read from the LIVE process argv before anything is signalled (there is
+   * nowhere else to read it from once the process is dead); the sessionId to resume comes from the
+   * registry's live-synced field, not from the original launch argv (the user may have resumed/switched
+   * sessions from inside the engine's own terminal since launch).
+   */
+  backend.onRestartAgent = async (agentId) => {
+    const session = registry.resolve(agentId)
+    if (!session) return { ok: false, error: 'AGENT_NOT_FOUND' }
+    if (!session.tmuxPane || !tmuxBackend) return { ok: false, error: 'RESTART_UNSUPPORTED_BACKEND' }
+    if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
+    const pane = session.tmuxPane
+    const engine = session.engine
+    const runtime: TmuxRuntimeRef = { backend: 'tmux', paneId: pane }
+    const routeKey = terminalRouteKey(runtime)
+
+    agentReconciler.holdRoute(routeKey)
+    try {
+      const bypassPermission = await liveBypassPermission(session)
+      const outcome = await restartAgent(
+        { engine, sessionId: session.sessionId },
+        bypassPermission,
+        paneSwapDeps(session, runtime),
+      )
+
+      if (!outcome.ok) return { ok: false, error: 'RESTART_FAILED', detail: outcome.detail }
+
+      // Address the CANONICAL agentId from the resolved session, not the raw RPC input — `resolve()`
+      // accepts either an agentId or a bare sessionId, but `setActive`/`byAgent` only ever key on the
+      // real agentId.
+      registry.updateProcessIdentity(session.agentId, outcome.processIdentity)
+      registry.setActive(session.agentId, true)
+      await clearPaneRemainOnExit(pane)
+      const refreshed = registry.byAgent(session.agentId)
+      if (!refreshed) return { ok: false, error: 'RESTART_FAILED', detail: 'agent vanished from the registry mid-restart' }
+      announceSession(refreshed)
+      console.log(`[restart] ${sid(session.agentId)} ${engine} · ${outcome.resumed ? 'resumed' : 'fresh session'}`)
+      return { ok: true, session: refreshed, resumed: outcome.resumed }
+    } finally {
+      agentReconciler.releaseRoute(routeKey)
+    }
   }
 
   backend.onMessage = (id, content) => {

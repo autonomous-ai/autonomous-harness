@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { terminateDeletedAgent, type TerminateDeps } from './deleteAgentFallback.js'
+import { describe, expect, it, vi } from 'vitest'
+import { terminateDeletedAgent, checkPidRuntime, type TerminateDeps } from './deleteAgentFallback.js'
 import type { RegisteredSession } from './registry.js'
-import type { RuntimeCheck } from './tmux.js'
+import type { ProcessRow, RuntimeCheck } from './tmux.js'
+
+const processRows = vi.hoisted(() => vi.fn())
+vi.mock('./tmux.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./tmux.js')>(),
+  processRows,
+}))
 
 /**
  * The one place in the adapter that signals somebody else's process. Everything here is about NOT hitting
@@ -175,5 +181,47 @@ describe('delete-agent process termination wiring', () => {
     const d = deps({ checkRuntime: async (s) => { seen.push(s); return runtime(false) } })
     await terminateDeletedAgent(SESSION, d)
     expect(seen[0]).toBe(SESSION)
+  })
+})
+
+/**
+ * `checkPidRuntime` — the exact PID + start-marker + executable check extracted out of onDeleteAgent's
+ * former inline lambda so restart can reuse it via `terminateDeletedAgent` too, without duplicating the
+ * PID-reuse guard. Pure extraction: this must not change onDeleteAgent's own behavior.
+ */
+describe('checkPidRuntime', () => {
+  const row = (over: Partial<ProcessRow> = {}): ProcessRow => ({
+    pid: 4242, parentPid: 1, executable: 'claude', startMarker: 'Mon Aug  3 09:00:00 2026', args: 'claude', ...over,
+  })
+
+  it('is alive when pid, startMarker, and executable all match', async () => {
+    processRows.mockResolvedValue([row()])
+    await expect(checkPidRuntime(SESSION)).resolves.toEqual({ state: 'alive' })
+  })
+
+  it('is gone when the saved pid is no longer in the process table', async () => {
+    processRows.mockResolvedValue([row({ pid: 1 })])
+    await expect(checkPidRuntime(SESSION)).resolves.toMatchObject({ state: 'gone' })
+  })
+
+  it('is gone — not alive — when the pid was recycled by a different process', async () => {
+    // Same pid, different start time: the PID-reuse guard.
+    processRows.mockResolvedValue([row({ startMarker: 'Tue Aug  4 09:00:00 2026' })])
+    await expect(checkPidRuntime(SESSION)).resolves.toMatchObject({ state: 'gone' })
+  })
+
+  it('is gone when the executable identity does not match, even with the same pid/startMarker', async () => {
+    processRows.mockResolvedValue([row({ executable: 'not-claude' })])
+    await expect(checkPidRuntime(SESSION)).resolves.toMatchObject({ state: 'gone' })
+  })
+
+  it('is unknown, not gone, when the process table itself could not be read', async () => {
+    processRows.mockResolvedValue(null)
+    await expect(checkPidRuntime(SESSION)).resolves.toMatchObject({ state: 'unknown' })
+  })
+
+  it('is gone when the session never had a saved process identity', async () => {
+    processRows.mockResolvedValue([row()])
+    await expect(checkPidRuntime({ ...SESSION, processIdentity: null })).resolves.toMatchObject({ state: 'gone' })
   })
 })
