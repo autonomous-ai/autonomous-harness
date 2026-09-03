@@ -357,6 +357,16 @@ export class BackendSocket {
     return this.commanderActive == null ? this.hasCommander() : this.commanderActive > 0
   }
 
+  /** True while a desktop window on THIS computer is attached over loopback.
+   *
+   *  Separate from `hasCommander()` on purpose: a device and a window are different audiences that
+   *  happen to want some of the same work done. The question watcher is the first thing to need it —
+   *  polling a pane for a dialog is pointless with nobody rendering it, but "nobody" used to mean
+   *  "no device", which left the window unable to learn that an agent was blocked. */
+  hasLocalClient(): boolean {
+    return this.localClients.size > 0
+  }
+
   /** True after a paired device has completed the E2EE hello/welcome session. */
   deviceE2eeConnected(): boolean {
     return this.e2ee.deviceConnected()

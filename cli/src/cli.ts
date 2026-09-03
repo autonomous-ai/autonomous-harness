@@ -1103,6 +1103,8 @@ async function runForeground(session: AuthSession): Promise<void> {
   const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
 
   const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal()
+  /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
+  const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
   const terminalStreams = new TerminalStreamManager({
     terminals,
     resolveAgent: (agentId) => registry.resolve(agentId),
@@ -1594,29 +1596,47 @@ async function runForeground(session: AuthSession): Promise<void> {
   const questionWatcher = new QuestionWatcher({
     getSession: (id) => registry.resolve(id),
     capture: captureTerminal,
-    hasDevice: () => deviceIsWatching(),
+    hasDevice: () => someoneCanAnswer(),
     isDriving: (sessionId) => questions.isDriving(sessionId),
     onQuestion: (sessionId, requestId, shaped) => {
       questions.remember(requestId, sessionId)
       showAwaitingAnswer(sessionId)
-      backend.sendCommander({
+      const asked = {
         type: 'commander_question',
         agentId: agentIdFor(sessionId),
         dbSessionId: sessionId,
         payload: { requestId, questions: shaped },
-      })
+      }
+      backend.sendCommander(asked)
+      // ...and to the window on this computer. `sendCommander` is `webEligible: false`, so until this
+      // second call the app could not learn that an agent was blocked even though the question had
+      // already been shaped for the dial.
+      //
+      // `sendLocal`, not `send`: the question and its option labels are user content, and the only
+      // audience `send` would add beyond loopback is the cloud leg, where this frame would travel
+      // PLAINTEXT — `commander_question` is deliberately absent from ENCRYPTED_UP_TYPES, and putting it
+      // there means re-deriving an interop hash pinned by the browser client and the device firmware in
+      // two other repositories. Loopback needs no envelope, and it costs nothing that is reachable
+      // today: a remote machine's watcher is gated on ITS OWN audience, which a window attached over
+      // here is not part of either way.
+      backend.sendLocal(asked)
       console.log(`[question] ${sid(sessionId)} asking the user · "${preview(shaped[0]?.q ?? '')}" · req=${requestId}`)
     },
     // Answered somewhere else — the app, or the pane by hand. Every client drawing it is told to stop
     // waiting, down the SAME path the question itself took, so the dial and the WiFi device cannot
     // disagree about whether a question is still open.
     onQuestionGone: (sessionId, requestId) => {
-      backend.sendCommander({
+      const closed = {
         type: 'commander_question_close',
         agentId: agentIdFor(sessionId),
         dbSessionId: sessionId,
         payload: { requestId },
-      })
+      }
+      backend.sendCommander(closed)
+      // Down the SAME two paths the question took, so no client is left drawing a dialog that another
+      // one already answered. This is the mechanism behind "answer anywhere": the dial is cabled to
+      // this very computer, so the dial and this window are always the same machine's audience.
+      backend.sendLocal(closed)
       console.log(`[question] ${sid(sessionId)} answered elsewhere · closing on every client · req=${requestId}`)
     },
   })
