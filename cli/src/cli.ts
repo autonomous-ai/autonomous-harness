@@ -41,6 +41,7 @@ import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
+import { handOffToGrid } from './lib/gridHandoff.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -235,6 +236,12 @@ Machine:
   harness flash [flags]        re-flash a plugged-in circle device over USB. Flags go straight to the
                                flasher: --detect-only, --port, --version, --yes, --erase-nvs
 
+Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH):
+  harness grid login           sign in to your grid reusing THIS computer's Autonomous account —
+                               no second browser, no second approval
+  harness grid login --force   sign the harness in as a different account first, then the grid
+  harness grid login --json    emit the same machine-readable NDJSON \`harness login --json\` emits
+
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
   harness pair <code>          pair a BROWSER (code shown on the machine page)
@@ -401,14 +408,50 @@ async function authStatusCommand(json: boolean): Promise<void> {
   else console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}\n`)
 }
 
-async function loginCommand(foreground: boolean, force: boolean, json: boolean): Promise<void> {
+/**
+ * `harness login` — and, `chained`, the first half of `harness grid login`.
+ *
+ * Returns whether this computer ended up signed in, so a caller can go on to its own step. `chained`
+ * suppresses only the terminating SUCCESS line — the authorize URL, the SSH paste fallback and every
+ * error line are the sign-in's to emit either way, and the caller adds the one result line that ends
+ * the stream. Under `--json` a sign-in failure therefore still arrives as itself, coded, exactly
+ * once; without it the sign-in throws, as `harness login` has always done, and the top-level handler
+ * prints it.
+ */
+async function loginCommand(
+  foreground: boolean,
+  force: boolean,
+  json: boolean,
+  opts: { chained?: boolean } = {},
+): Promise<boolean> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
+  const succeed = (alreadySignedIn: boolean): boolean => {
+    if (opts.chained) return true
+    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success' })
+    else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
+    else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+    return true
+  }
   if (readAuthSession() && !force) {
-    await resolveComputerMachine()
-    if (json) emit({ type: 'result', status: 'success', alreadySignedIn: true })
-    else console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
-    return
+    // Guarded exactly like the identical call after the exchange below. Unguarded, a hiccup on
+    // `/api/machines/resolve-computer` reached `onError`, which is JSON-unaware — so the ONE mode a
+    // client drives answered a stack trace and NO result line at all, on the commonest path there
+    // is (a computer that is already signed in).
+    try {
+      await resolveComputerMachine()
+    } catch (err) {
+      // An `AuthSessionError` is passed on rather than coded here: it is not the backend failing, it
+      // is THIS computer's harness session, and only the caller knows which of the two sign-ins the
+      // person should be sent to. `harness login` is unaffected — it never caught this before either.
+      if (json && !(err instanceof AuthSessionError)) {
+        emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message })
+        process.exitCode = 1
+        return false
+      }
+      throw err
+    }
+    return succeed(true)
   }
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
   // under its existing socket while this process replaces the durable session.
@@ -430,7 +473,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       })
       if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return false }
       throw err
     }
     if (json) {
@@ -466,7 +509,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       })
     } catch (err) {
       const timedOut = (err as Error).message === 'SSO login timed out'
-      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return false }
       throw err
     } finally {
       manual?.cancel()
@@ -479,7 +522,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       })
       if (!exchanged.token) throw new Error('SSO exchange returned no access token')
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return false }
       throw err
     }
     const id = computerId()
@@ -496,14 +539,60 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
     try {
       await resolveComputerMachine()
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return false }
       throw err
     }
-    if (json) emit({ type: 'result', status: 'success' })
-    else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+    return succeed(false)
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
+}
+
+// ── grid ───────────────────────────────────────────────────────────────────────────────────────
+/**
+ * `harness grid login` — sign in to your grid with the Autonomous account this computer already has.
+ *
+ * Two halves and one result. The first is `loginCommand` reused WHOLE, so this command inherits its
+ * already-signed-in short-circuit (no browser when a session exists), `--force`, the NDJSON contract
+ * and the paste-the-callback-URL fallback an SSH session needs — rather than reimplementing any of
+ * them. The second is the hand-off: the token goes to `grid login --harness` on its standard input.
+ *
+ * The token comes from `AuthSessionManager.accessToken()` and never off disk, which is the whole of
+ * this command's answer to "the harness token expired": a refresh happens transparently there,
+ * already coalesced in this process and across processes by the file lock. A refresh token that has
+ * gone invalid is an `AuthSessionError` whose own sentence names `harness login`, so the person is
+ * told WHICH of the two sign-ins broke instead of reading a stack trace about the other one.
+ */
+async function gridLoginCommand(force: boolean, json: boolean): Promise<void> {
+  // `extra` carries whatever the child managed to say before failing: under --json its stdout is
+  // captured, so without this the one channel a client is reading loses it entirely.
+  const fail = (code: string, message: string, exitCode: number, extra: Record<string, unknown> = {}): void => {
+    if (json) console.log(JSON.stringify({ type: 'result', status: 'error', code, message, ...extra }))
+    else console.error(`\n  ✗ ${message}\n`)
+    process.exitCode = exitCode
+  }
+  let token: string
+  try {
+    // `chained`: the sign-in emits its authorize URL and any error line, but not a success line, so
+    // what a client driving this reads is exactly one terminating result — this command's.
+    if (!await loginCommand(false, force, json, { chained: true })) return
+    token = await new AuthSessionManager(backendHttpBase()).accessToken()
+  } catch (err) {
+    if (!(err instanceof AuthSessionError)) throw err
+    fail('AUTH_ERROR', err.message, 1)
+    return
+  }
+  const handoff = await handOffToGrid(token, { json })
+  if (handoff.code !== 'OK') { fail(handoff.code, handoff.message, handoff.exitCode, gridAnswer(handoff.stdout)); return }
+  if (json) console.log(JSON.stringify({ type: 'result', status: 'success', ...gridAnswer(handoff.stdout) }))
+}
+
+/** What `grid` said, carried out on the result line so a client driving `--json` is not left with an
+ *  exit code alone. Parsed when it is JSON (it is asked for JSON), kept verbatim when it is not. */
+function gridAnswer(stdout: string): Record<string, unknown> {
+  const text = stdout.trim()
+  if (!text) return {}
+  try { return { grid: JSON.parse(text) } } catch { return { grid: text } }
 }
 
 /**
@@ -4299,6 +4388,10 @@ switch (cmd) {
     break
   case 'pairings':
     pairingsCommand().catch(onError)
+    break
+  case 'grid':
+    if (args[0] === 'login') gridLoginCommand(flags.includes('--force'), flags.includes('--json')).catch(onError)
+    else { console.error(`Unknown command: grid ${args[0] ?? ''}`); usage(1) }
     break
   case 'machines':
     if (!args[0]) machinesListCommand(flags.includes('--json')).catch(onError)
