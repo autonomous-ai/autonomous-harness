@@ -3,3 +3,5 @@ dist/
 .env
 *.tsbuildinfo
 .DS_Store
+# The Docker rig's pinned computer id — local to this checkout.
+docker/remote-machine/.rig.env

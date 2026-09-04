@@ -116,6 +116,15 @@ const envSchema = z.object({
   // value (below the OS ephemeral range, outside the project's 80xx/8100-8999/9001-9999 ranges). No
   // free-port fallback — if it's taken, the adapter reports it (another adapter is likely running).
   PORT: z.string().default('18473').transform(Number),
+  // The loopback port `harness login` listens on for the SSO redirect. 0 (the default) takes whatever
+  // the OS gives, which is right on a real computer: the browser and the listener are the same
+  // loopback, so the port never has to be known in advance.
+  //
+  // It has to be PINNABLE for a login that happens inside a container. There the browser is on the
+  // host and the listener is not, so the only way the redirect ever arrives is a published port — and
+  // a port cannot be published before it is known. Set this, publish the same number, and the real
+  // SSO flow works from a box with no browser of its own. See cli/docker/remote-machine/.
+  ADAPTER_LOGIN_CALLBACK_PORT: z.string().default('0').transform(Number),
   // The backend the CLI dials (`/api/adapter-ws`). Local dev: ws://localhost:8090.
   BACKEND_WS_URL: z.string().default('wss://harness-api.autonomous.ai'),
   // SSO account plane used by native-loopback login and the adapter WebSocket.

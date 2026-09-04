@@ -36,12 +36,8 @@ BIN_DIR="${HARNESS_BIN_DIR:-$HOME/.local/bin}"
 LAUNCHER="$BIN_DIR/harness"
 PID_FILE="$DATA_DIR/adapter.pid"
 
-# Source of truth for the *core* X.Y.Z, same as upload-cli.sh: whatever is published. Only used to
-# label the build (see step 1) — this script never publishes.
-GCS_BUCKET="${GCS_BUCKET:-s3-autonomous-upgrade-3}"
-GCS_PUBLIC_BASE_URL="${GCS_PUBLIC_BASE_URL:-https://storage.googleapis.com/${GCS_BUCKET}}"
-METADATA_PATH="${METADATA_PATH:-harness/cli/metadata.json}"
-OTA_KEY="${OTA_KEY:-cli}"   # must match ADAPTER_UPDATE_KEY in src/config/env.ts
+# The build's version label — and the GCS_BUCKET / METADATA_PATH / OTA_KEY overrides that steer it —
+# belong to scripts/lib/build-label.sh, sourced at step 1. This script never publishes.
 
 # --- Parse args ---
 DO_BUILD=1
@@ -72,21 +68,11 @@ fi
 # launcher's disable: even with updates on, the computer sits still until the next real release
 # instead of oscillating.
 if [ "$DO_BUILD" -eq 1 ]; then
-  META_URL="${GCS_PUBLIC_BASE_URL%/}/${METADATA_PATH#/}"
-  CORE="$(curl -fsSL --max-time 6 "$META_URL" 2>/dev/null | node -e '
-let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-  try { process.stdout.write(String((JSON.parse(s)[process.argv[1]]||{}).version||"")) } catch { process.stdout.write("") }
-})' "$OTA_KEY" 2>/dev/null || true)"
-  if [ -z "$CORE" ]; then
-    CORE="$(node -p "require('$ADAPTER_DIR/package.json').version" 2>/dev/null || echo '0.0.0')"
-    echo ">> manifest unreachable — labelling against package.json: $CORE" >&2
-  fi
-  SHA="$(git -C "$ADAPTER_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)"
-  DIRTY=""
-  # --porcelain, not `diff --quiet`: an UNTRACKED new source file changes the bundle too. dist/ is
-  # gitignored, so bundling never makes the next run look dirty by itself.
-  [ -z "$(git -C "$ADAPTER_DIR" status --porcelain -- "$ADAPTER_DIR" 2>/dev/null)" ] || DIRTY=".dirty"
-  LABEL="${CORE}-dev.${SHA}${DIRTY}"
+  # Shared with the Docker remote-machine rig, so both boxes report the SAME version for the same
+  # tree — see scripts/lib/build-label.sh.
+  # shellcheck source=lib/build-label.sh
+  . "$ADAPTER_DIR/scripts/lib/build-label.sh"
+  LABEL="$(harness_build_label "$ADAPTER_DIR")"
   echo ">> bundling ${LABEL}…"   # braces required: bash 3.2 swallows the following UTF-8 byte into the name
   ( cd "$ADAPTER_DIR" && ADAPTER_VERSION="$LABEL" npm run bundle )
 fi

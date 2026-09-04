@@ -4,7 +4,7 @@
 #   make install-cli ARGS="--no-restart"
 #   make upload-cli  ARGS="0.1.0"
 
-.PHONY: cli-test install-cli upload-cli
+.PHONY: cli-test install-cli upload-cli remote-machine
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
@@ -22,3 +22,15 @@ install-cli:
 ## Running daemons pick the new version up within ~1 min.
 upload-cli:
 	bash cli/scripts/upload-cli.sh $(ARGS)
+
+## remote-machine: drive a SECOND harness machine in Docker, so the app's remote path (relay ->
+## another machine's daemon) can be tested from one laptop. ARGS picks the step:
+##   make remote-machine ARGS=build   -> bundle this tree + build the image
+##   make remote-machine ARGS=up      -> start the box
+##   make remote-machine ARGS=login   -> SSO on the box (interactive)
+##   make remote-machine ARGS=link    -> let this Mac's relay reach it
+##   make remote-machine ARGS=verify  -> what each remote agent is ACTUALLY running on
+##   make remote-machine ARGS=destroy -> throw it away (prints how to drop the machine record)
+## See cli/docker/remote-machine/README.md.
+remote-machine:
+	bash cli/scripts/remote-machine.sh $(ARGS)

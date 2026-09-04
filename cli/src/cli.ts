@@ -421,7 +421,9 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
   const callback = createServer()
   await new Promise<void>((resolve, reject) => {
     callback.once('error', reject)
-    callback.listen(0, '127.0.0.1', () => resolve())
+    // 0 = whatever the OS gives, which is what a real computer wants. Pinned only where the browser
+    // and this listener are not on the same loopback — see ADAPTER_LOGIN_CALLBACK_PORT.
+    callback.listen(env.ADAPTER_LOGIN_CALLBACK_PORT, '127.0.0.1', () => resolve())
   })
   const address = callback.address()
   if (!address || typeof address === 'string') throw new Error('Could not start the SSO callback server')
