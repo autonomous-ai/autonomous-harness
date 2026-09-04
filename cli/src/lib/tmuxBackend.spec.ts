@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { TmuxBackend } from './tmuxBackend.js'
+import { TmuxBackend, clearEnvArgs } from './tmuxBackend.js'
 
 const originalPath = process.env.PATH
 const dirs: string[] = []
@@ -219,5 +219,24 @@ exit 1
     expect(moved.state).toBe('unknown')
     expect(moved).toMatchObject({ dispatch: 'possibly_executed' })
     if (moved.state === 'unknown') expect(moved.reason).toContain('no such pane')
+  })
+})
+
+// The command line is the whole contract here: `set-environment -u` REMOVES a variable, while the
+// `-e VAR=` form a respawn takes would set it to an empty string. An engine handed
+// ANTHROPIC_BASE_URL="" does not fall back to its own login; it tries to dial the empty string.
+describe('clearEnv command shape', () => {
+  it('unsets each name against the pane\'s session, never assigning an empty value', () => {
+    const args = clearEnvArgs('$3', ['ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL'])
+    expect(args).toEqual([
+      'set-environment', '-t', '$3', '-u', 'ANTHROPIC_BASE_URL',
+      ';',
+      'set-environment', '-t', '$3', '-u', 'ANTHROPIC_MODEL',
+    ])
+    expect(args.join(' ')).not.toContain('=')
+  })
+
+  it('asks for nothing when there is nothing to clear', () => {
+    expect(clearEnvArgs('$3', [])).toEqual([])
   })
 })

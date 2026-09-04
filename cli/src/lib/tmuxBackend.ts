@@ -69,6 +69,22 @@ function legacyActionResult(ok: boolean, operation: string): TerminalActionResul
   return ok ? TERMINAL_ACTION_SUCCEEDED : terminalActionPossiblyExecuted(`${operation} did not complete`)
 }
 
+/**
+ * The argv for removing [names] from session [sessionId]'s environment.
+ *
+ * Exported so a spec can pin the exact command without a tmux server. `-u` REMOVES the variable;
+ * the `-e VAR=` form that `respawn-pane` accepts would set it to an empty string instead, and an
+ * engine handed an empty base URL does not fall back to its own login — it dials the empty string.
+ */
+export function clearEnvArgs(sessionId: string, names: readonly string[]): string[] {
+  const args: string[] = []
+  for (const name of names) {
+    if (args.length) args.push(';')
+    args.push('set-environment', '-t', sessionId, '-u', name)
+  }
+  return args
+}
+
 export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   readonly name = 'tmux' as const
   readonly instanceId = 'tmux:default'
@@ -159,6 +175,28 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
       execFile('tmux', ['kill-session', '-t', sessionId], { timeout: 5_000 }, (error) => resolve(!error))
     })
     return legacyActionResult(ok, 'tmux session close')
+  }
+
+  /**
+   * Remove [names] from the environment of the session that owns [runtime].
+   *
+   * A pane created by `new-session -e` put those variables in the SESSION environment, and
+   * `respawn-pane` inherits it — so respawning with no `-e` flags would leave the old grid in place
+   * while reporting a clean swap. This is what makes "back to your own login" actually true.
+   */
+  async clearEnv(runtime: TmuxRuntimeRef, names: readonly string[]): Promise<TerminalActionResult> {
+    if (!names.length) return legacyActionResult(true, 'tmux clear environment')
+    const sessionId = await new Promise<string | null>((resolve) => {
+      execFile('tmux', ['display-message', '-p', '-t', runtime.paneId, '#{session_id}'], { timeout: 2_000 }, (error, stdout) => {
+        const value = stdout.trim()
+        resolve(!error && /^\$\d+$/.test(value) ? value : null)
+      })
+    })
+    if (!sessionId) return terminalActionNotStarted('tmux session could not be resolved from pane')
+    const ok = await new Promise<boolean>((resolve) => {
+      execFile('tmux', clearEnvArgs(sessionId, names), { timeout: 5_000 }, (error) => resolve(!error))
+    })
+    return legacyActionResult(ok, 'tmux clear environment')
   }
 
   /**
