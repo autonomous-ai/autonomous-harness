@@ -304,7 +304,8 @@ export class BackendSocket {
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /**
-   * Called on `agent_retarget` — cli.ts re-execs an EXISTING agent's pane against a different grid.
+   * Called on `agent_retarget` — cli.ts re-execs an EXISTING agent's pane against a different grid,
+   * or, when `grid` is null, back onto its own login.
    *
    * Separate from `onCreateAgent` because it is a different promise: the pane, its id and its
    * scrollback survive, and only the process is replaced. A running process's environment cannot be
