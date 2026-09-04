@@ -44,6 +44,8 @@ process.stdin.on('end', () => {
     return
   }
   if (process.env.FAKE_GRID_STDOUT) process.stdout.write(process.env.FAKE_GRID_STDOUT)
+  // Where the real \`grid\` puts every refusal — see the test that reads it back off the result line.
+  if (process.env.FAKE_GRID_STDERR) process.stderr.write(process.env.FAKE_GRID_STDERR)
   process.exitCode = Number(process.env.FAKE_GRID_EXIT || '0')
 })
 `
@@ -215,8 +217,10 @@ describe('harness grid login — an already-signed-in computer', () => {
 
     expect(result.status).toBe(0)
     const lines = ndjson(result.stdout)
-    // No authorize_url anywhere: an existing session must never reopen the browser.
-    expect(lines).toEqual([{ type: 'result', status: 'success' }])
+    // No authorize_url anywhere: an existing session must never reopen the browser. And
+    // `alreadySignedIn` is the key `harness login --json` puts on exactly this outcome — the same
+    // contract, so a client driving the two does not need two readers.
+    expect(lines).toEqual([{ type: 'result', status: 'success', alreadySignedIn: true }])
     expect(readRecord(root).args).toEqual(['login', '--harness', '--json'])
   }, 20_000)
 
@@ -255,7 +259,7 @@ describe('harness grid login — an already-signed-in computer', () => {
 
     expect(result.status).toBe(0)
     expect(ndjson(result.stdout)).toEqual([
-      { type: 'result', status: 'success', grid: { signed_in: true, email: 'a@b.test', grids: [] } },
+      { type: 'result', status: 'success', alreadySignedIn: true, grid: { signed_in: true, email: 'a@b.test', grids: [] } },
     ])
   }, 20_000)
 })
@@ -300,6 +304,8 @@ describe('harness grid login — a signed-out computer', () => {
     // Two lines total: the sign-in's authorize_url, and ONE terminating result — not one per half.
     expect(lines).toEqual([
       { type: 'authorize_url', url: 'https://sso.example.test/authorize?tx=abc' },
+      // No `alreadySignedIn`: this computer was signed OUT, and the key is absent rather than
+      // `false` — which is how `harness login --json` words the same outcome.
       { type: 'result', status: 'success' },
     ])
     expect(readRecord(root).stdin.trim()).toBe('tok_new')
@@ -341,6 +347,39 @@ describe('harness grid login — when the hand-off fails', () => {
       message: expect.any(String),
       grid: { error: { message: 'no such grid' } },
     }])
+  }, 20_000)
+
+  it('carries the child\'s own refusal out on the result line, and still to stderr', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+    // The shape a real refusal has: `grid` writes its sentence to STDERR and nothing to stdout.
+    const refusal = 'This control plane cannot sign you in with an Autonomous account token yet.\n'
+
+    const result = await run(root, ['grid', 'login', '--json'], base,
+      { FAKE_GRID_EXIT: '1', FAKE_GRID_STDERR: refusal })
+
+    // Needed in BOTH places, for two different readers. A client reading NDJSON off stdout would
+    // otherwise hold an exit code and have no sentence to show anybody — this command's own message
+    // classifies the failure, only the child's names the way out of it.
+    const [line] = ndjson(result.stdout)
+    expect(line).toMatchObject({ type: 'result', status: 'error', code: 'GRID_LOGIN_FAILED' })
+    expect(String(line.detail)).toContain('cannot sign you in')
+    // And a person watching the terminal still sees it where it has always been.
+    expect(result.stderr).toContain('cannot sign you in')
+  }, 20_000)
+
+  it('says nothing where the child said nothing, rather than sending empty keys', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base, { FAKE_GRID_EXIT: '7' })
+
+    // An ABSENT key reads as "the child said nothing there"; `null` or `''` would read as an answer.
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'error', code: 'GRID_LOGIN_FAILED', message: expect.any(String) },
+    ])
   }, 20_000)
 
   it('reads exit code 2 as an outdated grid CLI, not as a network failure', async () => {

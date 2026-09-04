@@ -418,20 +418,27 @@ async function authStatusCommand(json: boolean): Promise<void> {
  * once; without it the sign-in throws, as `harness login` has always done, and the top-level handler
  * prints it.
  */
+type SignInOutcome =
+  /** Signed in — `alreadySignedIn` distinguishes a session that was already there from a fresh one,
+   *  which is the one fact a caller cannot re-derive except by watching for an `authorize_url`. */
+  | { signedIn: true; alreadySignedIn: boolean }
+  /** Refused. Under `--json` its own coded result line has already been emitted. */
+  | { signedIn: false }
+
 async function loginCommand(
   foreground: boolean,
   force: boolean,
   json: boolean,
   opts: { chained?: boolean } = {},
-): Promise<boolean> {
+): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
-  const succeed = (alreadySignedIn: boolean): boolean => {
-    if (opts.chained) return true
+  const succeed = (alreadySignedIn: boolean): SignInOutcome => {
+    if (opts.chained) return { signedIn: true, alreadySignedIn }
     if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success' })
     else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
     else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
-    return true
+    return { signedIn: true, alreadySignedIn }
   }
   if (readAuthSession() && !force) {
     // Guarded exactly like the identical call after the exchange below. Unguarded, a hiccup on
@@ -447,7 +454,7 @@ async function loginCommand(
       if (json && !(err instanceof AuthSessionError)) {
         emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message })
         process.exitCode = 1
-        return false
+        return { signedIn: false }
       }
       throw err
     }
@@ -473,7 +480,7 @@ async function loginCommand(
       })
       if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return false }
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
     if (json) {
@@ -509,7 +516,7 @@ async function loginCommand(
       })
     } catch (err) {
       const timedOut = (err as Error).message === 'SSO login timed out'
-      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return false }
+      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     } finally {
       manual?.cancel()
@@ -522,7 +529,7 @@ async function loginCommand(
       })
       if (!exchanged.token) throw new Error('SSO exchange returned no access token')
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return false }
+      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
     const id = computerId()
@@ -539,7 +546,7 @@ async function loginCommand(
     try {
       await resolveComputerMachine()
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return false }
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
     return succeed(false)
@@ -564,18 +571,22 @@ async function loginCommand(
  * told WHICH of the two sign-ins broke instead of reading a stack trace about the other one.
  */
 async function gridLoginCommand(force: boolean, json: boolean): Promise<void> {
-  // `extra` carries whatever the child managed to say before failing: under --json its stdout is
-  // captured, so without this the one channel a client is reading loses it entirely.
+  // `extra` carries what the child itself said. Under --json both its streams are captured, so
+  // without this the one channel a client is reading is left with an exit code and nothing else.
   const fail = (code: string, message: string, exitCode: number, extra: Record<string, unknown> = {}): void => {
     if (json) console.log(JSON.stringify({ type: 'result', status: 'error', code, message, ...extra }))
     else console.error(`\n  ✗ ${message}\n`)
     process.exitCode = exitCode
   }
+  let signIn: SignInOutcome
   let token: string
   try {
     // `chained`: the sign-in emits its authorize URL and any error line, but not a success line, so
     // what a client driving this reads is exactly one terminating result — this command's.
-    if (!await loginCommand(false, force, json, { chained: true })) return
+    signIn = await loginCommand(false, force, json, { chained: true })
+    // ⚠️ On the FIELD, never on the object: every outcome is truthy, so `if (!outcome)` would read
+    // a refusal as a success and hand a token that was never obtained to the child.
+    if (signIn.signedIn === false) return
     token = await new AuthSessionManager(backendHttpBase()).accessToken()
   } catch (err) {
     if (!(err instanceof AuthSessionError)) throw err
@@ -583,16 +594,31 @@ async function gridLoginCommand(force: boolean, json: boolean): Promise<void> {
     return
   }
   const handoff = await handOffToGrid(token, { json })
-  if (handoff.code !== 'OK') { fail(handoff.code, handoff.message, handoff.exitCode, gridAnswer(handoff.stdout)); return }
-  if (json) console.log(JSON.stringify({ type: 'result', status: 'success', ...gridAnswer(handoff.stdout) }))
+  if (handoff.code !== 'OK') { fail(handoff.code, handoff.message, handoff.exitCode, gridSaid(handoff)); return }
+  if (!json) return
+  // The same key `harness login --json` uses, present only when it is true, so a client driving the
+  // two reads one contract rather than two — the harness sign-in's own line is worded exactly so.
+  console.log(JSON.stringify({
+    type: 'result',
+    status: 'success',
+    ...(signIn.alreadySignedIn ? { alreadySignedIn: true } : {}),
+    ...gridSaid(handoff),
+  }))
 }
 
-/** What `grid` said, carried out on the result line so a client driving `--json` is not left with an
- *  exit code alone. Parsed when it is JSON (it is asked for JSON), kept verbatim when it is not. */
-function gridAnswer(stdout: string): Record<string, unknown> {
-  const text = stdout.trim()
-  if (!text) return {}
-  try { return { grid: JSON.parse(text) } } catch { return { grid: text } }
+/** What `grid` itself said, carried out on the result line beside this command's own classification.
+ *
+ *  `grid`'s answer on success is a JSON document on stdout, so it travels parsed, under `grid`. Its
+ *  refusals go to **stderr** — every one of them already names its own way forward — and those
+ *  travel verbatim under `detail`, because a client reading NDJSON off stdout would otherwise have
+ *  the exit code and no sentence to show anybody. Both are omitted when empty rather than sent as
+ *  `null`: an absent key reads as "the child said nothing there", which is what it means. */
+function gridSaid(handoff: { stdout: string; stderr: string }): Record<string, unknown> {
+  const out = handoff.stdout.trim()
+  const err = handoff.stderr.trim()
+  let parsed: unknown = null
+  if (out) { try { parsed = JSON.parse(out) } catch { parsed = out } }
+  return { ...(out ? { grid: parsed } : {}), ...(err ? { detail: err } : {}) }
 }
 
 /**

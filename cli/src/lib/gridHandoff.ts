@@ -33,10 +33,22 @@ export interface GridHandoffResult {
   code: GridHandoffCode
   /** The child's own exit code, propagated; 1 when there was no child, or it died on a signal. */
   exitCode: number
-  /** Empty on success. Never contains the token. */
+  /** This module's own classification of the failure. Empty on success. Never contains the token. */
   message: string
   /** The child's stdout, captured only when `json` was asked for; otherwise it went straight out. */
   stdout: string
+  /** The child's stderr — where `grid` writes every refusal — captured only when `json` was asked
+   *  for, and passed through to this process's stderr either way. */
+  stderr: string
+}
+
+/** A bound on what a child can put into one JSON line. `grid` answers a small document and refuses
+ *  in a sentence or two, so this is not a tuning knob; it is a bound on a process whose output this
+ *  one does not control, and it is applied to the CAPTURE only — the passthrough is untouched. */
+const MAX_CAPTURED_CHARS = 64 * 1024
+
+function capped(sofar: string, chunk: Buffer): string {
+  return sofar.length >= MAX_CAPTURED_CHARS ? sofar : (sofar + chunk.toString()).slice(0, MAX_CAPTURED_CHARS)
 }
 
 const MISSING_MESSAGE =
@@ -49,16 +61,20 @@ const OUTDATED_MESSAGE =
 
 function failedMessage(status: number | null, signal: NodeJS.Signals | null): string {
   const how = status === null ? `was killed by ${signal ?? 'a signal'}` : `exited ${status}`
-  return `\`grid login ${GRID_HANDOFF_FLAG}\` ${how}. Its own output above says why.`
+  // No "see the output above": under --json there IS no above for whatever is reading the stream.
+  // What `grid` said travels with the failure instead, on `stderr`.
+  return `\`grid login ${GRID_HANDOFF_FLAG}\` ${how}.`
 }
 
 /**
  * Run `grid login --harness`, writing `token` to its standard input and closing it.
  *
- * With `json`, the child is asked for JSON too and its stdout is captured, so THIS process's stdout
- * stays a clean NDJSON stream for whatever is driving it; its stderr still passes through, which is
- * where `grid --json` puts everything a person needs to read. Without `json` both streams are
- * inherited and the child talks to the terminal directly.
+ * With `json`, the child is asked for JSON too and BOTH its streams are captured, so THIS process's
+ * stdout stays a clean NDJSON stream for whatever is driving it. stderr is captured **and** written
+ * straight back out, because it is needed twice: `grid` refuses on stderr, so that text is the only
+ * actionable thing a failure has — and a client reading NDJSON off stdout would never see it, while
+ * a person watching the terminal expects it where it has always been. Without `json` both streams
+ * are inherited and the child talks to the terminal directly.
  */
 export async function handOffToGrid(
   token: string,
@@ -69,15 +85,20 @@ export async function handOffToGrid(
   // there is nothing to override, and a parameter for one would be the knob with no user the ticket
   // refuses.
   if (!binaryOnPath(GRID_BINARY)) {
-    return { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout: '' }
+    return { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout: '', stderr: '' }
   }
   const args = ['login', GRID_HANDOFF_FLAG, ...(opts.json ? ['--json'] : [])]
   return await new Promise<GridHandoffResult>((resolve) => {
     const child = spawn(GRID_BINARY, args, {
-      stdio: ['pipe', opts.json ? 'pipe' : 'inherit', 'inherit'],
+      stdio: ['pipe', opts.json ? 'pipe' : 'inherit', opts.json ? 'pipe' : 'inherit'],
     })
     let stdout = ''
-    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+    let stderr = ''
+    child.stdout?.on('data', (chunk: Buffer) => { stdout = capped(stdout, chunk) })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = capped(stderr, chunk)
+      process.stderr.write(chunk) // the passthrough, unbounded — only the capture is bounded
+    })
 
     let settled = false
     const settle = (result: GridHandoffResult): void => { if (!settled) { settled = true; resolve(result) } }
@@ -88,15 +109,15 @@ export async function handOffToGrid(
     const { stdin } = child
     if (!stdin) {
       child.kill()
-      settle({ code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not open a pipe to \`${GRID_BINARY}\`.`, stdout })
+      settle({ code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not open a pipe to \`${GRID_BINARY}\`.`, stdout, stderr })
       return
     }
 
     // Between the PATH check and the spawn the binary can still be gone; and a child that exits
     // before reading breaks the pipe. Both are the child's story to tell, never a crash here.
     child.once('error', (err: NodeJS.ErrnoException) => settle(err.code === 'ENOENT'
-      ? { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout }
-      : { code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not run \`${GRID_BINARY}\`: ${err.message}`, stdout }))
+      ? { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout, stderr }
+      : { code: 'GRID_LOGIN_FAILED', exitCode: 1, message: `Could not run \`${GRID_BINARY}\`: ${err.message}`, stdout, stderr }))
     stdin.on('error', () => { /* EPIPE — see above */ })
 
     // A trailing newline as well as the close: `grid` reads one bounded LINE, so the hand-off does
@@ -105,9 +126,9 @@ export async function handOffToGrid(
 
     // `close`, not `exit`: the captured stdout must be complete before it is reported.
     child.once('close', (status, signal) => {
-      if (status === 0) { settle({ code: 'OK', exitCode: 0, message: '', stdout }); return }
-      if (status === ARGPARSE_USAGE_EXIT) { settle({ code: 'GRID_CLI_OUTDATED', exitCode: status, message: OUTDATED_MESSAGE, stdout }); return }
-      settle({ code: 'GRID_LOGIN_FAILED', exitCode: status ?? 1, message: failedMessage(status, signal), stdout })
+      if (status === 0) { settle({ code: 'OK', exitCode: 0, message: '', stdout, stderr }); return }
+      if (status === ARGPARSE_USAGE_EXIT) { settle({ code: 'GRID_CLI_OUTDATED', exitCode: status, message: OUTDATED_MESSAGE, stdout, stderr }); return }
+      settle({ code: 'GRID_LOGIN_FAILED', exitCode: status ?? 1, message: failedMessage(status, signal), stdout, stderr })
     })
   })
 }
