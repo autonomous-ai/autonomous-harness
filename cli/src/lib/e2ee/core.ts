@@ -370,6 +370,9 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   // never see agent ids, terminal bytes, dimensions, sequence numbers, or capability metadata.
   'terminal_capabilities', 'terminal_open', 'terminal_alive', 'terminal_ack', 'terminal_input',
   'terminal_resize', 'terminal_resync', 'terminal_close', 'terminal_scroll',
+  // WebRTC signaling reveals both peers' network candidates. Keep it inside the already-authenticated
+  // pairwise session; the backend needs only the outer type + connId to route it.
+  'p2p_offer', 'p2p_answer', 'p2p_ice_candidate', 'p2p_abort',
 ])
 export function isEncryptedUpType(t: string): boolean { return ENCRYPTED_UP_TYPES.has(t) }
 export function isEncryptedRpcResultType(t: string): boolean { return ENCRYPTED_RPC_RESULT_TYPES.has(t) }

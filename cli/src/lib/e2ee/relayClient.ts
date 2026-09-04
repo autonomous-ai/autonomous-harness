@@ -13,6 +13,7 @@ import { WebSocket } from 'ws'
 import * as C from './core.js'
 import { deriveTerminalBinaryKey, openTerminalBinary, sealTerminalBinary, type TerminalBinaryClear } from '../terminalBinary.js'
 import { pwCpaceGenerator, pwContext, stretchPassword } from './passwordPake.js'
+import { ReplayWindow } from './replayWindow.js'
 
 type Frame = Record<string, unknown>
 
@@ -29,16 +30,18 @@ export class RelaySessionCrypto {
   private terminalC2s: Uint8Array | null = null
   private terminalS2c: Uint8Array | null = null
   private c2sCounter = 0
-  private s2cRecv = -1
+  private readonly s2cRecv = new ReplayWindow()
   private terminalC2sCounter = 0
-  private terminalS2cRecv = -1
+  private readonly terminalS2cRecv = new ReplayWindow()
   private groupKey: Uint8Array | null = null
   private epoch = ''
+  private p2pVersion = 0
   private groupRecv = new Map<string, number>() // epoch -> highest counter seen
 
   constructor(private readonly deps: RelayCryptoDeps) {}
 
   get ready(): boolean { return this.c2s !== null && this.s2c !== null }
+  get terminalP2pVersion(): number { return this.p2pVersion }
 
   helloFrame(): Frame {
     return {
@@ -66,8 +69,8 @@ export class RelaySessionCrypto {
     } catch { return false }
     const opened = C.aeadOpen(keys.s2c, 0, C.utf8('e2e-welcome'), C.b64d(encB64))
     if (!opened) return false
-    let initial: { groupKey?: string; epoch?: string }
-    try { initial = JSON.parse(new TextDecoder().decode(opened)) as { groupKey?: string; epoch?: string } } catch { return false }
+    let initial: { groupKey?: string; epoch?: string; features?: { terminalP2p?: unknown } }
+    try { initial = JSON.parse(new TextDecoder().decode(opened)) as typeof initial } catch { return false }
     if (!initial.groupKey || !initial.epoch) return false
     this.c2s = keys.c2s
     this.s2c = keys.s2c
@@ -75,6 +78,9 @@ export class RelaySessionCrypto {
     this.terminalS2c = deriveTerminalBinaryKey(keys.s2c)
     this.groupKey = C.b64d(initial.groupKey)
     this.epoch = initial.epoch
+    this.p2pVersion = Number.isSafeInteger(initial.features?.terminalP2p)
+      ? Number(initial.features?.terminalP2p)
+      : 0
     return true
   }
 
@@ -121,10 +127,10 @@ export class RelaySessionCrypto {
       return { ...frame, payload: plain }
     }
     if (!this.s2c) return null
-    if (env.n <= this.s2cRecv) return null
+    if (!this.s2cRecv.allows(env.n)) return null
     const plain = C.unwrapPayload(this.s2c, env, type, frame.dbSessionId as string | undefined)
     if (plain === null) return null
-    this.s2cRecv = env.n
+    this.s2cRecv.commit(env.n)
     return { ...frame, payload: plain }
   }
 
@@ -141,8 +147,8 @@ export class RelaySessionCrypto {
   decryptTerminal(raw: Uint8Array): TerminalBinaryClear | null {
     if (!this.terminalS2c) return null
     const opened = openTerminalBinary(this.terminalS2c, raw)
-    if (!opened || (this.terminalS2cRecv !== -1 && opened.counter <= this.terminalS2cRecv)) return null
-    this.terminalS2cRecv = opened.counter
+    if (!opened || !this.terminalS2cRecv.allows(opened.counter)) return null
+    this.terminalS2cRecv.commit(opened.counter)
     return opened.frame
   }
 }

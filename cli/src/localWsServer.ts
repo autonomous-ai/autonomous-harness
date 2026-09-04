@@ -216,12 +216,12 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           if (isBinary) {
             const clear = decodeTerminalLocal(binaryBytes(raw))
             if (!clear) { close(4400, 'invalid terminal frame'); return }
-            relay.sendBinary(clear)
+            await relay.sendBinary(clear)
             return
           }
           const frame = jsonFrame(raw)
           if (!frame) { close(4400, 'invalid json frame'); return }
-          relay.send(frame)
+          await relay.send(frame)
           return
         }
 

@@ -115,6 +115,7 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       expect(welcome.type).toBe('e2e_welcome')
       expect(crypto.handleWelcome(welcome.payload as Record<string, unknown>)).toBe(true)
       expect(crypto.ready).toBe(true)
+      expect(crypto.terminalP2pVersion).toBe(1)
 
       // Outgoing: client encrypts a down-type frame; manager decrypts it via unwrapDown.
       const outgoing = crypto.wrapOutgoing({ type: 'terminal_input', payload: { requestId: 'r1', foo: 'bar' } })
@@ -122,6 +123,12 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       const decrypted = manager.unwrapDown('session-conn', outgoing)
       expect(decrypted).not.toBeNull()
       expect((decrypted!.payload as Record<string, unknown>).foo).toBe('bar')
+
+      const lowerDown = crypto.wrapOutgoing({ type: 'terminal_resize', payload: { streamId: 's', cols: 80 } })
+      const higherDown = crypto.wrapOutgoing({ type: 'terminal_resize', payload: { streamId: 's', cols: 120 } })
+      expect((manager.unwrapDown('session-conn', higherDown)?.payload as Record<string, unknown>).cols).toBe(120)
+      expect((manager.unwrapDown('session-conn', lowerDown)?.payload as Record<string, unknown>).cols).toBe(80)
+      expect(manager.unwrapDown('session-conn', lowerDown)).toBeNull()
 
       // Incoming: manager broadcasts a group-encrypted up event; client decrypts it.
       const wrappedUp = manager.wrapUp({ type: 'user_message', payload: { text: 'hi' } })
@@ -136,10 +143,30 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       const openedByAdapter = manager.unwrapTerminalBinary('session-conn', sealedOut!)
       expect(openedByAdapter?.bytes).toEqual(clear.bytes)
 
+      const lowerInput = crypto.encryptTerminal({ ...clear, seq: 2 })!
+      const higherInput = crypto.encryptTerminal({ ...clear, seq: 3 })!
+      expect(manager.unwrapTerminalBinary('session-conn', higherInput)?.seq).toBe(3)
+      expect(manager.unwrapTerminalBinary('session-conn', lowerInput)?.seq).toBe(2)
+      expect(manager.unwrapTerminalBinary('session-conn', lowerInput)).toBeNull()
+
       const sealedIn = manager.wrapTerminalBinary('session-conn', { ...clear, kind: 2 })
       expect(sealedIn).not.toBeNull()
       const openedByClient = crypto.decryptTerminal(sealedIn!)
       expect(openedByClient?.bytes).toEqual(clear.bytes)
+
+      // WebSocket RPC/control and WebRTC terminal frames share counters but can cross in flight.
+      // Authentic out-of-order frames inside the replay window must both survive; duplicates must not.
+      const lower = manager.wrapTarget('session-conn', 'terminal_ready', { streamId: 'lower' })!
+      const higher = manager.wrapTarget('session-conn', 'terminal_ready', { streamId: 'higher' })!
+      expect((crypto.unwrapIncoming(higher)?.payload as Record<string, unknown>).streamId).toBe('higher')
+      expect((crypto.unwrapIncoming(lower)?.payload as Record<string, unknown>).streamId).toBe('lower')
+      expect(crypto.unwrapIncoming(lower)).toBeNull()
+
+      const lowerBinary = manager.wrapTerminalBinary('session-conn', { ...clear, kind: 2, seq: 2 })!
+      const higherBinary = manager.wrapTerminalBinary('session-conn', { ...clear, kind: 2, seq: 3 })!
+      expect(crypto.decryptTerminal(higherBinary)?.seq).toBe(3)
+      expect(crypto.decryptTerminal(lowerBinary)?.seq).toBe(2)
+      expect(crypto.decryptTerminal(lowerBinary)).toBeNull()
     } finally {
       await new Promise<void>((resolve) => wss.close(() => resolve()))
     }

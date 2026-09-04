@@ -25,6 +25,7 @@ import {
 } from '../terminalBinary.js'
 import { E2eeStore } from './store.js'
 import { pwCpaceGenerator, pwContext } from './passwordPake.js'
+import { ReplayWindow } from './replayWindow.js'
 
 type Frame = Record<string, unknown>
 
@@ -65,11 +66,11 @@ interface Session {
   c2s: Uint8Array        // web → adapter (down message)
   s2c: Uint8Array        // adapter → web (welcome + targeted RPC replies)
   s2cCounter: number     // next send counter (0 was the welcome)
-  c2sRecv: number        // highest counter seen (replay guard)
+  c2sRecv: ReplayWindow  // bounded replay guard; permits cross-transport reordering
   terminalC2s: Uint8Array
   terminalS2c: Uint8Array
   terminalS2cCounter: number
-  terminalC2sRecv: number
+  terminalC2sRecv: ReplayWindow
 }
 
 const PAIR_TTL_MS = 60_000
@@ -325,10 +326,10 @@ export class E2eeManager {
     const session = this.sessions.get(connId)
     if (!session) return null
     const envelope = parseTerminalBinaryEnvelope(raw)
-    if (!envelope || (session.terminalC2sRecv !== -1 && envelope.counter <= session.terminalC2sRecv)) return null
+    if (!envelope || !session.terminalC2sRecv.allows(envelope.counter)) return null
     const opened = openTerminalBinary(session.terminalC2s, raw)
     if (!opened) return null
-    session.terminalC2sRecv = opened.counter
+    session.terminalC2sRecv.commit(opened.counter)
     return opened.frame
   }
 
@@ -345,10 +346,10 @@ export class E2eeManager {
     // (__e2e null, missing/non-string ct, non-number n) would make the deref / b64d below throw and
     // crash the daemon. Anything that isn't the expected shape is dropped like an undecryptable frame.
     if (!env || typeof env !== 'object' || typeof env.n !== 'number' || typeof env.ct !== 'string') return null
-    if (s.c2sRecv !== -1 && env.n <= s.c2sRecv) return null // replay / reorder — drop
+    if (!s.c2sRecv.allows(env.n)) return null
     const plain = C.unwrapPayload(s.c2s, env, frame.type as string, frame.dbSessionId as string | undefined)
     if (plain === null) return null
-    s.c2sRecv = env.n
+    s.c2sRecv.commit(env.n)
     return { ...frame, payload: plain }
   }
 
@@ -714,14 +715,18 @@ export class E2eeManager {
       c2s: keys.c2s,
       s2c: keys.s2c,
       s2cCounter: 1,
-      c2sRecv: -1,
+      c2sRecv: new ReplayWindow(),
       terminalC2s: deriveTerminalBinaryKey(keys.c2s),
       terminalS2c: deriveTerminalBinaryKey(keys.s2c),
       terminalS2cCounter: 0,
-      terminalC2sRecv: -1,
+      terminalC2sRecv: new ReplayWindow(),
     })
     const id = this.store.getIdentity()
-    const enc = C.aeadSeal(keys.s2c, 0, C.utf8('e2e-welcome'), C.utf8(JSON.stringify({ groupKey: C.b64e(this.groupKey), epoch: this.epoch })))
+    const enc = C.aeadSeal(keys.s2c, 0, C.utf8('e2e-welcome'), C.utf8(JSON.stringify({
+      groupKey: C.b64e(this.groupKey),
+      epoch: this.epoch,
+      features: { terminalP2p: 1 },
+    })))
     this.deps.sendTo(connId, {
       type: 'e2e_welcome',
       payload: {
