@@ -313,7 +313,7 @@ export class BackendSocket {
    * Separate from `onRestartAgent` because that one puts the agent back exactly as it was; this one
    * puts it back somewhere else. They share the swap underneath and differ in what they hand it.
    */
-  onRetargetAgent: ((input: { agentId: string; grid: GridLaunchOverride }) =>
+  onRetargetAgent: ((input: { agentId: string; grid: GridLaunchOverride | null }) =>
     Promise<{ ok: true } | { ok: false; error: string; detail?: string }>) | null = null
   /** Called on `agent_restart` — cli.ts stops the agent's live engine process and relaunches it in the
    *  SAME tmux pane, keeping the SAME agentId and (best-effort) resuming the same engine session.
@@ -1353,17 +1353,23 @@ export class BackendSocket {
           const agentId = (payload.agentId as string | undefined) || (payload.sessionId as string | undefined)
           if (!agentId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           if (!this.onRetargetAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const clear = payload.clearGrid === true
           const target = parseGridLaunchOverride(payload.grid)
-          // Unlike agent_create, an absent grid is meaningless here: this frame exists only to move an
-          // agent somewhere, so nowhere is a malformed request rather than "leave it alone".
-          if (target.state !== 'ok') {
+          // Exactly one, and `clearGrid` is a separate field rather than `grid: null` on purpose:
+          // parseGridLaunchOverride already answers `absent` for both undefined and null, so
+          // overloading null would make "I forgot the field" and "I mean own login" the same frame.
+          if (clear && target.state !== 'absent') {
+            reply(type, requestId, { error: 'INVALID_GRID', detail: 'clearGrid and grid are mutually exclusive' })
+            return
+          }
+          if (!clear && target.state !== 'ok') {
             reply(type, requestId, {
               error: 'INVALID_GRID',
               detail: target.state === 'invalid' ? target.reason : 'grid is required',
             })
             return
           }
-          const moved = await this.onRetargetAgent({ agentId, grid: target.override })
+          const moved = await this.onRetargetAgent({ agentId, grid: target.state === 'ok' ? target.override : null })
           if (!moved.ok) {
             reply(type, requestId, moved.detail ? { error: moved.error, detail: moved.detail } : { error: moved.error })
             return

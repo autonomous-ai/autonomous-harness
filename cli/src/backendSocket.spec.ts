@@ -717,3 +717,53 @@ describe('adapter-ws dial url', () => {
     expect(dialUrl(new BackendSocket('token', undefined, () => {}, 'computer-1'))).not.toContain('&machine=')
   })
 })
+
+describe('agent_retarget clearGrid', () => {
+  afterEach(() => {
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  const WIRE_GRID = {
+    networkId: 'grid-abc',
+    networkName: 'autonomous.ai',
+    baseUrl: 'https://grid.autonomous.ai/grid-abc/relay/v1',
+    apiKey: 'gridkey-abc123',
+  }
+
+  async function retarget(payload: Record<string, unknown>) {
+    const seen: Array<{ agentId: string; grid: unknown }> = []
+    const socket = new BackendSocket('token')
+    socket.onRetargetAgent = async (input) => { seen.push(input); return { ok: true } }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'agent_retarget', payload } })
+    await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0))
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'agent_retarget_result')
+    await socket.stop()
+    return { seen, reply }
+  }
+
+  it('passes a null grid when clearGrid is true', async () => {
+    const { seen } = await retarget({ requestId: 'r', agentId: 'a1', clearGrid: true })
+    expect(seen).toEqual([{ agentId: 'a1', grid: null }])
+  })
+
+  // Both is a contradiction, and answering it would mean guessing which one the client meant.
+  it('refuses grid and clearGrid together', async () => {
+    const { seen, reply } = await retarget({ requestId: 'r', agentId: 'a1', clearGrid: true, grid: WIRE_GRID })
+    expect(reply?.payload?.error).toBe('INVALID_GRID')
+    expect(seen).toHaveLength(0)
+  })
+
+  // Unchanged: a client that simply forgot the field is still an error, which is the whole reason
+  // clearGrid is a separate field rather than `grid: null`.
+  it('still refuses a frame with neither', async () => {
+    const { seen, reply } = await retarget({ requestId: 'r', agentId: 'a1' })
+    expect(reply?.payload?.error).toBe('INVALID_GRID')
+    expect(seen).toHaveLength(0)
+  })
+})
