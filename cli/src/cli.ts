@@ -42,6 +42,8 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
+import { passThroughToGridLogout } from './lib/gridLogout.js'
+import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -241,6 +243,9 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
                                no second browser, no second approval
   harness grid login --force   sign the harness in as a different account first, then the grid
   harness grid login --json    emit the same machine-readable NDJSON \`harness login --json\` emits
+  harness grid logout [flags]  sign out of your grid — the whole of \`grid logout\`, which stops what
+                               this box is serving BEFORE deleting anything. Flags go straight to it:
+                               --force signs out over a serve child it could not confirm stopped
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
@@ -622,6 +627,27 @@ function gridSaid(handoff: { stdout: string; stderr: string }): Record<string, u
 }
 
 /**
+ * `harness grid logout` — the grid sign-out, run as itself, so the pair a person was taught is
+ * symmetric.
+ *
+ * A passthrough and nothing else. The serve-child teardown that runs before any credential is
+ * deleted, the refusal that keeps them when a child cannot be confirmed stopped, `--force`, the
+ * exit code and every word on either stream are `grid logout`'s. This function's whole job is to
+ * adopt the child's exit code and to say the one thing the child cannot: that there was no child.
+ *
+ * ⚠️ **No cascade into the harness session, and none out of it.** Nothing here reads this
+ * computer's SSO session, so no grid condition can decide whether the harness stays signed in — and
+ * `harness logout` correspondingly never deletes grid credentials (see `logout` below).
+ */
+async function gridLogoutCommand(args: string[]): Promise<void> {
+  const outcome = await passThroughToGridLogout(args)
+  // On the FIELD: both outcomes are truthy objects, and testing the object would read a missing
+  // `grid` as a clean sign-out.
+  if (outcome.ran === false) console.error(`\n  ✗ ${outcome.message}\n`)
+  process.exitCode = outcome.exitCode
+}
+
+/**
  * Pulls `code`/`state`/`error` out of whatever the user pasted — the full callback URL, just its query
  * string (with or without a leading `?`), or a bare `code=...&state=...` pair with no URL shape at all.
  * `new URL(input, redirectUri)` never throws (a base makes it permissive), but a bare `code=...&state=...`
@@ -790,7 +816,16 @@ async function updateCommand(): Promise<void> {
   process.exit(0)
 }
 
-/** Stop the local adapter and discard this computer's SSO session. */
+/**
+ * Stop the local adapter and discard this computer's SSO session — local, and unable to fail.
+ *
+ * ⚠️ **This never touches the grid credential store, and must not learn to.** Two reasons, and both
+ * matter: `grid logout` can refuse and exit non-zero over a serve child it cannot confirm stopped,
+ * so cascading would let a grid condition block a harness sign-out for a reason that has nothing to
+ * do with the harness; and the store may predate the harness entirely, having been written by a
+ * browser sign-in this CLI knows nothing about. All that is owed is the sentence below, so that a
+ * long-lived credential is not left behind in silence.
+ */
 async function logout(): Promise<void> {
   const pid = readPid()
   if (pid && isAlive(pid)) { try { process.kill(pid, 'SIGTERM') } catch { /* ignore */ } }
@@ -798,6 +833,9 @@ async function logout(): Promise<void> {
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
+  // Existence is the whole of the test — nothing is read out of the store, and nothing is written
+  // into it. On stderr, so a script reading this command's output is unaffected by it.
+  warnIfGridSignInRemains()
   process.exit(0)
 }
 
@@ -3795,6 +3833,9 @@ async function resetCommand(): Promise<void> {
   if (r.pid) console.log(`    Stopped adapter process ${r.pid}.`)
   clearAuthSession()
   console.log('\n  Start again with: harness login, then harness start\n')
+  // The SECOND door onto the sign-out `logout` performs, and it clears MORE, so somebody running it
+  // is if anything likelier to believe nothing is left. Same call, so the two cannot drift.
+  warnIfGridSignInRemains()
   process.exit(0)
 }
 
@@ -4371,6 +4412,14 @@ const flags = rest.filter((a) => a.startsWith('-'))
 const args = rest.filter((a) => !a.startsWith('-'))
 const foreground = flags.includes('--foreground') || flags.includes('-f')
 
+/** `argv` with the first occurrence of `token` removed, order otherwise untouched — how a subcommand
+ *  word is dropped from an argv that is otherwise passed straight to a child. Flags typed BEFORE the
+ *  word survive, which a slice from its index would discard. */
+function withoutFirst(argv: string[], token: string): string[] {
+  const at = argv.indexOf(token)
+  return at < 0 ? argv : [...argv.slice(0, at), ...argv.slice(at + 1)]
+}
+
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') usage()
 if (cmd === 'version' || cmd === '--version' || cmd === '-v') { console.log(VERSION); process.exit(0) }
 
@@ -4417,6 +4466,11 @@ switch (cmd) {
     break
   case 'grid':
     if (args[0] === 'login') gridLoginCommand(flags.includes('--force'), flags.includes('--json')).catch(onError)
+    // Everything but the verb, in the order it was typed — a passthrough that allow-listed flags
+    // would be a second place that has to know what `grid logout` accepts. Only the FIRST `logout`
+    // token goes: filtering by value instead would eat an option's *value* the day `grid logout`
+    // takes one, forwarding the flag with nothing behind it.
+    else if (args[0] === 'logout') gridLogoutCommand(withoutFirst(rest, 'logout')).catch(onError)
     else { console.error(`Unknown command: grid ${args[0] ?? ''}`); usage(1) }
     break
   case 'machines':
