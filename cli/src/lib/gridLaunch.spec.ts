@@ -4,6 +4,7 @@ import {
   buildGridEngineLaunch,
   describeGridLaunch,
   gridCapableEngines,
+  gridEnvVarNames,
   parseGridLaunchOverride,
   relayBaseUrl,
   type GridLaunchOverride,
@@ -224,5 +225,23 @@ describe('describeGridLaunch', () => {
     expect(line).toContain('GLM-4.7-Flash')
     expect(line).not.toContain(WIRE.apiKey)
     expect(describeGridLaunch('claude', OVERRIDE)).not.toContain(WIRE.apiKey)
+  })
+})
+
+describe('gridEnvVarNames', () => {
+  // Derived from the contract rather than listed by hand: a second list would drift the first time
+  // an engine's contract gained a variable, and the symptom would be a "cleared" agent still running
+  // on the grid it was supposedly moved off.
+  it('names every variable claude is launched with', () => {
+    expect(gridEnvVarNames('claude').sort())
+      .toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL'])
+  })
+
+  it('includes the config-dir pointer for an engine that uses one', () => {
+    expect(gridEnvVarNames('pi')).toContain('PI_CODING_AGENT_DIR')
+  })
+
+  it('is empty for an engine that cannot be pointed at a grid', () => {
+    expect(gridEnvVarNames('amp')).toEqual([])
   })
 })

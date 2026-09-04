@@ -422,3 +422,30 @@ export function describeGridLaunch(engine: AgentEngine, override: GridLaunchOver
   return `[grid] ${engine} -> ${override.networkName} (${override.networkId})`
     + ` · ${override.model ?? 'model chosen by the engine'}`
 }
+
+/** A placeholder override, used only to ask a contract which variables it sets. Never launched. */
+const PROBE_OVERRIDE: GridLaunchOverride = {
+  networkId: 'probe',
+  networkName: 'probe',
+  baseUrl: 'https://example.invalid/probe/relay/v1',
+  apiKey: 'probe',
+  model: 'probe',
+}
+
+/**
+ * Which environment variables pointing [engine] at a grid sets.
+ *
+ * Asked of the contract by building one, rather than kept as a second list beside it. A hand-written
+ * list would be correct exactly until an engine's contract gained a variable, and the symptom of it
+ * being stale is the worst kind: an agent moved back to its own login that quietly keeps talking to
+ * the grid, reporting success the whole way.
+ *
+ * Empty for an engine that has no contract — there is nothing to clear because nothing was set.
+ */
+export function gridEnvVarNames(engine: AgentEngine): string[] {
+  const built = buildGridEngineLaunch(engine, PROBE_OVERRIDE)
+  if (!built.ok) return []
+  const names = Object.keys(built.launch.env)
+  if (built.launch.configDir) names.push(built.launch.configDir.envVar)
+  return names
+}
