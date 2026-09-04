@@ -43,7 +43,7 @@ import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch } from './lib/gridLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridEnvVarNames } from './lib/gridLaunch.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -3069,9 +3069,21 @@ async function runForeground(session: AuthSession): Promise<void> {
     // validate, and respawning over a pane whose occupant we cannot identify is how you replace
     // something that was not ours.
     if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
-    const built = buildGridEngineLaunch(session.engine, grid)
-    if (!built.ok) return { ok: false, error: built.error, detail: built.detail }
-    if (!(await tmuxSupportsSessionEnv())) {
+    // Back to the engine's own login. Nothing is built, because there is no launch to build — but
+    // the variables the LAST launch wrote are in the pane's session environment, and respawn-pane
+    // inherits it. Removing them is the entire operation; skip it and the agent comes back on the
+    // grid it was just moved off, with a success reported.
+    if (!grid) {
+      const cleared = await tmuxBackend.clearEnv(pane, gridEnvVarNames(session.engine))
+      if (cleared.state !== 'succeeded') {
+        return { ok: false, error: 'GRID_CLEAR_FAILED', detail: 'reason' in cleared ? cleared.reason : 'tmux would not clear the pane environment' }
+      }
+    }
+    const built = grid ? buildGridEngineLaunch(session.engine, grid) : null
+    if (built && !built.ok) return { ok: false, error: built.error, detail: built.detail }
+    // Only a launch that SETS variables needs the tmux that can set them. Clearing uses
+    // set-environment, which every supported tmux has.
+    if (built && !(await tmuxSupportsSessionEnv())) {
       return {
         ok: false,
         error: 'TMUX_TOO_OLD_FOR_GRID',
@@ -3089,8 +3101,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Nothing may type into the pane while it is being replaced.
     const release = acquireTerminalControl(session.agentId)
     if (!release) return { ok: false, error: 'AGENT_BUSY' }
-    const gridEnv: Record<string, string> = { ...built.launch.env }
-    if (built.launch.configDir) {
+    const gridEnv: Record<string, string> = built && built.ok ? { ...built.launch.env } : {}
+    if (built && built.ok && built.launch.configDir) {
       // Keyed on the agent, so moving the same agent between grids rewrites one directory rather
       // than leaving a trail of them.
       const { envVar, files } = built.launch.configDir
@@ -3118,7 +3130,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       const outcome = await restartAgent(
         { engine: session.engine, sessionId: session.sessionId },
         await liveBypassPermission(session),
-        paneSwapDeps(session, pane, { env: gridEnv, extraArgs: built.launch.args }),
+        paneSwapDeps(session, pane, { env: gridEnv, extraArgs: built && built.ok ? built.launch.args : [] }),
       )
       if (!outcome.ok) {
         console.warn(`[grid] retarget ${sid(session.agentId)} failed · ${outcome.detail}`)
@@ -3137,7 +3149,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       // would leave the banner up over an agent that had already been moved.
       if (refreshed) announceSession(refreshed)
       const how = outcome.resumed ? 'resumed' : 'fresh session'
-      console.log(`${describeGridLaunch(session.engine, grid)} · retargeted ${sid(session.agentId)} · ${how}`)
+      const where = grid ? describeGridLaunch(session.engine, grid) : `${session.engine} on its own login`
+      console.log(`${where} · retargeted ${sid(session.agentId)} · ${how}`)
       return { ok: true }
     } finally {
       release()
