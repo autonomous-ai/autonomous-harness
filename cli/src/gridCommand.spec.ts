@@ -179,6 +179,32 @@ function fakeBackend(handlers: {
 
 const signedInBackend = () => fakeBackend({ resolveComputer: () => ({ machine: { machineId: 'm_seeded' } }) })
 
+describe('the fake grid itself', () => {
+  /** The positive row for the fake's own guard.
+   *
+   *  Every case below asserts the argv the harness sent, and the fake refusing argv that omits
+   *  `--harness` is what makes those assertions mean "the hand-off was asked for" rather than
+   *  "some argv arrived". But the harness ALWAYS sends the flag, so nothing in this file ever
+   *  drives that branch — a fake whose refusal had rotted away would look exactly like one that
+   *  works, and the suite would go on reporting the seam as covered. So drive it directly. */
+  it('refuses argv that does not ask for the hand-off', async () => {
+    const root = tempRoot()
+    const grid = join(fakeGridBin(root, 'runnable'), 'grid')
+
+    const refused = await new Promise<number | null>((resolve) => {
+      const child = spawn(process.execPath, [grid, 'login', '--json'], {
+        env: { ...process.env, FAKE_GRID_RECORD: recordFile(root) },
+      })
+      child.stdin.end('a-token\n')
+      child.once('close', resolve)
+    })
+
+    expect(refused).toBe(64)
+    // And it still records what it was given, so a refusal is diagnosable rather than silent.
+    expect(readRecord(root).args).toEqual(['login', '--json'])
+  }, 20_000)
+})
+
 describe('harness grid login — an already-signed-in computer', () => {
   it('hands the token over with no browser and one terminating result line', async () => {
     const root = tempRoot()
