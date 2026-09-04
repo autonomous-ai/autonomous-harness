@@ -23,6 +23,7 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -1497,27 +1498,10 @@ export class BackendSocket {
   }
 
   /** Map a registered tmux session onto the web's Project shape (tabs in ProjectTabs). */
-  private async toProject(s: RegisteredSession): Promise<{
-    id: string; sessionId: string; userId: string; name: string; status: string
-    createdAt: string; updatedAt: string; tmuxPane: string | null; terminal: { available: boolean; primary: string; runtimes: RegisteredSession['runtimes'] }; engine: RegisteredSession['engine']; selectedModel: string | null
-    grid: { baseUrl: string; model: string | null } | null
-  }> {
-    const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
-    return {
-      id: s.agentId,
-      sessionId: s.sessionId,
-      userId: '',
-      name: projectDisplayName(s),
-      status: s.active ? 'active' : 'offline',
-      createdAt: new Date(s.registeredAt).toISOString(),
-      updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
-      tmuxPane: s.tmuxPane || null,
-      terminal: { available: registry.terminalAvailable(s.agentId), primary: s.primaryRuntimeKey, runtimes: s.runtimes },
-      engine: s.engine,
+  private toProject(s: RegisteredSession): Promise<AgentFrame> {
+    return agentFrame(s, {
       selectedModel: this.runtimeProfileProvider?.(s) ?? null,
-      // Where this agent's inference actually goes, so the app can tell which agents a newly picked
-      // grid has left behind. Read off the live process by discovery; carries no credential.
-      grid: s.grid ?? null,
-    }
+      terminalAvailable: registry.terminalAvailable(s.agentId),
+    })
   }
 }

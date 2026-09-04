@@ -145,6 +145,7 @@ import {
 } from './engines/commandcode/normalizer.js'
 import { probeGatewayRuntime } from './lib/gatewayRuntime.js'
 import { probeGridAssignment } from './lib/gridAssignment.js'
+import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
 import { RuntimeProfileManager } from './lib/runtimeProfile.js'
@@ -690,21 +691,8 @@ async function logout(): Promise<void> {
   process.exit(0)
 }
 
-async function projectFrame(s: RegisteredSession, selectedModel: string | null): Promise<Record<string, unknown>> {
-  const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
-  return {
-    id: s.agentId,
-    sessionId: s.sessionId,
-    userId: '',
-    name: projectDisplayName(s),
-    status: s.active ? 'active' : 'offline',
-    createdAt: new Date(s.registeredAt).toISOString(),
-    updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
-    tmuxPane: s.tmuxPane || null,
-    terminal: { available: registry.terminalAvailable(s.agentId), primary: s.primaryRuntimeKey, runtimes: s.runtimes },
-    engine: s.engine,
-    selectedModel,
-  }
+function projectFrame(s: RegisteredSession, selectedModel: string | null): Promise<AgentFrame> {
+  return agentFrame(s, { selectedModel, terminalAvailable: registry.terminalAvailable(s.agentId) })
 }
 
 function primaryTerminalLabel(session: RegisteredSession): string {
