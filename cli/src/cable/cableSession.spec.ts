@@ -562,6 +562,21 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('marks a summary quiet when the window already has that agent on screen', async () => {
+    const { session, port } = await connect(makeHost({}))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+
+    await session.summary('a1', 'recap one', 'body one')
+    await session.summary('a2', 'recap two', 'body two', true)
+
+    const sent = port.sent.filter((m) => m.t === 'summary' && !m.restore)
+    // Absent, not false, on the ordinary path: firmware that predates the flag must keep notifying
+    // exactly as it did, and it reads a missing field as false.
+    expect(sent.find((m) => m.agentId === 'a1')).not.toHaveProperty('quiet')
+    // The recap still travels — the tile draws it either way. Only the beep and the drawer are withheld.
+    expect(sent.find((m) => m.agentId === 'a2')).toMatchObject({ quiet: true, recap: 'recap two' })
+  })
+
   it('redraws a reattached dial with what each agent was last doing', async () => {
     // The summaries were on disk the whole time; a tile with a name and no recap has forgotten the work
     // it belongs to. Newest LAST on the wire so it ends up on top of the tile's stack.

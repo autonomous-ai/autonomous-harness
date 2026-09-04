@@ -1,6 +1,6 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type { Frame, LocalClientSink } from './backendSocket.js'
 import { attachLocalWsServer, type LocalWsBackend, type LocalWsServer } from './localWsServer.js'
@@ -103,6 +103,37 @@ describe('local CLI WebSocket', () => {
     expect(backend.sink?.sendFrame({ type: 'agents_list_result', payload: { requestId: 'r1', agents: [] } })).toBe(true)
     await expect(reply).resolves.toMatchObject({ type: 'agents_list_result' })
     ws.close()
+  })
+
+  it('takes the window\'s tile roster, keeps it off the wire, and forgets it on close', async () => {
+    const backend = new FakeBackend()
+    const rosters: string[][] = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onAppPanes: (ids) => rosters.push(ids),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    ws.send(JSON.stringify({ type: 'app_panes', payload: { agentIds: ['a1', 'a2', '', 7, null] } }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // Anything that is not a usable id is dropped rather than trusted.
+    expect(rosters).toEqual([['a1', 'a2']])
+    // Like app_focus: it describes a screen at this desk, so the machine never sees it.
+    expect(backend.frames.map((frame) => frame.type)).toEqual([])
+
+    ws.close()
+    // A window that went away has no tiles open. Left standing, the roster would go on silencing the
+    // dial for agents nobody can see any more — backwards, and permanently.
+    await vi.waitFor(() => expect(rosters).toEqual([['a1', 'a2'], []]))
   })
 
   it('follows an explicit app_focus, and keeps it off the wire', async () => {

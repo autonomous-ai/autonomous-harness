@@ -1100,6 +1100,8 @@ async function runForeground(session: AuthSession): Promise<void> {
   // machine selected, because the carousel held one machine's agents at a time; it now holds every
   // machine's at once, so this computer's tiles are on screen whichever machine the wheel last landed on
   // and skipping the recap here would leave them permanently blank.
+  /** Agents with a tile open in the desktop window right now. Empty when no window is attached. */
+  let openPaneAgents = new Set<string>()
   const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
 
   const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal()
@@ -2566,6 +2568,22 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
     onAppFocus: (machineId, agentId) => { void cableRef?.followApp(machineId, agentId) },
+    // Agents the window has a tile for. A finished turn on one of these is
+    // already in front of the person, so the dial updates its tile in silence
+    // rather than beeping about something being looked at.
+    //
+    // An OPEN tile counts as seen, deliberately — not a focused one. With four
+    // tiles on a grid all four are on screen, and asking which one the eye is
+    // on is a question the window cannot answer honestly anyway.
+    onAppPanes: (agentIds) => {
+      const next = new Set(agentIds)
+      // Logged on CHANGE only. It fires on every pane add, close and reconnect,
+      // and it is the one place the whole feature is observable from — without
+      // it, "the dial went quiet" and "the roster never arrived" look identical.
+      const changed = next.size !== openPaneAgents.size || [...next].some((id) => !openPaneAgents.has(id))
+      openPaneAgents = next
+      if (changed) console.log(`[cable] window tiles: ${next.size ? [...next].map(sid).join(' ') : '(none)'}`)
+    },
     machineId: backend.machineId,
     backend,
     relayPool,
@@ -3385,7 +3403,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (!event) return
     if (event.kind === 'processing') void cable.turnStarted(event.agentId, event.text)
     else if (event.kind === 'done') void cable.turnDone(event.agentId)
-    else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)
+    else if (event.kind === 'summary') {
+      // Quiet when the window already has this agent on screen. The tile still
+      // updates — the recap is what it draws — only the beep and the drawer
+      // entry are withheld, because they exist for a turn nobody is watching.
+      void cable.summary(event.agentId, event.recap || event.text, event.text, openPaneAgents.has(event.agentId))
+    }
     else void cable.turnError(event.agentId, event.text)
   }
 
@@ -3403,7 +3426,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (event.kind === 'question') { void cable.question(event.agentId, event.requestId, event.questions); return }
     if (event.kind === 'processing') void cable.turnStarted(event.agentId, event.text)
     else if (event.kind === 'done') void cable.turnDone(event.agentId)
-    else if (event.kind === 'summary') void cable.summary(event.agentId, event.recap || event.text, event.text)
+    else if (event.kind === 'summary') {
+      // Quiet when the window already has this agent on screen. The tile still
+      // updates — the recap is what it draws — only the beep and the drawer
+      // entry are withheld, because they exist for a turn nobody is watching.
+      void cable.summary(event.agentId, event.recap || event.text, event.text, openPaneAgents.has(event.agentId))
+    }
     else void cable.turnError(event.agentId, event.text)
   })
 

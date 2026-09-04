@@ -29,6 +29,8 @@ export interface LocalWsServerOptions {
   /** The desktop app opened an agent's terminal — which agent, and on which machine. Lets the dial follow
    *  the window, so the two screens stay one desk. */
   onAppFocus?: (machineId: string, agentId: string) => void
+  /** Every agent the window currently has a tile for, across all its machines. */
+  onAppPanes?: (agentIds: string[]) => void
 }
 
 export interface LocalWsServer {
@@ -111,6 +113,8 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
     // fixed for the life of the connection — set once, beside `selected`.
     let boundMachineId: string | null = null
     let relay: RelaySession | null = null
+    /** Whether this connection ever reported a tile roster — only then is clearing it ours to do. */
+    let sentPanes = false
     let alive = true
     let chain = Promise.resolve()
 
@@ -188,6 +192,24 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
         // Sniffed here rather than in the backend socket because that path never sees a RELAYED machine's
         // frames: those are forwarded upstream a few lines below and would be invisible, which is exactly
         // the case that matters — the dial has to follow the window onto ANOTHER machine too.
+        // The window's tile ROSTER. Consumed here like `app_focus` — it describes
+        // a screen at this desk, not anything the machine could act on.
+        //
+        // It carries every agent the window has open, INCLUDING ones belonging
+        // to other machines, and the app sends the same list to every daemon it
+        // is connected to. That is deliberate: the dial is served by whichever
+        // daemon owns the cable, and only a full picture lets that one decide
+        // whether a finished turn is already in front of the person.
+        if (!isBinary && options.onAppPanes) {
+          const roster = jsonFrame(raw)
+          if (roster?.type === 'app_panes') {
+            const raw = (roster.payload as Record<string, unknown> | undefined)?.agentIds
+            const ids = Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string' && id !== '') : []
+            sentPanes = true
+            options.onAppPanes(ids)
+            return
+          }
+        }
         if (!isBinary && options.onAppFocus && boundMachineId) {
           const moved = jsonFrame(raw)
           const agentId = (moved?.payload as Record<string, unknown> | undefined)?.agentId
@@ -246,6 +268,10 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
 
     const cleanup = (): void => {
       clearInterval(heartbeat)
+      // A window that went away has no tiles open. Left standing, the roster
+      // would keep silencing the dial for agents nobody can see any more —
+      // exactly backwards, and permanently.
+      if (sentPanes) options.onAppPanes?.([])
       if (relay) { relay.detach(); relay = null }
       else if (selected) void options.backend.unregisterLocalClient(connId)
       selected = false
