@@ -326,6 +326,40 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('hands a blocked agent to the window without putting the question on the cloud leg', async () => {
+    const socket = new BackendSocket('token')
+    expect(socket.hasLocalClient()).toBe(false)
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:window', {
+      sendFrame: (frame) => { frames.push(frame); return true },
+      sendBinary: () => true,
+    })
+    // The watcher's whole gate: polling a pane for a dialog is waste with nobody rendering it, and
+    // "nobody" used to mean "no device" — which is what kept the window in the dark.
+    expect(socket.hasLocalClient()).toBe(true)
+
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    const asked = {
+      type: 'commander_question',
+      agentId: 'a1',
+      dbSessionId: 's1',
+      payload: { requestId: 'q_1', questions: [{ key: 'Which theme?', q: 'Which theme?', options: ['Blue', 'Red'], multi: false }] },
+    }
+    socket.sendLocal(asked)
+
+    // The window reads it in the clear, which is what loopback is for...
+    expect(frames).toContainEqual(asked)
+    // ...and it never reaches the relay. `commander_question` is deliberately NOT in ENCRYPTED_UP_TYPES,
+    // so `send()` here would have travelled the cloud leg as plaintext question text and option labels.
+    expect(parseSent(ws).some((item) => (item.frame as { type?: string })?.type === 'commander_question')).toBe(false)
+
+    await socket.unregisterLocalClient('local:window')
+    expect(socket.hasLocalClient()).toBe(false)
+    await socket.stop()
+  })
+
   it('routes local terminal binary directly and preserves local streams when cloud disconnects', async () => {
     vi.useFakeTimers()
     const socket = new BackendSocket('token')
@@ -664,5 +698,22 @@ describe('Grok session_get history', () => {
     expect(full.events.at(-1)).toEqual({ type: 'done', payload: { result: 'success' } })
     expect(full).not.toHaveProperty('hasMore')
     expect(paginated).toMatchObject({ hasMore: false, oldestCursor: null })
+  })
+})
+
+describe('adapter-ws dial url', () => {
+  const dialUrl = (socket: BackendSocket): string => (socket as unknown as { url: string }).url
+
+  it('carries the machine id this daemon still holds, so a revoked one gets 403 not a new machine', () => {
+    const machineId = 'b'.repeat(32)
+
+    expect(dialUrl(new BackendSocket(machineId, undefined, () => {}, 'computer-1')))
+      .toContain(`&machine=${machineId}`)
+  })
+
+  it('omits the claim when the first argument is a test token rather than a machine id', () => {
+    // Constructed without an AuthSessionManager, the first argument is a token — sending it as a
+    // machine id would be a lie the backend then has to reject.
+    expect(dialUrl(new BackendSocket('token', undefined, () => {}, 'computer-1'))).not.toContain('&machine=')
   })
 })
