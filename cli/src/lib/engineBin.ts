@@ -115,9 +115,14 @@ function interactivePathEntries(): string[] {
   }
 }
 
+/** Only what a spawned child inherits. A hit here is safe to return as a bare name. */
+function processPathEntries(): string[] {
+  return (process.env.PATH ?? '').split(delimiter).filter(Boolean)
+}
+
 function pathEntries(): string[] {
   return [...new Set([
-    ...(process.env.PATH ?? '').split(delimiter).filter(Boolean),
+    ...processPathEntries(),
     ...interactivePathEntries(),
   ])]
 }
@@ -334,10 +339,28 @@ export function cursorRuntimeBin(snapshot = agentCommandOwnershipSnapshot()): st
  */
 export function opencodeBin(): string {
   if (env.OPENCODE_PATH) return env.OPENCODE_PATH
-  for (const entry of pathEntries()) {
+  // THE CHILD'S PATH FIRST, and only that one may answer with a bare name.
+  //
+  // `pathEntries()` searches the interactive login shell's PATH as well as this
+  // process's, and a spawned child inherits only the latter. A hit in a
+  // shell-only directory therefore resolved here and then failed to spawn with
+  // `ENOENT` — which is how the fallback below, added for exactly this bug, was
+  // being skipped: the loop kept FINDING opencode and kept returning a name the
+  // child could not resolve. Measured on a live daemon: 44 entries in the
+  // process PATH, 48 in the interactive one, and `~/.opencode/bin` among the
+  // four that only the shell knows about.
+  for (const entry of processPathEntries()) {
     try {
       accessSync(join(entry, 'opencode'), constants.X_OK)
       return 'opencode'
+    } catch { /* keep looking */ }
+  }
+  // Anywhere else it is reachable, it travels as an absolute path.
+  for (const entry of pathEntries()) {
+    const candidate = join(entry, 'opencode')
+    try {
+      accessSync(candidate, constants.X_OK)
+      return candidate
     } catch { /* keep looking */ }
   }
   const installed = join(homedir(), '.opencode', 'bin', 'opencode')

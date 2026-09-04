@@ -1753,6 +1753,21 @@ async function runForeground(session: AuthSession): Promise<void> {
         ?? hermesReaders.get(sessionId)?.turnOpen
         ?? devinReaders.get(sessionId)?.turnOpen
         ?? commandcodeNormalizers.get(sessionId)?.turnOpen
+      // A TURN THAT IS OPEN GETS ITS TRANSCRIPT RE-READ, every beat.
+      //
+      // The engines whose turn ends in a FILE — codex writes `task_complete`,
+      // and the other JSONL readers are the same shape — depend on chokidar
+      // delivering that last write. MEASURED twice, on two sessions an hour
+      // apart: it did not. Codex finished at 15:31:38 and the turn closed at
+      // 15:35:29, to the second, because the only thing that noticed was the
+      // five-minute reconciliation sweep. The web client never saw it because
+      // it renders the terminal stream; the device waits on `turn_ended` for
+      // its recap, so it sat spinning for 3m51s on a question answered in 18s.
+      //
+      // Reading to EOF here costs one stat and a short read of a file that is
+      // already open, and it bounds that failure at one heartbeat instead of
+      // at whatever is left of a five-minute window.
+      if (turnOpen) void watcher.pollSession(sessionId)
       // Device: keep the busy tile alive through the turn AND the summarize window. Returns false when idle.
       const deviceBusy = mirror.heartbeat(sessionId)
       // Web: unchanged — heartbeat only while the turn itself is open (summarizing uses turn_summary_pending).
@@ -1785,6 +1800,8 @@ async function runForeground(session: AuthSession): Promise<void> {
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
+        // ...and anything already drawn belongs to the turn BEFORE this one.
+        questionWatcher.noteTurnStart(sessionId)
       } else if (event.type === 'turn_ended') {
         const startedAt = turnStartedAt.get(sessionId)
         turnStartedAt.delete(sessionId)

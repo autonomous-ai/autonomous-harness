@@ -42,6 +42,60 @@ describe('DisposableOneShotPool', () => {
     expect([0, 1, 2, 3, 4, 6, 7].map(poolTargetForActiveSessions)).toEqual([0, 1, 1, 1, 2, 2, 3])
   })
 
+  it('backs off instead of forking a process every second forever', async () => {
+    // MEASURED before this existed: an engine whose CLI could not be spawned
+    // produced 69,341 log lines in ten hours — one fork per second, with
+    // nothing in the loop able to notice it was losing.
+    vi.useFakeTimers()
+    let attempts = 0
+    const lines: string[] = []
+    const pool = new DisposableOneShotPool<string, Result>(async () => {
+      attempts++
+      throw new Error('spawn opencode ENOENT')
+    }, 300_000, (line) => lines.push(line))
+
+    pool.setActiveCounts({ claude: 0, codex: 0, cursor: 0, opencode: 1, pi: 0, commandcode: 0, kilo: 0 })
+    pool.setDeviceConnected(true)
+    await settle()
+    expect(attempts).toBe(1)
+
+    // A flat one-second retry would be 60 forks here. Doubling is 6.
+    // Long enough to reach the ceiling: 1+2+4+8+16+32+60 = 123s of backoff.
+    // A flat one-second retry would have forked 200 times by here.
+    for (let i = 0; i < 200; i++) {
+      await vi.advanceTimersByTimeAsync(1_000)
+      await settle()
+    }
+    expect(attempts).toBeLessThan(12)
+
+    // ...and it stops narrating once the delay stops changing.
+    const failureLines = lines.filter((line) => line.includes('warm spawn failed'))
+    expect(failureLines.length).toBeLessThanOrEqual(8)
+    expect(failureLines.at(-1)).toContain('staying quiet')
+
+    pool.shutdown()
+  })
+
+  it('a worker that finally comes up clears the backoff', async () => {
+    vi.useFakeTimers()
+    let attempts = 0
+    const pool = new DisposableOneShotPool<string, Result>(async (engine) => {
+      attempts++
+      if (attempts < 3) throw new Error('spawn opencode ENOENT')
+      return new FakeWorker(engine, attempts)
+    }, 300_000, () => {})
+
+    pool.setActiveCounts({ claude: 0, codex: 0, cursor: 0, opencode: 1, pi: 0, commandcode: 0, kilo: 0 })
+    pool.setDeviceConnected(true)
+    await settle()
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(2_000)
+      await settle()
+    }
+    expect(pool.snapshot().opencode).toMatchObject({ ready: 1 })
+    pool.shutdown()
+  })
+
   it('consumes a ready worker once and immediately replenishes that engine', async () => {
     let id = 0
     const created: FakeWorker[] = []

@@ -327,6 +327,27 @@ describe('QuestionWatcher', () => {
     ])
   })
 
+  it('does not announce a dialog that was already on the pane when the turn began', async () => {
+    // The daemon attaches to a running engine whose LAST prompt was answered a
+    // moment ago in another client. Its pixels are still there, and a pane that
+    // was just answered looks exactly like one still waiting.
+    const w = watcher([fixture('single'), fixture('single'), fixture('single')]);
+    w.instance.noteTurnStart('s1');
+    await Promise.resolve();
+    await Promise.resolve();
+    await w.tick();
+    expect(w.seen).toHaveLength(0);
+  });
+
+  it('...but announces the next one, once the dialog actually changes', async () => {
+    const w = watcher([fixture('single'), fixture('multi'), fixture('multi')]);
+    w.instance.noteTurnStart('s1');
+    await Promise.resolve();
+    await Promise.resolve();
+    await w.tick();   // the NEW dialog — nothing like the one that predated the turn
+    expect(w.seen).toHaveLength(1);
+  });
+
   it('announces a question ONCE while it stays on screen', async () => {
     const w = watcher([fixture('single')])
     await w.tick(); await w.tick(); await w.tick()
