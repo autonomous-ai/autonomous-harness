@@ -164,12 +164,7 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
   }
 
   async kill(runtime: TmuxRuntimeRef): Promise<TerminalActionResult> {
-    const sessionId = await new Promise<string | null>((resolve) => {
-      execFile('tmux', ['display-message', '-p', '-t', runtime.paneId, '#{session_id}'], { timeout: 2_000 }, (error, stdout) => {
-        const value = stdout.trim()
-        resolve(!error && /^\$\d+$/.test(value) ? value : null)
-      })
-    })
+    const sessionId = await this.resolveSessionId(runtime.paneId)
     if (!sessionId) return terminalActionNotStarted('tmux session could not be resolved from pane')
     const ok = await new Promise<boolean>((resolve) => {
       execFile('tmux', ['kill-session', '-t', sessionId], { timeout: 5_000 }, (error) => resolve(!error))
@@ -186,17 +181,22 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
    */
   async clearEnv(runtime: TmuxRuntimeRef, names: readonly string[]): Promise<TerminalActionResult> {
     if (!names.length) return legacyActionResult(true, 'tmux clear environment')
-    const sessionId = await new Promise<string | null>((resolve) => {
-      execFile('tmux', ['display-message', '-p', '-t', runtime.paneId, '#{session_id}'], { timeout: 2_000 }, (error, stdout) => {
-        const value = stdout.trim()
-        resolve(!error && /^\$\d+$/.test(value) ? value : null)
-      })
-    })
+    const sessionId = await this.resolveSessionId(runtime.paneId)
     if (!sessionId) return terminalActionNotStarted('tmux session could not be resolved from pane')
     const ok = await new Promise<boolean>((resolve) => {
       execFile('tmux', clearEnvArgs(sessionId, names), { timeout: 5_000 }, (error) => resolve(!error))
     })
     return legacyActionResult(ok, 'tmux clear environment')
+  }
+
+  /** The id of the session that owns [paneId], or null when tmux will not say. */
+  private resolveSessionId(paneId: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      execFile('tmux', ['display-message', '-p', '-t', paneId, '#{session_id}'], { timeout: 2_000 }, (error, stdout) => {
+        const value = stdout.trim()
+        resolve(!error && /^\$\d+$/.test(value) ? value : null)
+      })
+    })
   }
 
   /**
