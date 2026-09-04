@@ -3069,16 +3069,6 @@ async function runForeground(session: AuthSession): Promise<void> {
     // validate, and respawning over a pane whose occupant we cannot identify is how you replace
     // something that was not ours.
     if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
-    // Back to the engine's own login. Nothing is built, because there is no launch to build — but
-    // the variables the LAST launch wrote are in the pane's session environment, and respawn-pane
-    // inherits it. Removing them is the entire operation; skip it and the agent comes back on the
-    // grid it was just moved off, with a success reported.
-    if (!grid) {
-      const cleared = await tmuxBackend.clearEnv(pane, gridEnvVarNames(session.engine))
-      if (cleared.state !== 'succeeded') {
-        return { ok: false, error: 'GRID_CLEAR_FAILED', detail: 'reason' in cleared ? cleared.reason : 'tmux would not clear the pane environment' }
-      }
-    }
     const built = grid ? buildGridEngineLaunch(session.engine, grid) : null
     if (built && !built.ok) return { ok: false, error: built.error, detail: built.detail }
     // Only a launch that SETS variables needs the tmux that can set them. Clearing uses
@@ -3127,6 +3117,23 @@ async function runForeground(session: AuthSession): Promise<void> {
     const routeKey = terminalRouteKey(pane)
     agentReconciler.holdRoute(routeKey)
     try {
+      // Back to the engine's own login. Nothing is built, because there is no launch to build. If this
+      // agent was launched onto a grid at creation, `new-session -e` wrote the grid's variables into
+      // the pane's SESSION environment, which a bare respawn-pane would inherit — clearing them first
+      // is what makes the env-less respawn below actually land on the engine's own login instead of
+      // silently keeping the old grid. If instead the agent was moved here by an earlier retarget,
+      // `respawn-pane -e` set those variables on that one process, not the session, so this clear is
+      // a harmless no-op and it is the env-less respawn itself that drops them. Either way the pane
+      // ends up clean. Run only after every refusal guard above: an early return with the pane
+      // already cleared but its live process untouched would leave that process still talking to the
+      // grid while the retarget reports failed — the exact half-applied state this handler exists to
+      // refuse.
+      if (!grid) {
+        const cleared = await tmuxBackend.clearEnv(pane, gridEnvVarNames(session.engine))
+        if (cleared.state !== 'succeeded') {
+          return { ok: false, error: 'GRID_CLEAR_FAILED', detail: 'reason' in cleared ? cleared.reason : 'tmux would not clear the pane environment' }
+        }
+      }
       const outcome = await restartAgent(
         { engine: session.engine, sessionId: session.sessionId },
         await liveBypassPermission(session),
