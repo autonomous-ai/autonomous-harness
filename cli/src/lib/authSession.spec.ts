@@ -61,6 +61,51 @@ describe('AuthSessionManager', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('names `harness login` when the refresh service answers 503, because that is what a dead token looks like here', async () => {
+    // Measured 2026-09-06 against the live backend: an unusable refresh token comes back as
+    // `503 {"error":{"code":"AUTH_SERVICE_UNAVAILABLE"}}`, NOT 401 and not REFRESH_TOKEN_INVALID.
+    // So this answer is indistinguishable from a real outage, and the message has to carry both
+    // readings — saying only the upstream's "Authentication service unavailable" sends somebody
+    // with a dead sign-in away to wait for a service that is fine.
+    writeAuthSession(baseSession())
+    // A fresh Response per call: a body can only be read once, so one shared Response would make
+    // every call after the first see an empty body and prove nothing about the message.
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({
+      success: false,
+      error: { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service unavailable' },
+    }), { status: 503 })))
+    const manager = new AuthSessionManager('https://api.example.test')
+
+    const err = await manager.accessToken().catch((e: unknown) => e) as InstanceType<typeof AuthSessionError>
+    expect(err).toMatchObject({ name: AuthSessionError.name, code: 'UNAVAILABLE' })
+    expect(err.message).toMatch(/harness login/)          // the way out, which the upstream never names
+    expect(err.message).toMatch(/Authentication service unavailable/)  // the upstream's own words, kept
+  })
+
+  it('keeps the session when the refresh service is merely unavailable', async () => {
+    // The other half of the same ambiguity, and the reason this must NOT be reclassified as
+    // INVALID_REFRESH: that branch deletes the session, and deleting it on a transient blip
+    // destroys a refresh token nothing can bring back. Ambiguous means keep, and say so.
+    writeAuthSession(baseSession())
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      success: false,
+      error: { code: 'AUTH_SERVICE_UNAVAILABLE', message: 'Authentication service unavailable' },
+    }), { status: 503 })))
+    const manager = new AuthSessionManager('https://api.example.test')
+
+    await expect(manager.accessToken()).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    expect(readAuthSession()).toMatchObject({ refreshToken: 'refresh-1' })
+  })
+
+  it('still says `harness login` when the service gives no message of its own', async () => {
+    writeAuthSession(baseSession())
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new Error('socket hang up')))
+    const manager = new AuthSessionManager('https://api.example.test')
+
+    await expect(manager.accessToken()).rejects.toThrow(/harness login/)
+    expect(readAuthSession()).toMatchObject({ refreshToken: 'refresh-1' })
+  })
+
   it('clears an invalid refresh session instead of retrying it forever', async () => {
     writeAuthSession(baseSession())
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({

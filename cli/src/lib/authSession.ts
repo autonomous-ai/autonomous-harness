@@ -113,6 +113,29 @@ async function withLock<T>(action: () => Promise<T>): Promise<T> {
 
 type RefreshResult = { token: string; refreshToken?: string; expiresIn?: number }
 
+/**
+ * The sentence an `UNAVAILABLE` refresh failure carries — and why it names `harness login` even
+ * though it is classified as a service problem.
+ *
+ * Measured 2026-09-06 against the live backend: an unusable refresh token comes back as
+ * `503 {"error":{"code":"AUTH_SERVICE_UNAVAILABLE"}}` — **not** 401 and **not**
+ * `REFRESH_TOKEN_INVALID`, so it never reaches the branch below whose whole job is to say the
+ * sign-in is dead. Passing the upstream's own words through verbatim then tells somebody whose
+ * sign-in has lapsed to wait for a service that is perfectly healthy, and that wait never ends.
+ *
+ * ⚠️ **It cannot simply be reclassified as `INVALID_REFRESH`.** The identical answer is what a
+ * genuine outage gives, and that branch DELETES the session — destroying a refresh token nothing
+ * can bring back, on a blip. Ambiguous means keep the credential and say both things. So the
+ * classification stays `UNAVAILABLE`, nothing is deleted, and only the wording changes: the
+ * upstream's reading first because it is the likelier one, the actionable one last because it is
+ * the one that ends the loop.
+ */
+function unavailableMessage(said?: string): string {
+  return `Could not renew this computer's sign-in${said ? ` (${said})` : ''}. `
+    + 'That is usually the SSO service having a moment, but it is also what a lapsed sign-in looks '
+    + 'like here — if it keeps happening, run `harness login` to sign in again.'
+}
+
 async function refreshRequest(baseUrl: string, current: AuthSession): Promise<RefreshResult> {
   if (!current.refreshToken) throw new AuthSessionError('No SSO refresh token. Run `harness login`.', 'MISSING')
   let response: Response
@@ -123,7 +146,7 @@ async function refreshRequest(baseUrl: string, current: AuthSession): Promise<Re
       body: JSON.stringify({ refreshToken: current.refreshToken, autonomousEnv: current.autonomousEnv }),
     })
   } catch {
-    throw new AuthSessionError('SSO refresh service is unavailable.', 'UNAVAILABLE')
+    throw new AuthSessionError(unavailableMessage(), 'UNAVAILABLE')
   }
   const body = await response.json().catch(() => ({})) as {
     success?: boolean; data?: { token?: unknown; refreshToken?: unknown; expiresIn?: unknown }; error?: { code?: unknown; message?: unknown }
@@ -132,7 +155,10 @@ async function refreshRequest(baseUrl: string, current: AuthSession): Promise<Re
     throw new AuthSessionError('SSO refresh token is invalid. Run `harness login`.', 'INVALID_REFRESH')
   }
   if (!response.ok || body.success === false || typeof body.data?.token !== 'string' || !body.data.token) {
-    throw new AuthSessionError(typeof body.error?.message === 'string' ? body.error.message : 'SSO refresh service is unavailable.', 'UNAVAILABLE')
+    throw new AuthSessionError(
+      unavailableMessage(typeof body.error?.message === 'string' && body.error.message ? body.error.message : undefined),
+      'UNAVAILABLE',
+    )
   }
   return {
     token: body.data.token,
