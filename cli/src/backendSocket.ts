@@ -23,6 +23,8 @@ import { registry, projectDisplayName, type RegisteredSession } from './lib/regi
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { probeEngines } from './lib/engineProbe.js'
+import { engineInstallRecipe } from './lib/engineInstall.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
@@ -1334,6 +1336,34 @@ export class BackendSocket {
             models: payload.compact === true
               ? compactRuntimePickerModels(models, sessionId, payload.pickerMode, payload.selectedModel)
               : models,
+          })
+          return
+        }
+
+        case 'engines_probe': {
+          // Which engines this machine has, asked BEFORE a create rather than discovered by one
+          // failing. Answered here — on the machine in question — because a Mac and the Docker rig
+          // routinely hold different engines, and an availability list computed anywhere else is
+          // wrong for exactly the remote case this request exists to serve.
+          //
+          // `engines` narrows the probe to what the caller is showing; an absent or malformed list
+          // means "all of them", so an older app that sends nothing still gets a usable answer.
+          const asked = Array.isArray(payload.engines)
+            ? payload.engines.filter((id): id is AgentEngine =>
+              typeof id === 'string' && (ENGINES as readonly string[]).includes(id))
+            : undefined
+          const availability = await probeEngines(asked && asked.length > 0 ? asked : undefined)
+          reply(type, requestId, {
+            engines: availability.map((entry) => ({
+              engine: entry.engine,
+              installed: entry.installed,
+              command: entry.command,
+              installable: entry.installable,
+              // The line the user is about to consent to. Sent with the probe so the dialog can name
+              // it without a second round trip — and so the machine that will RUN it is the machine
+              // that said what it is.
+              installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
+            })),
           })
           return
         }

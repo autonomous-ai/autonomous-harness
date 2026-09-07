@@ -40,6 +40,21 @@ export interface LaunchCommandOptions {
    * never travels this way.
    */
   extraArgs?: readonly string[]
+  /**
+   * A shell line to run in the pane BEFORE the engine, from `engineInstall.ts` — the engine is not on
+   * this machine yet and the user agreed to fetch it.
+   *
+   * It runs inside the same interactive shell the engine is about to be exec'd into, which is the
+   * only context where installing helps: `npm`, `node` and `curl` routinely arrive through
+   * `.zshrc`/`.bashrc` (nvm, asdf, vendor installers), and a prefix chosen by the daemon's PATH would
+   * either not find npm or install into a prefix the engine's own shell cannot then see. The second
+   * failure is the dangerous one — it looks like success and leaves the engine still missing.
+   *
+   * Ignored when there is no interactive shell to wrap with: without one there is no launch script to
+   * put it in, and running an installer through a bare `execFile` would use the daemon's PATH, which
+   * is the case above.
+   */
+  installFirst?: string
 }
 
 /**
@@ -149,7 +164,37 @@ export function buildEngineLaunchArgv(
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
   if (!interactive) return command
-  return [interactive.path, ...interactive.args, 'exec "$@"', 'harness-engine', ...command]
+  const script = opts.installFirst
+    ? installThenExecScript(opts.installFirst)
+    : 'exec "$@"'
+  return [interactive.path, ...interactive.args, script, 'harness-engine', ...command]
+}
+
+/**
+ * Install, then become the engine — or say why not, and stop.
+ *
+ * Three things this script gets right, each of which was a way to lose:
+ *
+ *  * **`exec` only on success.** Running the engine after a failed install reproduces the exact
+ *    `command not found` this feature exists to replace, with a screenful of npm output above it to
+ *    bury the cause.
+ *  * **The install line is not interpolated into a command.** It is the vendor's own published line
+ *    from `engineInstall.ts` — a constant in our source, never anything a user or a peer supplied —
+ *    and it is `eval`ed as the shell line it is written as, because `curl … | bash` is one of them.
+ *    Nothing from the wire reaches here; if that ever changes, this is the line that must not.
+ *  * **`"$@"` still carries the engine argv positionally**, so engine paths and flags are never
+ *    re-parsed by the shell. That property is what the plain `exec "$@"` had and it is preserved.
+ *
+ * The banner matters more than it looks. A pane that sits silent for forty seconds of `npm install`
+ * reads as a hung agent, and the person's next move is to kill it.
+ */
+function installThenExecScript(install: string): string {
+  return [
+    `printf '%s\\n' 'harness: installing the engine — this pane becomes the agent when it finishes' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
+    `if eval ${JSON.stringify(install)}; then exec "$@"; fi`,
+    `printf '\\n%s\\n' 'harness: the install failed, so the agent was not started. The command is above; fix it and create the agent again.'`,
+    'exit 1',
+  ].join('\n')
 }
 
 const AVAILABILITY_SCRIPT = 'resolved="$(command -v "$1" 2>/dev/null)" || exit 1\n'

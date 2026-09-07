@@ -622,6 +622,29 @@ async function lookupPaneEngineProcess(
 }
 
 /**
+ * The pane's OWN process — whatever is sitting there, engine or not.
+ *
+ * [resolvePaneEngineProcess] answers "is the engine running here yet", which during an install is
+ * deliberately no: the pane is running the user's shell, and the shell is running `npm`. This one
+ * answers "what is running here", so an agent can be registered for a pane whose engine has not
+ * started — the record the terminal tile attaches to while the install scrolls past.
+ *
+ * The identity is a placeholder by design, and a SHORT-LIVED one. When the engine finally execs,
+ * discovery registers it against the same pane and the registry adopts the record in place — see the
+ * `routeAgent` branch in `registry.ts`, which matches on the terminal route precisely while an agent
+ * has no engine session bound yet. The agentId therefore survives, and so does the tile.
+ */
+export async function resolvePaneRootProcess(pane: string): Promise<ProcessIdentity | null> {
+  const rootPid = await panePid(pane)
+  if (!rootPid) return null
+  const rows = await processRows()
+  if (!rows) return null
+  const row = rows.find((candidate) => candidate.pid === rootPid)
+  if (!row) return null
+  return { pid: row.pid, executable: row.executable, startMarker: row.startMarker }
+}
+
+/**
  * Every process under a pane, shallowest first — the answer to "then WHAT was running?".
  *
  * `selectEngineProcess` returning null says only that nothing matched the engine, which is the least

@@ -130,3 +130,76 @@ describe('commandAvailableInInteractiveShell', () => {
     await expect(commandAvailableInInteractiveShell('missing-engine', bashProbeShell())).resolves.toBe(false)
   })
 })
+
+describe('buildEngineLaunchArgv with installFirst', () => {
+  // Everything here is about ONE rule: the engine must not be exec'd after an install that failed.
+  // Doing so reproduces the `command not found` this feature exists to replace, with a screenful of
+  // installer output above it to bury the cause.
+  const script = (install: string): string =>
+    buildEngineLaunchArgv('opencode', { installFirst: install }, '/bin/zsh')[2]
+
+  it('leaves the plain launch alone when nothing has to be installed', () => {
+    expect(buildEngineLaunchArgv('opencode', {}, '/bin/zsh')[2]).toBe('exec "$@"')
+  })
+
+  it('keeps the engine argv positional, so the shell never re-parses a path or a flag', () => {
+    const argv = buildEngineLaunchArgv('opencode', {
+      installFirst: 'npm install -g opencode-ai',
+      bypassPermission: true,
+    }, '/bin/zsh')
+    expect(argv.slice(0, 2)).toEqual(['/bin/zsh', '-lic'])
+    expect(argv.slice(3)).toEqual(['harness-engine', ...buildEngineCommandArgv('opencode', { bypassPermission: true })])
+    expect(argv[2]).toContain('exec "$@"')
+  })
+
+  it('runs the engine only when the install succeeded', async () => {
+    await expect(runPaneScript(script('true'))).resolves.toMatchObject({ code: 0, ranEngine: true })
+  })
+
+  it('does not run the engine when the install returns a failure', async () => {
+    const result = await runPaneScript(script('false'))
+    expect(result.ranEngine).toBe(false)
+    expect(result.code).toBe(1)
+    expect(result.stdout).toContain('the install failed')
+  })
+
+  it('does not run the engine when the install command is not there at all', async () => {
+    const result = await runPaneScript(script('harness-no-such-installer --please'))
+    expect(result.ranEngine).toBe(false)
+    expect(result.code).toBe(1)
+  })
+
+  it('prints the command before running it, so a long install is not a hung pane', () => {
+    expect(script('npm install -g opencode-ai')).toContain('npm install -g opencode-ai')
+  })
+
+  it("survives an install line carrying a quote, rather than ending the shell's string", async () => {
+    // `curl … | bash` is already in the table; a quoted argument is the next shape to arrive, and an
+    // install line is a constant in our own source — so the failure mode is a broken pane, not an
+    // injection. It still must not break.
+    const result = await runPaneScript(script(`sh -c 'exit 3'`))
+    expect(result.ranEngine).toBe(false)
+    expect(result.code).toBe(1)
+  })
+})
+
+/** Run one generated pane script under /bin/sh and report what it did. */
+async function runPaneScript(
+  paneScript: string,
+): Promise<{ code: number; stdout: string; ranEngine: boolean }> {
+  const { execFile } = await import('node:child_process')
+  const marker = 'HARNESS-TEST-ENGINE-RAN'
+  return await new Promise((resolve) => {
+    execFile(
+      '/bin/sh',
+      ['-c', paneScript, 'harness-engine', 'printf', `${marker}\n`],
+      { timeout: 10_000 },
+      (error, stdout) => {
+        const code = error && typeof (error as { code?: unknown }).code === 'number'
+          ? (error as unknown as { code: number }).code
+          : 0
+        resolve({ code, stdout, ranEngine: stdout.includes(marker) })
+      },
+    )
+  })
+}
