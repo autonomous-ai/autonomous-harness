@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { assignmentMatches, classifyGridAssignment, readOpencodeGridAssignment, readPiGridAssignment } from './gridAssignment.js'
+import { assignmentMatches, classifyGridAssignment, probeGridAssignment, readOpencodeGridAssignment, readPiGridAssignment } from './gridAssignment.js'
 import { buildGridEngineLaunch, gridCapableEngines, type GridLaunchOverride } from './gridLaunch.js'
 import { clearProcessEnvCache, parsePsEnviron } from './processEnv.js'
 
@@ -248,5 +248,32 @@ describe('readOpencodeGridAssignment', () => {
     await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: '/nonexistent/opencode.json' }))
       .resolves.toBeNull()
     await expect(readOpencodeGridAssignment({})).resolves.toBeNull()
+  })
+})
+
+describe('a failed read is not a finding', () => {
+  // The flicker this pins: the app's grid pill swapped between an agent's model and "own login" for
+  // the length of every turn. Each probe whose `ps` did not answer in time reported "on no grid",
+  // the registry wrote that over a known-good assignment, and the next successful probe put it back.
+  //
+  // The distinction is the fix, not the failure rate. A read can fail for reasons this code will
+  // never enumerate — a busy machine, a 2s timeout, a process caught mid-exec — and none of them are
+  // evidence about where an agent is pointed.
+  const DEAD_PID = 2 ** 31 - 1
+
+  it('answers undefined when the environment cannot be read at all', async () => {
+    clearProcessEnvCache()
+    await expect(probeGridAssignment(
+      { pid: DEAD_PID, executable: 'opencode', startMarker: 'Mon Jan  1 00:00:00 2035' },
+      'opencode',
+    )).resolves.toBeUndefined()
+  })
+
+  it('is distinguishable from a read that found no grid', () => {
+    // Same call shape, opposite meaning: this one looked and there was nothing.
+    expect(classifyGridAssignment('claude', { PATH: '/usr/bin' })).toBeNull()
+    // `null == undefined` is true, so only a strict check tells these apart — which is exactly what
+    // `openProcessAgent` and `updateProcessIdentity` do.
+    expect(classifyGridAssignment('claude', { PATH: '/usr/bin' })).not.toBeUndefined()
   })
 })

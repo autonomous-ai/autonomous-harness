@@ -180,18 +180,29 @@ export async function readOpencodeGridAssignment(
 /**
  * Read one live engine process's grid.
  *
- * Null covers both "not on a grid" and "could not look", deliberately: the caller renders an agent
- * whose assignment is unknown the same as one with none, which at worst offers a move that turns out
- * to be a no-op. The opposite error — claiming an agent is already on the right grid when nobody
- * checked — would leave it quietly running somewhere else.
+ * **Three answers, not two.** `null` is a finding — this process was read and is on no grid.
+ * `undefined` is the absence of one: the environment could not be read at all, so there is nothing to
+ * report. They were the same value until the app's grid pill was seen flickering between an agent's
+ * model and "own login" for the length of every turn: each failed read overwrote a known-good
+ * assignment with "on no grid", and the next successful one put it back.
+ *
+ * The reads that fail are ordinary — `ps eww` carries a 2s timeout and a discovery sweep runs one per
+ * agent while the machine is busy answering. Which of them fails does not matter, and chasing that
+ * was the wrong instinct: what matters is that failing to look must not erase what was already seen.
+ * A process's environment cannot change under it (see `processEnv.ts`), so an earlier successful read
+ * of THIS process stays true.
+ *
+ * `gateway` in the same registry has worked this way all along — `undefined` there means "the probe
+ * failed" and leaves the stored value alone. Both `openProcessAgent` and `updateProcessIdentity`
+ * already guard on `!== undefined`; the grid simply never used it.
  */
 export async function probeGridAssignment(
   identity: ProcessIdentity,
   engine: AgentEngine,
   args = '',
-): Promise<GridAssignment | null> {
+): Promise<GridAssignment | null | undefined> {
   const processEnv = await readProcessEnv(identity)
-  if (!processEnv) return null
+  if (!processEnv) return undefined
   // The two engines whose provider lives in a file this daemon wrote, rather than in a variable.
   if (engine === 'pi') return await readPiGridAssignment(processEnv, args)
   if (engine === 'opencode') return await readOpencodeGridAssignment(processEnv)

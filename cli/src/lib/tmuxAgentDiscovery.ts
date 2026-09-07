@@ -48,8 +48,9 @@ export interface DiscoveredTmuxAgent {
    */
   gateway?: 'ori' | null
   /**
-   * The grid this pane's engine is actually talking to, read off the same environment. null = a normal
-   * vendor login, or the read failed; see `gridAssignment.ts` for why those share an answer.
+   * The grid this pane's engine is actually talking to, read off the same environment. `null` = read,
+   * and on no grid. `undefined` = could not be read, which must NOT overwrite a stored assignment —
+   * see `probeGridAssignment`.
    */
   grid?: GridAssignment | null
 }
