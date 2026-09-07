@@ -285,8 +285,13 @@ export class RemoteRelayPool {
           void entry.p2p?.handleSignal(type, plain.payload)
           return
         }
-        this.noteTerminalResponse(entry, plain, 'relay')
+        // Forward the real frame FIRST: for `terminal_ready`, the Desktop app's TerminalSession learns
+        // its streamId from THIS frame — noteTerminalResponse's own terminal_link_mode frame (sent
+        // synchronously inside it) must arrive after, or the app-side stream-id match silently drops it
+        // (streamId is still null at that point, since terminal_ready — the thing that sets it — has
+        // not been delivered yet).
         entry.sink?.sendFrame(plain)
+        this.noteTerminalResponse(entry, plain, 'relay')
       })
       ws.once('close', (code, reasonBuf) => {
         if (!settled) {
@@ -399,8 +404,8 @@ export class RemoteRelayPool {
     if (typeof wrapped.type !== 'string' || !TERMINAL_P2P_UP_TYPES.has(wrapped.type)) return
     const plain = entry.crypto.unwrapIncoming(wrapped)
     if (!plain) return
+    entry.sink?.sendFrame(plain) // real frame before the derived terminal_link_mode — see comment above
     this.noteTerminalResponse(entry, plain, 'p2p')
-    entry.sink?.sendFrame(plain)
   }
 
   private noteTerminalResponse(entry: Entry, frame: Frame, transport: 'p2p' | 'relay'): void {
