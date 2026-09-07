@@ -771,9 +771,45 @@ export class QuestionWatcher {
   private lastId = new Map<string, string>()  // sessionId → requestId of the announced question
   private misses = new Map<string, number>()  // sessionId → consecutive polls with no dialog
   private readonly blocked = new Map<string, string>()
+  /** sessionId → the dialog that was ALREADY on the pane when this turn began. */
+  private readonly preTurn = new Map<string, string>()
 
 
   constructor(private readonly deps: QuestionWatcherDeps) {}
+
+  /**
+   * A turn just began — remember any dialog already on the pane, so it is not
+   * announced as this turn's question.
+   *
+   * A dialog belonging to a turn cannot have been on screen before that turn's
+   * first byte. That invariant is the only way to tell "waiting for an answer"
+   * from "answered a moment ago and still drawn", because a pane looks
+   * identical either way.
+   *
+   * MEASURED: the daemon attached to a Codex that had just been asked about an
+   * update and answered in the app. Its first capture, 0.8s into the NEXT turn,
+   * still held that prompt — so the dial was shown a question nobody was being
+   * asked, and it stood there for 25s until the engine's output scrolled it out
+   * of the captured window.
+   *
+   * Deliberately NOT applied on attach: re-announcing a genuinely open dialog to
+   * a client that arrives mid-question is a feature, and there is no turn
+   * boundary there to reason from.
+   */
+  noteTurnStart(sessionId: string): void {
+    this.preTurn.delete(sessionId)
+    void (async () => {
+      const session = this.deps.getSession(sessionId)
+      const target = session?.agentId || session?.sessionId
+      if (!target) return
+      const view = parseEngineQuestionPane(session?.engine ?? 'claude', await this.deps.capture(target, CAPTURE_LINES) ?? '')
+      if (!view || view.kind !== 'question' || !view.question || view.rows.length === 0) return
+      // Only if nothing has been announced for this turn yet: the capture takes
+      // a moment, and a dialog that opened inside that window is this turn's.
+      if (this.lastId.has(sessionId)) return
+      this.preTurn.set(sessionId, fingerprintOf(view))
+    })()
+  }
 
   /** Poll this session's pane while its turn is open (called on turn_started). */
   start(sessionId: string): void {
@@ -799,6 +835,7 @@ export class QuestionWatcher {
    * was removed cannot answer either.
    */
   stop(sessionId: string): void {
+    this.preTurn.delete(sessionId)
     const timer = this.timers.get(sessionId)
     if (timer) { clearInterval(timer); this.timers.delete(sessionId) }
     const requestId = this.lastId.get(sessionId)
@@ -866,7 +903,11 @@ export class QuestionWatcher {
       return
     }
     this.misses.delete(sessionId)   // a dialog on screen ends any run of misses
-    const fingerprint = `${view.question}|${view.rows.map((r) => r.label).join('|')}|${view.multi}`
+    const fingerprint = fingerprintOf(view)
+    // Already on the pane before this turn started → it belongs to whatever came
+    // before, and has been answered. Say nothing until it changes or leaves.
+    if (this.preTurn.get(sessionId) === fingerprint) return
+    this.preTurn.delete(sessionId)
     if (this.last.get(sessionId) === fingerprint) return
     this.last.set(sessionId, fingerprint)
 
@@ -883,6 +924,11 @@ export class QuestionWatcher {
     }])
 
   }
+}
+
+/** What makes two captures the SAME dialog: its words, its options, its arity. */
+function fingerprintOf(view: QuestionView): string {
+  return `${view.question}|${view.rows.map((r) => r.label).join('|')}|${view.multi}`
 }
 
 function hash(value: string): string {

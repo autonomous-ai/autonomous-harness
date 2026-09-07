@@ -24,7 +24,23 @@ interface EngineState<Options, Result> {
   starting: number
   ready: Set<DisposableWorker<Options, Result>>
   retryTimer: NodeJS.Timeout | null
+  /** Consecutive warm-spawn failures. Drives the backoff and silences the log. */
+  failures: number
 }
+
+/**
+ * Warm-spawn retry backoff.
+ *
+ * A flat one-second retry is fine for a worker that crashed and will come back.
+ * It is a disaster for a condition that never changes on its own — a missing or
+ * unresolvable binary — because nothing in the loop ever notices it is losing.
+ * MEASURED before this existed: one engine whose CLI could not be spawned
+ * produced 69,341 log lines in ten hours, one process fork per second, forever.
+ */
+const RETRY_BASE_MS = 1_000
+const RETRY_CAP_MS = 60_000
+/** The attempt whose delay first reaches the cap — the last one that logs. */
+const CAP_ANNOUNCE_AT = 7
 
 export interface PoolSnapshot {
   enabled: boolean
@@ -41,13 +57,13 @@ export interface PoolSnapshot {
 /** Maintains disposable, pre-spawned workers. A checked-out worker is never returned to the pool. */
 export class DisposableOneShotPool<Options, Result> {
   private readonly states: Record<OneShotEngine, EngineState<Options, Result>> = {
-    claude: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
-    codex: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
-    cursor: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
-    opencode: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
-    pi: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
-    commandcode: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
-    kilo: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null },
+    claude: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
+    codex: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
+    cursor: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
+    opencode: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
+    pi: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
+    commandcode: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
+    kilo: { active: 0, target: 0, starting: 0, ready: new Set(), retryTimer: null, failures: 0 },
   }
   private readonly all = new Set<DisposableWorker<Options, Result>>()
   private connected = false
@@ -218,6 +234,10 @@ export class DisposableOneShotPool<Options, Result> {
       clearTimeout(state.retryTimer)
       state.retryTimer = null
     }
+    // Going idle ends the streak. The next session of this engine deserves a
+    // fast first attempt — the thing that was broken may well have been fixed
+    // in between, and it is the only moment we get to find out cheaply.
+    if (state.target === 0) state.failures = 0
 
     while (state.ready.size > state.target) {
       const worker = state.ready.values().next().value as DisposableWorker<Options, Result> | undefined
@@ -242,13 +262,24 @@ export class DisposableOneShotPool<Options, Result> {
           if (!this.closed && this.enabled && state.ready.size < state.target) this.scheduleRetry(engine)
         } else {
           state.ready.add(worker)
+          state.failures = 0
           this.log(`[recap-pool] ${engine} warm ready=${state.ready.size}/${state.target}`)
           this.reconcile(engine)
         }
       })
       .catch((err) => {
         state.starting--
-        this.log(`[recap-pool] ${engine} warm spawn failed: ${err instanceof Error ? err.message : String(err)}`)
+        state.failures++
+        const delay = this.retryDelay(state)
+        // Every attempt while the backoff is still growing, then ONCE at the
+        // ceiling. A failure that cannot fix itself should say so and go quiet,
+        // not narrate the same sentence every second until the log is 9MB.
+        if (delay < RETRY_CAP_MS || state.failures === CAP_ANNOUNCE_AT) {
+          this.log(
+            `[recap-pool] ${engine} warm spawn failed (${state.failures}): ${err instanceof Error ? err.message : String(err)}`
+            + (delay >= RETRY_CAP_MS ? ` · backing off to ${RETRY_CAP_MS / 1000}s and staying quiet` : ` · retry in ${delay}ms`),
+          )
+        }
         this.scheduleRetry(engine)
       })
   }
@@ -275,6 +306,12 @@ export class DisposableOneShotPool<Options, Result> {
     state.retryTimer = setTimeout(() => {
       state.retryTimer = null
       this.reconcile(engine)
-    }, 1000)
+    }, this.retryDelay(state))
+  }
+
+  /** 1s, 2s, 4s … capped at a minute. Doubling is what makes a permanent failure cost nothing. */
+  private retryDelay(state: EngineState<Options, Result>): number {
+    const shift = Math.min(Math.max(state.failures - 1, 0), 6)
+    return Math.min(RETRY_BASE_MS * 2 ** shift, RETRY_CAP_MS)
   }
 }
