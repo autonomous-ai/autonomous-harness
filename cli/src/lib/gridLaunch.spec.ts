@@ -343,7 +343,14 @@ describe('opencode declares the grid as a provider', () => {
 
   it("falls back to the grid's router when no model was chosen", () => {
     expect(launch().args).toEqual(['-m', 'autonomous-ai/Auto'])
-    // And the router is not listed twice when it IS the selection.
+  })
+
+  it('writes EXACTLY ONE model, which is what the probe reads back', () => {
+    // `readOpencodeGridAssignment` answers "which model is this agent on" from this file alone,
+    // precisely so it never has to parse a live process's argv — which flickered. A second entry
+    // here would leave that question unanswerable and the probe would go back to saying nothing.
+    expect(Object.keys(config('DeepSeek-V4-Flash-0731').provider['autonomous-ai'].models))
+      .toEqual(['DeepSeek-V4-Flash-0731'])
     expect(Object.keys(config().provider['autonomous-ai'].models)).toEqual(['Auto'])
   })
 

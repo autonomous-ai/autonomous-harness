@@ -206,13 +206,16 @@ function opencodeGridConfig(
   override: GridLaunchOverride,
   model: string,
 ): string {
+  // EXACTLY ONE model, and that is deliberate: it is what the agent was created with.
+  //
+  // Offering the router alongside it would let someone switch inside OpenCode, which reads as a
+  // kindness until you ask what the agent is running on. The probe that answers that
+  // (`readOpencodeGridAssignment`) reads this file, so a file naming two models can only say which
+  // one is live by parsing the engine's argv — and an argv is a live process's business, which it
+  // may rewrite. One model here makes the answer a fact about a file that cannot change under us.
+  //
+  // Choosing a different model is what every other engine here does too: per agent, at creation.
   const models: Record<string, { name: string }> = { [model]: { name: model } }
-  // The router is always offered, so the picker inside OpenCode can fall back to "let the grid
-  // choose" without the agent being recreated. Skipped when it IS the selection, so one id never
-  // appears twice.
-  if (model !== GRID_ROUTER_MODEL) {
-    models[GRID_ROUTER_MODEL] = { name: `${GRID_ROUTER_MODEL} (grid picks the model)` }
-  }
   return `${JSON.stringify({
     $schema: 'https://opencode.ai/config.json',
     provider: {

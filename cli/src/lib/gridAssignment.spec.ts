@@ -169,10 +169,12 @@ describe('readOpencodeGridAssignment', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
-  // OpenCode's endpoint lives in the config file this daemon wrote, not in a variable — so the probe
-  // reads that file. The regression this guards: while opencode was still listed under
-  // BASE_URL_VAR, moving it to a config file made every opencode agent report "own login" in the
-  // app, with the grid answering correctly underneath.
+  // OpenCode's endpoint lives in the config file this daemon wrote, not in a variable. Two
+  // regressions are pinned here:
+  //  * listing opencode under BASE_URL_VAR while its endpoint had moved made every opencode agent
+  //    report "own login" while the grid answered correctly underneath;
+  //  * reading the model out of argv made the app's pill flicker between the model and "own login"
+  //    while the agent was answering, because a live process may rewrite its command line.
   const RELAY = 'https://grid.autonomous.ai/grid-3378218621364f16/relay/v1'
   const write = (body: unknown): string => {
     const dir = mkdtempSync(join(tmpdir(), 'harness-opencode-cfg-'))
@@ -181,14 +183,20 @@ describe('readOpencodeGridAssignment', () => {
     writeFileSync(path, JSON.stringify(body))
     return path
   }
-  const config = (baseURL: string, provider = 'autonomous-ai') => ({
-    provider: { [provider]: { npm: '@ai-sdk/openai-compatible', options: { baseURL } } },
+  const config = (baseURL: string, models: string[] = ['DeepSeek-V4-Flash-0731']) => ({
+    provider: {
+      'autonomous-ai': {
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL },
+        models: Object.fromEntries(models.map((m) => [m, { name: m }])),
+      },
+    },
   })
 
   it('round-trips the config the LAUNCHER writes, not one written by hand', async () => {
-    // The strongest form of this test, and the one that would have caught the regression: build the
-    // real launch, write its real files where the probe will look, and read them back. A spec that
-    // hand-writes the config proves only that two hand-written shapes agree.
+    // The strongest form of this test: build the real launch, write its real files where the probe
+    // will look, and read them back. A spec that hand-writes the config proves only that two
+    // hand-written shapes agree.
     const built = buildGridEngineLaunch('opencode', OVERRIDE)
     if (!built.ok) throw new Error(built.detail)
     const dir = mkdtempSync(join(tmpdir(), 'opencode-grid-'))
@@ -196,11 +204,9 @@ describe('readOpencodeGridAssignment', () => {
     for (const file of built.launch.configDir!.files) {
       writeFileSync(join(dir, file.name), file.content)
     }
-    const path = join(dir, built.launch.configDir!.pointAt!)
-    const assignment = await readOpencodeGridAssignment(
-      { [built.launch.configDir!.envVar]: path },
-      `opencode ${built.launch.args.join(' ')}`,
-    )
+    const assignment = await readOpencodeGridAssignment({
+      [built.launch.configDir!.envVar]: join(dir, built.launch.configDir!.pointAt!),
+    })
     expect(assignment).not.toBeNull()
     expect(assignment!.baseUrl).toContain(NETWORK_ID)
     expect(assignment!.model).toBe(OVERRIDE.model)
@@ -208,47 +214,39 @@ describe('readOpencodeGridAssignment', () => {
     expect(JSON.stringify(assignment)).not.toContain('gridkey-secret')
   })
 
-  it('reads the endpoint out of the provider the argv selected', async () => {
+  it('answers the same whatever the engine has done to its command line', async () => {
+    // The flicker: argv is a live process's to rewrite, so nothing here may depend on it.
     const path = write(config(RELAY))
-    await expect(readOpencodeGridAssignment(
-      { OPENCODE_CONFIG: path },
-      'opencode -m autonomous-ai/DeepSeek-V4-Flash-0731',
-    )).resolves.toEqual({ baseUrl: RELAY, model: 'DeepSeek-V4-Flash-0731' })
-  })
-
-  it('reports the router as the model when that is what was selected', async () => {
-    const path = write(config(RELAY))
-    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path }, '-m autonomous-ai/Auto'))
-      .resolves.toEqual({ baseUrl: RELAY, model: 'Auto' })
-  })
-
-  it('answers null for a provider the argv did not name', async () => {
-    // Two grids can be configured side by side; reading the wrong block would report an agent as
-    // being on a grid it is not on.
-    const path = write(config(RELAY, 'other-grid'))
-    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path }, '-m autonomous-ai/Auto'))
-      .resolves.toBeNull()
+    const expected = { baseUrl: RELAY, model: 'DeepSeek-V4-Flash-0731' }
+    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path })).resolves.toEqual(expected)
   })
 
   it('answers null for an endpoint that is not a relay', async () => {
     const path = write(config('https://api.openai.com/v1'))
-    await expect(readOpencodeGridAssignment(
-      { OPENCODE_CONFIG: path },
-      '-m autonomous-ai/gpt-4o',
-    )).resolves.toBeNull()
+    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path })).resolves.toBeNull()
+  })
+
+  it('answers null for a file this launch did not write', async () => {
+    // A user's own config can carry several providers; guessing which one an engine would pick
+    // would report an agent as being on a grid it is not on.
+    const path = write({
+      provider: {
+        'autonomous-ai': { options: { baseURL: RELAY }, models: { a: {} } },
+        other: { options: { baseURL: RELAY } },
+      },
+    })
+    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path })).resolves.toBeNull()
+  })
+
+  it('answers null when the provider names more than one model', async () => {
+    // Then the file cannot say which one is live, and a guess would be reported as a measurement.
+    const path = write(config(RELAY, ['DeepSeek-V4-Flash-0731', 'Auto']))
+    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path })).resolves.toBeNull()
   })
 
   it('answers null rather than throwing when the file is gone or unreadable', async () => {
-    await expect(readOpencodeGridAssignment(
-      { OPENCODE_CONFIG: '/nonexistent/opencode.json' },
-      '-m autonomous-ai/Auto',
-    )).resolves.toBeNull()
-    await expect(readOpencodeGridAssignment({}, '-m autonomous-ai/Auto')).resolves.toBeNull()
-  })
-
-  it('answers null when no model was selected on argv', async () => {
-    const path = write(config(RELAY))
-    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path }, 'opencode'))
+    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: '/nonexistent/opencode.json' }))
       .resolves.toBeNull()
+    await expect(readOpencodeGridAssignment({})).resolves.toBeNull()
   })
 })

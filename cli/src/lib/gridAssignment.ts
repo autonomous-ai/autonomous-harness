@@ -133,36 +133,45 @@ export async function readPiGridAssignment(
   }
 }
 
-/** OpenCode's config file, and the `-m <provider>/<model>` that selects out of it. */
+/** The config file OpenCode was pointed at. Fixed at exec; nothing the engine does can change it. */
 const OPENCODE_CONFIG_VAR = 'OPENCODE_CONFIG'
-const OPENCODE_ARGV_MODEL = /(?:^|\s)(?:-m|--model)[\s=]+([A-Za-z0-9._-]+)\/(\S+)/
 
 /**
- * OpenCode's endpoint, read out of the config file its process was pointed at.
+ * OpenCode's endpoint and model, read out of the config file its process was pointed at.
  *
  * Same shape as Pi's, and for the same reason: neither engine carries its endpoint in an environment
  * variable, so the only honest answer comes from the file the process is actually reading. Reading
  * our own record of what we launched would answer a different question — what we intended — and that
  * is precisely the disagreement a probe exists to catch.
  *
+ * **It deliberately does not read argv.** The first version matched `-m <provider>/<model>` there,
+ * and the app's grid pill flickered between the model and "own login" while an agent was answering:
+ * every re-probe during a turn had to re-parse a live process's command line, and a command line is
+ * that process's to rewrite. The file is written once by the launch and is exactly one provider on
+ * one grid with one model, so those are read straight out of it — a fact that cannot move.
+ *
  * Every failure lands on null. "We cannot tell" and "not on a grid" are treated alike by the caller;
  * the opposite error, claiming a grid nobody verified, would leave an agent quietly somewhere else.
  */
 export async function readOpencodeGridAssignment(
   processEnv: Record<string, string>,
-  args: string,
 ): Promise<GridAssignment | null> {
   const configPath = processEnv[OPENCODE_CONFIG_VAR]?.trim()
   if (!configPath) return null
-  const selected = OPENCODE_ARGV_MODEL.exec(args)
-  if (!selected) return null
   try {
     const raw = JSON.parse(await readFile(configPath, 'utf8')) as {
-      provider?: Record<string, { options?: { baseURL?: unknown } }>
+      provider?: Record<string, { options?: { baseURL?: unknown }; models?: Record<string, unknown> }>
     }
-    const baseUrl = raw.provider?.[selected[1]]?.options?.baseURL
+    const providers = Object.values(raw.provider ?? {})
+    // More than one provider is not a file this launch wrote. Rather than guess which one the engine
+    // would pick, say nothing — the caller reads that as "not on the grid you picked", which is the
+    // safe direction to be wrong in.
+    if (providers.length !== 1) return null
+    const baseUrl = providers[0].options?.baseURL
     if (typeof baseUrl !== 'string' || !isGridUrl(baseUrl)) return null
-    return { baseUrl, model: selected[2] }
+    const models = Object.keys(providers[0].models ?? {})
+    if (models.length !== 1) return null
+    return { baseUrl, model: models[0] }
   } catch {
     return null
   }
@@ -185,7 +194,7 @@ export async function probeGridAssignment(
   if (!processEnv) return null
   // The two engines whose provider lives in a file this daemon wrote, rather than in a variable.
   if (engine === 'pi') return await readPiGridAssignment(processEnv, args)
-  if (engine === 'opencode') return await readOpencodeGridAssignment(processEnv, args)
+  if (engine === 'opencode') return await readOpencodeGridAssignment(processEnv)
   return classifyGridAssignment(engine, processEnv, args)
 }
 
