@@ -118,6 +118,8 @@ import {
   fetchManifest, downloadVerified, canary, stage, semverGt, shouldAutoUpdate, isLocalDevBuild,
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
+import { managedNodePath } from './lib/nodeRuntime.js'
+import { ensureLauncher, ensureManagedRuntime } from './lib/runtimeInstall.js'
 import { stat } from 'fs/promises'
 import { CodexNormalizer, codexTaskError, lastCodexTurnText } from './engines/codex/normalizer.js'
 import { CursorNormalizer, lastCursorTurnText } from './engines/cursor/normalizer.js'
@@ -3663,7 +3665,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     const spawnDaemon = (extraEnv: Record<string, string>): ReturnType<typeof spawn> => {
       prepareLogFile(LOG_FILE, LEGACY_LOG_FILE) // before the fd + the sinceOffset below, so both see one size
       const fd = openSync(LOG_FILE, 'a')
-      const c = spawn(process.execPath, [SCRIPT_PATH, '__run'], {
+      // Serves the update restart AND the rollback respawn. managedNodePath() is re-read here rather
+      // than captured at boot, so a runtime provisioned during this process's lifetime is the one the
+      // next daemon runs on.
+      const c = spawn(managedNodePath(), [SCRIPT_PATH, '__run'], {
         detached: true, env: { ...process.env, ...extraEnv }, stdio: ['ignore', fd, fd],
       })
       // A spawn failure (e.g. EMFILE) emits 'error' on the child; with no listener that is an
@@ -4056,6 +4061,12 @@ async function waitForReady(sinceOffset: number, timeoutMs = 8000): Promise<Read
 async function launch(foreground: boolean): Promise<void> {
   const session = readAuthSession()
   if (!session) throw new Error('Not signed in. Run `harness login`.')
+  // Provision the Node we run on, and repoint the launcher at it, BEFORE anything is spawned. Before
+  // matters twice over: the parent tails the daemon log and gives up after CONNECT_WAIT_MS, so a
+  // first-run ~50MB download inside the child would surface as a bogus start-up timeout; and in the
+  // foreground this is where the user can actually see it happen.
+  const runtimeNode = await ensureManagedRuntime((m) => console.log(m))
+  if (runtimeNode) ensureLauncher(runtimeNode, (m) => console.log(m))
   // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {
     if (!foreground) console.log('[cli] dev mode — running in the foreground (Ctrl-C to stop)')
@@ -4074,7 +4085,9 @@ async function launch(foreground: boolean): Promise<void> {
   prepareLogFile(LOG_FILE, LEGACY_LOG_FILE) // adopt an older name + enforce the cap before we tail from here
   const logOffset = existsSync(LOG_FILE) ? readFileSync(LOG_FILE).length : 0
   const logFd = openSync(LOG_FILE, 'a')
-  const child = spawn(process.execPath, [SCRIPT_PATH, '__run'], {
+  // The daemon starts on the managed runtime straight away rather than inheriting this process's
+  // interpreter and waiting for some later restart to adopt it.
+  const child = spawn(runtimeNode ?? process.execPath, [SCRIPT_PATH, '__run'], {
     detached: true,
     env: { ...process.env },
     stdio: ['ignore', logFd, logFd],
