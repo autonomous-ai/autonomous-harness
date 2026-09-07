@@ -10,6 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { describe, expect, it } from 'vitest'
 import { cursorMessagesToEvents } from './normalizer.js'
 import { loadCursorReplayTaskLinks } from './subagent.js'
+import { managedNodePath } from '../../lib/nodeRuntime.js'
 
 const runCursorE2e = process.env.RUN_CURSOR_E2E === '1'
 const execFileAsync = promisify(execFile)
@@ -91,7 +92,9 @@ async function installTemporaryCursorHooks(port: number, dataDir: string): Promi
     ? settings.hooks as Record<string, unknown>
     : {}
   const command = [
-    'node',
+    // Mirrors lib/hooks.ts: an absolute interpreter, never the bare word, so this fixture keeps
+    // matching what the installer really writes.
+    shellQuote(managedNodePath()),
     shellQuote(hookScript),
     '--port', String(port),
     '--data-dir', shellQuote(dataDir),

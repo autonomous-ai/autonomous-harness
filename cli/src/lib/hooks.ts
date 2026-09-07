@@ -11,6 +11,7 @@ import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import { env } from '../config/env.js'
 import { VERSION } from '../version.js'
+import { managedNodePath } from './nodeRuntime.js'
 
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
 const CODEX_HOOKS_PATH = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json')
@@ -58,7 +59,11 @@ function shellQuote(value: string): string {
 
 function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok' | 'agy' | 'copilot'): string {
   return [
-    'node',
+    // Absolute, never the bare word `node`. This string is executed later by the ENGINE, in a shell
+    // whose PATH is none of our business — and since the product ships its own Node, a computer with
+    // no `node` on PATH is normal. See managedNodePath(); a changed interpreter is picked up by the
+    // same drift comparison each installer already does for a changed path or port.
+    shellQuote(managedNodePath()),
     shellQuote(HOOK_SCRIPT),
     '--port', String(port),
     '--data-dir', shellQuote(env.ADAPTER_DATA_DIR),
@@ -553,8 +558,18 @@ function allowlistHermesHook(cmd: string): void {
     const parsed = JSON.parse(readFileSync(HERMES_ALLOWLIST_PATH, 'utf-8')) as typeof data
     if (parsed && Array.isArray(parsed.approvals)) data = parsed
   } catch { /* absent or unreadable → start from an empty skeleton */ }
-  const approvals = data.approvals ?? []
-  let changed = false
+  const previous = data.approvals ?? []
+  // Drop OUR stale approvals before adding the current one. Each command change — a new port, a moved
+  // install, a new Node runtime — otherwise leaves five dead entries here forever, and the entry is
+  // dead the moment the command string it approves is no longer the one we install. Foreign approvals
+  // are somebody else's business and are copied through untouched.
+  const isOurStaleApproval = (a: { command?: string }) =>
+    typeof a?.command === 'string' &&
+    a.command.includes('notify.mjs') &&
+    a.command.includes('--engine hermes') &&
+    a.command !== cmd
+  const approvals = previous.filter((a) => !isOurStaleApproval(a))
+  let changed = approvals.length !== previous.length
   for (const event of HERMES_HOOK_EVENTS) {
     // Hermes matches on EXACT (event, command) string equality.
     if (approvals.some((a) => a?.event === event && a?.command === cmd)) continue

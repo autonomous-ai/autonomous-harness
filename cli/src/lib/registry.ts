@@ -136,7 +136,7 @@ export interface RegisterInput {
 /** Display name for a session's "project" tab/tile. A user rename (persisted override) is
  *  authoritative and FIXED — it must NOT drift back to the tmux pane title, which Claude keeps
  *  rewriting to the latest convo topic. Only a session the user never renamed auto-follows the title,
- *  then falls back to "<id4> · <folder>". */
+ *  then falls back to "<folder> · <id4>". */
 export function projectDisplayName(s: RegisteredSession): string {
   return NAME_OVERRIDES.get(s.sessionId) || NAME_OVERRIDES.get(s.agentId) || titleDisplayName(s.title) || defaultProjectDisplayName(s)
 }
@@ -1376,7 +1376,7 @@ export const registry = new Registry()
 
 function defaultProjectDisplayName(s: RegisteredSession): string {
   const folder = s.cwd ? s.cwd.split('/').filter(Boolean).pop() || s.cwd : s.projectDir
-  return `${(s.sessionId || s.agentId).slice(0, 4)} · ${folder}`
+  return `${folder} · ${(s.sessionId || s.agentId).slice(0, 4)}`
 }
 
 function titleDisplayName(title: string | null | undefined): string | null {
