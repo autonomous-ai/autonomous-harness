@@ -21,6 +21,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
+import { GRID_ROUTER_MODEL } from './gridLaunch.js'
 import { readProcessEnv } from './processEnv.js'
 import type { ProcessIdentity } from './registry.js'
 
@@ -171,7 +172,17 @@ export async function readOpencodeGridAssignment(
     if (typeof baseUrl !== 'string' || !isGridUrl(baseUrl)) return null
     const models = Object.keys(providers[0].models ?? {})
     if (models.length !== 1) return null
-    return { baseUrl, model: models[0] }
+    // The router reports as NO model, the same as every other engine launched without one.
+    //
+    // OpenCode is the only engine whose provider block has to name something, so a launch with no
+    // model picked writes the relay's router id there. That is an OpenCode implementation detail and
+    // must not leak: the app's own "Auto" is `model: null`, and a raw `Auto` coming back would be the
+    // same state under a different name — the header would print the id instead of "Auto", and
+    // `assignmentMatches` would compare 'Auto' against null and report every such agent as being on
+    // the wrong target, forever. See the desktop's `kAutoModelId`, and the commit that stopped the
+    // model menu offering the router beside its own Auto row.
+    const model = models[0]
+    return { baseUrl, model: model.toLowerCase() === GRID_ROUTER_MODEL.toLowerCase() ? null : model }
   } catch {
     return null
   }

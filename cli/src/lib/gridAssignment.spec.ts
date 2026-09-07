@@ -214,6 +214,16 @@ describe('readOpencodeGridAssignment', () => {
     expect(JSON.stringify(assignment)).not.toContain('gridkey-secret')
   })
 
+  it('reports the router as NO model, the way every other engine does', async () => {
+    // OpenCode is the only engine whose provider block must name something, so a launch with no
+    // model picked writes the relay's router id there. Letting that id back out would be the app's
+    // own "Auto" under a second name: the header would print the raw id, and `assignmentMatches`
+    // would compare it against null and call every such agent mis-targeted forever.
+    const path = write(config(RELAY, ['Auto']))
+    await expect(readOpencodeGridAssignment({ OPENCODE_CONFIG: path }))
+      .resolves.toEqual({ baseUrl: RELAY, model: null })
+  })
+
   it('answers the same whatever the engine has done to its command line', async () => {
     // The flicker: argv is a live process's to rewrite, so nothing here may depend on it.
     const path = write(config(RELAY))

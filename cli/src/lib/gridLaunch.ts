@@ -156,7 +156,7 @@ export function anthropicBaseUrl(baseUrl: string): string {
  * the relay's `/models`, and the relay answers it like any other id — which is what lets a provider
  * block that must name SOMETHING name this.
  */
-const GRID_ROUTER_MODEL = 'Auto'
+export const GRID_ROUTER_MODEL = 'Auto'
 
 /** The file OpenCode's `OPENCODE_CONFIG` is pointed at. */
 const OPENCODE_CONFIG_FILE = 'opencode.json'
