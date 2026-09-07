@@ -109,7 +109,7 @@ import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
 import { connectWithPassword } from './lib/e2ee/relayClient.js'
 import {
   startSelfUpdater, restore as restoreUpdate, confirm as confirmUpdate,
-  fetchManifest, downloadVerified, canary, stage, semverGt,
+  fetchManifest, downloadVerified, canary, stage, semverGt, shouldAutoUpdate, isLocalDevBuild,
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { stat } from 'fs/promises'
@@ -236,7 +236,8 @@ Machine:
   harness machines             list the machines on this account (this computer's is marked)
   harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
   harness version              print the installed version (v${VERSION})
-  harness update               update to the latest build now (it also self-updates in the background)
+  harness update [--force]     update to the latest build now (it also self-updates in the background;
+                               neither touches a local install-cli.sh build without --force)
   harness flash [flags]        re-flash a plugged-in circle device over USB. Flags go straight to the
                                flasher: --detect-only, --port, --version, --yes, --erase-nvs
 
@@ -623,14 +624,15 @@ async function downloadCanaryStage(entry: UpdateEntry, dir: string, log: (m: str
 }
 
 /** Fetch the manifest and, if a strictly-newer build exists, stage it (see downloadCanaryStage). Returns
- *  the staged version, or null when nothing was staged — already current, a dev/repo or update-disabled
- *  build, or ANY fetch/verify/canary failure (all swallowed: an update hiccup must never block `start`). */
+ *  the staged version, or null when nothing was staged — already current, a local, dev/repo or
+ *  update-disabled build, or ANY fetch/verify/canary failure (all swallowed: an update hiccup must
+ *  never block `start`). See {@link shouldAutoUpdate} for why a local build is left alone. */
 async function stageLatestBundle(log: (m: string) => void): Promise<string | null> {
   if (SCRIPT_PATH.endsWith('.ts') || env.ADAPTER_UPDATE_DISABLE) return null // dev/repo run never touches the installed bundle
   const dir = resolve(env.ADAPTER_CLI_DIR)
   try {
     const entry = await fetchManifest(env.ADAPTER_UPDATE_URL, env.ADAPTER_UPDATE_KEY)
-    if (!entry || !semverGt(entry.version, VERSION)) return null
+    if (!entry || !shouldAutoUpdate(entry.version, VERSION)) return null
     log(`▸ newer build available — updating v${VERSION} → v${entry.version}…`)
     return (await downloadCanaryStage(entry, dir, log)) ? entry.version : null
   } catch (e) {
@@ -642,17 +644,33 @@ async function stageLatestBundle(log: (m: string) => void): Promise<string | nul
 /** `harness update` — force the self-update NOW instead of waiting for the daemon's
  *  background poll. Checks the manifest; if a newer build exists it stops any running daemon first (so
  *  its poller can't race our staging), swaps in the new bytes, then relaunches on them. No-op on a
- *  dev/repo build, and leaves the daemon running-on-the-old-build untouched when already up to date. */
-async function updateCommand(): Promise<void> {
+ *  dev/repo build, and leaves the daemon running-on-the-old-build untouched when already up to date.
+ *
+ *  On a LOCAL build (`install-cli.sh`) it stops and says so: the automatic paths leave those alone
+ *  (see {@link shouldAutoUpdate}), and a command that silently did the opposite would be the same
+ *  lost-work trap with a human's finger on it. [force] is that human saying it anyway. */
+async function updateCommand(force: boolean): Promise<void> {
   if (SCRIPT_PATH.endsWith('.ts')) {
     console.log('This is a dev/repo build (running from source) — `harness update` is a no-op. Rebuild the bundle instead.')
+    process.exit(0)
+  }
+  if (isLocalDevBuild(VERSION) && !force) {
+    console.log(`This is a local build (v${VERSION}), installed from a working tree by scripts/install-cli.sh.`)
+    console.log('Updating would replace it with a published release and lose whatever it was built to test.')
+    console.log('  keep it:    rebuild with `make install-cli` after you pull')
+    console.log('  replace it: harness update --force')
     process.exit(0)
   }
   console.log(`▸ Checking for updates…  (current v${VERSION})`)
   let entry: UpdateEntry | null = null
   try { entry = await fetchManifest(env.ADAPTER_UPDATE_URL, env.ADAPTER_UPDATE_KEY) }
   catch (e) { console.error(`✗ Could not reach the update manifest: ${e instanceof Error ? e.message : e}`); process.exit(1) }
-  if (!entry || !semverGt(entry.version, VERSION)) {
+  // `--force` on a local build is the one case where "newer" is not the question. Its label carries
+  // the published core (`0.1.56-dev.<sha>`), so semverGt is false against the release it was built
+  // level with — the check that keeps a release from stomping the build is also the check that would
+  // make the deliberate swap a no-op.
+  const replacingLocalBuild = force && isLocalDevBuild(VERSION)
+  if (!entry || !(semverGt(entry.version, VERSION) || replacingLocalBuild)) {
     console.log(`✓ Already on the latest version (v${VERSION}).`)
     process.exit(0)
   }
@@ -4585,7 +4603,7 @@ switch (cmd) {
     status().catch(onError)
     break
   case 'update':
-    updateCommand().catch(onError)
+    updateCommand(flags.includes('--force')).catch(onError)
     break
   case 'flash':
     // Everything after `flash` belongs to the flasher, not to us — see lib/flash.ts on why the flags

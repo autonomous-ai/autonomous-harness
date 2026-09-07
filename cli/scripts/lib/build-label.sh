@@ -4,10 +4,11 @@
 # `<published-core>-dev.<sha>[.dirty]`. Two properties, both deliberate:
 #
 #   * The core matches the current release, so `harness version` and `harness status` read sensibly
-#     next to a production install, and semverGt() (lib/selfUpdate.ts) — which compares the X.Y.Z core
-#     only and is false on equality — can never let the release you are level with overwrite your
-#     build. The NEXT real release still lands, which is the behaviour you want.
-#   * The `-dev.<sha>` suffix makes it unmistakably local, and `.dirty` says the tree had uncommitted
+#     next to a production install.
+#   * The `-dev.<sha>` suffix is what shouldAutoUpdate() (lib/selfUpdate.ts) matches to leave this
+#     build alone: no release replaces it automatically, and `harness update` says so rather than
+#     doing it. Change this shape and local builds start being overwritten again. It also makes the
+#     build unmistakably local, and `.dirty` says the tree had uncommitted
 #     changes when it was bundled — the difference between "this is commit abc123" and "this is
 #     something only my disk has ever seen".
 #

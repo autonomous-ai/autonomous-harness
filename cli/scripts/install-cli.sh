@@ -11,18 +11,22 @@
 #   bash scripts/install-cli.sh --no-updates  # pin this build: turn self-update OFF (default: ON)
 #
 # SELF-UPDATE STAYS ON BY DEFAULT, and the version label is what makes that safe. The build is labelled
-# `<published-core>-dev.<sha>`, and semverGt() (lib/selfUpdate.ts) compares the X.Y.Z core ONLY and is
-# false on equality — so the release you are level with can never overwrite your build, while the NEXT
-# release does. That is the behaviour you want: develop on your own bytes, and still be carried forward
-# when a real version ships.
+# `<published-core>-dev.<sha>`, and shouldAutoUpdate() (lib/selfUpdate.ts) refuses to replace ANY
+# `-dev.` build automatically — so no release, however far ahead, overwrites your bytes on its own.
 #
-# It used to default to OFF, which pinned the computer silently: a new release would land in the manifest
-# and simply never arrive, and the only clue was `harness update` working by hand while nothing happened
-# on its own. `--no-updates` still gives you that, deliberately — it exports ADAPTER_UPDATE_DISABLE=true
-# in the launcher, switching off both the 60s poll and `harness start`'s update-before-connect (cli.ts
-# `stageLatestBundle`). To rejoin the release train from a pinned install, re-run this without the flag,
-# or the public installer:
+# It did not always: the rule used to be ordering alone (semverGt on the X.Y.Z core), which let the
+# release you were level with sit still but let the NEXT one land. That reads like being carried
+# forward and behaves like losing your work — a machine developing against unreleased CLI code had its
+# bundle swapped mid-session, and the only symptom was the unreleased feature quietly not working.
+#
+# So: nothing here pins the computer, and nothing overwrites it either. To take a release deliberately,
+# `harness update --force`, or the public installer:
 #   curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
+#
+# `--no-updates` remains for a stronger promise — no manifest is even fetched. It exports
+# ADAPTER_UPDATE_DISABLE=true in the launcher, switching off both the 60s poll and `harness start`'s
+# update-before-connect (cli.ts `stageLatestBundle`), which also silences the update check for a
+# release-labelled build installed with --no-build.
 set -euo pipefail
 
 ADAPTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # this package
@@ -63,10 +67,8 @@ fi
 
 # --- Step 1: bundle, labelled <published-core>-dev.<sha>[.dirty] ---
 # The core matches the release so `harness version`/`status` read sensibly next to prod, and the
-# prerelease suffix makes it unmistakably a local build. semverGt() (lib/selfUpdate.ts) compares the
-# X.Y.Z core only, so this is never NEWER than the published release — a second layer under the
-# launcher's disable: even with updates on, the computer sits still until the next real release
-# instead of oscillating.
+# `-dev.` suffix is load-bearing, not decoration: it is what shouldAutoUpdate() (lib/selfUpdate.ts)
+# matches to leave this build alone, and what `harness update` refuses to replace without --force.
 if [ "$DO_BUILD" -eq 1 ]; then
   # Shared with the Docker remote-machine rig, so both boxes report the SAME version for the same
   # tree — see scripts/lib/build-label.sh.
@@ -91,9 +93,10 @@ if [ "$DO_BUILD" -eq 1 ] && [ "$VER" != "$LABEL" ]; then
 fi
 echo ">> installing $VER"
 case "$VER" in
-  *-*) : ;;   # has a prerelease suffix → a published release can never outrank it
-  *) echo "   note: '$VER' looks like a RELEASE version, not a -dev build. With self-update on, a newer" >&2
-     echo "         published release would replace it; rebuild without --no-build to get a -dev label." >&2 ;;
+  *-dev.*|*-dev) : ;;   # the label shouldAutoUpdate() protects
+  *) echo "   note: '$VER' is not a -dev build, so it is NOT protected from self-update. With updates" >&2
+     echo "         on, a newer published release would replace it; rebuild without --no-build to get" >&2
+     echo "         a -dev label, or install with --no-updates." >&2 ;;
 esac
 
 # --- Step 3: stop the running daemon (it holds the OLD bytes in memory) ---

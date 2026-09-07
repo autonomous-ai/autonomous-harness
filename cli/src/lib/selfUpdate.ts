@@ -35,7 +35,10 @@ const PACKAGE = 'package.json'
 const RUNTIME_PACKAGE = `${JSON.stringify({ type: 'module' })}\n`
 
 /** Strict semver-greater on the `X.Y.Z` core (ignores pre-release/build). Unparseable → false, so a
- *  malformed manifest or the `0.0.0-dev` dev sentinel never triggers a downgrade/oscillation. */
+ *  malformed manifest or the `0.0.0-dev` dev sentinel never triggers a downgrade/oscillation.
+ *
+ *  Ordering only — it is NOT the permission to update. Automatic updates go through
+ *  {@link shouldAutoUpdate}, which also refuses to overwrite a local build. */
 export function semverGt(a: string, b: string): boolean {
   const parse = (v: string): number[] | null => {
     const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v)
@@ -46,6 +49,29 @@ export function semverGt(a: string, b: string): boolean {
   if (!x || !y) return false
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]
   return false
+}
+
+/** A build made from a working tree rather than downloaded from the release channel: the
+ *  `<published-core>-dev.<sha>[.dirty]` label that scripts/lib/build-label.sh stamps on every local
+ *  install, plus the `0.0.0-dev` sentinel version.ts falls back to. */
+export function isLocalDevBuild(version: string): boolean {
+  return /^\d+\.\d+\.\d+-dev(\.|$)/.test(version.trim())
+}
+
+/**
+ * The gate every AUTOMATIC update passes: the daemon's background poll and `harness start`'s
+ * update-before-connect. Newer, AND not on top of a local build.
+ *
+ * Install-if-missing, never upgrade-over-a-dev-build. The old rule was ordering alone, and because
+ * `install-cli.sh` labels a local build `<published-core>-dev.<sha>`, the very next release outranked
+ * it: a machine developing against unreleased CLI code had its bundle silently replaced mid-session,
+ * and the only symptom was the unreleased feature quietly not working. Being carried forward is not
+ * worth that — a developer who wants the release can ask for it (`harness update --force`) and a
+ * release install, which is every user's, still updates exactly as before.
+ */
+export function shouldAutoUpdate(candidate: string, current: string): boolean {
+  if (isLocalDevBuild(current)) return false
+  return semverGt(candidate, current)
 }
 
 /** Fetch + parse the manifest; return this adapter's entry, or null (unreachable / malformed / absent). */
@@ -125,8 +151,9 @@ export function confirm(dir: string): void {
 export interface Poller { stop(): void }
 
 /**
- * Poll on an interval; on the first strictly-newer, verified, canary-passed build, STAGE it and call
- * `onStaged(version)` exactly once, then stop polling (the caller restarts immediately). Every failure
+ * Poll on an interval; on the first build {@link shouldAutoUpdate} allows that also verifies and
+ * passes its canary, STAGE it and call `onStaged(version)` exactly once, then stop polling (the
+ * caller restarts immediately). Every failure
  * (fetch/parse/sha/canary/disk) is swallowed and simply retried next tick — the daemon never crashes
  * on a bad update.
  */
@@ -149,7 +176,7 @@ export function startSelfUpdater(opts: {
     checking = true
     try {
       const entry = await fetchManifest(opts.url, opts.key)
-      if (!entry || !semverGt(entry.version, opts.currentVersion)) return
+      if (!entry || !shouldAutoUpdate(entry.version, opts.currentVersion)) return
       console.log(`[update] newer build available: ${opts.currentVersion} → ${entry.version}`)
       const cliBuf = await downloadVerified(entry.cli)
       const notifyBuf = await downloadVerified(entry.notify)
