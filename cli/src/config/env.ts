@@ -14,6 +14,8 @@ const adapterDataDir = join(adapterCliDir, 'data')
 // The private, checksum-verified Node the installers and Desktop Harness provision. `current-node`
 // inside it names the binary in use; both writers rewrite that file whenever they lay down a runtime.
 const adapterRuntimeDir = join(adapterRootDir, 'runtime')
+// The `harness` launcher the installers write. Not under ~/.harness: it has to sit on PATH.
+const adapterBinDir = join(homedir(), '.local', 'bin')
 // The computer id lives at the PRODUCT root, one level ABOVE `cli/`, and deliberately not in the data
 // dir: `harness reset` wipes that dir, the ~/.machine adoption below force-replaces entries in it, and
 // a custom ADAPTER_DATA_DIR moves it. A computer's identity must outlive all three — the backend binds
@@ -372,6 +374,15 @@ const envSchema = z.object({
   // lines have to name an interpreter by absolute path, because a hook fires in a shell whose PATH
   // we do not control — see managedNodePath() in lib/nodeRuntime.ts.
   ADAPTER_RUNTIME_DIR: z.string().default(adapterRuntimeDir),
+  // The runtime manifest — a DIFFERENT document from ADAPTER_UPDATE_URL's: keyed by platform
+  // (`darwin-arm64`, `linux-x64`, …) with url/sha256/size/archiveRoot per entry. Deliberately the
+  // same URL `install.sh` and Desktop Harness read, so all three land on identical bytes.
+  ADAPTER_RUNTIME_METADATA_URL: z
+    .string()
+    .default('https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/runtime/metadata.json'),
+  // Where the `harness` launcher lives. Same name (and default) `scripts/install-cli.sh` uses, so a
+  // sandboxed install and this process agree on which launcher they are talking about.
+  HARNESS_BIN_DIR: z.string().default(adapterBinDir),
 
   // ── the dial on the USB cable ──────────────────────────────────────────────────────────────────
   // Set 'true' to leave the serial port alone entirely. The port is exclusive, so this is what a

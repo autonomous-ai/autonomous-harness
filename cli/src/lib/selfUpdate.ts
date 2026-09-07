@@ -17,6 +17,7 @@ import { createHash } from 'crypto'
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { join } from 'path'
+import { managedNodePath } from './nodeRuntime.js'
 
 export interface FileRef {
   url: string
@@ -108,7 +109,9 @@ export function canary(cliBuf: Buffer, dir: string): boolean {
     mkdirSync(tmpDir, { recursive: true })
     writeFileSync(join(tmpDir, PACKAGE), RUNTIME_PACKAGE)
     writeFileSync(tmpCli, cliBuf)
-    const r = spawnSync(process.execPath, [tmpCli, 'version'], { timeout: 15_000, stdio: 'ignore' })
+    // The interpreter the NEXT daemon will run on — see managedNodePath(). Canarying on this
+    // process's interpreter would assert about a Node the new build may never be started with.
+    const r = spawnSync(managedNodePath(), [tmpCli, 'version'], { timeout: 15_000, stdio: 'ignore' })
     return r.status === 0
   } catch {
     return false
