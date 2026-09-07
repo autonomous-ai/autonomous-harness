@@ -60,6 +60,13 @@ import { shouldReplayCommander } from './lib/commanderReplay.js'
 import { RuntimeProfileControlError, type RuntimeProfileErrorCode } from './lib/runtimeProfileController.js'
 import { parseRuntimeProfile, type RuntimeModelOption } from './lib/runtimeProfile.js'
 import { sid, preview, logFrame } from './lib/log.js'
+import {
+  TerminalP2pResponderPool,
+  TERMINAL_P2P_DOWN_TYPES,
+  TERMINAL_P2P_SIGNAL_TYPES,
+  type TerminalP2pData,
+  type TerminalP2pSignal,
+} from './lib/terminalP2p.js'
 
 // OpenCode has no per-session transcript file — its history is read from this SQLite store.
 const OPENCODE_DB = join(env.OPENCODE_DATA_DIR, 'opencode.db')
@@ -273,6 +280,9 @@ export class BackendSocket {
   private readonly downChains = new Map<string, Promise<void>>()
   private readonly localClients = new Map<string, LocalClientSink>()
   private terminalStreams: TerminalStreamManager | null = null
+  private readonly terminalP2p: TerminalP2pResponderPool
+  private readonly p2pPendingOpens = new Map<string, Set<string>>()
+  private readonly p2pStreams = new Map<string, Set<string>>()
   private isAlive = true
   private onStatus: (connected: boolean) => void
   /** Cross-instance commander (device) client count, from backend `__clients` frames. */
@@ -409,6 +419,11 @@ export class BackendSocket {
       sendUser: (frame) => this.sendUser(frame),
       isConnected: () => this.isConnected(),
     })
+    this.terminalP2p = new TerminalP2pResponderPool({
+      sendSignal: (connId, type, payload) => this.sendP2pSignal(connId, type, payload),
+      onData: (connId, data) => this.handleP2pData(connId, data),
+      onUnavailable: (connId, reason) => this.demoteP2pConnection(connId, reason),
+    })
   }
 
   setTerminalStreamManager(manager: TerminalStreamManager): void {
@@ -525,6 +540,9 @@ export class BackendSocket {
         'backend disconnected',
         false,
       )
+      void this.terminalP2p.stop()
+      this.p2pPendingOpens.clear()
+      this.p2pStreams.clear()
       this.replayCommanderOnNextSnapshot = true
       this.onStatus(false)
       if (this.closed) return
@@ -564,6 +582,7 @@ export class BackendSocket {
     if (this.heartbeat) clearInterval(this.heartbeat)
     if (this.appPing) clearInterval(this.appPing)
     await this.terminalStreams?.stop()
+    await this.terminalP2p.stop()
     try { this.ws?.close() } catch { /* ignore */ }
     this.ws = null
   }
@@ -607,6 +626,10 @@ export class BackendSocket {
     if (local) return local.sendFrame({ type, payload })
     const frame = this.e2ee.wrapTarget(connId, type, payload)
     if (!frame) return false
+    if (this.routeTerminalOutputToP2p(connId, type, payload)) {
+      if (this.terminalP2p.send(connId, JSON.stringify(frame))) return true
+      this.demoteP2pConnection(connId, 'send_failed')
+    }
     return this.sendBestEffort({
       t: 'up',
       targetConnId: connId,
@@ -626,6 +649,10 @@ export class BackendSocket {
     }
     const clientFrame = this.e2ee.wrapTerminalBinary(connId, clear)
     if (!clientFrame) return false
+    if (this.p2pStreams.get(connId)?.has(clear.streamId)) {
+      if (this.terminalP2p.send(connId, Buffer.from(clientFrame))) return true
+      this.demoteP2pConnection(connId, 'send_failed')
+    }
     const packet = encodeTerminalHop(TerminalHopDirection.up, connId, clientFrame)
     if (!packet || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false
     try { this.ws.send(packet); return true } catch { return false }
@@ -703,12 +730,76 @@ export class BackendSocket {
     return false
   }
 
-  private enqueueDown(frame: Frame, connId: string): void {
+  private sendP2pSignal(connId: string, type: string, payload: TerminalP2pSignal): void {
+    const frame = this.e2ee.wrapTarget(connId, type, { ...payload })
+    if (frame) this.sendTo(connId, frame)
+  }
+
+  private handleP2pData(connId: string, data: TerminalP2pData): void {
+    if (typeof data === 'string') {
+      if (Buffer.byteLength(data, 'utf8') > 512 * 1024) return
+      let frame: Frame
+      try { frame = JSON.parse(data) as Frame } catch { return }
+      if (typeof frame.type !== 'string' || !TERMINAL_P2P_DOWN_TYPES.has(frame.type)) return
+      this.enqueueDown(frame, connId, 'p2p')
+      return
+    }
+    if (data.length > 512 * 1024) return
+    this.enqueueTerminalBinary(connId, data)
+  }
+
+  private noteTerminalInputRoute(
+    connId: string,
+    type: string,
+    payload: Record<string, unknown>,
+    transport: 'relay' | 'p2p',
+  ): void {
+    if (type === 'terminal_open' && typeof payload.requestId === 'string') {
+      let pending = this.p2pPendingOpens.get(connId)
+      if (!pending) { pending = new Set(); this.p2pPendingOpens.set(connId, pending) }
+      if (transport === 'p2p') pending.add(payload.requestId)
+      else pending.delete(payload.requestId)
+      return
+    }
+    const streamId = typeof payload.streamId === 'string' ? payload.streamId : ''
+    if (transport === 'relay' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
+  }
+
+  private routeTerminalOutputToP2p(connId: string, type: string, payload: Record<string, unknown>): boolean {
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
+    const streamId = typeof payload.streamId === 'string' ? payload.streamId : ''
+    const pending = this.p2pPendingOpens.get(connId)
+    if ((type === 'terminal_ready' || type === 'terminal_error') && requestId && pending?.has(requestId)) {
+      pending.delete(requestId)
+      if (pending.size === 0) this.p2pPendingOpens.delete(connId)
+      if (type === 'terminal_ready' && streamId) {
+        let streams = this.p2pStreams.get(connId)
+        if (!streams) { streams = new Set(); this.p2pStreams.set(connId, streams) }
+        streams.add(streamId)
+      }
+      return true
+    }
+    const streams = this.p2pStreams.get(connId)
+    const selected = !!streamId && streams?.has(streamId) === true
+    if (selected && type === 'terminal_closed') {
+      streams!.delete(streamId)
+      if (streams!.size === 0) this.p2pStreams.delete(connId)
+    }
+    return selected
+  }
+
+  private demoteP2pConnection(connId: string, reason: string): void {
+    this.p2pPendingOpens.delete(connId)
+    this.p2pStreams.delete(connId)
+    console.warn(`[terminal-p2p] conn=${sid(connId)} fallback=relay reason=${reason}`)
+  }
+
+  private enqueueDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): void {
     const key = connId || '__backend__'
     const previous = this.downChains.get(key) ?? Promise.resolve()
     const next = previous
       .catch(() => { /* prior failure is already logged */ })
-      .then(() => this.dispatchDown(frame, connId))
+      .then(() => this.dispatchDown(frame, connId, transport))
       .catch((err) => {
         console.error('[backend] down-frame dispatch failed:', err instanceof Error ? err.message : err)
       })
@@ -824,7 +915,7 @@ export class BackendSocket {
     this.send({ type: resultType, payload: { requestId, ...payload } })
   }
 
-  private async dispatchDown(frame: Frame, connId: string): Promise<void> {
+  private async dispatchDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
     const local = this.localClients.has(connId)
@@ -848,6 +939,10 @@ export class BackendSocket {
       const dec = this.e2ee.unwrapDown(connId, frame)
       if (!dec) return
       frame = dec
+    }
+    if (!local && TERMINAL_P2P_SIGNAL_TYPES.has(type)) {
+      await this.terminalP2p.handleSignal(connId, type, frame.payload)
+      return
     }
     // Logged AFTER the unwrap above, so a down-frame reads as what the client actually asked for rather
     // than as an opaque __e2e envelope.
@@ -886,6 +981,9 @@ export class BackendSocket {
       // connection-scoped state immediately; otherwise a dead Desktop keeps a
       // terminal controller lease until the 30-second heartbeat timeout.
       this.e2ee.dropSession(connId)
+      await this.terminalP2p.closeConnection(connId, 'client_disconnected', false)
+      this.p2pPendingOpens.delete(connId)
+      this.p2pStreams.delete(connId)
       await this.terminalStreams?.closeConnection(
         connId,
         'client connection closed',
@@ -911,6 +1009,7 @@ export class BackendSocket {
     const requestId = payload.requestId
 
     if (type.startsWith('terminal_')) {
+      this.noteTerminalInputRoute(connId, type, payload, transport)
       if (this.terminalStreams) await this.terminalStreams.handleFrame(connId, type, payload)
       return
     }

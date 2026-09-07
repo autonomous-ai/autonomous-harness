@@ -1011,8 +1011,16 @@ export class CableSession {
   async turnDone(agentId: string): Promise<void> {
     await this.send({ t: 'turn.done', agentId })
   }
-  async summary(agentId: string, recap: string, text: string): Promise<void> {
-    await this.send({ t: 'summary', agentId, recap, text })
+  /**
+   * A finished turn's recap.
+   *
+   * `quiet` means the window already has this agent on screen: draw the tile,
+   * skip the beep and the notification drawer. An extra field rather than a
+   * different frame, so firmware that predates it simply notifies as it always
+   * did instead of losing the recap.
+   */
+  async summary(agentId: string, recap: string, text: string, quiet = false): Promise<void> {
+    await this.send(quiet ? { t: 'summary', agentId, recap, text, quiet: true } : { t: 'summary', agentId, recap, text })
   }
   async turnError(agentId: string, message: string): Promise<void> {
     await this.send({ t: 'turn.error', agentId, message })
