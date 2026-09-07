@@ -5,6 +5,7 @@ import {
   describeGridLaunch,
   gridCapableEngines,
   gridConflictingEnvToClear,
+  gridProviderId,
   gridEnvVarNames,
   parseGridLaunchOverride,
   relayBaseUrl,
@@ -112,16 +113,19 @@ describe('the launch each engine gets', () => {
     expect(launch.args).toContain('GLM-4.7-Flash')
   })
 
-  it('uses the OpenAI-compatible pair for opencode and Hermes', () => {
-    expect(launchOf('opencode').env).toEqual({
-      OPENAI_BASE_URL: RELAY_V1,
-      OPENAI_API_KEY: WIRE.apiKey,
-    })
+  it('uses the OpenAI-compatible pair for Hermes, which honours the endpoint it is given', () => {
     expect(launchOf('hermes').env).toEqual({
       OPENAI_BASE_URL: RELAY_V1,
       OPENAI_API_KEY: WIRE.apiKey,
       HERMES_INFERENCE_MODEL: 'GLM-4.7-Flash',
     })
+  })
+
+  it('does NOT use that pair for opencode, which would not honour it', () => {
+    // OpenCode reads the endpoint but keeps its compiled-in `openai` catalogue, so the pair produced
+    // an engine naming models the grid had never heard of. It declares a provider instead — see the
+    // `opencode declares the grid as a provider` block below.
+    expect(launchOf('opencode').env).toEqual({ GRID_API_KEY: WIRE.apiKey })
   })
 
   it('uses xAI\'s model-list base for Grok, with the model on the command line', () => {
@@ -276,7 +280,12 @@ describe('gridConflictingEnvToClear', () => {
     // The regression this exists for: OpenCode was given OPENAI_BASE_URL for a grid, found an
     // inherited ANTHROPIC_API_KEY, and spent it on api.anthropic.com instead.
     expect(clearedFor('opencode')).toContain('ANTHROPIC_API_KEY')
-    expect(clearedFor('opencode')).not.toContain('OPENAI_BASE_URL')
+    // And OPENAI_* goes too, now that opencode brings its own provider: leaving the user's own
+    // OpenAI key in place would re-arm the built-in catalogue this launch exists to get away from.
+    expect(clearedFor('opencode')).toContain('OPENAI_BASE_URL')
+    expect(clearedFor('opencode')).toContain('OPENAI_API_KEY')
+    // Its own variable is the one thing kept.
+    expect(clearedFor('opencode')).not.toContain('GRID_API_KEY')
   })
 
   it('clears the personal Anthropic key even for Claude, whose grid uses the bearer variable', () => {
@@ -296,5 +305,75 @@ describe('gridConflictingEnvToClear', () => {
     const cleared = clearedFor('codex')
     expect(cleared).not.toContain('GRID_API_KEY')
     expect(cleared).toEqual(expect.arrayContaining(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL']))
+  })
+})
+
+describe('opencode declares the grid as a provider', () => {
+  const base: GridLaunchOverride = {
+    networkId: 'grid-x',
+    networkName: 'autonomous.ai',
+    baseUrl: 'https://grid.autonomous.ai/grid-x/relay/v1',
+    apiKey: 'RELAY-KEY',
+  }
+  const launch = (model?: string) => {
+    const built = buildGridEngineLaunch('opencode', model ? { ...base, model } : base)
+    if (!built.ok) throw new Error('opencode refused')
+    return built.launch
+  }
+  const config = (model?: string) => JSON.parse(launch(model).configDir!.files[0].content)
+
+  it('slugifies a grid name into something a person can type as <id>/<model>', () => {
+    expect(gridProviderId('autonomous.ai')).toBe('autonomous-ai')
+    expect(gridProviderId('private autonomous')).toBe('private-autonomous')
+    expect(gridProviderId('macOS')).toBe('macos')
+    // Nothing left to slug: an empty provider key would make the config unparseable.
+    expect(gridProviderId('...')).toBe('grid')
+  })
+
+  it('never writes a top-level `model`, which OpenCode validates against a closed enum', () => {
+    // A private grid's model is not in that enum, so this key would make OpenCode refuse the whole
+    // config at startup — arriving as a dead pane well after the launch looked fine.
+    expect(config('DeepSeek-V4-Flash-0731')).not.toHaveProperty('model')
+    expect(config()).not.toHaveProperty('model')
+  })
+
+  it('selects the model on argv instead, which is not schema-validated', () => {
+    expect(launch('DeepSeek-V4-Flash-0731').args).toEqual(['-m', 'autonomous-ai/DeepSeek-V4-Flash-0731'])
+  })
+
+  it("falls back to the grid's router when no model was chosen", () => {
+    expect(launch().args).toEqual(['-m', 'autonomous-ai/Auto'])
+    // And the router is not listed twice when it IS the selection.
+    expect(Object.keys(config().provider['autonomous-ai'].models)).toEqual(['Auto'])
+  })
+
+  it('keeps the key out of the file and references it from the environment', () => {
+    const written = launch('DeepSeek-V4-Flash-0731')
+    expect(written.configDir!.files[0].content).not.toContain('RELAY-KEY')
+    expect(written.env).toEqual({ GRID_API_KEY: 'RELAY-KEY' })
+    expect(config('DeepSeek-V4-Flash-0731').provider['autonomous-ai'].options.apiKey)
+      .toBe('{env:GRID_API_KEY}')
+  })
+
+  it('does not set OPENAI_* beside its own provider', () => {
+    // Those would re-arm OpenCode's built-in `openai` provider, whose compiled-in catalogue is what
+    // picked a model the grid answered 503 for.
+    expect(launch('DeepSeek-V4-Flash-0731').env).not.toHaveProperty('OPENAI_BASE_URL')
+    expect(launch('DeepSeek-V4-Flash-0731').env).not.toHaveProperty('OPENAI_API_KEY')
+  })
+
+  it('passes the relay root through verbatim — the SDK appends the path itself', () => {
+    expect(config().provider['autonomous-ai'].options.baseURL).toBe(base.baseUrl)
+  })
+
+  it('omits `limit` entirely rather than writing half of one', () => {
+    // OpenCode requires `context` and `output` together and rejects the config given only one.
+    const models = config('DeepSeek-V4-Flash-0731').provider['autonomous-ai'].models
+    for (const entry of Object.values(models)) expect(entry).not.toHaveProperty('limit')
+  })
+
+  it('points OPENCODE_CONFIG at the file, not at the directory holding it', () => {
+    expect(launch().configDir!.envVar).toBe('OPENCODE_CONFIG')
+    expect(launch().configDir!.pointAt).toBe('opencode.json')
   })
 })

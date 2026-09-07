@@ -3042,9 +3042,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       // An engine whose provider lives in a file gets a directory this daemon owns, never the
       // user's own dotfiles. The label is unique per creation, so two agents never share one.
       if (built.launch.configDir) {
-        const { envVar, files } = built.launch.configDir
+        const { envVar, files, pointAt } = built.launch.configDir
         try {
-          gridLaunch.env[envVar] = await writeGridConfigDir(label, files)
+          const dir = await writeGridConfigDir(label, files)
+          // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
+          gridLaunch.env[envVar] = pointAt ? join(dir, pointAt) : dir
         } catch (error) {
           const detail = `could not write ${engine}'s grid configuration · ${error instanceof Error ? error.message : error}`
           console.warn(`[agent] create ${engine} refused · ${detail}`)
@@ -3424,9 +3426,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (built && built.ok && built.launch.configDir) {
       // Keyed on the agent, so moving the same agent between grids rewrites one directory rather
       // than leaving a trail of them.
-      const { envVar, files } = built.launch.configDir
+      const { envVar, files, pointAt } = built.launch.configDir
       try {
-        gridEnv[envVar] = await writeGridConfigDir(session.agentId, files)
+        const dir = await writeGridConfigDir(session.agentId, files)
+        // Same split as create: a directory for Pi, the file itself for OpenCode.
+        gridEnv[envVar] = pointAt ? join(dir, pointAt) : dir
       } catch (error) {
         release()
         const detail = `could not write ${session.engine}'s grid configuration · ${error instanceof Error ? error.message : error}`

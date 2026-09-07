@@ -149,6 +149,88 @@ export function anthropicBaseUrl(baseUrl: string): string {
   return trimmed.endsWith('/v1') ? trimmed.slice(0, -'/v1'.length) : trimmed
 }
 
+/**
+ * The relay's routing strategy, used when the user picked no particular model.
+ *
+ * Not a model: send a request naming it and the grid chooses one. It is `owned_by: grid-router` in
+ * the relay's `/models`, and the relay answers it like any other id — which is what lets a provider
+ * block that must name SOMETHING name this.
+ */
+const GRID_ROUTER_MODEL = 'Auto'
+
+/** The file OpenCode's `OPENCODE_CONFIG` is pointed at. */
+const OPENCODE_CONFIG_FILE = 'opencode.json'
+
+/**
+ * A grid's name as an OpenCode provider id.
+ *
+ * The id is what a person types as `<id>/<model>`, so it has to survive being typed: lowercase, no
+ * spaces, no dots. Grid names carry all three — `autonomous.ai`, `private autonomous`, `macOS` — so
+ * this is a real transformation rather than a formality.
+ *
+ *     autonomous.ai       -> autonomous-ai
+ *     private autonomous  -> private-autonomous
+ *     macOS               -> macos
+ *
+ * A name that leaves nothing behind (punctuation only) falls back to `grid`, because an empty
+ * provider key would make the config unparseable rather than merely odd.
+ */
+export function gridProviderId(networkName: string): string {
+  const slug = networkName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return slug || 'grid'
+}
+
+/**
+ * The provider block OpenCode reads, as JSON.
+ *
+ * Four things here are load-bearing, each of which breaks the engine differently when got wrong:
+ *
+ *  1. **No top-level `model` key.** OpenCode's schema `$ref`s a CLOSED enum of known public models
+ *     with no wildcard branch, so naming a private grid's model there makes OpenCode refuse the
+ *     whole config at startup — a failure that arrives as a dead pane, long after the launch looked
+ *     fine. The model is selected on argv instead, which is not schema-validated.
+ *  2. **`baseURL` is the relay root verbatim.** It already ends in `/relay/v1`; the SDK appends
+ *     `/chat/completions` itself, so any "normalising" here 404s every request.
+ *  3. **`apiKey` is `{env:…}`, not the key.** Nothing written to disk by this module may contain a
+ *     credential. This diverges from the advice a person following OpenCode's own docs gets — there
+ *     the literal is recommended, because an unset variable silently becomes an empty string and a
+ *     human-launched OpenCode has no guarantee the variable is set. Here it IS guaranteed: the
+ *     daemon puts it in the pane's environment with `tmux new-session -e` before the engine starts.
+ *  4. **No `limit` block.** OpenCode requires `context` and `output` TOGETHER and rejects the config
+ *     if only one is present. The relay reports a context window per model but this module is not
+ *     the thing that read it, and inventing one would be worse than the defaults OpenCode already
+ *     uses.
+ */
+function opencodeGridConfig(
+  provider: string,
+  override: GridLaunchOverride,
+  model: string,
+): string {
+  const models: Record<string, { name: string }> = { [model]: { name: model } }
+  // The router is always offered, so the picker inside OpenCode can fall back to "let the grid
+  // choose" without the agent being recreated. Skipped when it IS the selection, so one id never
+  // appears twice.
+  if (model !== GRID_ROUTER_MODEL) {
+    models[GRID_ROUTER_MODEL] = { name: `${GRID_ROUTER_MODEL} (grid picks the model)` }
+  }
+  return `${JSON.stringify({
+    $schema: 'https://opencode.ai/config.json',
+    provider: {
+      [provider]: {
+        npm: '@ai-sdk/openai-compatible',
+        // The grid's name as written — this is what a person reads in the model picker, so it keeps
+        // its dots and its capitals while the id beside it does not.
+        name: override.networkName,
+        options: {
+          baseURL: relayBaseUrl(override.baseUrl),
+          apiKey: `{env:${GRID_KEY_VAR}}`,
+        },
+        models,
+      },
+    },
+  }, null, 2)}\n`
+}
+
 /** One file to write into the per-agent config directory a launch is given. */
 export interface GridConfigFile {
   /** File name inside the directory. Never a path — this writes one flat directory. */
@@ -172,7 +254,18 @@ export interface GridEngineLaunch {
    * exactly as they left it, and deleting the directory undoes everything. No file written here may
    * contain the key; Pi's provider block references an environment variable instead.
    */
-  configDir?: { envVar: string; files: GridConfigFile[] }
+  configDir?: {
+    envVar: string
+    files: GridConfigFile[]
+    /**
+     * Point [envVar] at ONE of the written files rather than at the directory holding them.
+     *
+     * Pi wants the directory (`PI_CODING_AGENT_DIR`); OpenCode's `OPENCODE_CONFIG` wants a config
+     * file. Same mechanism — a private directory this daemon owns — differing only in what the
+     * engine is handed, so it is a field rather than a second writer.
+     */
+    pointAt?: string
+  }
 }
 
 interface GridEngineContract {
@@ -349,14 +442,48 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // (https://opencode.ai/docs/providers). The model is left to the app — its `--model` wants a
   // `provider/model` pair whose provider id is not documented for the env-var route, and inventing
   // one would send it looking for a model that does not exist.
+  // OpenCode is the one engine here that an endpoint variable alone cannot steer, and the reason is
+  // worth stating because `OPENAI_BASE_URL` looks like it should be enough — the grid CLI's own
+  // `grid info --env` exports exactly that pair, and it is enough for hermes.
+  //
+  // OpenCode's `openai` provider carries a COMPILED-IN model catalogue (49 entries: gpt-4o,
+  // gpt-5.6-terra-pro, …). It sends requests to `OPENAI_BASE_URL` but never asks that endpoint what
+  // it serves, so pointing it at a grid gives an engine that will only ever name models the grid has
+  // never heard of. Measured: it selected `gpt-5.6-terra-pro` and the relay answered
+  //
+  //   503 · No providers available for this model. This grid serves: DeepSeek-V4-Flash-0731, …
+  //
+  // and `-m openai/DeepSeek-V4-Flash-0731` — naming a real grid model under its built-in provider —
+  // made OpenCode's own server throw instead.
+  //
+  // So it takes the shape codex and pi take: DECLARE a provider. `OPENCODE_CONFIG` names a config
+  // file, this daemon writes one into a directory it owns, and the grid arrives as a provider whose
+  // models are the grid's own ids. The user's `~/.config/opencode/opencode.json` is never opened.
   opencode: {
-    build: (override) => ({
-      env: {
-        OPENAI_BASE_URL: relayBaseUrl(override.baseUrl),
-        OPENAI_API_KEY: override.apiKey,
-      },
-      args: [],
-    }),
+    build: (override) => {
+      const provider = gridProviderId(override.networkName)
+      // No model chosen means the grid routes — `Auto` is the router's own id, and the relay serves
+      // it (verified: 200). It is a real id to OpenCode either way, which is what matters: the
+      // provider block has to name something, and leaving the model out entirely puts OpenCode back
+      // on its own catalogue and the 503 above.
+      const model = override.model ?? GRID_ROUTER_MODEL
+      return {
+        // The key travels in the environment and is REFERENCED from the file, never written into it
+        // — the rule every config-file engine here follows.
+        env: { [GRID_KEY_VAR]: override.apiKey },
+        // Deliberately NOT `OPENAI_BASE_URL`/`OPENAI_API_KEY`. Setting them would re-arm the built-in
+        // `openai` provider beside ours, and its catalogue is what chose the model the grid refused.
+        args: ['-m', `${provider}/${model}`],
+        configDir: {
+          envVar: 'OPENCODE_CONFIG',
+          pointAt: OPENCODE_CONFIG_FILE,
+          files: [{
+            name: OPENCODE_CONFIG_FILE,
+            content: opencodeGridConfig(provider, override, model),
+          }],
+        },
+      }
+    },
   },
 
   // Nous Research's documented trio for a custom OpenAI-compatible endpoint
