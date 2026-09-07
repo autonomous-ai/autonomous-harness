@@ -193,6 +193,63 @@ const GRID_KEY_VAR = 'GRID_API_KEY'
 const GRID_PROVIDER_ID = 'grid'
 
 /**
+ * Every variable any contract in this file uses to point an engine somewhere.
+ *
+ * A grid launch has to CLEAR the ones it does not itself set, because setting the right variable is
+ * not enough to decide where an engine goes: an engine picks a provider from whatever credentials it
+ * can see, and a stray one wins on its own terms. Measured, twice, on one machine:
+ *
+ *  * OpenCode, handed `OPENAI_BASE_URL` for a grid, found an inherited `ANTHROPIC_API_KEY` and chose
+ *    Claude Sonnet at api.anthropic.com — reporting `invalid x-api-key`, a sentence that names
+ *    neither the grid nor the variable that redirected it.
+ *  * Claude Code, on the same machine, had its `ANTHROPIC_BASE_URL` deleted by a line in `.zshrc` and
+ *    fell back to the same key, with the same unreadable result.
+ *
+ * The inherited value arrives from further away than a user can reasonably audit. On that machine it
+ * came from `.zshrc`, and then — after that was fixed — from a VS Code setting
+ * (`claudeCode.environmentVariables`) that seeded the terminal the desktop app was launched from,
+ * whose environment the app passed to the daemon, which passed it to the tmux server, which gave it
+ * to every pane. Four layers, none visible from the failure.
+ *
+ * So the launch is the place to settle it: it is the only point that knows the user asked for a grid.
+ * Unset here is scoped to the engine's own process and touches nothing on disk — a plain terminal on
+ * the same machine keeps every variable it had.
+ *
+ * The list is deliberately OUR OWN vars rather than a survey of every provider an engine supports.
+ * Enumerating those is unbounded and would go stale silently; these are the ones this file uses, so
+ * this file can be right about them.
+ */
+export const GRID_CONFLICTING_ENV_VARS: readonly string[] = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_MODEL',
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'XAI_API_KEY',
+  'GROK_MODELS_BASE_URL',
+  'COPILOT_PROVIDER_API_KEY',
+  'COPILOT_PROVIDER_BASE_URL',
+  'COPILOT_MODEL',
+  'HERMES_INFERENCE_MODEL',
+  GRID_KEY_VAR,
+]
+
+/**
+ * The variables this launch must clear: everything in [GRID_CONFLICTING_ENV_VARS] the launch does not
+ * itself set.
+ *
+ * Set-then-unset would be a bug, so the two sets are computed from one another rather than listed
+ * twice — a contract that gains a variable stops clearing it in the same edit.
+ */
+export function gridConflictingEnvToClear(launch: GridEngineLaunch): string[] {
+  const provided = new Set(Object.keys(launch.env))
+  if (launch.configDir) provided.add(launch.configDir.envVar)
+  return GRID_CONFLICTING_ENV_VARS.filter((name) => !provided.has(name))
+}
+
+
+/**
  * Pi's provider block, as the Grid app shipped and unit-tested it
  * (`autonomous-grid-app`, `pi_grid_config.dart` at 36d00c95, before Pi was dropped from that app for
  * reasons about ITS chat UI — a fourth agent nobody reached for, and a 180 MB private Node

@@ -4,6 +4,7 @@ import {
   buildGridEngineLaunch,
   describeGridLaunch,
   gridCapableEngines,
+  gridConflictingEnvToClear,
   gridEnvVarNames,
   parseGridLaunchOverride,
   relayBaseUrl,
@@ -243,5 +244,57 @@ describe('gridEnvVarNames', () => {
 
   it('is empty for an engine that cannot be pointed at a grid', () => {
     expect(gridEnvVarNames('amp')).toEqual([])
+  })
+})
+
+describe('gridConflictingEnvToClear', () => {
+  const override = {
+    networkId: 'grid-x',
+    networkName: 'autonomous.ai',
+    baseUrl: 'https://grid.autonomous.ai/grid-x/relay/v1',
+    apiKey: 'RELAY-KEY',
+  }
+  const clearedFor = (engine: AgentEngine, model?: string): string[] => {
+    const built = buildGridEngineLaunch(engine, model ? { ...override, model } : override)
+    if (!built.ok) throw new Error(`${engine} refused: ${JSON.stringify(built)}`)
+    return gridConflictingEnvToClear(built.launch)
+  }
+
+  it('never clears a variable the same launch sets', () => {
+    for (const engine of ['claude', 'codex', 'opencode', 'hermes', 'grok', 'copilot', 'pi'] as const) {
+      const built = buildGridEngineLaunch(engine, { ...override, model: 'a-model' })
+      if (!built.ok) throw new Error(`${engine} refused`)
+      const set = new Set(Object.keys(built.launch.env))
+      if (built.launch.configDir) set.add(built.launch.configDir.envVar)
+      for (const name of gridConflictingEnvToClear(built.launch)) {
+        expect(set.has(name), `${engine} both sets and clears ${name}`).toBe(false)
+      }
+    }
+  })
+
+  it("clears the key that redirected OpenCode away from the grid it was handed", () => {
+    // The regression this exists for: OpenCode was given OPENAI_BASE_URL for a grid, found an
+    // inherited ANTHROPIC_API_KEY, and spent it on api.anthropic.com instead.
+    expect(clearedFor('opencode')).toContain('ANTHROPIC_API_KEY')
+    expect(clearedFor('opencode')).not.toContain('OPENAI_BASE_URL')
+  })
+
+  it('clears the personal Anthropic key even for Claude, whose grid uses the bearer variable', () => {
+    // Claude Code warns when both are set and the relay wants the Bearer; leaving the API key behind
+    // is what let a dotfile decide which one won.
+    expect(clearedFor('claude')).toContain('ANTHROPIC_API_KEY')
+    expect(clearedFor('claude')).not.toContain('ANTHROPIC_AUTH_TOKEN')
+    expect(clearedFor('claude')).not.toContain('ANTHROPIC_BASE_URL')
+  })
+
+  it('keeps ANTHROPIC_MODEL only when the launch pins one', () => {
+    expect(clearedFor('claude')).toContain('ANTHROPIC_MODEL')
+    expect(clearedFor('claude', 'DeepSeek-V4-Flash-0731')).not.toContain('ANTHROPIC_MODEL')
+  })
+
+  it('leaves codex its GRID_API_KEY and clears every vendor variable around it', () => {
+    const cleared = clearedFor('codex')
+    expect(cleared).not.toContain('GRID_API_KEY')
+    expect(cleared).toEqual(expect.arrayContaining(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL']))
   })
 })

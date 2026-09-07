@@ -55,6 +55,19 @@ export interface LaunchCommandOptions {
    * is the case above.
    */
   installFirst?: string
+  /**
+   * Environment variables to clear in the pane before the engine starts — the vendor credentials a
+   * grid launch must not leave lying around. See `gridConflictingEnvToClear` in `gridLaunch.ts`,
+   * which is the only caller and which computes them from what the launch itself sets.
+   *
+   * It has to happen HERE rather than through tmux, because `tmux new-session -e` can only set a
+   * variable, never remove one — and the value being removed was inherited from the tmux server, the
+   * daemon, or the terminal that started the app, none of which this process can reach back into.
+   *
+   * Scoped to the engine's own process. Nothing on disk changes, and a plain shell on the same
+   * machine keeps everything it had.
+   */
+  clearEnv?: readonly string[]
 }
 
 /**
@@ -164,10 +177,28 @@ export function buildEngineLaunchArgv(
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
   if (!interactive) return command
-  const script = opts.installFirst
+  // The clear comes FIRST, before the install as well as before the engine. An installer is a child
+  // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
+  // but an install script that probes for credentials to configure itself would, and the whole point
+  // of this launch is that the agent's environment is the one the user asked for.
+  const prelude = clearEnvPrelude(opts.clearEnv)
+  const body = opts.installFirst
     ? installThenExecScript(opts.installFirst)
     : 'exec "$@"'
-  return [interactive.path, ...interactive.args, script, 'harness-engine', ...command]
+  return [interactive.path, ...interactive.args, prelude + body, 'harness-engine', ...command]
+}
+
+/**
+ * `unset` for the variables a grid launch must not let through, or nothing at all.
+ *
+ * Names only — never values — and each is validated against a strict shell-identifier shape before it
+ * reaches the script. The list is a constant in our own source today, so this is a guard against a
+ * future caller rather than against anything on the wire; it is here because the day that changes is
+ * the day nobody re-reads this function.
+ */
+function clearEnvPrelude(names: readonly string[] | undefined): string {
+  const safe = (names ?? []).filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+  return safe.length ? `unset ${safe.join(' ')}\n` : ''
 }
 
 /**

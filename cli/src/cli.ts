@@ -48,7 +48,7 @@ import { ENGINE_CLI_COMMANDS, ENGINES, engineBin } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch, gridEnvVarNames } from './lib/gridLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames } from './lib/gridLaunch.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -3073,7 +3073,13 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
       return recipe.command
     })()
-    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installFirst }
+    // Clearing the vendor credentials this launch does NOT set is part of pointing an agent at a
+    // grid, not an extra. An engine chooses its provider from whatever it can see, and an inherited
+    // key wins on its own terms — OpenCode picked Anthropic over a grid it had been handed, and said
+    // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
+    // is supposed to use exactly these variables.
+    const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
+    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installFirst, clearEnv }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     if (installFirst) console.log(`[agent] create ${engine} · installing first · ${installFirst}`)
