@@ -409,12 +409,22 @@ export class RemoteRelayPool {
     const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
     if (frame.type === 'terminal_ready' && requestId && streamId) {
       if (entry.p2pPendingOpens.delete(requestId) && transport === 'p2p') entry.p2pStreams.add(streamId)
+      // Tell the local app (Desktop) which transport this stream just came up on — derived from
+      // entry.p2pStreams' own post-update membership (the routing source of truth just above), not a
+      // naive echo of `transport`, so a stale/duplicate terminal_ready can never report a mode that
+      // doesn't match what's actually routing.
+      entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: entry.p2pStreams.has(streamId) ? 'p2p' : 'relay' } })
     } else if (frame.type === 'terminal_error' && requestId) {
       entry.p2pPendingOpens.delete(requestId)
     } else if (frame.type === 'terminal_closed' && streamId) {
       entry.p2pStreams.delete(streamId)
     }
-    if (transport === 'relay' && streamId) entry.p2pStreams.delete(streamId)
+    // A non-terminal_ready frame for a stream still marked p2p but physically delivered over relay: a
+    // quieter, single-stream demotion than demoteP2p() (which also tears down the whole p2p connection)
+    // — still worth telling the local app about, since its badge would otherwise go stale.
+    if (transport === 'relay' && streamId && entry.p2pStreams.delete(streamId)) {
+      entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: 'relay' } })
+    }
   }
 
   private demoteP2p(entry: Entry, reason: string): void {
@@ -426,6 +436,7 @@ export class RemoteRelayPool {
     for (const streamId of streamIds) {
       const resync = entry.crypto.wrapOutgoing({ type: 'terminal_resync', payload: { streamId } })
       try { entry.ws.send(JSON.stringify(resync)) } catch { /* relay close handles cleanup */ }
+      entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: 'relay' } })
     }
     if (streamIds.length > 0) this.reportP2pResult(entry, 'dropped', undefined, reason)
     void p2p?.stop(reason)
