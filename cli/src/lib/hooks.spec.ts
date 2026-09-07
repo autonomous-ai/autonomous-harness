@@ -351,3 +351,152 @@ describe('Hermes hook installation', () => {
     expect(existsSync(join(hermesHome, 'shell-hooks-allowlist.json'))).toBe(false)
   })
 })
+
+/**
+ * A hook command is executed later, by the ENGINE, in a shell whose PATH we do not control — an app
+ * started from Finder inherits launchd's bare `/usr/bin:/bin:/usr/sbin:/sbin`. Since the product ships
+ * its own Node under ~/.harness/runtime, a computer with no `node` on PATH is the normal case, and a
+ * command line beginning with the bare word `node` fails there with "node: command not found".
+ */
+describe('the Node interpreter baked into hook commands', () => {
+  let runtimeDir = ''
+
+  beforeEach(() => {
+    codexHome = mkdtempSync(join(tmpdir(), 'adapter-codex-node-'))
+    hermesHome = mkdtempSync(join(tmpdir(), 'adapter-hermes-node-'))
+    runtimeDir = mkdtempSync(join(tmpdir(), 'adapter-runtime-'))
+  })
+
+  afterEach(() => {
+    for (const dir of [codexHome, hermesHome, runtimeDir]) rmSync(dir, { recursive: true, force: true })
+    delete process.env.CODEX_HOME
+    delete process.env.HERMES_HOME
+    delete process.env.ADAPTER_RUNTIME_DIR
+  })
+
+  /** The first shell word of the emitted command, unquoted. */
+  function interpreterOf(command: string): string {
+    const [, quoted] = /^'((?:[^']|'\\'')*)'/.exec(command) ?? []
+    return quoted ?? command.split(' ')[0]
+  }
+
+  it('names an absolute, runnable interpreter and never the bare word node', async () => {
+    const file = join(codexHome, 'hooks.json')
+    const { installCodexHooks } = await loadHooks()
+    installCodexHooks(18473)
+
+    const out = JSON.parse(readFileSync(file, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const command = out.hooks.SessionStart[0].hooks[0].command
+    const interpreter = interpreterOf(command)
+
+    expect(interpreter).not.toBe('node')
+    expect(interpreter.startsWith('/')).toBe(true)
+    expect(existsSync(interpreter)).toBe(true)
+  })
+
+  it('prefers the managed runtime over the interpreter this process runs on', async () => {
+    // Stand in for a runtime provisioned AFTER this daemon started: the hooks must follow
+    // current-node, not process.execPath, or a Node upgrade would never reach them.
+    const upgraded = join(runtimeDir, 'node-v99', 'bin', 'node')
+    mkdirSync(join(runtimeDir, 'node-v99', 'bin'), { recursive: true })
+    writeFileSync(upgraded, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(runtimeDir, 'current-node'), `${upgraded}\n`)
+    process.env.ADAPTER_RUNTIME_DIR = runtimeDir
+
+    const file = join(codexHome, 'hooks.json')
+    const { installCodexHooks } = await loadHooks()
+    installCodexHooks(18473)
+
+    const out = JSON.parse(readFileSync(file, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    expect(interpreterOf(out.hooks.SessionStart[0].hooks[0].command)).toBe(upgraded)
+  })
+
+  it('falls back to this process when current-node names something unrunnable', async () => {
+    writeFileSync(join(runtimeDir, 'current-node'), `${join(runtimeDir, 'node-gone', 'bin', 'node')}\n`)
+    process.env.ADAPTER_RUNTIME_DIR = runtimeDir
+
+    const file = join(codexHome, 'hooks.json')
+    const { installCodexHooks } = await loadHooks()
+    installCodexHooks(18473)
+
+    const out = JSON.parse(readFileSync(file, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    // A hook naming an interpreter that cannot run is strictly worse than one naming the interpreter
+    // we are demonstrably running on.
+    expect(interpreterOf(out.hooks.SessionStart[0].hooks[0].command)).toBe(process.execPath)
+  })
+
+  it('refuses a current-node pointing outside the runtime directory', async () => {
+    writeFileSync(join(runtimeDir, 'current-node'), '/bin/sh\n')
+    process.env.ADAPTER_RUNTIME_DIR = runtimeDir
+
+    const file = join(codexHome, 'hooks.json')
+    const { installCodexHooks } = await loadHooks()
+    installCodexHooks(18473)
+
+    const out = JSON.parse(readFileSync(file, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    expect(interpreterOf(out.hooks.SessionStart[0].hooks[0].command)).toBe(process.execPath)
+  })
+
+  // The repair path for every machine already carrying the broken form. It works because each
+  // installer recognises its own entries by the notify.mjs substring and rewrites on ANY command
+  // drift — a changed interpreter is the same kind of drift as a changed path or port.
+  it('replaces an already-installed hook that still runs a bare node', async () => {
+    const file = join(codexHome, 'hooks.json')
+    writeFileSync(file, JSON.stringify({
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: "node '/Users/someone/.harness/cli/notify.mjs' --port 18473 --engine codex" }] }],
+      },
+    }))
+
+    const { installCodexHooks } = await loadHooks()
+    installCodexHooks(18473)
+
+    const out = JSON.parse(readFileSync(file, 'utf8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> }
+    const commands = out.hooks.SessionStart.flatMap((block) => block.hooks.map((h) => h.command))
+    expect(commands).toHaveLength(1)
+    expect(commands[0].startsWith('node ')).toBe(false)
+    expect(interpreterOf(commands[0]).startsWith('/')).toBe(true)
+  })
+})
+
+/**
+ * Hermes silently skips any hook whose exact (event, command) pair is not approved, so the installer
+ * records its own. Every command change mints five new pairs; without pruning, the approvals file
+ * grows by five entries for every port change, moved install and Node upgrade, forever.
+ */
+describe('Hermes hook allowlist', () => {
+  beforeEach(() => {
+    hermesHome = mkdtempSync(join(tmpdir(), 'adapter-hermes-allow-'))
+    writeFileSync(join(hermesHome, 'config.yaml'), 'model: test\n')
+  })
+
+  afterEach(() => {
+    rmSync(hermesHome, { recursive: true, force: true })
+    delete process.env.HERMES_HOME
+  })
+
+  it('drops its own stale approvals and keeps foreign ones', async () => {
+    const allowlist = join(hermesHome, 'shell-hooks-allowlist.json')
+    writeFileSync(allowlist, JSON.stringify({
+      approvals: [
+        { event: 'on_session_start', command: "node '/old/notify.mjs' --port 19918 --engine hermes" },
+        { event: 'pre_llm_call', command: "node '/old/notify.mjs' --port 19918 --engine hermes" },
+        { event: 'on_session_start', command: '/usr/local/bin/somebody-elses-hook.sh' },
+      ],
+    }))
+
+    const { installHermesHooks } = await loadHooks()
+    installHermesHooks(18473)
+
+    const out = JSON.parse(readFileSync(allowlist, 'utf8')) as { approvals: Array<{ event: string; command: string }> }
+    expect(out.approvals.some((a) => a.command.includes('/old/notify.mjs'))).toBe(false)
+    expect(out.approvals.some((a) => a.command === '/usr/local/bin/somebody-elses-hook.sh')).toBe(true)
+    // Exactly one approval per event, and it is the command actually written into config.yaml.
+    const installed = /- command: "(.*?)"/.exec(readFileSync(join(hermesHome, 'config.yaml'), 'utf8'))![1]
+      .replace(/\\(.)/g, '$1')
+    const ours = out.approvals.filter((a) => a.command.includes('notify.mjs'))
+    expect(ours.every((a) => a.command === installed)).toBe(true)
+    expect(new Set(ours.map((a) => a.event)).size).toBe(ours.length)
+  })
+})
+

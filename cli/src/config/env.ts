@@ -11,6 +11,9 @@ import { adoptComputerId } from '../lib/computerIdentity.js'
 const adapterRootDir = join(homedir(), '.harness')
 const adapterCliDir = join(adapterRootDir, 'cli')
 const adapterDataDir = join(adapterCliDir, 'data')
+// The private, checksum-verified Node the installers and Desktop Harness provision. `current-node`
+// inside it names the binary in use; both writers rewrite that file whenever they lay down a runtime.
+const adapterRuntimeDir = join(adapterRootDir, 'runtime')
 // The computer id lives at the PRODUCT root, one level ABOVE `cli/`, and deliberately not in the data
 // dir: `harness reset` wipes that dir, the ~/.machine adoption below force-replaces entries in it, and
 // a custom ADAPTER_DATA_DIR moves it. A computer's identity must outlive all three — the backend binds
@@ -365,6 +368,10 @@ const envSchema = z.object({
   ADAPTER_UPDATE_DISABLE: z.string().default('false').transform((v) => v === 'true'),
   // Install dir holding the packaged cli.js + notify.mjs that the self-updater swaps in place.
   ADAPTER_CLI_DIR: z.string().default(adapterCliDir),
+  // Where the managed Node runtime lives. Read (never written) by this process: the hook command
+  // lines have to name an interpreter by absolute path, because a hook fires in a shell whose PATH
+  // we do not control — see managedNodePath() in lib/nodeRuntime.ts.
+  ADAPTER_RUNTIME_DIR: z.string().default(adapterRuntimeDir),
 
   // ── the dial on the USB cable ──────────────────────────────────────────────────────────────────
   // Set 'true' to leave the serial port alone entirely. The port is exclusive, so this is what a

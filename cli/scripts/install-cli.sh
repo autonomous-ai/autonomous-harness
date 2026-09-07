@@ -58,9 +58,24 @@ for arg in "$@"; do
   esac
 done
 
-command -v node >/dev/null 2>&1 || { echo "error: node not found — the CLI is plain JS run by your Node (>= 20)" >&2; exit 1; }
-NODE_MAJOR="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')"
-[ "$NODE_MAJOR" -ge 20 ] || { echo "error: Node >= 20 required (found $(node -v))" >&2; exit 1; }
+# The Node the launcher will be PINNED to, as an absolute path. Two reasons it is resolved here
+# rather than left as a bare `node` in the launcher: a Finder-launched app inherits launchd's
+# PATH (/usr/bin:/bin:/usr/sbin:/sbin — no Homebrew, no nvm) and would find no `node` at all; and
+# the public installer pins an absolute path, which this script's header promises to match.
+# The managed runtime wins when it is present, so a dev install drives the same cli.js on the same
+# Node the desktop app uses instead of quietly forking onto whatever PATH resolves.
+HARNESS_RUNTIME_NODE="${HARNESS_RUNTIME_NODE:-$HOME/.harness/runtime/current-node}"
+NODE_BIN=""
+if [ -r "$HARNESS_RUNTIME_NODE" ]; then
+  CANDIDATE="$(cat "$HARNESS_RUNTIME_NODE" 2>/dev/null || true)"
+  if [ -n "$CANDIDATE" ] && [ -x "$CANDIDATE" ]; then NODE_BIN="$CANDIDATE"; fi
+fi
+if [ -z "$NODE_BIN" ]; then
+  NODE_BIN="$(command -v node 2>/dev/null || true)"
+fi
+[ -n "$NODE_BIN" ] || { echo "error: node not found — the CLI is plain JS run by your Node (>= 20)" >&2; exit 1; }
+NODE_MAJOR="$("$NODE_BIN" -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')"
+[ "$NODE_MAJOR" -ge 20 ] || { echo "error: Node >= 20 required (found $("$NODE_BIN" -v))" >&2; exit 1; }
 if [ "$DO_BUILD" -eq 1 ]; then
   command -v npm >/dev/null 2>&1 || { echo "error: npm not found (needed for the bundle step; use --no-build to skip)" >&2; exit 1; }
 fi
@@ -86,7 +101,7 @@ head -1 "$SRC_CLI" | grep -q '^#!' || { echo "error: dist/cli.js lost its sheban
 # replace a working install (the same gate the self-updater applies). Everything below reports
 # `node dist/cli.js version` rather than the label above, so `--no-build` — where dist/ may hold a
 # bundle some other command produced — can never announce a version it isn't installing.
-VER="$(node "$SRC_CLI" version 2>/dev/null || true)"
+VER="$("$NODE_BIN" "$SRC_CLI" version 2>/dev/null || true)"
 [ -n "$VER" ] || { echo "error: 'node dist/cli.js version' failed — refusing to install a broken bundle" >&2; exit 1; }
 if [ "$DO_BUILD" -eq 1 ] && [ "$VER" != "$LABEL" ]; then
   echo "error: bundle reports '$VER', expected '$LABEL' (ADAPTER_VERSION not injected)" >&2; exit 1
@@ -108,7 +123,7 @@ if [ -n "$RUNNING_PID" ] && kill -0 "$RUNNING_PID" 2>/dev/null; then
   echo ">> stopping the running adapter (pid $RUNNING_PID)…"
   # Prefer the CLI's own stop (graceful WS close → releases the machine-owner claim, clears the pid
   # file); fall back to signals if the currently-installed bundle is broken or missing.
-  node "$CLI_DIR/cli.js" stop >/dev/null 2>&1 || kill -TERM "$RUNNING_PID" 2>/dev/null || true
+  "$NODE_BIN" "$CLI_DIR/cli.js" stop >/dev/null 2>&1 || kill -TERM "$RUNNING_PID" 2>/dev/null || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$RUNNING_PID" 2>/dev/null || break; sleep 0.3; done
   if kill -0 "$RUNNING_PID" 2>/dev/null; then kill -KILL "$RUNNING_PID" 2>/dev/null || true; sleep 0.5; fi
   rm -f "$PID_FILE"
@@ -135,7 +150,7 @@ rm -f "$CLI_DIR/cli.js.prev" "$CLI_DIR/notify.mjs.prev"
 if [ "$KEEP_UPDATES" -eq 1 ]; then
   cat > "$LAUNCHER.tmp" <<EOF
 #!/bin/sh
-exec node "$CLI_DIR/cli.js" "\$@"
+exec "$NODE_BIN" "$CLI_DIR/cli.js" "\$@"
 EOF
 else
   cat > "$LAUNCHER.tmp" <<EOF
@@ -145,7 +160,7 @@ else
 # Re-run install-cli.sh without --no-updates (or the public installer) to rejoin the release train.
 ADAPTER_UPDATE_DISABLE=true
 export ADAPTER_UPDATE_DISABLE
-exec node "$CLI_DIR/cli.js" "\$@"
+exec "$NODE_BIN" "$CLI_DIR/cli.js" "\$@"
 EOF
 fi
 chmod 755 "$LAUNCHER.tmp"
