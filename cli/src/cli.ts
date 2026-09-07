@@ -3349,6 +3349,17 @@ async function runForeground(session: AuthSession): Promise<void> {
     buildArgv: (opts) => buildEngineLaunchArgv(session.engine, {
       ...opts,
       ...(launch.extraArgs?.length ? { extraArgs: launch.extraArgs } : {}),
+      // A pane swap onto a grid has to clear the same vendor credentials a fresh create does, for the
+      // same reason and against the same failure: an engine re-exec'd with the grid's variables still
+      // sees whatever else the pane inherited, and picks its provider from all of it. This was the
+      // gap — a create cleared them, then moving that agent onto a grid from the pane header put them
+      // straight back, so the engine came up on Anthropic with a grid selected above it.
+      //
+      // Derived from what this swap actually provides, so the empty-env case — a retarget back to the
+      // engine's own login — clears nothing. There the user's own variables are the point.
+      ...(launch.env && Object.keys(launch.env).length
+        ? { clearEnv: gridConflictingEnvToClear({ env: launch.env, args: [] }) }
+        : {}),
     }),
     log: (message) => console.log(message),
   })
