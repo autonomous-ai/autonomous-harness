@@ -35,7 +35,9 @@ export interface GridAssignment {
 /** The environment variable each engine's endpoint was written to, where it is one. */
 const BASE_URL_VAR: Partial<Record<AgentEngine, string>> = {
   claude: 'ANTHROPIC_BASE_URL',
-  opencode: 'OPENAI_BASE_URL',
+  // opencode is deliberately absent: its endpoint moved into a config file (see
+  // `readOpencodeGridAssignment`), and leaving it here would read a stray OPENAI_BASE_URL from the
+  // user's own shell as proof this agent is on a grid.
   hermes: 'OPENAI_BASE_URL',
   grok: 'GROK_MODELS_BASE_URL',
   copilot: 'COPILOT_PROVIDER_BASE_URL',
@@ -131,6 +133,41 @@ export async function readPiGridAssignment(
   }
 }
 
+/** OpenCode's config file, and the `-m <provider>/<model>` that selects out of it. */
+const OPENCODE_CONFIG_VAR = 'OPENCODE_CONFIG'
+const OPENCODE_ARGV_MODEL = /(?:^|\s)(?:-m|--model)[\s=]+([A-Za-z0-9._-]+)\/(\S+)/
+
+/**
+ * OpenCode's endpoint, read out of the config file its process was pointed at.
+ *
+ * Same shape as Pi's, and for the same reason: neither engine carries its endpoint in an environment
+ * variable, so the only honest answer comes from the file the process is actually reading. Reading
+ * our own record of what we launched would answer a different question — what we intended — and that
+ * is precisely the disagreement a probe exists to catch.
+ *
+ * Every failure lands on null. "We cannot tell" and "not on a grid" are treated alike by the caller;
+ * the opposite error, claiming a grid nobody verified, would leave an agent quietly somewhere else.
+ */
+export async function readOpencodeGridAssignment(
+  processEnv: Record<string, string>,
+  args: string,
+): Promise<GridAssignment | null> {
+  const configPath = processEnv[OPENCODE_CONFIG_VAR]?.trim()
+  if (!configPath) return null
+  const selected = OPENCODE_ARGV_MODEL.exec(args)
+  if (!selected) return null
+  try {
+    const raw = JSON.parse(await readFile(configPath, 'utf8')) as {
+      provider?: Record<string, { options?: { baseURL?: unknown } }>
+    }
+    const baseUrl = raw.provider?.[selected[1]]?.options?.baseURL
+    if (typeof baseUrl !== 'string' || !isGridUrl(baseUrl)) return null
+    return { baseUrl, model: selected[2] }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Read one live engine process's grid.
  *
@@ -146,7 +183,9 @@ export async function probeGridAssignment(
 ): Promise<GridAssignment | null> {
   const processEnv = await readProcessEnv(identity)
   if (!processEnv) return null
+  // The two engines whose provider lives in a file this daemon wrote, rather than in a variable.
   if (engine === 'pi') return await readPiGridAssignment(processEnv, args)
+  if (engine === 'opencode') return await readOpencodeGridAssignment(processEnv, args)
   return classifyGridAssignment(engine, processEnv, args)
 }
 
