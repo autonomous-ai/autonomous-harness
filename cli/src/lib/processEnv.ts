@@ -87,7 +87,23 @@ export async function readProcessEnv(identity: ProcessIdentity): Promise<Record<
   if (hit && Date.now() - hit.at < TTL_MS) return hit.env
   const env = await read(identity.pid)
   if (!env) return null
+  // A later read of the same process may see LESS than an earlier one — and when it does, the earlier
+  // one was right. That follows from the invariant above: the environment did not change, so a key
+  // that has gone missing was dropped by the READING, not by the process.
+  //
+  // Only macOS can lose one. `/proc/<pid>/environ` is all-or-nothing; `ps eww -o command=` prints
+  // argv and then the environment into one field, so a partial answer is a shape that exists there
+  // and nowhere else. It is also invisible: `ps` exits 0 and the caller gets a map that simply lacks
+  // a variable, which reads exactly like a process that never had it.
+  //
+  // That difference is not cosmetic here. `readOpencodeGridAssignment` treats a missing
+  // `OPENCODE_CONFIG` as "this agent is on no grid", so one partial read turned an agent's grid into
+  // "own login" in the app — briefly, then back, for the length of a turn.
+  //
+  // Merging restores only what a partial read lost, and never invents: the key includes the pid AND
+  // its start marker, so another process cannot reach this entry.
+  const merged = hit ? { ...hit.env, ...env } : env
   if (cache.size >= CACHE_LIMIT) cache.clear()
-  cache.set(key, { env, at: Date.now() })
-  return env
+  cache.set(key, { env: merged, at: Date.now() })
+  return merged
 }

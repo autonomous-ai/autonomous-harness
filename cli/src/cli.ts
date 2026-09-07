@@ -3169,15 +3169,25 @@ async function runForeground(session: AuthSession): Promise<void> {
       // `routeAgent` branch in registry.ts, which matches on terminal route exactly while an agent has
       // no engine session bound. Same agentId, same tile, no flicker.
       const placeholder = await resolvePaneRootProcess(spawned.runtime.paneId)
+      // The grid, READ off the shell that is about to become the engine — not declared.
+      //
+      // That shell already carries everything the launch set, because `tmux new-session -e` put it
+      // there before anything ran: it is the same environment the engine will inherit, in a process
+      // that exists now. So the ordinary probe answers, and it answers truthfully.
+      //
+      // Skipping this was a real bug, not a purity win. An install runs for a minute, and for that
+      // whole minute the app said "own login" over an agent that had already been pointed at a grid
+      // — the one moment the user is watching, and the one answer they were owed.
+      const placeholderGrid = placeholder
+        ? await probeGridAssignment(placeholder, engine, argv.join(' '))
+        : undefined
       const opened = placeholder
         ? registry.openProcessAgent({
           engine,
           runtimes: [spawned.runtime],
           cwd,
-          // Deliberately no `grid`: the registry re-derives that from the LIVE process on every
-          // discovery, never from a declaration. Declaring it here would state, of a pane currently
-          // running npm, which grid its engine is on.
           processIdentity: placeholder,
+          ...(placeholderGrid !== undefined ? { grid: placeholderGrid } : {}),
         })
         : null
       if (opened) {
