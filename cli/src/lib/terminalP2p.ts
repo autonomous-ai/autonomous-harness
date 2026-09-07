@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { RTCPeerConnection, type RTCDataChannel, type RTCIceCandidateInit } from 'werift'
+import { selectStunUrls, type StunSelector } from './stunSelect.js'
 
 export const TERMINAL_P2P_PROTOCOL_VERSION = 1
 export const TERMINAL_P2P_CHANNEL = 'terminal-v1'
@@ -49,6 +50,7 @@ export interface TerminalP2pInitiatorDeps {
   onState?: (state: TerminalP2pState, setupMs: number, reason?: string) => void
   onUnavailable?: (reason: string) => void
   now?: () => number
+  selectStunUrls?: StunSelector
 }
 
 type ReadyWaiter = (ready: boolean) => void
@@ -84,31 +86,51 @@ export class TerminalP2pInitiator {
   readonly sessionId = randomUUID()
   private readonly startedAt: number
   private readonly now: () => number
+  private readonly selectStunUrls: StunSelector
   private pc: RTCPeerConnection | null = null
   private channel: RTCDataChannel | null = null
   private ready = false
+  private starting = false
   private finished = false
   private timeout: ReturnType<typeof setTimeout> | null = null
   private waiters: ReadyWaiter[] = []
 
   constructor(private readonly deps: TerminalP2pInitiatorDeps) {
     this.now = deps.now ?? (() => Date.now())
+    this.selectStunUrls = deps.selectStunUrls ?? selectStunUrls
     this.startedAt = this.now()
   }
 
   get isReady(): boolean { return this.ready && channelCanSend(this.channel) }
 
   start(): void {
-    if (this.pc || this.finished || !this.deps.policy.enabled) return
-    const pc = new RTCPeerConnection(peerConfig(this.deps.policy.stunUrls))
+    // `starting`, not `this.pc`: the peer connection is only built after the STUN race below, so for
+    // those few hundred ms `this.pc` is still null and would let a second start() build a second one.
+    if (this.starting || this.pc || this.finished || !this.deps.policy.enabled) return
+    this.starting = true
+    // Armed here rather than in begin() so the race runs INSIDE the 10s budget instead of on top of
+    // it, and so a selector that somehow never settles still fails this initiator instead of hanging
+    // it forever. It also keeps setupMs on the same origin as before (startedAt, set in the ctor).
+    this.timeout = setTimeout(() => this.fail('negotiation_timeout'), TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS)
+    this.timeout.unref?.()
+    this.deps.onState?.('connecting', 0)
+    void this.begin()
+  }
+
+  private async begin(): Promise<void> {
+    let stunUrls = this.deps.policy.stunUrls
+    try {
+      stunUrls = await this.selectStunUrls(stunUrls)
+    } catch { /* the selector contract is that it never rejects; keep the policy order regardless */ }
+    // stop()/fail() may have run while the race was in flight. Building the peer connection now would
+    // strand it: nothing holds a reference any more, so its UDP sockets would never be closed.
+    if (this.finished) return
+    const pc = new RTCPeerConnection(peerConfig(stunUrls))
     const channel = pc.createDataChannel(TERMINAL_P2P_CHANNEL, { ordered: true })
     this.pc = pc
     this.channel = channel
     this.wirePeer(pc)
     this.wireChannel(channel)
-    this.timeout = setTimeout(() => this.fail('negotiation_timeout'), TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS)
-    this.timeout.unref?.()
-    this.deps.onState?.('connecting', 0)
     void this.createOffer(pc)
   }
 
@@ -245,6 +267,7 @@ export interface TerminalP2pResponderPoolDeps {
   sendSignal: (connId: string, type: string, payload: TerminalP2pSignal) => void
   onData: (connId: string, data: TerminalP2pData) => void
   onUnavailable?: (connId: string, reason: string) => void
+  selectStunUrls?: StunSelector
 }
 
 interface ResponderEntry {
@@ -259,8 +282,16 @@ interface ResponderEntry {
 /** Target side: one responder per authenticated source connId. */
 export class TerminalP2pResponderPool {
   private readonly entries = new Map<string, ResponderEntry>()
+  /** Per-connId offer generation. acceptOffer() awaits twice before it publishes its entry, so two
+   *  offers arriving back to back can interleave (handleSignal is dispatched, not serialised) and the
+   *  loser's peer connection would be orphaned by the winner's entries.set(). Bump on entry, re-check
+   *  after every await. Pre-existing race — the STUN selection below only widens the window. */
+  private readonly offerSeq = new Map<string, number>()
+  private readonly selectStunUrls: StunSelector
 
-  constructor(private readonly deps: TerminalP2pResponderPoolDeps) {}
+  constructor(private readonly deps: TerminalP2pResponderPoolDeps) {
+    this.selectStunUrls = deps.selectStunUrls ?? selectStunUrls
+  }
 
   async handleSignal(connId: string, type: string, value: unknown): Promise<boolean> {
     if (!TERMINAL_P2P_SIGNAL_TYPES.has(type)) return false
@@ -299,6 +330,11 @@ export class TerminalP2pResponderPool {
     if (!entry || entry.closing) return
     entry.closing = true
     this.entries.delete(connId)
+    // Every reason but 'superseded' retires the connId for good, so drop its generation counter too or
+    // the map grows for the life of the daemon. 'superseded' is excluded because that call comes from
+    // acceptOffer itself, which has already claimed the current generation and still needs it as its
+    // own liveness check across the awaits that follow.
+    if (reason !== 'superseded') this.offerSeq.delete(connId)
     clearTimeout(entry.timeout)
     if (notifyPeer) {
       this.deps.sendSignal(connId, 'p2p_abort', {
@@ -313,14 +349,24 @@ export class TerminalP2pResponderPool {
 
   async stop(): Promise<void> {
     await Promise.all([...this.entries.keys()].map((connId) => this.closeConnection(connId, 'shutdown', false)))
+    // Also drops generations for offers still inside their STUN race, which makes them bail instead of
+    // building a peer connection nothing would ever close.
+    this.offerSeq.clear()
   }
 
   private async acceptOffer(connId: string, payload: TerminalP2pSignal): Promise<void> {
+    const seq = (this.offerSeq.get(connId) ?? 0) + 1
+    this.offerSeq.set(connId, seq)
     await this.closeConnection(connId, 'superseded', false)
+    if (this.offerSeq.get(connId) !== seq) return
     const offeredStunUrls = Array.isArray(payload.stunUrls)
       ? payload.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 4)
       : []
-    const pc = new RTCPeerConnection(peerConfig(offeredStunUrls))
+    // The offerer raced these too, and may well have landed on a different server. That is fine: a
+    // srflx candidate is each peer's own public address, so the two sides need not agree on who to ask.
+    const ordered = await this.selectStunUrls(offeredStunUrls)
+    if (this.offerSeq.get(connId) !== seq) return
+    const pc = new RTCPeerConnection(peerConfig(ordered))
     const entry: ResponderEntry = {
       sessionId: payload.sessionId,
       pc,

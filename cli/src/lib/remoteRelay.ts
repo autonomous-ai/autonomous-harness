@@ -27,6 +27,7 @@ import {
   type TerminalP2pData,
   type TerminalP2pPolicy,
 } from './terminalP2p.js'
+import { warmStunUrls } from './stunSelect.js'
 
 const CONNECT_TIMEOUT_MS = 15_000
 const LINGER_MS = 30_000
@@ -218,6 +219,12 @@ export class RemoteRelayPool {
             if (frame.type === 'connected' && payload?.machineId === machineId) {
               selected = true
               entry.p2pPolicy = p2pPolicy(payload.p2p)
+              // Earliest instant the url list exists. startP2p() fires one round trip later on
+              // e2e_welcome, so the cache is usually still cold — what actually pays off is the
+              // in-flight dedupe: begin() joins THIS race instead of starting a second one, and its
+              // cost hides behind the welcome round trip. Nothing here is load-bearing for
+              // correctness; drop it and the only change is a slightly later first terminal.
+              if (entry.p2pPolicy) warmStunUrls(entry.p2pPolicy.stunUrls)
               try { ws.send(JSON.stringify(crypto.helloFrame())) } catch { /* the close handler below rejects */ }
               return
             }
