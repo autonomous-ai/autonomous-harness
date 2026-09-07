@@ -41,6 +41,9 @@ import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
+import { handOffToGrid } from './lib/gridHandoff.js'
+import { passThroughToGridLogout } from './lib/gridLogout.js'
+import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES } from './lib/engineBin.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
 import { buildGridEngineLaunch, describeGridLaunch, gridEnvVarNames } from './lib/gridLaunch.js'
@@ -241,6 +244,15 @@ Machine:
   harness flash [flags]        re-flash a plugged-in circle device over USB. Flags go straight to the
                                flasher: --detect-only, --port, --version, --yes, --erase-nvs
 
+Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH):
+  harness grid login           sign in to your grid reusing THIS computer's Autonomous account —
+                               no second browser, no second approval
+  harness grid login --force   sign the harness in as a different account first, then the grid
+  harness grid login --json    emit the same machine-readable NDJSON \`harness login --json\` emits
+  harness grid logout [flags]  sign out of your grid — the whole of \`grid logout\`, which stops what
+                               this box is serving BEFORE deleting anything. Flags go straight to it:
+                               --force signs out over a serve child it could not confirm stopped
+
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
   harness pair <code>          pair a BROWSER (code shown on the machine page)
@@ -407,14 +419,57 @@ async function authStatusCommand(json: boolean): Promise<void> {
   else console.log(`\n  ${payload.loggedIn ? '✓ Signed in' : '✗ Not signed in'}${payload.machineId ? ` (machine ${payload.machineId})` : ''}\n`)
 }
 
-async function loginCommand(foreground: boolean, force: boolean, json: boolean): Promise<void> {
+/**
+ * `harness login` — and, `chained`, the first half of `harness grid login`.
+ *
+ * Returns whether this computer ended up signed in, so a caller can go on to its own step. `chained`
+ * suppresses only the terminating SUCCESS line — the authorize URL, the SSH paste fallback and every
+ * error line are the sign-in's to emit either way, and the caller adds the one result line that ends
+ * the stream. Under `--json` a sign-in failure therefore still arrives as itself, coded, exactly
+ * once; without it the sign-in throws, as `harness login` has always done, and the top-level handler
+ * prints it.
+ */
+type SignInOutcome =
+  /** Signed in — `alreadySignedIn` distinguishes a session that was already there from a fresh one,
+   *  which is the one fact a caller cannot re-derive except by watching for an `authorize_url`. */
+  | { signedIn: true; alreadySignedIn: boolean }
+  /** Refused. Under `--json` its own coded result line has already been emitted. */
+  | { signedIn: false }
+
+async function loginCommand(
+  foreground: boolean,
+  force: boolean,
+  json: boolean,
+  opts: { chained?: boolean } = {},
+): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
+  const succeed = (alreadySignedIn: boolean): SignInOutcome => {
+    if (opts.chained) return { signedIn: true, alreadySignedIn }
+    if (json) emit(alreadySignedIn ? { type: 'result', status: 'success', alreadySignedIn: true } : { type: 'result', status: 'success' })
+    else if (alreadySignedIn) console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
+    else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+    return { signedIn: true, alreadySignedIn }
+  }
   if (readAuthSession() && !force) {
-    await resolveComputerMachine()
-    if (json) emit({ type: 'result', status: 'success', alreadySignedIn: true })
-    else console.log('\n  ✓ Already signed in. Run `harness start` to connect this computer.\n')
-    return
+    // Guarded exactly like the identical call after the exchange below. Unguarded, a hiccup on
+    // `/api/machines/resolve-computer` reached `onError`, which is JSON-unaware — so the ONE mode a
+    // client drives answered a stack trace and NO result line at all, on the commonest path there
+    // is (a computer that is already signed in).
+    try {
+      await resolveComputerMachine()
+    } catch (err) {
+      // An `AuthSessionError` is passed on rather than coded here: it is not the backend failing, it
+      // is THIS computer's harness session, and only the caller knows which of the two sign-ins the
+      // person should be sent to. `harness login` is unaffected — it never caught this before either.
+      if (json && !(err instanceof AuthSessionError)) {
+        emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message })
+        process.exitCode = 1
+        return { signedIn: false }
+      }
+      throw err
+    }
+    return succeed(true)
   }
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
   // under its existing socket while this process replaces the durable session.
@@ -438,7 +493,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       })
       if (!start.authorizeUrl || !start.tx) throw new Error('Backend did not return an SSO authorize URL')
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
     if (json) {
@@ -474,7 +529,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       })
     } catch (err) {
       const timedOut = (err as Error).message === 'SSO login timed out'
-      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: timedOut ? 'TIMEOUT' : 'CALLBACK_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     } finally {
       manual?.cancel()
@@ -487,7 +542,7 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
       })
       if (!exchanged.token) throw new Error('SSO exchange returned no access token')
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: 'EXCHANGE_FAILED', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
     const id = computerId()
@@ -504,14 +559,100 @@ async function loginCommand(foreground: boolean, force: boolean, json: boolean):
     try {
       await resolveComputerMachine()
     } catch (err) {
-      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return }
+      if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
-    if (json) emit({ type: 'result', status: 'success' })
-    else console.log('\n  ✓ Signed in. Run `harness start` to connect this computer.\n')
+    return succeed(false)
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
+}
+
+// ── grid ───────────────────────────────────────────────────────────────────────────────────────
+/**
+ * `harness grid login` — sign in to your grid with the Autonomous account this computer already has.
+ *
+ * Two halves and one result. The first is `loginCommand` reused WHOLE, so this command inherits its
+ * already-signed-in short-circuit (no browser when a session exists), `--force`, the NDJSON contract
+ * and the paste-the-callback-URL fallback an SSH session needs — rather than reimplementing any of
+ * them. The second is the hand-off: the token goes to `grid login --harness` on its standard input.
+ *
+ * The token comes from `AuthSessionManager.accessToken()` and never off disk, which is the whole of
+ * this command's answer to "the harness token expired": a refresh happens transparently there,
+ * already coalesced in this process and across processes by the file lock. A refresh token that has
+ * gone invalid is an `AuthSessionError` whose own sentence names `harness login`, so the person is
+ * told WHICH of the two sign-ins broke instead of reading a stack trace about the other one.
+ */
+async function gridLoginCommand(force: boolean, json: boolean): Promise<void> {
+  // `extra` carries what the child itself said. Under --json both its streams are captured, so
+  // without this the one channel a client is reading is left with an exit code and nothing else.
+  const fail = (code: string, message: string, exitCode: number, extra: Record<string, unknown> = {}): void => {
+    if (json) console.log(JSON.stringify({ type: 'result', status: 'error', code, message, ...extra }))
+    else console.error(`\n  ✗ ${message}\n`)
+    process.exitCode = exitCode
+  }
+  let signIn: SignInOutcome
+  let token: string
+  try {
+    // `chained`: the sign-in emits its authorize URL and any error line, but not a success line, so
+    // what a client driving this reads is exactly one terminating result — this command's.
+    signIn = await loginCommand(false, force, json, { chained: true })
+    // ⚠️ On the FIELD, never on the object: every outcome is truthy, so `if (!outcome)` would read
+    // a refusal as a success and hand a token that was never obtained to the child.
+    if (signIn.signedIn === false) return
+    token = await new AuthSessionManager(backendHttpBase()).accessToken()
+  } catch (err) {
+    if (!(err instanceof AuthSessionError)) throw err
+    fail('AUTH_ERROR', err.message, 1)
+    return
+  }
+  const handoff = await handOffToGrid(token, { json })
+  if (handoff.code !== 'OK') { fail(handoff.code, handoff.message, handoff.exitCode, gridSaid(handoff)); return }
+  if (!json) return
+  // The same key `harness login --json` uses, present only when it is true, so a client driving the
+  // two reads one contract rather than two — the harness sign-in's own line is worded exactly so.
+  console.log(JSON.stringify({
+    type: 'result',
+    status: 'success',
+    ...(signIn.alreadySignedIn ? { alreadySignedIn: true } : {}),
+    ...gridSaid(handoff),
+  }))
+}
+
+/** What `grid` itself said, carried out on the result line beside this command's own classification.
+ *
+ *  `grid`'s answer on success is a JSON document on stdout, so it travels parsed, under `grid`. Its
+ *  refusals go to **stderr** — every one of them already names its own way forward — and those
+ *  travel verbatim under `detail`, because a client reading NDJSON off stdout would otherwise have
+ *  the exit code and no sentence to show anybody. Both are omitted when empty rather than sent as
+ *  `null`: an absent key reads as "the child said nothing there", which is what it means. */
+function gridSaid(handoff: { stdout: string; stderr: string }): Record<string, unknown> {
+  const out = handoff.stdout.trim()
+  const err = handoff.stderr.trim()
+  let parsed: unknown = null
+  if (out) { try { parsed = JSON.parse(out) } catch { parsed = out } }
+  return { ...(out ? { grid: parsed } : {}), ...(err ? { detail: err } : {}) }
+}
+
+/**
+ * `harness grid logout` — the grid sign-out, run as itself, so the pair a person was taught is
+ * symmetric.
+ *
+ * A passthrough and nothing else. The serve-child teardown that runs before any credential is
+ * deleted, the refusal that keeps them when a child cannot be confirmed stopped, `--force`, the
+ * exit code and every word on either stream are `grid logout`'s. This function's whole job is to
+ * adopt the child's exit code and to say the one thing the child cannot: that there was no child.
+ *
+ * ⚠️ **No cascade into the harness session, and none out of it.** Nothing here reads this
+ * computer's SSO session, so no grid condition can decide whether the harness stays signed in — and
+ * `harness logout` correspondingly never deletes grid credentials (see `logout` below).
+ */
+async function gridLogoutCommand(args: string[]): Promise<void> {
+  const outcome = await passThroughToGridLogout(args)
+  // On the FIELD: both outcomes are truthy objects, and testing the object would read a missing
+  // `grid` as a clean sign-out.
+  if (outcome.ran === false) console.error(`\n  ✗ ${outcome.message}\n`)
+  process.exitCode = outcome.exitCode
 }
 
 /**
@@ -700,7 +841,16 @@ async function updateCommand(force: boolean): Promise<void> {
   process.exit(0)
 }
 
-/** Stop the local adapter and discard this computer's SSO session. */
+/**
+ * Stop the local adapter and discard this computer's SSO session — local, and unable to fail.
+ *
+ * ⚠️ **This never touches the grid credential store, and must not learn to.** Two reasons, and both
+ * matter: `grid logout` can refuse and exit non-zero over a serve child it cannot confirm stopped,
+ * so cascading would let a grid condition block a harness sign-out for a reason that has nothing to
+ * do with the harness; and the store may predate the harness entirely, having been written by a
+ * browser sign-in this CLI knows nothing about. All that is owed is the sentence below, so that a
+ * long-lived credential is not left behind in silence.
+ */
 async function logout(): Promise<void> {
   const pid = readPid()
   if (pid && isAlive(pid)) { try { process.kill(pid, 'SIGTERM') } catch { /* ignore */ } }
@@ -708,6 +858,9 @@ async function logout(): Promise<void> {
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
+  // Existence is the whole of the test — nothing is read out of the store, and nothing is written
+  // into it. On stderr, so a script reading this command's output is unaffected by it.
+  warnIfGridSignInRemains()
   process.exit(0)
 }
 
@@ -3931,6 +4084,9 @@ async function resetCommand(): Promise<void> {
   if (r.pid) console.log(`    Stopped adapter process ${r.pid}.`)
   clearAuthSession()
   console.log('\n  Start again with: harness login, then harness start\n')
+  // The SECOND door onto the sign-out `logout` performs, and it clears MORE, so somebody running it
+  // is if anything likelier to believe nothing is left. Same call, so the two cannot drift.
+  warnIfGridSignInRemains()
   process.exit(0)
 }
 
@@ -4507,6 +4663,14 @@ const flags = rest.filter((a) => a.startsWith('-'))
 const args = rest.filter((a) => !a.startsWith('-'))
 const foreground = flags.includes('--foreground') || flags.includes('-f')
 
+/** `argv` with the first occurrence of `token` removed, order otherwise untouched — how a subcommand
+ *  word is dropped from an argv that is otherwise passed straight to a child. Flags typed BEFORE the
+ *  word survive, which a slice from its index would discard. */
+function withoutFirst(argv: string[], token: string): string[] {
+  const at = argv.indexOf(token)
+  return at < 0 ? argv : [...argv.slice(0, at), ...argv.slice(at + 1)]
+}
+
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') usage()
 if (cmd === 'version' || cmd === '--version' || cmd === '-v') { console.log(VERSION); process.exit(0) }
 
@@ -4550,6 +4714,15 @@ switch (cmd) {
     break
   case 'pairings':
     pairingsCommand().catch(onError)
+    break
+  case 'grid':
+    if (args[0] === 'login') gridLoginCommand(flags.includes('--force'), flags.includes('--json')).catch(onError)
+    // Everything but the verb, in the order it was typed — a passthrough that allow-listed flags
+    // would be a second place that has to know what `grid logout` accepts. Only the FIRST `logout`
+    // token goes: filtering by value instead would eat an option's *value* the day `grid logout`
+    // takes one, forwarding the flag with nothing behind it.
+    else if (args[0] === 'logout') gridLogoutCommand(withoutFirst(rest, 'logout')).catch(onError)
+    else { console.error(`Unknown command: grid ${args[0] ?? ''}`); usage(1) }
     break
   case 'machines':
     if (!args[0]) machinesListCommand(flags.includes('--json')).catch(onError)

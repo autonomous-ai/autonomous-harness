@@ -1,0 +1,798 @@
+/**
+ * The `grid` seam — the real CLI as a subprocess, against a fake backend and a fake `grid`.
+ *
+ * The fake `grid` is first on PATH and records the argv and the standard input it was handed. It
+ * **refuses** a `login` argv without `--harness`: asserting that the harness asked for the hand-off
+ * is the one thing a fake binary can honestly check, since it cannot exchange a token the way the
+ * real CLI does.
+ *
+ * Three commands meet here, and the last two are about what does NOT happen: `harness grid login`
+ * hands a token over, `harness grid logout` passes straight through to `grid logout` without
+ * reproducing any of it, and `harness logout` mentions the grid credential store without touching it.
+ */
+import { spawn } from 'child_process'
+import { createServer, type Server } from 'http'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { delimiter, join } from 'path'
+import { fileURLToPath } from 'url'
+import { afterEach, describe, expect, it } from 'vitest'
+
+const CLI_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const CLI_SOURCE = join(CLI_ROOT, 'src', 'cli.ts')
+const TSX = join(CLI_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+const dirs: string[] = []
+const servers: Server[] = []
+
+afterEach(async () => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const server of servers.splice(0)) {
+    server.closeAllConnections?.()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+/** Records what it was given, then behaves as the surrounding test's env vars tell it to.
+ *  Extensionless, so Node runs it as CommonJS regardless of any package.json above it. */
+const FAKE_GRID = `#!/usr/bin/env node
+'use strict'
+const { writeFileSync } = require('fs')
+const args = process.argv.slice(2)
+
+function answer(stdin) {
+  writeFileSync(process.env.FAKE_GRID_RECORD, JSON.stringify({ args, stdin, env: process.env }))
+  // The guard is scoped to the verb it belongs to. Only the LOGIN hand-off must ask for
+  // \`--harness\`; \`grid logout\` has no such flag, and refusing it here would make the passthrough
+  // untestable against the same fake.
+  if (args[0] === 'login' && !args.includes('--harness')) {
+    process.stderr.write('fake grid: refusing argv that does not ask for the hand-off\\n')
+    process.exitCode = 64
+    return
+  }
+  if (process.env.FAKE_GRID_STDOUT) process.stdout.write(process.env.FAKE_GRID_STDOUT)
+  // Where the real \`grid\` puts every refusal — see the test that reads it back off the result line.
+  if (process.env.FAKE_GRID_STDERR) process.stderr.write(process.env.FAKE_GRID_STDERR)
+  process.exitCode = Number(process.env.FAKE_GRID_EXIT || '0')
+}
+
+// Standard input is read on the hand-off and NOWHERE else. The logout passthrough inherits stdin
+// from the harness, whose own caller may never close it — so a fake that waited for end-of-file on
+// every argv would hang the pair instead of measuring it.
+if (args[0] === 'login') {
+  let stdin = ''
+  process.stdin.setEncoding('utf8')
+  process.stdin.on('data', (chunk) => { stdin += chunk })
+  process.stdin.on('end', () => answer(stdin))
+} else {
+  answer('')
+}
+`
+
+function tempRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'harness-cli-grid-'))
+  dirs.push(root)
+  return root
+}
+
+type GridOnPath = 'runnable' | 'absent' | 'not-executable'
+
+/** A `grid` on PATH, in one of the three states the hand-off has to tell apart.
+ *
+ *  `not-executable` is the one that earns its keep: it is the only case where the PATH pre-check and
+ *  the spawn disagree — the check refuses it as unrunnable, while a spawn would answer EACCES, which
+ *  is NOT the ENOENT the fallback recognises. Without it, deleting the pre-check entirely leaves the
+ *  absent case green, and the test named for it would be measuring nothing of its own. */
+function fakeGridBin(root: string, state: GridOnPath): string {
+  const dir = join(root, 'bin')
+  mkdirSync(dir, { recursive: true })
+  if (state === 'absent') return dir
+  const script = join(dir, 'grid')
+  writeFileSync(script, FAKE_GRID)
+  chmodSync(script, state === 'runnable' ? 0o755 : 0o644)
+  return dir
+}
+
+function recordFile(root: string): string { return join(root, 'grid-invocation.json') }
+
+function readRecord(root: string): { args: string[]; stdin: string; env: Record<string, string> } {
+  return JSON.parse(readFileSync(recordFile(root), 'utf8'))
+}
+
+function seedSession(root: string, overrides: Record<string, unknown> = {}): void {
+  const authDir = join(root, 'auth')
+  mkdirSync(authDir, { recursive: true })
+  writeFileSync(join(authDir, 'session.json'), JSON.stringify({
+    version: 1,
+    accessToken: 'tok_seeded',
+    refreshToken: 'refresh_seeded',
+    expiresAt: Date.now() + 60 * 60_000, // an hour out — accessToken() must not attempt a refresh
+    autonomousEnv: 'prod',
+    computerId: 'a'.repeat(32),
+    machineId: 'm_seeded',
+    updatedAt: Date.now(),
+    ...overrides,
+  }))
+}
+
+function envFor(root: string, backendUrl?: string, extra: NodeJS.ProcessEnv = {}, grid: GridOnPath = 'runnable'): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    HOME: root,
+    HARNESS_AUTH_DIR: join(root, 'auth'),
+    ADAPTER_DATA_DIR: join(root, 'data'),
+    ADAPTER_CLI_DIR: join(root, 'cli'),
+    ADAPTER_COMPUTER_ID_FILE: join(root, 'computer-id'),
+    ADAPTER_UPDATE_DISABLE: 'true',
+    // The fake goes FIRST so it wins over any real `grid` this machine has. Unless it is meant to be
+    // unusable — then the rest of PATH is dropped entirely, or a developer's own installed `grid`
+    // answers and the test measures their machine instead of the refusal (it did: a real CLI
+    // predating `--harness` exited 2, which read as an outdated CLI rather than an absent one).
+    PATH: grid === 'runnable'
+      ? `${fakeGridBin(root, grid)}${delimiter}${process.env.PATH ?? ''}`
+      : fakeGridBin(root, grid),
+    FAKE_GRID_RECORD: recordFile(root),
+    ...(backendUrl ? { BACKEND_WS_URL: backendUrl } : {}),
+    ...extra,
+  }
+}
+
+type Run = { status: number | null; stdout: string; stderr: string }
+
+/** Async spawn — REQUIRED whenever the child talks to a fake backend hosted in THIS process, which
+ *  spawnSync would block the event loop of until the child exits, deadlocking both.
+ *
+ *  ⚠️ Resolves on **`close`**, never `exit`. `exit` fires while the child's stdio may still hold
+ *  unemitted data, so a terminating NDJSON line written just before the process ends can be missing
+ *  from `stdout` — and the cases below compare it for EQUALITY. A regression that DROPPED that line
+ *  would produce the same shorter stdout, so the flake would make the real failure look like noise. */
+function run(root: string, args: string[], backendUrl?: string, extra: NodeJS.ProcessEnv = {}, grid: GridOnPath = 'runnable'): Promise<Run> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [TSX, CLI_SOURCE, ...args], {
+      cwd: CLI_ROOT,
+      env: envFor(root, backendUrl, extra, grid),
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (c: Buffer) => { stdout += c.toString() })
+    child.stderr.on('data', (c: Buffer) => { stderr += c.toString() })
+    child.once('close', (status) => resolve({ status, stdout, stderr }))
+  })
+}
+
+function ndjson(stdout: string): Record<string, unknown>[] {
+  return stdout.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line))
+}
+
+/** The `/api/auth/*` + resolve-computer calls the harness sign-in makes — real network shape. */
+function fakeBackend(handlers: {
+  authorizeNative?: (body: any) => any
+  exchange?: (body: any) => any
+  resolveComputer?: (body: any) => any
+  refresh?: (body: any) => { status: number; body: unknown }
+}): Promise<{ server: Server; base: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', (c) => { raw += c })
+      req.on('end', () => {
+        const body = raw ? JSON.parse(raw) : {}
+        const send = (data: unknown): void => {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ success: true, data }))
+        }
+        if (req.url === '/api/auth/authorize-native' && handlers.authorizeNative) { send(handlers.authorizeNative(body)); return }
+        if (req.url === '/api/auth/exchange' && handlers.exchange) { send(handlers.exchange(body)); return }
+        if (req.url === '/api/machines/resolve-computer' && handlers.resolveComputer) { send(handlers.resolveComputer(body)); return }
+        if (req.url === '/api/auth/refresh' && handlers.refresh) {
+          const answer = handlers.refresh(body)
+          res.writeHead(answer.status, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(answer.body))
+          return
+        }
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: { message: 'not stubbed' } }))
+      })
+    })
+    servers.push(server)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      resolve({ server, base: `http://127.0.0.1:${port}` })
+    })
+  })
+}
+
+const signedInBackend = () => fakeBackend({ resolveComputer: () => ({ machine: { machineId: 'm_seeded' } }) })
+
+describe('the fake grid itself', () => {
+  /** The positive row for the fake's own guard.
+   *
+   *  Every case below asserts the argv the harness sent, and the fake refusing argv that omits
+   *  `--harness` is what makes those assertions mean "the hand-off was asked for" rather than
+   *  "some argv arrived". But the harness ALWAYS sends the flag, so nothing in this file ever
+   *  drives that branch — a fake whose refusal had rotted away would look exactly like one that
+   *  works, and the suite would go on reporting the seam as covered. So drive it directly. */
+  it('refuses argv that does not ask for the hand-off', async () => {
+    const root = tempRoot()
+    const grid = join(fakeGridBin(root, 'runnable'), 'grid')
+
+    const refused = await new Promise<number | null>((resolve) => {
+      const child = spawn(process.execPath, [grid, 'login', '--json'], {
+        env: { ...process.env, FAKE_GRID_RECORD: recordFile(root) },
+      })
+      child.stdin.end('a-token\n')
+      child.once('close', resolve)
+    })
+
+    expect(refused).toBe(64)
+    // And it still records what it was given, so a refusal is diagnosable rather than silent.
+    expect(readRecord(root).args).toEqual(['login', '--json'])
+  }, 20_000)
+})
+
+describe('harness grid login — an already-signed-in computer', () => {
+  it('hands the token over with no browser and one terminating result line', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base)
+
+    expect(result.status).toBe(0)
+    const lines = ndjson(result.stdout)
+    // No authorize_url anywhere: an existing session must never reopen the browser. And
+    // `alreadySignedIn` is the key `harness login --json` puts on exactly this outcome — the same
+    // contract, so a client driving the two does not need two readers.
+    expect(lines).toEqual([{ type: 'result', status: 'success', alreadySignedIn: true }])
+    expect(readRecord(root).args).toEqual(['login', '--harness', '--json'])
+  }, 20_000)
+
+  it('writes the token on standard input, and puts it in neither argv nor the environment', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    await run(root, ['grid', 'login', '--json'], base)
+
+    const record = readRecord(root)
+    expect(record.stdin.trim()).toBe('tok_seeded')
+    expect(JSON.stringify(record.args)).not.toContain('tok_seeded')
+    expect(JSON.stringify(record.env)).not.toContain('tok_seeded')
+  }, 20_000)
+
+  it('lets the child\'s own output through on the human path, and asks it for no JSON', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login'], base, { FAKE_GRID_STDOUT: 'Signed in as a@b.test.\n' })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Signed in as a@b.test.')
+    expect(readRecord(root).args).toEqual(['login', '--harness'])
+  }, 20_000)
+
+  it('carries the child\'s JSON answer out on the result line', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base,
+      { FAKE_GRID_STDOUT: '{"signed_in":true,"email":"a@b.test","grids":[]}\n' })
+
+    expect(result.status).toBe(0)
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'success', alreadySignedIn: true, grid: { signed_in: true, email: 'a@b.test', grids: [] } },
+    ])
+  }, 20_000)
+})
+
+describe('harness grid login — a signed-out computer', () => {
+  it('runs the whole loopback sign-in first, then hands the new token over', async () => {
+    const root = tempRoot()
+    let capturedRedirectUri = ''
+    const { base } = await fakeBackend({
+      authorizeNative: (body) => { capturedRedirectUri = body.redirectUri; return { authorizeUrl: 'https://sso.example.test/authorize?tx=abc', tx: 'tx_abc' } },
+      exchange: () => ({ token: 'tok_new', refreshToken: 'refresh_new', expiresIn: 3600, autonomousEnv: 'prod' }),
+      resolveComputer: () => ({ machine: { machineId: 'm_new' } }),
+    })
+
+    const child = spawn(process.execPath, [TSX, CLI_SOURCE, 'grid', 'login', '--json'], {
+      cwd: CLI_ROOT,
+      env: envFor(root, base),
+    })
+    let stdout = ''
+    const lines: Record<string, unknown>[] = []
+    const gotUrl = new Promise<void>((resolve) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString()
+        while (stdout.includes('\n')) {
+          const idx = stdout.indexOf('\n')
+          const line = stdout.slice(0, idx).trim()
+          stdout = stdout.slice(idx + 1)
+          if (line) { lines.push(JSON.parse(line)); resolve() }
+        }
+      })
+    })
+
+    await gotUrl
+    expect(lines[0]).toEqual({ type: 'authorize_url', url: 'https://sso.example.test/authorize?tx=abc' })
+
+    // Simulate the browser completing SSO against this CLI's own loopback callback server.
+    await fetch(`${capturedRedirectUri}?code=code_123&state=state_456`)
+
+    // `close`, not `exit`: on `exit` the child's stdout may still hold the terminating result line.
+    const status = await new Promise<number | null>((resolve) => child.once('close', resolve))
+    if (stdout.trim()) lines.push(JSON.parse(stdout.trim()))
+    expect(status).toBe(0)
+    // Two lines total: the sign-in's authorize_url, and ONE terminating result — not one per half.
+    expect(lines).toEqual([
+      { type: 'authorize_url', url: 'https://sso.example.test/authorize?tx=abc' },
+      // No `alreadySignedIn`: this computer was signed OUT, and the key is absent rather than
+      // `false` — which is how `harness login --json` words the same outcome.
+      { type: 'result', status: 'success' },
+    ])
+    expect(readRecord(root).stdin.trim()).toBe('tok_new')
+  }, 30_000)
+})
+
+describe('harness grid login — when the hand-off fails', () => {
+  it('propagates the child\'s exit code', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base, { FAKE_GRID_EXIT: '7' })
+
+    expect(result.status).toBe(7)
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'error', code: 'GRID_LOGIN_FAILED', message: expect.any(String) },
+    ])
+  }, 20_000)
+
+  /** ⚠️ Not a shape today's `grid` produces: it refuses on STDERR (`cli/json_error.py` prints there,
+   *  and a `SystemExit` string goes there too), and that stream is inherited, so a refusal already
+   *  reaches the caller untouched. What this pins is the seam's own property — captured stdout is
+   *  never SWALLOWED — which is what stops a child that does write there from vanishing under the
+   *  one mode whose whole point is that a client can read the answer. */
+  it('does not swallow what the child put on stdout before failing', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base,
+      { FAKE_GRID_EXIT: '7', FAKE_GRID_STDOUT: '{"error":{"message":"no such grid"}}\n' })
+
+    expect(result.status).toBe(7)
+    expect(ndjson(result.stdout)).toEqual([{
+      type: 'result',
+      status: 'error',
+      code: 'GRID_LOGIN_FAILED',
+      message: expect.any(String),
+      grid: { error: { message: 'no such grid' } },
+    }])
+  }, 20_000)
+
+  it('carries the child\'s own refusal out on the result line, and still to stderr', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+    // The shape a real refusal has: `grid` writes its sentence to STDERR and nothing to stdout.
+    const refusal = 'This control plane cannot sign you in with an Autonomous account token yet.\n'
+
+    const result = await run(root, ['grid', 'login', '--json'], base,
+      { FAKE_GRID_EXIT: '1', FAKE_GRID_STDERR: refusal })
+
+    // Needed in BOTH places, for two different readers. A client reading NDJSON off stdout would
+    // otherwise hold an exit code and have no sentence to show anybody — this command's own message
+    // classifies the failure, only the child's names the way out of it.
+    const [line] = ndjson(result.stdout)
+    expect(line).toMatchObject({ type: 'result', status: 'error', code: 'GRID_LOGIN_FAILED' })
+    expect(String(line.detail)).toContain('cannot sign you in')
+    // And a person watching the terminal still sees it where it has always been.
+    expect(result.stderr).toContain('cannot sign you in')
+  }, 20_000)
+
+  it('says nothing where the child said nothing, rather than sending empty keys', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base, { FAKE_GRID_EXIT: '7' })
+
+    // An ABSENT key reads as "the child said nothing there"; `null` or `''` would read as an answer.
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'error', code: 'GRID_LOGIN_FAILED', message: expect.any(String) },
+    ])
+  }, 20_000)
+
+  it('reads exit code 2 as an outdated grid CLI, not as a network failure', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base, { FAKE_GRID_EXIT: '2' })
+
+    expect(result.status).toBe(2)
+    const [line] = ndjson(result.stdout)
+    expect(line).toMatchObject({ type: 'result', status: 'error', code: 'GRID_CLI_OUTDATED' })
+    expect(String(line.message)).toContain('too old')
+  }, 20_000)
+
+  it('says the same thing in the human text', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login'], base, { FAKE_GRID_EXIT: '2' })
+
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('too old')
+  }, 20_000)
+
+  it('reports a missing grid CLI when there is none on PATH', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base, {}, 'absent')
+
+    expect(result.status).toBe(1)
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'error', code: 'GRID_CLI_MISSING', message: expect.any(String) },
+    ])
+  }, 20_000)
+
+  it('reports a grid it cannot RUN as missing too, rather than as a failed sign-in', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend()
+
+    const result = await run(root, ['grid', 'login', '--json'], base, {}, 'not-executable')
+
+    // The case above would stay green with the PATH pre-check deleted, because a spawn into an
+    // empty PATH answers ENOENT and the fallback maps that to the same code. This one would not: a
+    // present-but-unrunnable file is EACCES, which the fallback does NOT recognise, so without the
+    // pre-check it would surface as GRID_LOGIN_FAILED.
+    expect(result.status).toBe(1)
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'error', code: 'GRID_CLI_MISSING', message: expect.any(String) },
+    ])
+  }, 20_000)
+})
+
+describe('harness grid login — when the harness session itself is broken', () => {
+  it('names the harness sign-in, not the grid one, when the refresh token is invalid', async () => {
+    const root = tempRoot()
+    seedSession(root, { expiresAt: Date.now() - 60_000 })
+    const { base } = await fakeBackend({
+      resolveComputer: () => ({ machine: { machineId: 'm_seeded' } }),
+      refresh: () => ({ status: 401, body: { success: false, error: { code: 'REFRESH_TOKEN_INVALID', message: 'nope' } } }),
+    })
+
+    const result = await run(root, ['grid', 'login', '--json'], base)
+
+    expect(result.status).toBe(1)
+    const [line] = ndjson(result.stdout)
+    expect(line).toMatchObject({ type: 'result', status: 'error', code: 'AUTH_ERROR' })
+    expect(String(line.message)).toContain('harness login')
+  }, 20_000)
+})
+
+describe('harness grid login — the sign-in half it inherits', () => {
+  it('refreshes an expired token and hands over the NEW one, never the stale one', async () => {
+    const root = tempRoot()
+    seedSession(root, { expiresAt: Date.now() - 60_000 })
+    const { base } = await fakeBackend({
+      resolveComputer: () => ({ machine: { machineId: 'm_seeded' } }),
+      refresh: () => ({ status: 200, body: { success: true, data: { token: 'tok_refreshed', refreshToken: 'refresh_2', expiresIn: 3600 } } }),
+    })
+
+    const result = await run(root, ['grid', 'login', '--json'], base)
+
+    // The whole of this command's answer to "the harness token expired" is that it asks the session
+    // manager rather than reading the file: a token read off disk would be `tok_seeded`, and the
+    // hand-off would trade a credential the control plane has already stopped accepting.
+    expect(result.status).toBe(0)
+    expect(readRecord(root).stdin.trim()).toBe('tok_refreshed')
+  }, 20_000)
+
+  it('--force reaches the sign-in, so a session on disk does not short-circuit it', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await fakeBackend({
+      authorizeNative: () => ({ authorizeUrl: 'https://sso.example.test/authorize?tx=forced', tx: 'tx_forced' }),
+      resolveComputer: () => ({ machine: { machineId: 'm_seeded' } }),
+    })
+
+    const child = spawn(process.execPath, [TSX, CLI_SOURCE, 'grid', 'login', '--force', '--json'], {
+      cwd: CLI_ROOT,
+      env: envFor(root, base),
+    })
+    const first = await new Promise<Record<string, unknown>>((resolve) => {
+      let buffered = ''
+      child.stdout.on('data', (chunk: Buffer) => {
+        buffered += chunk.toString()
+        const idx = buffered.indexOf('\n')
+        if (idx >= 0) resolve(JSON.parse(buffered.slice(0, idx).trim()))
+      })
+    })
+    child.kill() // it would otherwise wait five minutes for a callback nothing is going to send
+
+    // A seeded session is present, so WITHOUT --force reaching loginCommand this would short-circuit
+    // and the first line would be the terminating result instead.
+    expect(first).toEqual({ type: 'authorize_url', url: 'https://sso.example.test/authorize?tx=forced' })
+  }, 20_000)
+
+  it('codes a backend failure in the sign-in half rather than crashing out of --json', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    // Nothing stubbed: resolve-computer answers 404, the way a backend having a bad minute would.
+    const { base } = await fakeBackend({})
+
+    const result = await run(root, ['grid', 'login', '--json'], base)
+
+    // The stream must stay NDJSON. Unguarded this produced a stack trace and NO result line at all.
+    expect(result.status).toBe(1)
+    expect(ndjson(result.stdout)).toEqual([
+      { type: 'result', status: 'error', code: 'BACKEND_ERROR', message: expect.any(String) },
+    ])
+    expect(result.stderr).not.toContain('Failed to start adapter')
+  }, 20_000)
+})
+
+describe('the harness grid namespace', () => {
+  it('refuses a subcommand it does not have', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await run(root, ['grid', 'nonsense'], 'http://127.0.0.1:1')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Unknown command: grid nonsense')
+  }, 20_000)
+})
+
+// ── signing out ────────────────────────────────────────────────────────────────────────────────
+//
+// Two verbs, and the tests below are mostly about the wall between them: `harness grid logout` runs
+// the grid sign-out and nothing of the harness's, and `harness logout` mentions the grid credential
+// store without reading a byte of it or deleting it.
+
+/** The grid credential store, as `grid` itself lays it out: `<GRID_HOME>/credentials.toml`. */
+function seedGridCredentials(dir: string): string {
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, 'credentials.toml')
+  writeFileSync(file, 'session_token = "grid_seeded"\n')
+  return file
+}
+
+/** `harness logout`, with GRID_HOME under this test's control rather than the developer's shell.
+ *
+ *  A stray `GRID_HOME` in the ambient environment would point the check at a directory this test
+ *  never wrote, and the SILENT case would then pass for entirely the wrong reason. Passing
+ *  `undefined` drops the variable from the child's environment altogether, which is the state the
+ *  `~/.grid` default is for. */
+function runLogout(root: string, gridHome?: string): Promise<Run> {
+  return run(root, ['logout'], 'http://127.0.0.1:1', { GRID_HOME: gridHome })
+}
+
+describe('harness grid logout', () => {
+  it('runs the grid sign-out and answers with the child\'s own exit code', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    // Port 1 for the backend: nothing on this path may reach it. The grid sign-out is the grid's
+    // business, and a harness session this command never reads is one it can never be blocked by.
+    const result = await run(root, ['grid', 'logout'], 'http://127.0.0.1:1',
+      { FAKE_GRID_STDOUT: 'Signed out. Removed credentials for 2 grids.\n' })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Removed credentials for 2 grids.')
+    expect(readRecord(root).args).toEqual(['logout'])
+  }, 20_000)
+
+  it('carries a refusal out as a non-zero exit, in the child\'s own words', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    // The shape `grid logout` refuses in: it will not delete credentials it may still need to
+    // deregister a serve child with, and it says so on stderr.
+    const refusal = 'dt-edge: still serving on pid 4242. Stop it, or sign out with --force.\n'
+
+    const result = await run(root, ['grid', 'logout'], 'http://127.0.0.1:1',
+      { FAKE_GRID_EXIT: '1', FAKE_GRID_STDERR: refusal })
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('still serving on pid 4242')
+  }, 20_000)
+
+  it('lets --force reach the child, so the override a person already knows still works', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await run(root, ['grid', 'logout', '--force'], 'http://127.0.0.1:1')
+
+    expect(result.status).toBe(0)
+    expect(readRecord(root).args).toEqual(['logout', '--force'])
+  }, 20_000)
+
+  it('passes --json through and hands back the child\'s answer unwrapped', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await run(root, ['grid', 'logout', '--json'], 'http://127.0.0.1:1',
+      { FAKE_GRID_STDOUT: '{"signed_out":true,"grids":2}\n' })
+
+    expect(result.status).toBe(0)
+    expect(readRecord(root).args).toEqual(['logout', '--json'])
+    // ⚠️ EXACTLY the child's document, with no harness envelope around it and no result line after
+    // it. `harness grid login --json` has two halves to reconcile and therefore emits its own
+    // terminating line; this command has ONE, so anything it added would be a second dialect of an
+    // answer `grid logout` already gives.
+    expect(result.stdout.trim()).toBe('{"signed_out":true,"grids":2}')
+  }, 20_000)
+
+  it('never signs the harness out, not even when the grid sign-out refuses', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const session = join(root, 'auth', 'session.json')
+    const before = readFileSync(session, 'utf8')
+
+    const result = await run(root, ['grid', 'logout'], 'http://127.0.0.1:1', { FAKE_GRID_EXIT: '1' })
+
+    expect(result.status).toBe(1)
+    // No cascade in this direction either: a grid condition decides the exit code and nothing else.
+    expect(existsSync(session)).toBe(true)
+    expect(readFileSync(session, 'utf8')).toBe(before)
+  }, 20_000)
+
+  it('says there is no grid CLI rather than crashing on the spawn', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await run(root, ['grid', 'logout'], 'http://127.0.0.1:1', {}, 'absent')
+
+    expect(result.status).toBe(1)
+    // Named as the missing thing it is. `toContain('grid')` would be satisfied by the dispatcher's
+    // own "Unknown command: grid logout", which is what this said before the command existed.
+    expect(result.stderr).toContain('PATH')
+    expect(result.stderr).not.toContain('Unknown command')
+    expect(result.stderr).not.toContain('Failed to start adapter')
+  }, 20_000)
+
+  it('drops only the verb it consumed, never a later token that spells it', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    // `grid logout` takes no option value TODAY, so this is the passthrough's stated contract rather
+    // than a flag that exists: "a flag `grid logout` grows tomorrow works here the day it ships".
+    // Filtering the argv by VALUE would forward `--reason` with its value eaten.
+    const result = await run(root, ['grid', 'logout', '--reason', 'logout'], 'http://127.0.0.1:1')
+
+    expect(result.status).toBe(0)
+    expect(readRecord(root).args).toEqual(['logout', '--reason', 'logout'])
+  }, 20_000)
+
+  it('reports a grid it cannot RUN as missing too', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await run(root, ['grid', 'logout'], 'http://127.0.0.1:1', {}, 'not-executable')
+
+    // This module keeps its OWN copy of the PATH pre-check, so the sibling case in the hand-off
+    // suite proves nothing about it. The case above would survive that pre-check being deleted here
+    // — an empty PATH answers ENOENT, which the spawn's own fallback maps to the same sentence. A
+    // present-but-unrunnable file answers EACCES, which it does not.
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('PATH')
+  }, 20_000)
+})
+
+describe('harness logout — the grid credential it will not touch', () => {
+  it('warns, naming `harness grid logout`, when a grid sign-in is still on this machine', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    seedGridCredentials(join(root, '.grid'))
+
+    const result = await runLogout(root)
+
+    // Local, and unable to fail: the warning is a sentence, never a condition.
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Signed out.')
+    expect(result.stderr).toContain('harness grid logout')
+  }, 20_000)
+
+  it('stays silent when there are no grid credentials', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await runLogout(root)
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('Signed out.')
+    expect(result.stderr).not.toContain('grid logout')
+  }, 20_000)
+
+  it('never removes the grid credential file', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const credentials = seedGridCredentials(join(root, '.grid'))
+    const before = readFileSync(credentials, 'utf8')
+
+    await runLogout(root)
+
+    // The store may predate the harness entirely — a browser sign-in it knows nothing about — so
+    // the warning is the whole of what this command is entitled to do about it.
+    expect(existsSync(credentials)).toBe(true)
+    expect(readFileSync(credentials, 'utf8')).toBe(before)
+  }, 20_000)
+
+  it('looks where GRID_HOME points, the way `grid` itself does', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const elsewhere = join(root, 'grid-home')
+    seedGridCredentials(elsewhere)
+
+    const result = await runLogout(root, elsewhere)
+
+    expect(result.stderr).toContain('harness grid logout')
+  }, 20_000)
+
+  it('expands a leading ~ in GRID_HOME, because `grid` does', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    seedGridCredentials(join(root, 'grid-state'))
+
+    // A shell expands `~` at assignment; a systemd unit, a Docker ENV or a .env file does not. There
+    // `grid`'s own `expanduser()` still resolves it, so a literal value taken verbatim here would
+    // look for a directory named `~` and go silent about a credential that is definitely present.
+    const result = await runLogout(root, '~/grid-state')
+
+    expect(result.stderr).toContain('harness grid logout')
+  }, 20_000)
+
+  it('does not warn about a store GRID_HOME points away from', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    // Credentials at the DEFAULT location, and a GRID_HOME aimed at an empty directory. Without the
+    // override being read, the check would find the default store and warn — so this is the negative
+    // control that makes the case above mean "it read GRID_HOME" rather than "it found something".
+    seedGridCredentials(join(root, '.grid'))
+    const empty = join(root, 'grid-home-empty')
+    mkdirSync(empty, { recursive: true })
+
+    const result = await runLogout(root, empty)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('grid logout')
+  }, 20_000)
+})
+
+describe('harness reset — the second door onto the same sign-out', () => {
+  it('warns about a grid sign-in too, and leaves it alone', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const credentials = seedGridCredentials(join(root, '.grid'))
+    const before = readFileSync(credentials, 'utf8')
+
+    // `reset` clears the SSO session exactly as `logout` does, and more besides — so somebody who
+    // runs it is if anything likelier to believe nothing is left behind. A warning written at one
+    // door and not the other is a warning the other silently does without.
+    const result = await run(root, ['reset'], 'http://127.0.0.1:1', { GRID_HOME: undefined })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('harness grid logout')
+    expect(existsSync(credentials)).toBe(true)
+    expect(readFileSync(credentials, 'utf8')).toBe(before)
+  }, 20_000)
+
+  it('stays silent when there is no grid sign-in', async () => {
+    const root = tempRoot()
+    seedSession(root)
+
+    const result = await run(root, ['reset'], 'http://127.0.0.1:1', { GRID_HOME: undefined })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('grid logout')
+  }, 20_000)
+})
