@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildBindingRequest,
   createStunSelector,
+  pickTurnUrl,
   parseBindingResponse,
   parseStunUrl,
   type StunProbe,
@@ -127,7 +128,7 @@ describe('STUN selection race', () => {
   it('puts the fastest responder first and keeps the losers in their original order', async () => {
     const probe = fakeProbe({ [URLS[2]!]: 10, [URLS[0]!]: 30 })
     const select = createStunSelector({ probe })
-    expect(await select(URLS)).toEqual(['stun:10.0.0.1:3478', URLS[0], URLS[1]])
+    expect(await select(URLS)).toEqual({ urls: ['stun:10.0.0.1:3478', URLS[0], URLS[1]], udpReachable: true })
   })
 
   it('returns as soon as one answers, aborting the probes still outstanding', async () => {
@@ -138,21 +139,22 @@ describe('STUN selection race', () => {
       return new Promise(() => { /* would hang forever without the abort */ })
     }
     const select = createStunSelector({ probe })
-    expect((await select(URLS))[0]).toBe('stun:10.0.0.1:3478')
+    expect((await select(URLS)).urls[0]).toBe('stun:10.0.0.1:3478')
     expect(aborted).toBe(true)
   })
 
   it('is never worse than today: when every server fails it returns the list untouched', async () => {
     const probe = vi.fn<StunProbe>(async () => null)
     const select = createStunSelector({ probe })
-    expect(await select(URLS)).toEqual(URLS)
+    expect(await select(URLS)).toEqual({ urls: URLS, udpReachable: false })
   })
 
   it('does not probe at all for a list of zero or one url', async () => {
     const probe = vi.fn<StunProbe>(async () => '10.0.0.1')
     const select = createStunSelector({ probe })
-    expect(await select([])).toEqual([])
-    expect(await select(['stun:only.example:3478'])).toEqual(['stun:only.example:3478'])
+    expect(await select([])).toEqual({ urls: [], udpReachable: null })
+    expect(await select(['stun:only.example:3478']))
+      .toEqual({ urls: ['stun:only.example:3478'], udpReachable: null })
     expect(probe).not.toHaveBeenCalled()
   })
 
@@ -163,14 +165,14 @@ describe('STUN selection race', () => {
       return Promise.resolve(null)
     }
     const select = createStunSelector({ probe: thrower })
-    await expect(select(URLS)).resolves.toEqual(URLS)
+    await expect(select(URLS)).resolves.toEqual({ urls: URLS, udpReachable: false })
   })
 
   it('leaves a winner that is already an IP literal alone, and never pins the losers', async () => {
     const urls = ['stun:198.51.100.7:3478', 'stun:b.example:3478']
     const probe: StunProbe = async (url) => (url === urls[0] ? '198.51.100.7' : null)
     const select = createStunSelector({ probe })
-    expect(await select(urls)).toEqual(urls)
+    expect(await select(urls)).toEqual({ urls, udpReachable: true })
   })
 
   it('joins an in-flight race instead of starting a second one', async () => {
@@ -237,8 +239,9 @@ describe('STUN probe over a real socket', () => {
 
     try {
       const select = createStunSelector({ probeTimeoutMs: 1_000 })
-      const ordered = await select([`stun:127.0.0.1:${deadPort}`, `stun:127.0.0.1:${livePort}`])
-      expect(ordered[0]).toBe(`stun:127.0.0.1:${livePort}`)
+      const selection = await select([`stun:127.0.0.1:${deadPort}`, `stun:127.0.0.1:${livePort}`])
+      expect(selection.urls[0]).toBe(`stun:127.0.0.1:${livePort}`)
+      expect(selection.udpReachable).toBe(true)
     } finally {
       await new Promise<void>((resolve) => server.close(resolve))
     }
@@ -248,6 +251,47 @@ describe('STUN probe over a real socket', () => {
     const select = createStunSelector({ probeTimeoutMs: 300 })
     // TEST-NET-3, guaranteed unroutable, so both probes hit the deadline rather than any error path.
     const urls = ['stun:203.0.113.1:3478', 'stun:203.0.113.2:3478']
-    expect(await select(urls)).toEqual(urls)
+    expect(await select(urls)).toEqual({ urls, udpReachable: false })
   }, 10_000)
 })
+
+describe('TURN url choice', () => {
+  // Exactly what Cloudflare's generate-ice-servers returns, in its own order.
+  const CLOUDFLARE = [
+    'turn:turn.cloudflare.com:3478?transport=udp',
+    'turn:turn.cloudflare.com:3478?transport=tcp',
+    'turns:turn.cloudflare.com:5349?transport=tcp',
+    'turn:turn.cloudflare.com:80?transport=tcp',
+    'turns:turn.cloudflare.com:443?transport=tcp',
+  ]
+
+  it('takes the udp url when the stun race proved udp leaves this host', () => {
+    expect(pickTurnUrl(CLOUDFLARE, true)).toBe('turn:turn.cloudflare.com:3478?transport=udp')
+  })
+
+  it('drops to TLS on 443 when every stun server was unreachable', () => {
+    // werift would otherwise sit on the first entry, and its own udp->tcp retry stays on 3478 — a port
+    // a network that blocks UDP usually blocks too. 443 is the whole reason this function exists.
+    expect(pickTurnUrl(CLOUDFLARE, false)).toBe('turns:turn.cloudflare.com:443?transport=tcp')
+  })
+
+  it('falls back to any turns: url when 443 is not on offer', () => {
+    expect(pickTurnUrl(['turn:x:3478?transport=udp', 'turns:x:5349?transport=tcp'], false))
+      .toBe('turns:x:5349?transport=tcp')
+  })
+
+  it('behaves exactly like werift when reachability was never measured', () => {
+    expect(pickTurnUrl(CLOUDFLARE, null)).toBe(CLOUDFLARE[0])
+  })
+
+  it('keeps the first url when the preferred kind is missing from the list', () => {
+    expect(pickTurnUrl(['turn:x:3478?transport=tcp'], true)).toBe('turn:x:3478?transport=tcp')
+    expect(pickTurnUrl(['turn:x:3478?transport=udp'], false)).toBe('turn:x:3478?transport=udp')
+  })
+
+  it('returns null for an empty or non-turn list', () => {
+    expect(pickTurnUrl([], true)).toBeNull()
+    expect(pickTurnUrl(['stun:x:3478', 'https://x'], true)).toBeNull()
+  })
+})
+

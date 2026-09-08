@@ -24,6 +24,7 @@ import {
   TERMINAL_P2P_PROTOCOL_VERSION,
   TERMINAL_P2P_SIGNAL_TYPES,
   TERMINAL_P2P_UP_TYPES,
+  readTurn,
   type TerminalP2pData,
   type TerminalP2pPolicy,
 } from './terminalP2p.js'
@@ -82,7 +83,14 @@ function p2pPolicy(value: unknown): TerminalP2pPolicy | null {
   const openWaitMs = typeof raw.openWaitMs === 'number' && Number.isSafeInteger(raw.openWaitMs)
     ? Math.max(0, Math.min(5_000, raw.openWaitMs))
     : 1_500
-  return { enabled: true, protocolVersion: TERMINAL_P2P_PROTOCOL_VERSION, stunUrls, openWaitMs }
+  const turn = readTurn(raw.turn)
+  return {
+    enabled: true,
+    protocolVersion: TERMINAL_P2P_PROTOCOL_VERSION,
+    stunUrls,
+    openWaitMs,
+    ...(turn ? { turn } : {}),
+  }
 }
 
 function framePayload(frame: Frame): Record<string, unknown> {
@@ -385,7 +393,9 @@ export class RemoteRelayPool {
       onState: (state, setupMs, reason) => {
         if (state === 'direct') {
           wasDirect = true
-          this.reportP2pResult(entry, 'direct', setupMs)
+          // 'relayed' distinguishes a Cloudflare TURN path from a truly direct one. Both are "p2p" as far
+          // as the terminal is concerned, but only one of them is billed per GB.
+          this.reportP2pResult(entry, 'direct', setupMs, p2p.transport === 'relay' ? 'relayed' : undefined)
         } else if (state === 'failed' && !wasDirect) {
           this.reportP2pResult(entry, reason === 'negotiation_timeout' ? 'timeout' : 'failed', setupMs, reason)
         }

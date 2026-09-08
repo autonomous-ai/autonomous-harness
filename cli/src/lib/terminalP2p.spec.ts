@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  readTurn,
   TerminalP2pInitiator,
   TerminalP2pResponderPool,
   type TerminalP2pSignal,
@@ -41,7 +42,7 @@ describe('terminal WebRTC data channel', () => {
     const policyUrls = ['stun:a.example:3478', 'stun:b.example:3478']
     // Returning [] keeps werift on host candidates, so the offer is emitted immediately instead of
     // waiting out a gather against hosts that do not resolve.
-    const selectStunUrls = vi.fn<StunSelector>(async () => [])
+    const selectStunUrls = vi.fn<StunSelector>(async () => ({ urls: [], udpReachable: null }))
     let resolveOffer!: (payload: TerminalP2pSignal) => void
     const offered = new Promise<TerminalP2pSignal>((resolve) => { resolveOffer = resolve })
     const initiator = new TerminalP2pInitiator({
@@ -65,8 +66,8 @@ describe('terminal WebRTC data channel', () => {
   }, 15_000)
 
   it('builds one peer connection when start() is called twice during the stun race', async () => {
-    let release!: (urls: string[]) => void
-    const gate = new Promise<string[]>((resolve) => { release = resolve })
+    let release!: (selection: { urls: string[]; udpReachable: boolean | null }) => void
+    const gate = new Promise<{ urls: string[]; udpReachable: boolean | null }>((resolve) => { release = resolve })
     const selectStunUrls = vi.fn<StunSelector>(() => gate)
     const initiator = new TerminalP2pInitiator({
       policy: { enabled: true, protocolVersion: 1, stunUrls: ['stun:a.example:3478', 'stun:b.example:3478'], openWaitMs: 1_500 },
@@ -80,14 +81,14 @@ describe('terminal WebRTC data channel', () => {
       initiator.start()
       expect(selectStunUrls).toHaveBeenCalledTimes(1)
     } finally {
-      release([])
+      release({ urls: [], udpReachable: null })
       await initiator.stop('test_complete', false)
     }
   })
 
   it('builds nothing at all when stop() lands while the stun race is still in flight', async () => {
-    let release!: (urls: string[]) => void
-    const gate = new Promise<string[]>((resolve) => { release = resolve })
+    let release!: (selection: { urls: string[]; udpReachable: boolean | null }) => void
+    const gate = new Promise<{ urls: string[]; udpReachable: boolean | null }>((resolve) => { release = resolve })
     const states: string[] = []
     const signals: string[] = []
     const initiator = new TerminalP2pInitiator({
@@ -101,7 +102,7 @@ describe('terminal WebRTC data channel', () => {
     initiator.start()
     const ready = initiator.waitUntilReady(5_000)
     await initiator.stop('test_complete', false)
-    release([])
+    release({ urls: [], udpReachable: null })
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     // No offer was ever sent, which is the observable proof no RTCPeerConnection was constructed —
@@ -119,7 +120,7 @@ describe('terminal WebRTC data channel', () => {
       sendSignal: () => { /* nothing to signal in this test */ },
       onData: () => { /* no peer in this test */ },
       onState: (state, _setupMs, reason) => { states.push({ state, reason }) },
-      selectStunUrls: () => new Promise<string[]>(() => { /* wedged on purpose */ }),
+      selectStunUrls: () => new Promise(() => { /* wedged on purpose */ }),
     })
 
     try {
@@ -132,7 +133,7 @@ describe('terminal WebRTC data channel', () => {
   })
 
   it('hands the responder the offered urls, filtered and capped, to race on its own', async () => {
-    const selectStunUrls = vi.fn<StunSelector>(async (urls) => urls)
+    const selectStunUrls = vi.fn<StunSelector>(async (urls) => ({ urls, udpReachable: true }))
     const responder = new TerminalP2pResponderPool({
       sendSignal: () => { /* the offer below is deliberately unanswerable */ },
       onData: () => { /* no data in this test */ },
@@ -156,4 +157,64 @@ describe('terminal WebRTC data channel', () => {
       await responder.stop()
     }
   })
+
+  it('forwards the turn credential in the offer so the responder can allocate too', async () => {
+    // Loopback discard port: werift really does try to allocate against whatever we hand it, so a real
+    // hostname here would make this test wait out a live TURN negotiation. A closed local port fails
+    // immediately and still proves the credential travelled.
+    const turn = { urls: ['turn:127.0.0.1:9?transport=udp'], username: 'cf-user', credential: 'cf-secret' }
+    let resolveOffer!: (payload: TerminalP2pSignal) => void
+    const offered = new Promise<TerminalP2pSignal>((resolve) => { resolveOffer = resolve })
+    const initiator = new TerminalP2pInitiator({
+      policy: { enabled: true, protocolVersion: 1, stunUrls: ['stun:a.example:3478'], openWaitMs: 1_500, turn },
+      sendSignal: (type, payload) => { if (type === 'p2p_offer') resolveOffer(payload) },
+      onData: () => { /* no peer in this test */ },
+      selectStunUrls: async () => ({ urls: [], udpReachable: null }),
+    })
+
+    try {
+      initiator.start()
+      // The responder is never sent a policy of its own, so the offer is its only source of credentials.
+      expect((await offered).turn).toEqual(turn)
+    } finally {
+      await initiator.stop('test_complete', false)
+    }
+  }, 15_000)
+
+  it('gives the responder the offered turn credential, and drops a malformed one', async () => {
+    const seen: Array<unknown> = []
+    const responder = new TerminalP2pResponderPool({
+      sendSignal: () => { /* the offers below are deliberately unanswerable */ },
+      onData: () => { /* no data in this test */ },
+      selectStunUrls: async (urls) => ({ urls, udpReachable: true }),
+    })
+    const offer = (turn: unknown, sessionId: string): Promise<boolean> => responder.handleSignal('source-1', 'p2p_offer', {
+      sessionId,
+      protocolVersion: 1,
+      sdp: 'not-a-real-sdp',
+      stunUrls: ['stun:1.example:3478'],
+      turn,
+    })
+
+    try {
+      await offer({ urls: ['turn:x:3478?transport=udp'], username: 'u', credential: 'c' },
+        '00000000-0000-4000-8000-000000000001')
+      seen.push(readTurn({ urls: ['turn:x:3478?transport=udp'], username: 'u', credential: 'c' }))
+      // Each of these is rejected for a different reason; all must degrade to STUN-only, not throw.
+      for (const bad of [
+        undefined,
+        { urls: [], username: 'u', credential: 'c' },
+        { urls: ['stun:x:3478'], username: 'u', credential: 'c' },
+        { urls: ['turn:x:3478'], username: '', credential: 'c' },
+        { urls: ['turn:x:3478'], username: 'u', credential: 42 },
+        'not-an-object',
+      ]) {
+        expect(readTurn(bad)).toBeUndefined()
+        await offer(bad, '00000000-0000-4000-8000-000000000002')
+      }
+      expect(seen[0]).toEqual({ urls: ['turn:x:3478?transport=udp'], username: 'u', credential: 'c' })
+    } finally {
+      await responder.stop()
+    }
+  }, 15_000)
 })

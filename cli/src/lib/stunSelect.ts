@@ -48,7 +48,21 @@ const NEGATIVE_TTL_MS = 30_000
 /** Resolves to the winner's IPv4 address, or null if this server did not answer. Never rejects. */
 export type StunProbe = (url: string, timeoutMs: number, signal: AbortSignal) => Promise<string | null>
 
-export type StunSelector = (urls: string[]) => Promise<string[]>
+export interface StunSelection {
+  /** The input list, winner first. Identical to the input (same order) when nothing answered. */
+  urls: string[]
+  /**
+   * Did ANY configured STUN server answer over UDP?
+   *
+   * Tri-state on purpose. `null` means "not probed" — a list of 0 or 1 urls short-circuits without
+   * sending a packet, so we know nothing either way. Collapsing that into `false` would tell
+   * pickTurnUrl() that UDP is blocked on every single-STUN-url deployment and push all of them onto
+   * TURN over TLS:443 for no reason.
+   */
+  udpReachable: boolean | null
+}
+
+export type StunSelector = (urls: string[]) => Promise<StunSelection>
 
 export interface StunSelectorOptions {
   probe?: StunProbe
@@ -223,7 +237,7 @@ export function createStunSelector(opts: StunSelectorOptions = {}): StunSelector
   const negativeTtlMs = opts.negativeTtlMs ?? NEGATIVE_TTL_MS
   const probeTimeoutMs = opts.probeTimeoutMs ?? PROBE_TIMEOUT_MS
   const cache = new Map<string, CacheEntry>()
-  const pending = new Map<string, Promise<string[]>>()
+  const pending = new Map<string, Promise<StunSelection>>()
 
   const race = (urls: string[]): Promise<RaceResult> => new Promise<RaceResult>((resolve) => {
     const controller = new AbortController()
@@ -255,23 +269,62 @@ export function createStunSelector(opts: StunSelectorOptions = {}): StunSelector
   })
 
   return async (urls) => {
-    // Zero or one url: nothing to choose between, so do not spend a single packet deciding.
-    if (urls.length <= 1) return urls
+    // Zero or one url: nothing to choose between, so do not spend a single packet deciding. Reachability
+    // stays UNKNOWN here rather than false — we never asked.
+    if (urls.length <= 1) return { urls, udpReachable: null }
     const key = urls.map((url) => url.trim().toLowerCase()).join(' ')
     const hit = cache.get(key)
-    if (hit && now() - hit.at < (hit.ok ? ttlMs : negativeTtlMs)) return hit.ordered
+    if (hit && now() - hit.at < (hit.ok ? ttlMs : negativeTtlMs)) {
+      return { urls: hit.ordered, udpReachable: hit.ok }
+    }
     const inflight = pending.get(key)
     if (inflight) return inflight
     const run = race(urls)
       .then(({ ordered, ok }) => {
         cache.set(key, { ordered, ok, at: now() })
-        return ordered
+        return { urls: ordered, udpReachable: ok }
       })
-      .catch(() => urls) // the contract is that this function never rejects
+      .catch(() => ({ urls, udpReachable: null })) // the contract is that this function never rejects
       .finally(() => { pending.delete(key) })
     pending.set(key, run)
     return run
   }
+}
+
+/**
+ * Which of Cloudflare's five TURN urls to hand werift — it reads only the FIRST `turn:` entry
+ * (webrtc/src/utils.js parseIceServers) and never falls over to the rest, exactly like the STUN bug
+ * this module already works around. Its own udp→tcp retry stays on port 3478, which a network that
+ * drops UDP usually blocks too, so the 443 choice has to be made here.
+ *
+ * The STUN race already answered the only question that matters — does UDP leave this host — so this
+ * costs no extra packets. Both misreads are safe: guessing "blocked" merely picks the slower TLS path
+ * (measured 404ms vs 115ms to allocate), and guessing "open" falls back to werift's own tcp retry.
+ */
+export function pickTurnUrl(turnUrls: string[], udpReachable: boolean | null): string | null {
+  const usable = turnUrls.filter((url) => /^turns?:/i.test(url.trim()))
+  if (usable.length === 0) return null
+  if (udpReachable === false) {
+    const tls = usable.find((url) => /^turns:/i.test(url.trim()) && parseStunUrlPort(url) === 443)
+      ?? usable.find((url) => /^turns:/i.test(url.trim()))
+    if (tls) return tls
+  }
+  if (udpReachable === true) {
+    const udp = usable.find((url) => /[?&]transport=udp/i.test(url))
+    if (udp) return udp
+  }
+  // Unknown, or the list carries no url of the preferred kind: behave exactly like werift does today.
+  return usable[0] ?? null
+}
+
+function parseStunUrlPort(url: string): number | null {
+  const match = /^turns?:(?:\/\/)?([^?]+)/i.exec(url.trim())
+  if (!match) return null
+  const authority = match[1]!
+  const lastColon = authority.lastIndexOf(':')
+  if (lastColon === -1 || authority.indexOf(':') !== lastColon) return null
+  const port = Number.parseInt(authority.slice(lastColon + 1), 10)
+  return Number.isFinite(port) ? port : null
 }
 
 /** Process-wide selector: one shared cache, so a warm-up on one relay pays for every later peer. */
