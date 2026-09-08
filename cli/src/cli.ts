@@ -48,7 +48,8 @@ import { ENGINE_CLI_COMMANDS, ENGINES, engineBin } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
-import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames } from './lib/gridLaunch.js'
+import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridEngineLaunch } from './lib/gridLaunch.js'
+import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
 import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.js'
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
@@ -63,6 +64,7 @@ import {
   clearPaneRemainOnExit,
   resolvePaneEngineProcess,
   resolvePaneRootProcess,
+  tmuxPaneEnvironment,
   tmuxPaneProcessTree,
   tmuxPaneState,
   type TmuxPaneState,
@@ -152,7 +154,7 @@ import {
   lastCommandCodeTurnText,
 } from './engines/commandcode/normalizer.js'
 import { probeGatewayRuntime } from './lib/gatewayRuntime.js'
-import { probeGridAssignment } from './lib/gridAssignment.js'
+import { gridAssignmentFromEnv, probeGridAssignment, sameGridAssignment } from './lib/gridAssignment.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
@@ -2307,6 +2309,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     },
     onObserved: async (observed, current) => {
       const wasDormant = !current.active
+      // Read BEFORE the update, because the update is what overwrites it. `undefined` means the probe
+      // could not look, which never counts as a move — see `probeGridAssignment`'s three answers.
+      const gridMoved = observed.grid !== undefined
+        && !sameGridAssignment(current.grid ?? null, observed.grid)
       registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
       registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
       await bindObservedAgent(observed)
@@ -2319,7 +2325,17 @@ async function runForeground(session: AuthSession): Promise<void> {
         }
         syncRecapPool()
         announceSession(active)
+        return
       }
+      // An agent that was already awake changed grid under us. Nobody was told: this branch wrote the
+      // new assignment into the registry and stopped, so the app went on drawing the old one until
+      // its own 60s reconciliation tick happened to notice — a minute of an agent's header naming a
+      // grid it had left. The retarget path has always announced (it is the same fact, arriving by a
+      // different door); this is the door an engine's own `exec` comes through, which is what an
+      // install-then-launch does the moment the install finishes.
+      if (!gridMoved) return
+      const refreshed = registry.byAgent(current.agentId)
+      if (refreshed) announceSession(refreshed)
     },
     onDormant: (agent, reason) => {
       if (!agent.active) return
@@ -3011,6 +3027,25 @@ async function runForeground(session: AuthSession): Promise<void> {
    * The freshly-exec'd engine process may not be visible to `ps` the instant tmux returns, so one probe
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
+  /**
+   * The config directory a grid launch should actually be given on THIS machine, or none.
+   *
+   * Only Hermes can lose one. Its web tools ride a managed-scope overlay, and `HERMES_MANAGED_DIR`
+   * REPLACES `/etc/hermes` rather than adding to it — so on a machine where an administrator pinned
+   * Hermes settings there, writing ours would take their policy away for as long as the agent runs.
+   * The agent still launches on the grid; it launches without web tools, which is the smaller loss
+   * and the one that can be said out loud.
+   *
+   * Here rather than in the contract because it is a fact about the machine: a `build()` that
+   * stats the filesystem answers differently on two of them, and its spec would follow.
+   */
+  const gridConfigDirFor = (engine: AgentEngine, launch: GridEngineLaunch): GridEngineLaunch['configDir'] => {
+    if (!launch.configDir || engine !== 'hermes' || !existsSync(HERMES_SYSTEM_MANAGED_DIR)) return launch.configDir
+    console.warn(`[grid] ${engine} starts without web tools · ${HERMES_SYSTEM_MANAGED_DIR} pins this `
+      + `machine's Hermes settings, and the overlay carrying the web tools would replace it`)
+    return undefined
+  }
+
   backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
@@ -3043,8 +3078,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       gridLaunch = { env: { ...built.launch.env }, args: built.launch.args }
       // An engine whose provider lives in a file gets a directory this daemon owns, never the
       // user's own dotfiles. The label is unique per creation, so two agents never share one.
-      if (built.launch.configDir) {
-        const { envVar, files, pointAt } = built.launch.configDir
+      const createConfigDir = gridConfigDirFor(engine, built.launch)
+      if (createConfigDir) {
+        const { envVar, files, pointAt } = createConfigDir
         try {
           const dir = await writeGridConfigDir(label, files)
           // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
@@ -3169,17 +3205,22 @@ async function runForeground(session: AuthSession): Promise<void> {
       // `routeAgent` branch in registry.ts, which matches on terminal route exactly while an agent has
       // no engine session bound. Same agentId, same tile, no flicker.
       const placeholder = await resolvePaneRootProcess(spawned.runtime.paneId)
-      // The grid, READ off the shell that is about to become the engine — not declared.
+      // The grid, read from TMUX rather than from the shell running the installer.
       //
-      // That shell already carries everything the launch set, because `tmux new-session -e` put it
-      // there before anything ran: it is the same environment the engine will inherit, in a process
-      // that exists now. So the ordinary probe answers, and it answers truthfully.
+      // Reading the shell was the obvious move and it does not work on macOS: `ps` refuses to print
+      // the environment of an Apple platform binary, and the pane's own `/bin/zsh` is one. It refuses
+      // by exiting 0 with argv alone, so the probe came back "this agent is on no grid" — a finding,
+      // from a read that never happened — and the app said "own login" over an agent already pointed
+      // at a grid, for the whole length of the install. Linux never showed it: `/proc/<pid>/environ`
+      // answers for any process of your own.
       //
-      // Skipping this was a real bug, not a purity win. An install runs for a minute, and for that
-      // whole minute the app said "own login" over an agent that had already been pointed at a grid
-      // — the one moment the user is watching, and the one answer they were owed.
-      const placeholderGrid = placeholder
-        ? await probeGridAssignment(placeholder, engine, argv.join(' '))
+      // tmux holds the same fact and will say it. `new-session -e` wrote this environment before
+      // anything ran, and it is what the engine inherits at exec — so this is the launch's own
+      // routing, read back, not a note we wrote about what we intended. Discovery replaces it with
+      // the process's answer the moment there is a process anyone is allowed to read.
+      const paneEnv = await tmuxPaneEnvironment(spawned.runtime.paneId)
+      const placeholderGrid = paneEnv
+        ? await gridAssignmentFromEnv(engine, paneEnv, argv.join(' '))
         : undefined
       const opened = placeholder
         ? registry.openProcessAgent({
@@ -3435,10 +3476,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     const release = acquireTerminalControl(session.agentId)
     if (!release) return { ok: false, error: 'AGENT_BUSY' }
     const gridEnv: Record<string, string> = built && built.ok ? { ...built.launch.env } : {}
-    if (built && built.ok && built.launch.configDir) {
+    const retargetConfigDir = built && built.ok ? gridConfigDirFor(session.engine, built.launch) : undefined
+    if (retargetConfigDir) {
       // Keyed on the agent, so moving the same agent between grids rewrites one directory rather
       // than leaving a trail of them.
-      const { envVar, files, pointAt } = built.launch.configDir
+      const { envVar, files, pointAt } = retargetConfigDir
       try {
         const dir = await writeGridConfigDir(session.agentId, files)
         // Same split as create: a directory for Pi, the file itself for OpenCode.

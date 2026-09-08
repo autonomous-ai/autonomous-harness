@@ -12,6 +12,7 @@ import {
   type GridLaunchOverride,
 } from './gridLaunch.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
+import { buildEngineLaunchArgv } from './engineLaunch.js'
 
 /** The shape the desktop actually sends, with values read off the live control plane. */
 const WIRE = {
@@ -25,6 +26,9 @@ const RELAY = 'https://grid.autonomous.ai/grid-3378218621364f16/relay'
 
 const OVERRIDE: GridLaunchOverride = { ...WIRE }
 const WITH_MODEL: GridLaunchOverride = { ...WIRE, model: 'GLM-4.7-Flash' }
+/** The control plane's web-tools mount, trailing slash and all — see `GridLaunchOverride.mcpUrl`. */
+const MCP_URL = 'https://api-grid.autonomous.ai/v1/grid/web-mcp/'
+const WITH_MCP: GridLaunchOverride = { ...WITH_MODEL, mcpUrl: MCP_URL }
 
 function launchOf(engine: AgentEngine, override = WITH_MODEL) {
   const built = buildGridEngineLaunch(engine, override)
@@ -113,12 +117,19 @@ describe('the launch each engine gets', () => {
     expect(launch.args).toContain('GLM-4.7-Flash')
   })
 
-  it('uses the OpenAI-compatible pair for Hermes, which honours the endpoint it is given', () => {
-    expect(launchOf('hermes').env).toEqual({
+  it('uses the OpenAI-compatible pair for Hermes, with the model on the command line too', () => {
+    const launch = launchOf('hermes')
+    expect(launch.env).toEqual({
       OPENAI_BASE_URL: RELAY_V1,
       OPENAI_API_KEY: WIRE.apiKey,
       HERMES_INFERENCE_MODEL: 'GLM-4.7-Flash',
     })
+    // The variable alone was measured to decide nothing: the pane this daemon opens is hermes'
+    // INTERACTIVE CLI, which reads its model from `-m` then config.yaml and from no environment
+    // tier — and a grid move relaunches it as `hermes --resume <id>`, which puts the model stored
+    // on the session row back unless argv carried an explicit `-m`. The pill read GLM-4.7-Flash
+    // out of the environment while the pane ran the config's DeepSeek-V4-Flash-0731.
+    expect(launch.args).toEqual(['-m', 'GLM-4.7-Flash'])
   })
 
   it('does NOT use that pair for opencode, which would not honour it', () => {
@@ -190,6 +201,7 @@ describe('the launch each engine gets', () => {
   it('leaves the model to the engine when the user picked none', () => {
     expect(launchOf('claude', OVERRIDE).env).not.toHaveProperty('ANTHROPIC_MODEL')
     expect(launchOf('hermes', OVERRIDE).env).not.toHaveProperty('HERMES_INFERENCE_MODEL')
+    expect(launchOf('hermes', OVERRIDE).args).toEqual([])
     expect(launchOf('grok', OVERRIDE).args).toEqual([])
     expect(launchOf('codex', OVERRIDE).args).not.toContain('-m')
   })
@@ -238,8 +250,21 @@ describe('gridEnvVarNames', () => {
   // an engine's contract gained a variable, and the symptom would be a "cleared" agent still running
   // on the grid it was supposedly moved off.
   it('names every variable claude is launched with', () => {
+    // GRID_API_KEY among them: the probe asks for a launch with web tools, and moving an agent to
+    // another grid has to take the old grid's MCP credential out of the pane with everything else.
     expect(gridEnvVarNames('claude').sort())
-      .toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL'])
+      .toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'GRID_API_KEY'])
+  })
+
+  it("names the scope Hermes' web tools are written into", () => {
+    // Cleared on a retarget like every other variable here. It points at a directory holding one
+    // grid's credential reference; an agent moved to another grid must not keep reading it.
+    expect(gridEnvVarNames('hermes')).toContain('HERMES_MANAGED_DIR')
+  })
+
+  it("names codex's MCP header variable, which no other engine uses", () => {
+    expect(gridEnvVarNames('codex')).toContain('GRID_MCP_AUTHORIZATION')
+    expect(gridEnvVarNames('claude')).not.toContain('GRID_MCP_AUTHORIZATION')
   })
 
   it('includes the config-dir pointer for an engine that uses one', () => {
@@ -382,5 +407,123 @@ describe('opencode declares the grid as a provider', () => {
   it('points OPENCODE_CONFIG at the file, not at the directory holding it', () => {
     expect(launch().configDir!.envVar).toBe('OPENCODE_CONFIG')
     expect(launch().configDir!.pointAt).toBe('opencode.json')
+  })
+})
+
+describe('web tools (grid ADR 0041)', () => {
+  const claudeMcpJson = (override = WITH_MCP) => {
+    const args = launchOf('claude', override).args
+    const at = args.indexOf('--mcp-config')
+    expect(at, 'claude was not given --mcp-config').toBeGreaterThanOrEqual(0)
+    return JSON.parse(args[at + 1] as string)
+  }
+  const codexArg = (key: string, override = WITH_MCP): string | undefined => {
+    const args = launchOf('codex', override).args
+    return args.find((arg) => arg.startsWith(`${key}=`))
+  }
+  const opencodeConfig = (override = WITH_MCP) =>
+    JSON.parse(launchOf('opencode', override).configDir!.files[0]!.content)
+
+  it('accepts the desktop payload carrying an MCP url', () => {
+    expect(parseGridLaunchOverride({ ...WIRE, mcpUrl: MCP_URL }))
+      .toEqual({ state: 'ok', override: { ...OVERRIDE, mcpUrl: MCP_URL } })
+  })
+
+  it('refuses an mcpUrl that is not an http(s) address', () => {
+    for (const mcpUrl of ['api-grid.autonomous.ai/v1/grid/web-mcp/', 'file:///etc/passwd', '']) {
+      expect(parseGridLaunchOverride({ ...WIRE, mcpUrl }).state, mcpUrl).toBe('invalid')
+    }
+  })
+
+  it('hands Claude Code the server as a --mcp-config JSON string', () => {
+    expect(claudeMcpJson().mcpServers['grid-web'])
+      .toEqual({ type: 'http', url: MCP_URL, headers: { Authorization: 'Bearer ${GRID_API_KEY}' } })
+  })
+
+  it('leaves the user their own MCP servers', () => {
+    // --strict-mcp-config would drop every server they configured for themselves. A grid adds web
+    // tools; it does not take an agent's own tools away.
+    expect(launchOf('claude', WITH_MCP).args).not.toContain('--strict-mcp-config')
+  })
+
+  it("points Codex at it through env_http_headers, which carries the WHOLE header value", () => {
+    expect(codexArg('mcp_servers.grid_web.url')).toBe(`mcp_servers.grid_web.url="${MCP_URL}"`)
+    expect(codexArg('mcp_servers.grid_web.env_http_headers.Authorization'))
+      .toBe('mcp_servers.grid_web.env_http_headers.Authorization="GRID_MCP_AUTHORIZATION"')
+    // Bearer included — `bearer_token_env_var` takes a bare token, this one does not, and ADR 0041
+    // D-d calls confusing the two a silent 401.
+    expect(launchOf('codex', WITH_MCP).env.GRID_MCP_AUTHORIZATION).toBe(`Bearer ${WIRE.apiKey}`)
+  })
+
+  it('declares it in the config file opencode already gets', () => {
+    expect(opencodeConfig().mcp['grid-web'])
+      .toEqual({
+        type: 'remote',
+        url: MCP_URL,
+        enabled: true,
+        headers: { Authorization: 'Bearer {env:GRID_API_KEY}' },
+      })
+  })
+
+  it('gives Hermes a managed-scope overlay, since it takes no flag for MCP', () => {
+    const dir = launchOf('hermes', WITH_MCP).configDir
+    expect(dir?.envVar).toBe('HERMES_MANAGED_DIR')
+    // The directory itself, like Pi — Hermes reads `config.yaml` out of the scope it is handed.
+    expect(dir?.pointAt).toBeUndefined()
+    const file = dir?.files.find((f) => f.name === 'config.yaml')
+    expect(file, 'hermes was given no config.yaml').toBeDefined()
+    // Emitted as JSON on purpose: it is a subset of YAML, and Hermes parses this with a YAML loader.
+    expect(JSON.parse(file!.content)).toEqual({
+      mcp_servers: {
+        'grid-web': {
+          url: MCP_URL,
+          headers: { Authorization: 'Bearer ${GRID_API_KEY}' },
+        },
+      },
+    })
+  })
+
+  it("merges into the user's Hermes config rather than replacing it", () => {
+    // `_deep_merge` recurses dict-over-dict, so pinning one server under `mcp_servers` keeps every
+    // server they configured for themselves. Nothing outside that key may appear here — a second
+    // top-level key would pin a setting of theirs that nobody asked us to pin.
+    const file = launchOf('hermes', WITH_MCP).configDir!.files[0]!
+    expect(Object.keys(JSON.parse(file.content))).toEqual(['mcp_servers'])
+  })
+
+  it('never writes the key to disk or to an argv', () => {
+    for (const engine of ['claude', 'codex', 'opencode', 'hermes'] as const) {
+      const launch = launchOf(engine, WITH_MCP)
+      for (const arg of launch.args) expect(arg, `${engine} argv`).not.toContain(WIRE.apiKey)
+      for (const file of launch.configDir?.files ?? []) {
+        expect(file.content, `${engine} ${file.name}`).not.toContain(WIRE.apiKey)
+      }
+      // It reaches the engine the one way this module allows.
+      expect(Object.values(launch.env).some((value) => value.includes(WIRE.apiKey))).toBe(true)
+    }
+  })
+
+  it('survives the interactive-shell wrapper the pane actually launches through', () => {
+    // The one that would be catastrophic to get wrong. An engine is started as
+    // `zsh -lic 'unset …; exec "$@"' harness-engine <engine> …`, and if that shell were to expand
+    // the argument, `${GRID_API_KEY}` would become the key — in a command line `ps` shows to every
+    // user on the machine. `exec "$@"` passes positionals through untouched, which is what keeps
+    // the reference a reference; this pins it against a future change to the wrapper.
+    const launch = launchOf('claude', WITH_MCP)
+    const argv = buildEngineLaunchArgv('claude', { extraArgs: launch.args })
+    expect(argv.join(' ')).toContain('Bearer ${GRID_API_KEY}')
+    expect(argv.join(' ')).not.toContain(WIRE.apiKey)
+  })
+
+  it('adds nothing at all when the desktop sends no mcpUrl', () => {
+    // An older desktop, and the no-regression promise: the launch is byte-for-byte what it was.
+    expect(launchOf('claude', WITH_MODEL).args).toEqual([])
+    expect(launchOf('claude', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
+    expect(codexArg('mcp_servers.grid_web.url', WITH_MODEL)).toBeUndefined()
+    expect(launchOf('codex', WITH_MODEL).env.GRID_MCP_AUTHORIZATION).toBeUndefined()
+    expect(opencodeConfig(WITH_MODEL).mcp).toBeUndefined()
+    // Hermes had no config directory at all before web tools, so it goes back to having none.
+    expect(launchOf('hermes', WITH_MODEL).configDir).toBeUndefined()
+    expect(launchOf('hermes', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
   })
 })

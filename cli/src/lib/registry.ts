@@ -32,7 +32,7 @@ import {
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'crypto'
 import { join, basename, dirname, relative } from 'path'
-import { uptime } from 'os'
+import { hostname, uptime } from 'os'
 import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
@@ -1379,13 +1379,50 @@ function defaultProjectDisplayName(s: RegisteredSession): string {
   return `${folder} · ${(s.sessionId || s.agentId).slice(0, 4)}`
 }
 
+/**
+ * The machine's own name, in the forms a terminal title is likely to carry it.
+ *
+ * Computed once: a rename mid-run would at worst let one title through, and reading it per title
+ * would run a syscall for every agent on every title sweep.
+ */
+const SELF_NAMES: ReadonlySet<string> = (() => {
+  const names = new Set<string>()
+  try {
+    const host = hostname().trim().toLowerCase()
+    if (host) {
+      names.add(host)
+      // `MacBookPro2021.local` and `MacBookPro2021` are the same machine wearing two names, and an
+      // engine may print either.
+      const short = host.split('.')[0]
+      if (short) names.add(short)
+    }
+  } catch {
+    // No hostname is not a reason to reject nothing else; the set simply stays empty.
+  }
+  return names
+})()
+
+/**
+ * A pane title, as an agent NAME — or null when the title says nothing about this agent.
+ *
+ * Two rejections, and the second is the interesting one.
+ *
+ * The machine's own name is refused. Hermes sets its terminal title to the hostname and leaves it
+ * there, following the shell convention rather than the conversation one, so every hermes agent on
+ * this Mac was called `MacBookPro2021.local` — in the sidebar, in the pane header, forever, and
+ * identically for every one of them. A name that is the same for every agent on a machine is worse
+ * than no name: `defaultProjectDisplayName` at least says which folder and which session. This is
+ * about the machine, not the engine, so it is refused by what it SAYS rather than by who sent it —
+ * any engine that adopts the same convention is covered without a table to keep in step.
+ */
 function titleDisplayName(title: string | null | undefined): string | null {
   const cleaned = title
     ?.trim()
     .replace(/^[\s\p{Mark}\p{Punctuation}\p{Symbol}]+/u, '')
     .trim()
     .slice(0, 80)
-  return cleaned || null
+  if (!cleaned) return null
+  return SELF_NAMES.has(cleaned.toLowerCase()) ? null : cleaned
 }
 
 function validProcessIdentity(value: unknown): value is ProcessIdentity {

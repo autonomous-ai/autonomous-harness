@@ -214,10 +214,40 @@ export async function probeGridAssignment(
 ): Promise<GridAssignment | null | undefined> {
   const processEnv = await readProcessEnv(identity)
   if (!processEnv) return undefined
-  // The two engines whose provider lives in a file this daemon wrote, rather than in a variable.
-  if (engine === 'pi') return await readPiGridAssignment(processEnv, args)
-  if (engine === 'opencode') return await readOpencodeGridAssignment(processEnv)
-  return classifyGridAssignment(engine, processEnv, args)
+  return await gridAssignmentFromEnv(engine, processEnv, args)
+}
+
+/**
+ * The same classification, over an environment the caller already holds.
+ *
+ * Split out for the one window where no readable process exists yet: between `tmux new-session` and
+ * the engine's `exec`, the pane belongs to `/bin/zsh`, whose environment macOS will not show to
+ * `ps` at all. `tmuxPaneEnvironment` can still say what that pane was given, and this turns it into
+ * the same answer by the same rules — including the two engines whose provider lives in a file
+ * rather than a variable, which is precisely the part a caller would get wrong on its own.
+ *
+ * There is no `undefined` here: the caller decided it could look, and did. Only [probeGridAssignment]
+ * distinguishes "could not read the process".
+ */
+export async function gridAssignmentFromEnv(
+  engine: AgentEngine,
+  env: Record<string, string>,
+  args = '',
+): Promise<GridAssignment | null> {
+  if (engine === 'pi') return await readPiGridAssignment(env, args)
+  if (engine === 'opencode') return await readOpencodeGridAssignment(env)
+  return classifyGridAssignment(engine, env, args)
+}
+
+/**
+ * Do these two describe the same assignment?
+ *
+ * `undefined` is not compared here and must not reach this: it means the probe could not look, which
+ * is never evidence that anything moved. Callers guard on it before asking.
+ */
+export function sameGridAssignment(a: GridAssignment | null, b: GridAssignment | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.baseUrl === b.baseUrl && (a.model ?? null) === (b.model ?? null)
 }
 
 /** Is this agent already where `networkId` is served, on `model`? */

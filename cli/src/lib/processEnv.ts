@@ -52,7 +52,20 @@ function read(pid: number): Promise<Record<string, string> | null> {
   }
   return new Promise((resolve) => {
     execFile('ps', ['eww', '-p', String(pid), '-o', 'command='], { timeout: 2_000, maxBuffer: 4 << 20 }, (err, stdout) => {
-      resolve(err && !stdout ? null : parsePsEnviron(stdout))
+      if (err && !stdout) { resolve(null); return }
+      const env = parsePsEnviron(stdout)
+      // NO variables at all is macOS refusing to show them, not a process that has none.
+      //
+      // `ps` will not print the environment of an Apple PLATFORM BINARY — `/bin/zsh`, `/bin/bash`,
+      // `/bin/sleep` — to anyone, and it reports that refusal by exiting 0 with argv alone. (The
+      // status travels with the code signature, not the path: a copy of `/bin/zsh` run from
+      // somewhere else is just as opaque.) A real process always has an environment, so an empty
+      // parse here is the read failing, and saying so is what keeps `gateway` and `grid` on
+      // `undefined` — "we could not look" — instead of hardening into the finding "on no grid".
+      //
+      // This is not hypothetical or rare: it is every pane between `tmux new-session` and the
+      // engine's `exec`, which for an engine Harness installs first is the whole install.
+      resolve(Object.keys(env).length > 0 ? env : null)
     })
   })
 }

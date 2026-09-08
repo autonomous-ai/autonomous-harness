@@ -72,9 +72,49 @@ function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-9;:]*[A-Za-z]/g, '')
 }
 
-function hasDimSgr(value: string): boolean {
+/**
+ * The SGR attributes an escape sequence actually sets, with extended-colour arguments removed.
+ *
+ * `38`/`48`/`58` introduce a colour whose ARGUMENTS are numbers, not attributes: `5;<n>` for 256 and
+ * `2;<r>;<g>;<b>` for truecolor. Without this skip a truecolor foreground (`38;2;…`) reads as SGR 2
+ * — dim — and a line the user had typed would be mistaken for an empty composer, which is the one
+ * direction this must never be wrong in: the pane would read idle and be respawned under a draft.
+ */
+function sgrAttributes(params: readonly string[]): string[] {
+  const attributes: string[] = []
+  for (let index = 0; index < params.length; index += 1) {
+    const code = params[index]
+    if (code !== '38' && code !== '48' && code !== '58') {
+      attributes.push(code)
+      continue
+    }
+    const kind = params[index + 1]
+    index += kind === '5' ? 2 : kind === '2' ? 4 : 1
+  }
+  return attributes
+}
+
+/**
+ * Is the text after the composer marker the PLACEHOLDER, rather than something the user typed?
+ *
+ * Read from the STYLING, never the words: the placeholder sentence differs per engine and changes
+ * between versions, but every one of these TUIs greys its placeholder out somehow and none of them
+ * styles a draft the same way.
+ *
+ * Two attributes, because two are in use. SGR 2 (dim) is what claude, codex and devin draw; SGR 3
+ * (italic) is what hermes draws — its `Ask anything, or type / for commands…` is italic over a
+ * 256-colour gold (`ESC[3m ESC[38;5;136m`) and carries no dim at all. Looking only for dim made
+ * EVERY hermes pane look like a pane with a draft in it, so `idle` was false for the agent's whole
+ * life and every retarget and model switch came back AGENT_BUSY over an engine sitting at an empty
+ * prompt. Same failure the comment on `promptMarker` warns about, one step further along: the
+ * marker was found, and then the placeholder was not recognised as one.
+ */
+function hasPlaceholderSgr(value: string): boolean {
   return [...value.matchAll(/\u001b\[([0-9;:]*)m/g)]
-    .some((match) => match[1].split(/[;:]/).includes('2'))
+    .some((match) => {
+      const attributes = sgrAttributes(match[1].split(/[;:]/))
+      return attributes.includes('2') || attributes.includes('3')
+    })
 }
 
 function interactionText(capture: string): string {
@@ -103,6 +143,7 @@ function promptMarker(engine: RegisteredSession['engine']): RegExp {
 
 export function inspectRuntimePane(engine: RegisteredSession['engine'], capture: string): PaneInspection {
   if (engine === 'pi') return inspectPiPane(capture)
+  if (engine === 'opencode') return inspectOpencodePane(capture)
   const rawLines = capture.split('\n')
   const marks = promptMarker(engine)
   const promptIndex = rawLines.findLastIndex((line) => {
@@ -114,16 +155,74 @@ export function inspectRuntimePane(engine: RegisteredSession['engine'], capture:
   // Old picker/plan text can remain in tmux history. Only UI below the latest prompt belongs to the
   // current interaction; if no prompt is visible, inspect the whole capture as a conservative fallback.
   const currentUi = stripAnsi((promptIndex >= 0 ? rawLines.slice(promptIndex) : rawLines).join('\n')).replace(/\u00a0/g, ' ')
-  const dialog = /Select Model(?: and Effort)?|Select Reasoning Level|Advanced Reasoning|Available models|Models matching|Edit Parameters|Type to filter.*Tab to edit|Esc to go back|Press enter to confirm|Do you want to proceed|Allow this action|permission required|Starting MCP servers?/i.test(currentUi)
+  const dialog = DIALOG_UI.test(currentUi)
   const plan = engine === 'codex' ? /\bplan mode\b/i.test(currentUi) : /\bplan mode on\b/i.test(currentUi)
   const marker = stripAnsi(prompt).search(marks)
   let visible = marker >= 0 ? stripAnsi(prompt).slice(marker + 1).replace(/\u00a0/g, ' ').trim() : ''
   const rawMarker = prompt.search(marks)
   const rawTail = rawMarker >= 0 ? prompt.slice(rawMarker + 1) : ''
-  const placeholder = hasDimSgr(rawTail)
+  const placeholder = hasPlaceholderSgr(rawTail)
   if (placeholder) visible = ''
   const draft = visible.length > 0
   return { idle: !!prompt && !dialog && !draft, plan, dialog, draft }
+}
+
+/**
+ * A modal drawn over the pane — a picker, a permission prompt, an MCP boot notice.
+ *
+ * One copy, shared by every reader here: an engine whose composer needs its own function still meets
+ * the same dialogs, and two lists of these would drift the first time either gained an entry.
+ * No `g` flag, so `test` carries no `lastIndex` between callers.
+ */
+const DIALOG_UI = /Select Model(?: and Effort)?|Select Reasoning Level|Advanced Reasoning|Available models|Models matching|Edit Parameters|Type to filter.*Tab to edit|Esc to go back|Press enter to confirm|Do you want to proceed|Allow this action|permission required|Starting MCP servers?/i
+
+/** The rule OpenCode closes its composer box with: `╹▀▀▀▀…`. */
+const OPENCODE_BOX_RULE = /[─▀▁▔]{8,}/u
+
+/**
+ * OpenCode's composer is a BOX, and its `┃` gutter does not stop at the text.
+ *
+ * The last gutter line is the box's own STATUS strip — `Build · <model> · <account>`, sitting
+ * directly on the rule that closes the box. The generic reader takes the last line carrying the
+ * marker, which is that strip, and reads what the BOX says about itself as something the user typed.
+ * So every opencode pane was permanently "holding a draft": never idle, and every retarget and model
+ * switch refused as AGENT_BUSY over an empty composer. Same symptom hermes had, opposite cause —
+ * there the placeholder was not recognised, here the wrong line was read.
+ *
+ * The composer is therefore the gutter MINUS that strip, and the strip is identified by WHERE it is
+ * — the gutter line the closing rule sits under — rather than by what it says, which is three
+ * variable fields that change with the model, the mode and the account. When no rule follows, no
+ * strip is assumed and every gutter line counts as composer: a layout we do not recognise must not
+ * silently swallow a line the user typed in.
+ *
+ * Every gutter line is checked, not just the last: a long message wraps down the box, and reading
+ * one line of it would call a full composer empty.
+ */
+function inspectOpencodePane(capture: string): PaneInspection {
+  const rawLines = capture.split('\n')
+  const marks = /┃/u
+  // The LAST contiguous run of gutter lines. Earlier runs are previous composers still in scrollback
+  // — the message the user already sent is not a draft.
+  const gutter: number[] = []
+  for (let index = rawLines.length - 1; index >= 0; index -= 1) {
+    if (marks.test(stripAnsi(rawLines[index]))) { gutter.unshift(index); continue }
+    if (gutter.length > 0) break
+  }
+  if (gutter.length === 0) return { idle: false, plan: false, dialog: false, draft: false }
+  const last = gutter[gutter.length - 1]
+  const closed = last + 1 < rawLines.length && OPENCODE_BOX_RULE.test(stripAnsi(rawLines[last + 1]))
+  const composer = closed ? gutter.slice(0, -1) : gutter
+  const currentUi = stripAnsi(rawLines.slice(gutter[0]).join('\n')).replace(/\u00a0/g, ' ')
+  const dialog = DIALOG_UI.test(currentUi)
+  const draft = composer.some((index) => {
+    const line = rawLines[index]
+    const visibleMarker = stripAnsi(line).search(marks)
+    if (visibleMarker < 0) return false
+    const rawMarker = line.search(marks)
+    if (rawMarker >= 0 && hasPlaceholderSgr(line.slice(rawMarker + 1))) return false
+    return stripAnsi(line).slice(visibleMarker + 1).replace(/\u00a0/g, ' ').trim().length > 0
+  })
+  return { idle: !dialog && !draft, plan: /\bplan mode on\b/i.test(currentUi), dialog, draft }
 }
 
 /**

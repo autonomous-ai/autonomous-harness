@@ -38,6 +38,55 @@ describe('runtime pane parsing', () => {
     )).toMatchObject({ idle: true, draft: false })
   })
 
+  it('reads hermes, which italicises its placeholder instead of dimming it', () => {
+    // Copied byte-for-byte off a live pane. Hermes carries no SGR 2 at all: the placeholder is
+    // italic (3) over a 256-colour gold, so a dim-only rule read every hermes pane as holding a
+    // draft — `idle` false for the agent's whole life, and every retarget answered AGENT_BUSY over an
+    // engine sitting at an empty prompt.
+    const placeholder = '❯ \u001b[3m\u001b[38;5;136mAsk anything, or type / for commands…\u001b[0m'
+    expect(inspectRuntimePane('hermes', placeholder)).toMatchObject({ idle: true, draft: false })
+    expect(inspectRuntimePane('hermes', '❯ what changed in this repo')).toMatchObject({ idle: false, draft: true })
+  })
+
+  it('reads opencode past the status strip its own gutter runs through', () => {
+    // The box: three composer rows, then the strip that names the mode, model and account, then the
+    // rule that closes it. Every one of those rows carries the `┃` gutter, so the last-marker rule
+    // landed on the strip and read the BOX describing itself as something the user had typed —
+    // opencode was never idle, and every retarget came back AGENT_BUSY over an empty composer.
+    const box = (composer: readonly string[]) => [
+      '     ▣  Build · DeepSeek-V4-Flash-0731 · 6.0s',
+      '',
+      ...composer.map((line) => `  ┃${line}`),
+      '  ┃  Build · DeepSeek-V4-Flash-0731 autonomous.ai',
+      '  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      '   /Users/macbook/Downloads/20260907',
+    ].join('\n')
+
+    expect(inspectRuntimePane('opencode', box(['', '', '']))).toMatchObject({ idle: true, draft: false })
+    // Wrapped text counts wherever in the box it sits: reading only the row above the strip would
+    // call a full composer empty.
+    expect(inspectRuntimePane('opencode', box(['', '  what changed in', '  this repo'])))
+      .toMatchObject({ idle: false, draft: true })
+    // No closing rule is a layout we do not recognise, and then nothing is assumed to be a status
+    // strip — a line the user typed must never be swallowed by a guess about the frame.
+    expect(inspectRuntimePane('opencode', ['  ┃', '  ┃  fix the parser'].join('\n')))
+      .toMatchObject({ idle: false, draft: true })
+    // An earlier box still in scrollback is a message already SENT, not a draft.
+    expect(inspectRuntimePane(
+      'opencode',
+      [box(['', '  LSP là gì thế', '']), 'answer text', box(['', '', ''])].join('\n'),
+    )).toMatchObject({ idle: true, draft: false })
+  })
+
+  it('does not read a truecolor foreground as a dim placeholder', () => {
+    // `38;2;<r>;<g>;<b>` carries a literal 2 that is a colour-space selector, not the dim attribute.
+    // Counting it would make a line the user had TYPED look like an empty composer — the one
+    // direction this must never be wrong in, since the pane would read idle and be respawned under
+    // the draft.
+    expect(inspectRuntimePane('claude', '\u001b[39m❯\u00a0\u001b[38;2;255;170;0mfix the parser\u001b[0m'))
+      .toMatchObject({ idle: false, draft: true })
+  })
+
   it('reads devin and pi panes, whose composers look nothing like the others', () => {
     // Devin's marker is ❭ (U+276D), not claude's ❯ (U+276F) — reading it as claude's found no prompt at
     // all, and a pane with no prompt is never idle, so every switch would have been refused as BUSY.

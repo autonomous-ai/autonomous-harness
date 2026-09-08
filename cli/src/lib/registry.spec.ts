@@ -170,6 +170,33 @@ describe('registry remote display names', () => {
     expect(projectDisplayName(retitled!)).toBe('Manual name') // display stays fixed
   })
 
+  it('refuses a pane title that is only the machine\'s own name', async () => {
+    // Hermes titles its terminal with the hostname and leaves it there. Adopted as a name, every
+    // hermes agent on this machine is called the same thing — which is strictly worse than the
+    // folder-and-session default it displaced.
+    const { hostname } = await import('node:os')
+    const transcriptPath = join(dataDir, 'session-host.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+
+    const { registry, projectDisplayName } = await loadRegistryModule()
+    registry.load()
+    const registered = registerProcess(registry, {
+      launcherId: 'h9',
+      sessionId: 'session-host',
+      transcriptPath,
+      tmuxPane: '%9',
+      cwd: '/tmp/demo',
+      title: hostname(),
+    })
+    expect(registered?.entry.title).toBeNull()
+    expect(projectDisplayName(registered!.entry)).toBe('demo \u00b7 sess')
+
+    // The short form is the same machine wearing another name.
+    expect(registry.updateTitle('session-host', hostname().split('.')[0])?.title).toBeNull()
+    // Anything that is genuinely about the conversation still lands.
+    expect(registry.updateTitle('session-host', 'Ship settings page')?.title).toBe('Ship settings page')
+  })
+
   it('only adds or updates agent-names.json entries', async () => {
     const transcriptPath = join(dataDir, 'session-3.jsonl')
     writeFileSync(transcriptPath, '{}\n')

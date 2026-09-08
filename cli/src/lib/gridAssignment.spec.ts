@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { assignmentMatches, classifyGridAssignment, probeGridAssignment, readOpencodeGridAssignment, readPiGridAssignment } from './gridAssignment.js'
 import { buildGridEngineLaunch, gridCapableEngines, type GridLaunchOverride } from './gridLaunch.js'
+import type { AgentEngine } from '../engines/types.js'
 import { clearProcessEnvCache, parsePsEnviron } from './processEnv.js'
 
 const NETWORK_ID = 'grid-3378218621364f16'
@@ -16,6 +17,12 @@ const OVERRIDE: GridLaunchOverride = {
   baseUrl: RELAY_V1,
   apiKey: 'gridkey-secret',
   model: 'GLM-4.7-Flash',
+}
+
+/** The same launch with the grid's web tools wired in — see `gridLaunch`'s MCP section. */
+const WITH_MCP: GridLaunchOverride = {
+  ...OVERRIDE,
+  mcpUrl: 'https://api-grid.autonomous.ai/v1/grid/web-mcp/',
 }
 
 describe('classifyGridAssignment', () => {
@@ -285,5 +292,53 @@ describe('a failed read is not a finding', () => {
     // `null == undefined` is true, so only a strict check tells these apart — which is exactly what
     // `openProcessAgent` and `updateProcessIdentity` do.
     expect(classifyGridAssignment('claude', { PATH: '/usr/bin' })).not.toBeUndefined()
+  })
+})
+
+describe('web tools do not disturb the probe', () => {
+  // Wiring MCP adds argv to Codex and a key to OpenCode's config file, and both are things the probe
+  // parses. An agent that IS on a grid reporting as being on none gets pointlessly restarted, so the
+  // round trips above are repeated against the shape a launch with web tools produces.
+  const dirs: string[] = []
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  const classify = (engine: AgentEngine, override: GridLaunchOverride) => {
+    const built = buildGridEngineLaunch(engine, override)
+    if (!built.ok) throw new Error(`${engine}: ${built.detail}`)
+    return classifyGridAssignment(engine, built.launch.env, built.launch.args.join(' '))
+  }
+
+  it('reads a process back identically with the MCP argv in the way', () => {
+    for (const engine of gridCapableEngines()) {
+      if (engine === 'pi' || engine === 'opencode') continue
+      // Compared against the same engine launched WITHOUT web tools rather than a literal, so this
+      // states the invariant — wiring MCP changes nothing the probe reads — in a form that survives
+      // an engine changing which URL shape it wants.
+      expect(classify(engine, WITH_MCP), engine).toEqual(classify(engine, OVERRIDE))
+      expect(classify(engine, WITH_MCP)?.model, engine).toBe('GLM-4.7-Flash')
+    }
+  })
+
+  it('never reads the control plane as the place an agent is running', () => {
+    // Codex is the one at risk: its endpoint comes out of argv, which now also carries
+    // `mcp_servers.grid_web.url=…`. Reading that as the endpoint would report an agent as running on
+    // the control plane, and the app would offer to move it off a grid it is already on.
+    expect(classify('codex', WITH_MCP)?.baseUrl).toBe(RELAY_V1)
+  })
+
+  it("reads OpenCode's config back with the server declared beside the provider", async () => {
+    const built = buildGridEngineLaunch('opencode', WITH_MCP)
+    if (!built.ok) throw new Error(built.detail)
+    const dir = mkdtempSync(join(tmpdir(), 'opencode-grid-mcp-'))
+    dirs.push(dir)
+    for (const file of built.launch.configDir!.files) {
+      writeFileSync(join(dir, file.name), file.content)
+    }
+    const assignment = await readOpencodeGridAssignment({
+      [built.launch.configDir!.envVar]: join(dir, built.launch.configDir!.pointAt!),
+    })
+    expect(assignment).toEqual({ baseUrl: RELAY_V1, model: 'GLM-4.7-Flash' })
   })
 })

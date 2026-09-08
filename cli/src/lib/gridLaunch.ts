@@ -40,6 +40,16 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
+import {
+  claudeMcpConfig,
+  codexMcpArgs,
+  GRID_MCP_AUTH_VAR,
+  GRID_MCP_SERVER_NAME,
+  HERMES_MANAGED_CONFIG_FILE,
+  HERMES_MANAGED_DIR_VAR,
+  hermesManagedConfig,
+  mcpAuthorizationHeader,
+} from './gridWebMcp.js'
 
 /** Where Pi keeps the skills the user manages, handed back through our own settings.json. */
 function userPiSkillsDir(): string {
@@ -60,6 +70,19 @@ export interface GridLaunchOverride {
   apiKey: string
   /** Absent means "whatever the engine asks for" — the relay's own default. */
   model?: string
+  /**
+   * The grid's web-tools MCP endpoint, on the CONTROL PLANE — `…/v1/grid/web-mcp/`, trailing slash
+   * included, because without it the mount answers 307 and not every client follows one.
+   *
+   * Deliberately not derived here from [baseUrl]. That is the RELAY, and grid ADR 0041 D-a takes the
+   * relay out of this path on purpose: a relay is per-grid, can be asleep, and for a self-hosted grid
+   * is a LAN address a harness may not reach. The control plane's address is also not ours to guess —
+   * it is whichever one the user's Grid CLI is signed into, and this machine may have no Grid session
+   * at all. The desktop knows; this does not.
+   *
+   * Absent means no web tools, which is exactly what an older desktop sends.
+   */
+  mcpUrl?: string
 }
 
 export type GridOverrideParse =
@@ -83,6 +106,26 @@ function requiredString(raw: Record<string, unknown>, key: string): string | nul
 }
 
 /**
+ * Why [value] is not an address an engine can be handed, or null when it is one.
+ *
+ * Anything else — a `file:` URL, a bare hostname, a path — would fail inside the engine with an
+ * error naming neither the grid nor this frame. Shared by the two URL fields rather than written
+ * twice, so they cannot drift into disagreeing about what an address is.
+ */
+function urlProblem(field: string, value: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return `grid ${field} is not a URL`
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return `grid ${field} must be http(s), got ${parsed.protocol}`
+  }
+  return null
+}
+
+/**
  * `payload.grid` as a validated override, or the reason it is not one.
  *
  * Absent is a first-class answer, not a failure: a build with no grid selected sends no `grid` field
@@ -103,21 +146,16 @@ export function parseGridLaunchOverride(raw: unknown): GridOverrideParse {
     apiKey ? null : 'apiKey',
   ].filter((name): name is string => name !== null)
   if (missing.length) return { state: 'invalid', reason: `grid is missing ${missing.join(', ')}` }
-  // An engine is about to be handed this as the address it talks to, so it has to be an address:
-  // anything else (a `file:` URL, a bare hostname, a path) would fail inside the engine with an
-  // error naming neither the grid nor this frame.
-  let parsed: URL
-  try {
-    parsed = new URL(baseUrl as string)
-  } catch {
-    return { state: 'invalid', reason: 'grid baseUrl is not a URL' }
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return { state: 'invalid', reason: `grid baseUrl must be http(s), got ${parsed.protocol}` }
-  }
+  const badBaseUrl = urlProblem('baseUrl', baseUrl as string)
+  if (badBaseUrl) return { state: 'invalid', reason: badBaseUrl }
   const hasModel = source.model !== undefined && source.model !== null
   const model = hasModel ? requiredString(source, 'model') : undefined
   if (hasModel && !model) return { state: 'invalid', reason: 'grid model must be a non-empty string' }
+  const hasMcpUrl = source.mcpUrl !== undefined && source.mcpUrl !== null
+  const mcpUrl = hasMcpUrl ? requiredString(source, 'mcpUrl') : undefined
+  if (hasMcpUrl && !mcpUrl) return { state: 'invalid', reason: 'grid mcpUrl must be a non-empty string' }
+  const badMcpUrl = mcpUrl ? urlProblem('mcpUrl', mcpUrl) : null
+  if (badMcpUrl) return { state: 'invalid', reason: badMcpUrl }
   return {
     state: 'ok',
     override: {
@@ -126,6 +164,7 @@ export function parseGridLaunchOverride(raw: unknown): GridOverrideParse {
       baseUrl: baseUrl as string,
       apiKey: apiKey as string,
       ...(model ? { model } : {}),
+      ...(mcpUrl ? { mcpUrl } : {}),
     },
   }
 }
@@ -231,6 +270,20 @@ function opencodeGridConfig(
         models,
       },
     },
+    // The grid's web tools, referencing the key exactly the way `apiKey` above does — opencode's own
+    // `{env:…}`, so this file still contains no credential.
+    ...(override.mcpUrl
+      ? {
+        mcp: {
+          [GRID_MCP_SERVER_NAME]: {
+            type: 'remote',
+            url: override.mcpUrl,
+            enabled: true,
+            headers: { Authorization: `Bearer {env:${GRID_KEY_VAR}}` },
+          },
+        },
+      }
+      : {}),
   }, null, 2)}\n`
 }
 
@@ -329,6 +382,8 @@ export const GRID_CONFLICTING_ENV_VARS: readonly string[] = [
   'COPILOT_MODEL',
   'HERMES_INFERENCE_MODEL',
   GRID_KEY_VAR,
+  GRID_MCP_AUTH_VAR,
+  HERMES_MANAGED_DIR_VAR,
 ]
 
 /**
@@ -413,8 +468,11 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         // has no standing to choose a user's model. That reasoning does not carry here: the desktop
         // app ASKED, and this is the answer. Left unset when the user picked no model.
         ...(override.model ? { ANTHROPIC_MODEL: override.model } : {}),
+        // Only when there are web tools to reach: the variable exists to be referenced by the config
+        // below, and setting it otherwise would leave a key in the pane that nothing reads.
+        ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
       },
-      args: [],
+      args: override.mcpUrl ? ['--mcp-config', claudeMcpConfig(override.mcpUrl, GRID_KEY_VAR)] : [],
     }),
   },
 
@@ -426,7 +484,10 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // The key travels in the environment under `env_key`, never in argv.
   codex: {
     build: (override) => ({
-      env: { [GRID_KEY_VAR]: override.apiKey },
+      env: {
+        [GRID_KEY_VAR]: override.apiKey,
+        ...(override.mcpUrl ? { [GRID_MCP_AUTH_VAR]: mcpAuthorizationHeader(override.apiKey) } : {}),
+      },
       args: [
         '-c', 'model_provider="grid"',
         '-c', 'model_providers.grid.name="Autonomous Grid"',
@@ -436,6 +497,7 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         '-c', 'model_providers.grid.wire_api="responses"',
         // The relay streams HTTP SSE, not WebSocket.
         '-c', 'model_providers.grid.supports_websockets=false',
+        ...(override.mcpUrl ? codexMcpArgs(override.mcpUrl) : []),
         ...(override.model ? ['-m', override.model] : []),
       ],
     }),
@@ -490,15 +552,55 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   },
 
   // Nous Research's documented trio for a custom OpenAI-compatible endpoint
-  // (hermes-agent/website/docs/reference/environment-variables.md).
+  // (hermes-agent/website/docs/reference/environment-variables.md) — plus the model on the command
+  // line, which is the only place hermes reads it from in the mode this daemon actually launches.
+  //
+  // `HERMES_INFERENCE_MODEL` is read by `hermes -z` and by the gateway behind `hermes --tui`. The
+  // pane opened here is neither: it is the INTERACTIVE CLI, whose model resolution is `-m` then
+  // config.yaml and no env tier at all (`cli.py:_init_model_and_provider`, "Priority: CLI args >
+  // env vars > config file" — the env half is about the provider). And a grid move relaunches as
+  // `hermes --resume <id>`, which restores the model stored on the session row unless argv carried
+  // an explicit `-m`; that flag is the documented opt-out ("resume must not clobber an explicit -m
+  // with the session's stored model", `cli.py` / `cli_model_switch_mixin.py`).
+  //
+  // Measured on 2026-09-08 before this line existed: the pane's environment said
+  // `HERMES_INFERENCE_MODEL=GLM-4.7-Flash` — which is what the desktop's model pill read back and
+  // printed — while hermes itself ran DeepSeek-V4-Flash-0731, the default in the user's own
+  // ~/.hermes/config.yaml and the model persisted on the resumed session's row.
+  //
+  // The variable stays beside the flag: `-z`/`--tui` read it, and it is how `gridAssignment.ts`
+  // answers "which model is this agent on" for hermes without parsing a live process's argv.
+  //
+  // ⚠️ The ENDPOINT has no such flag. Hermes's custom-provider resolver deliberately ignores
+  // `OPENAI_BASE_URL` ("config.yaml is the single source of truth for endpoint URLs",
+  // `runtime_provider_backends.py`) and the CLI exposes no `--base-url`, so moving a hermes agent
+  // between grids moves its model but leaves its requests on whatever relay config.yaml names. The
+  // only lever left is `HERMES_HOME`, which would take state.db and the user's skills with it and
+  // break the resume this move depends on.
   hermes: {
     build: (override) => ({
       env: {
         OPENAI_BASE_URL: relayBaseUrl(override.baseUrl),
         OPENAI_API_KEY: override.apiKey,
         ...(override.model ? { HERMES_INFERENCE_MODEL: override.model } : {}),
+        // Referenced by the overlay below, so it exists only when there is an overlay to read it.
+        ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
       },
-      args: [],
+      args: override.model ? ['-m', override.model] : [],
+      // Hermes reads its MCP servers from one config file and takes no flag for them, so the web
+      // tools arrive as a managed-scope overlay merged over the user's own — see `gridWebMcp.ts`,
+      // including why this is `HERMES_MANAGED_DIR` and not `HERMES_HOME`.
+      ...(override.mcpUrl
+        ? {
+          configDir: {
+            envVar: HERMES_MANAGED_DIR_VAR,
+            files: [{
+              name: HERMES_MANAGED_CONFIG_FILE,
+              content: hermesManagedConfig(override.mcpUrl, GRID_KEY_VAR),
+            }],
+          },
+        }
+        : {}),
     }),
   },
 
@@ -617,6 +719,10 @@ const PROBE_OVERRIDE: GridLaunchOverride = {
   baseUrl: 'https://example.invalid/probe/relay/v1',
   apiKey: 'probe',
   model: 'probe',
+  // Present so the probe reports the variables a launch WITH web tools sets. Retarget clears what
+  // this answers, and a probe that left them out would move an agent to another grid while its old
+  // grid's MCP credential stayed in the pane — the exact staleness the doc comment below warns of.
+  mcpUrl: 'https://example.invalid/v1/grid/web-mcp/',
 }
 
 /**
