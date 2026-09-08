@@ -1,27 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-export type LampFrame = Record<string, unknown> & { type: string }
+export type AutonomousDeviceFrame = Record<string, unknown> & { type: string }
 export type ReceiptState = 'queued' | 'delivered' | 'started' | 'completed' | 'rejected' | 'unknown'
-export interface LampReceipt {
+export interface AutonomousDeviceReceipt {
   idempotencyKey: string; deliveryId: string; operation: string; state: ReceiptState
   agentId: string; machineId: string; serverInstanceId: string; turnId: string | null
   error: { code: string; message: string } | null; at: number
 }
-export interface LampAgent { agentId: string; name: string; engine: string; state: string }
-export interface LampDelivery { deliveryId: string; sessionId: string; state: ReceiptState; reason?: string }
-export interface LampServiceOptions {
+export interface AutonomousDeviceAgent { agentId: string; name: string; engine: string; state: string }
+export interface AutonomousDeviceDelivery { deliveryId: string; sessionId: string; state: ReceiptState; reason?: string }
+export interface AutonomousDeviceServiceOptions {
   machineId: string; serverInstanceId?: string; now?: () => number
-  agents: () => LampAgent[]
+  agents: () => AutonomousDeviceAgent[]
   submit: (agentId: string, text: string, deliveryId: string) => void
   cancelDelivery: (deliveryId: string) => boolean
   stop: (agentId: string) => Promise<boolean>
   answer: (agentId: string, questionRequestId: string, answers: Record<string, string>) => Promise<boolean>
   recent: (agentId: string, n: number) => unknown[]
-  emit?: (frame: LampFrame) => void
+  emit?: (frame: AutonomousDeviceFrame) => void
 }
-interface Entry { lampId: string; digest: string; receipt: LampReceipt }
+interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt }
 const CAPABILITIES = ['agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
-export const LAMP_CAPABILITIES: string[] = [...CAPABILITIES]
+export const AUTONOMOUS_DEVICE_CAPABILITIES: string[] = [...CAPABILITIES]
 const MUTATIONS = new Set(['turn.send', 'turn.stop', 'question.answer'])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const KEY = /^[A-Za-z0-9_-]{1,64}$/
@@ -36,23 +36,23 @@ function fail(code: string, message: string): never { throw new RequestError(cod
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value) }
 
 /** Pure local-agent facade. Transport authenticates identity; this layer never guesses a target. */
-export class LampService {
+export class AutonomousDeviceService {
   readonly serverInstanceId: string
   private readonly now: () => number
   private readonly entries = new Map<string, Entry>()
   private readonly deliveries = new Map<string, Entry>()
   private readonly turns = new Map<string, Entry>()
   private readonly questions = new Map<string, { requestId: string; questions: unknown }>()
-  private events: LampFrame[] = []
+  private events: AutonomousDeviceFrame[] = []
   private sequence = 0
-  constructor(private readonly options: LampServiceOptions) {
+  constructor(private readonly options: AutonomousDeviceServiceOptions) {
     this.serverInstanceId = options.serverInstanceId ?? randomUUID()
     this.now = options.now ?? Date.now
   }
-  private key(lampId: string, key: string): string { return `${lampId}:${key}` }
-  receipt(lampId: string, key: string): LampReceipt | null {
+  private key(deviceId: string, key: string): string { return `${deviceId}:${key}` }
+  receipt(deviceId: string, key: string): AutonomousDeviceReceipt | null {
     this.prune()
-    const value = this.entries.get(this.key(lampId, key))?.receipt
+    const value = this.entries.get(this.key(deviceId, key))?.receipt
     return value ? structuredClone(value) : null
   }
   private prune(): void {
@@ -85,23 +85,23 @@ export class LampService {
     }
     this.event('receipt.updated', entry.receipt.agentId, { receipt: structuredClone(entry.receipt), idempotencyKey: entry.receipt.idempotencyKey })
   }
-  delivery(event: LampDelivery): void {
+  delivery(event: AutonomousDeviceDelivery): void {
     const entry = this.deliveries.get(event.deliveryId)
     if (!entry) return
     this.update(entry, event.state, event.reason)
   }
-  revoke(lampId: string): void {
-    for (const [key, entry] of this.entries) if (entry.lampId === lampId) {
+  revoke(deviceId: string): void {
+    for (const [key, entry] of this.entries) if (entry.deviceId === deviceId) {
       this.options.cancelDelivery(entry.receipt.deliveryId)
       this.deliveries.delete(entry.receipt.deliveryId)
       if (this.turns.get(entry.receipt.agentId) === entry) this.turns.delete(entry.receipt.agentId)
       this.entries.delete(key)
     }
-    // A newly paired identity cannot replay the previous lamp's request receipts.
+    // A newly paired identity cannot replay the previous device's request receipts.
     this.events = []
   }
   event(kind: string, agentId: string | undefined, payload: Record<string, unknown>): void {
-    const frame: LampFrame = { type: 'event', eventId: ++this.sequence, serverInstanceId: this.serverInstanceId,
+    const frame: AutonomousDeviceFrame = { type: 'event', eventId: ++this.sequence, serverInstanceId: this.serverInstanceId,
       machineId: this.options.machineId, ...(agentId ? { agentId } : {}), kind, payload }
     this.events.push(frame)
     if (this.events.length > 500) this.events.shift()
@@ -113,7 +113,7 @@ export class LampService {
       && (cursor as number) >= (Number(this.events[0]?.eventId ?? this.sequence + 1) - 1) && (cursor as number) <= this.sequence,
     cursor: this.sequence }
   }
-  replay(resume: { serverInstanceId?: unknown; cursor?: unknown } | undefined, send: (frame: LampFrame) => unknown): void {
+  replay(resume: { serverInstanceId?: unknown; cursor?: unknown } | undefined, send: (frame: AutonomousDeviceFrame) => unknown): void {
     if (!this.resume(resume).resumed) {
       send({ type: 'resync', reason: resume?.serverInstanceId === this.serverInstanceId ? 'cursor_too_old' : 'instance_changed', serverInstanceId: this.serverInstanceId, cursor: this.sequence })
       return
@@ -145,19 +145,19 @@ export class LampService {
       this.event(p.kind === 'summary' ? 'turn.summary' : p.kind === 'tool' ? 'turn.tool' : 'agent.error', agentId, p)
     }
   }
-  async request(lampId: string, req: Record<string, unknown>): Promise<LampFrame> {
+  async request(deviceId: string, req: Record<string, unknown>): Promise<AutonomousDeviceFrame> {
     const type = typeof req.type === 'string' ? req.type : 'invalid'
-    const response = (data: Record<string, unknown>): LampFrame => ({ type: `${type}_result`, requestId: req.requestId, ...data })
+    const response = (data: Record<string, unknown>): AutonomousDeviceFrame => ({ type: `${type}_result`, requestId: req.requestId, ...data })
     let reserved: Entry | undefined
     try {
       if (!UUID.test(String(req.requestId))) fail('INVALID_REQUEST', 'requestId must be a UUIDv4')
-      if (!LAMP_CAPABILITIES.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
+      if (!AUTONOMOUS_DEVICE_CAPABILITIES.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
       const allowed = ['type', 'requestId', ...(type === 'agents.list' ? [] : type === 'receipt.get' ? ['idempotencyKey'] : ['machineId', 'agentId']),
         ...(MUTATIONS.has(type) ? ['idempotencyKey'] : []), ...(type === 'turn.send' ? ['text'] : type === 'question.answer' ? ['questionRequestId', 'answers'] : type === 'recap' ? ['n'] : [])]
       if (Object.keys(req).some(k => !allowed.includes(k))) fail('INVALID_REQUEST', 'Unknown request field')
       if (type === 'receipt.get') {
         if (!KEY.test(String(req.idempotencyKey ?? ''))) fail('INVALID_REQUEST', 'Invalid idempotencyKey')
-        return response({ receipt: this.receipt(lampId, String(req.idempotencyKey)) })
+        return response({ receipt: this.receipt(deviceId, String(req.idempotencyKey)) })
       }
       if (type === 'agents.list') return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => ({ ...a, machineId: this.options.machineId })) })
       if (typeof req.agentId !== 'string' || !req.agentId || typeof req.machineId !== 'string') fail('MISSING_TARGET', 'machineId and agentId are required')
@@ -169,7 +169,7 @@ export class LampService {
         || !Object.keys(req.answers).length || Object.values(req.answers).some(v => typeof v !== 'string'))) fail('INVALID_REQUEST', 'questionRequestId and string answers are required')
       if (MUTATIONS.has(type) && !KEY.test(String(req.idempotencyKey ?? ''))) fail('INVALID_REQUEST', 'Invalid idempotencyKey')
       const digest = createHash('sha256').update(canonical({ ...req, requestId: null, idempotencyKey: null })).digest('hex')
-      const key = this.key(lampId, String(req.idempotencyKey))
+      const key = this.key(deviceId, String(req.idempotencyKey))
       this.prune()
       const previous = MUTATIONS.has(type) ? this.entries.get(key) : undefined
       if (previous) {
@@ -186,7 +186,7 @@ export class LampService {
       }
       if (type === 'question.answer' && this.questions.get(agentId)?.requestId !== req.questionRequestId) fail('QUESTION_STALE', 'Question is no longer open')
       this.reserveCapacity()
-      const entry: Entry = { lampId, digest, receipt: { idempotencyKey: String(req.idempotencyKey), deliveryId: randomUUID(), operation: type,
+      const entry: Entry = { deviceId, digest, receipt: { idempotencyKey: String(req.idempotencyKey), deliveryId: randomUUID(), operation: type,
         machineId: this.options.machineId, agentId, state: 'queued', turnId: null, serverInstanceId: this.serverInstanceId, error: null, at: this.now() } }
       this.entries.set(key, entry); this.deliveries.set(entry.receipt.deliveryId, entry); reserved = entry
       try {

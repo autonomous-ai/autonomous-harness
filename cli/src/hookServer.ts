@@ -49,7 +49,7 @@ export interface PairOutcome {
 }
 
 export interface HookServerHandlers {
-  onLampRequest?: (method: string, target: string, body?: unknown) => Promise<{ status: number; body: unknown }>
+  onAutonomousDeviceRequest?: (method: string, target: string, body?: unknown) => Promise<{ status: number; body: unknown }>
 
   onRegistered: (
     entry: RegisteredSession,
@@ -339,19 +339,19 @@ export function startHookServer(
       const localOk = req.headers['x-adapter-local'] === '1'
       const hookOk = hookCredentialMatches(hookCredential, req.headers['x-harness-hook-token'])
 
-      if (url.startsWith('/api/lamp/')) {
+      if (url.startsWith('/api/autonomous-device/')) {
         const peer = req.socket.remoteAddress
         const loopback = peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1'
         const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined
         if (!loopback || req.headers.origin || !hookCredentialMatches(hookCredential, bearer)) {
           json(403, { error: { code: 'FORBIDDEN', message: 'Authenticated native loopback client required' } }); return
         }
-        if (!handlers.onLampRequest) { json(503, { error: { code: 'UNAVAILABLE', message: 'Lamp service unavailable' } }); return }
+        if (!handlers.onAutonomousDeviceRequest) { json(503, { error: { code: 'UNAVAILABLE', message: 'Autonomous device service unavailable' } }); return }
         let body: unknown
         if (req.method !== 'GET') {
           try { body = JSON.parse(await readBody(req)) } catch { json(400, { error: { code: 'BAD_REQUEST', message: 'Invalid JSON body' } }); return }
         }
-        const result = await handlers.onLampRequest(req.method ?? '', req.url ?? '', body)
+        const result = await handlers.onAutonomousDeviceRequest(req.method ?? '', req.url ?? '', body)
         json(result.status, result.body); return
       }
       if (req.method === 'GET' && url === '/api/health') {

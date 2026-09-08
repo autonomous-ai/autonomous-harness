@@ -1,7 +1,7 @@
 import { readHookCredential } from '../hookAuth.js'
 
 /** Native UI and terminal use the same authenticated loopback management API. */
-export async function runLampCommand(argv: string[], dataDir: string, port: number): Promise<number> {
+export async function runAutonomousDeviceCommand(argv: string[], dataDir: string, port: number): Promise<number> {
   const json = argv.includes('--json')
   const args = argv.filter(a => !a.startsWith('--'))
   const verb = args[0] ?? 'status'
@@ -11,7 +11,7 @@ export async function runLampCommand(argv: string[], dataDir: string, port: numb
     || (argv.includes('--replace') && verb !== 'pair') || (argv.includes('--all') && verb !== 'revoke')
     || args.length > (verb === 'revoke' ? 2 : 1)
     || (verb === 'revoke' && (!!args[1] === argv.includes('--all')))) {
-    print({ error: { code: 'INVALID_ARGUMENT', message: 'Usage: harness lamp pair [--replace] | cancel | pair-status | list | status | revoke <id|--all> [--json]' } })
+    print({ error: { code: 'INVALID_ARGUMENT', message: 'Usage: harness autonomous-device pair [--replace] | cancel | pair-status | list | status | revoke <id|--all> [--json]' } })
     return 1
   }
   const credential = readHookCredential(dataDir)
@@ -19,7 +19,7 @@ export async function runLampCommand(argv: string[], dataDir: string, port: numb
   const mutation = ['pair', 'cancel', 'revoke'].includes(verb)
   const body = verb === 'pair' ? { replace: argv.includes('--replace') } : verb === 'revoke' ? argv.includes('--all') ? { all: true } : { id: args[1] } : {}
   try {
-    const result = await fetch(`http://127.0.0.1:${port}/api/lamp/${route}`, {
+    const result = await fetch(`http://127.0.0.1:${port}/api/autonomous-device/${route}`, {
       method: mutation ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000),
       headers: { Authorization: `Bearer ${credential}`, ...(mutation ? { 'Content-Type': 'application/json' } : {}) },
       ...(mutation ? { body: JSON.stringify(body) } : {}),
@@ -28,7 +28,7 @@ export async function runLampCommand(argv: string[], dataDir: string, port: numb
     print(value)
     return result.ok ? 0 : 1
   } catch {
-    print({ error: { code: 'DAEMON_UNAVAILABLE', message: 'Could not reach the Harness lamp API. Start or update Harness CLI.' } })
+    print({ error: { code: 'DAEMON_UNAVAILABLE', message: 'Could not reach the Harness Autonomous device API. Start or update Harness CLI.' } })
     return 1
   }
 }

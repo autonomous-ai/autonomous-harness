@@ -1,32 +1,32 @@
 /** Management stays on the authenticated hook server, never the LAN listener. */
-export interface LampManagement {
+export interface AutonomousDeviceManagement {
   pairStart(options: { replace?: boolean }): unknown | Promise<unknown>
   pairCancel(): unknown | Promise<unknown>
   pairStatus(): unknown | Promise<unknown>
   list(): unknown | Promise<unknown>
   status(): unknown | Promise<unknown>
   revoke(target: { id: string } | { all: true }): unknown | Promise<unknown>
-  receipt(target: { lampId: string; idempotencyKey: string }): unknown | Promise<unknown>
+  receipt(target: { deviceId: string; idempotencyKey: string }): unknown | Promise<unknown>
 }
 
-export interface LampLocalResponse { status: number; body: unknown }
+export interface AutonomousDeviceLocalResponse { status: number; body: unknown }
 
 const routes: Record<string, string> = {
-  '/api/lamp/pair/start': 'POST',
-  '/api/lamp/pair/cancel': 'POST',
-  '/api/lamp/pair/status': 'GET',
-  '/api/lamp/list': 'GET',
-  '/api/lamp/status': 'GET',
-  '/api/lamp/revoke': 'POST',
-  '/api/lamp/receipt': 'GET',
+  '/api/autonomous-device/pair/start': 'POST',
+  '/api/autonomous-device/pair/cancel': 'POST',
+  '/api/autonomous-device/pair/status': 'GET',
+  '/api/autonomous-device/list': 'GET',
+  '/api/autonomous-device/status': 'GET',
+  '/api/autonomous-device/revoke': 'POST',
+  '/api/autonomous-device/receipt': 'GET',
 }
 
 const errorStatus: Record<string, number> = {
-  BAD_REQUEST: 400, UNKNOWN_LAMP: 404, ALREADY_PAIRED: 409, BUSY: 409,
+  BAD_REQUEST: 400, UNKNOWN_DEVICE: 404, ALREADY_PAIRED: 409, BUSY: 409,
   RATE_LIMITED: 429, EXPIRED: 410, CANCELLED: 409,
 }
 
-function failure(status: number, code: string, message: string): LampLocalResponse {
+function failure(status: number, code: string, message: string): AutonomousDeviceLocalResponse {
   return { status, body: { error: { code, message } } }
 }
 
@@ -34,17 +34,17 @@ function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function lampId(value: unknown): value is string {
-  // Lamp identities are canonical base64 Ed25519 public keys (32 bytes).
+function deviceId(value: unknown): value is string {
+  // Autonomous device identities are canonical base64 Ed25519 public keys (32 bytes).
   return typeof value === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(value)
     && Buffer.from(value, 'base64').toString('base64') === value
 }
 
 /** The caller must enforce loopback, Origin refusal, and the hook credential first. */
-export async function lampLocalRequest(
-  service: LampManagement, method: string, requestTarget: string, body?: unknown,
-): Promise<LampLocalResponse> {
-  const bad = () => failure(400, 'BAD_REQUEST', 'Invalid lamp management request')
+export async function autonomousDeviceLocalRequest(
+  service: AutonomousDeviceManagement, method: string, requestTarget: string, body?: unknown,
+): Promise<AutonomousDeviceLocalResponse> {
+  const bad = () => failure(400, 'BAD_REQUEST', 'Invalid device management request')
   let url: URL
   try {
     if (!requestTarget.startsWith('/') || requestTarget.startsWith('//')) return bad()
@@ -52,43 +52,43 @@ export async function lampLocalRequest(
   } catch { return bad() }
   if (url.hash) return bad()
   const expected = routes[url.pathname]
-  if (!expected) return failure(404, 'NOT_FOUND', 'Unknown lamp management endpoint')
+  if (!expected) return failure(404, 'NOT_FOUND', 'Unknown device management endpoint')
   if (method !== expected) return failure(405, 'METHOD_NOT_ALLOWED', 'Method not allowed')
   if (method === 'GET' && body !== undefined) return bad()
-  if (url.pathname !== '/api/lamp/receipt' && url.search) return bad()
+  if (url.pathname !== '/api/autonomous-device/receipt' && url.search) return bad()
   const input = body === undefined ? {} : body
   if (!object(input)) return bad()
   const keys = Object.keys(input)
   let call: () => unknown | Promise<unknown>
   switch (url.pathname) {
-    case '/api/lamp/pair/start':
+    case '/api/autonomous-device/pair/start':
       if (keys.some(key => key !== 'replace') || ('replace' in input && typeof input.replace !== 'boolean')) return bad()
       call = () => service.pairStart('replace' in input ? { replace: input.replace as boolean } : {})
       break
-    case '/api/lamp/revoke':
+    case '/api/autonomous-device/revoke':
       if (keys.length !== 1) return bad()
       if (keys[0] === 'all' && input.all === true) call = () => service.revoke({ all: true })
-      else if (keys[0] === 'id' && lampId(input.id)) {
+      else if (keys[0] === 'id' && deviceId(input.id)) {
         const id = input.id
         call = () => service.revoke({ id })
       } else return bad()
       break
-    case '/api/lamp/receipt': {
+    case '/api/autonomous-device/receipt': {
       const query = url.searchParams
-      if ([...query.keys()].some(key => key !== 'lampId' && key !== 'idempotencyKey')
-        || query.getAll('lampId').length !== 1 || query.getAll('idempotencyKey').length !== 1) return bad()
-      const id = query.get('lampId')
+      if ([...query.keys()].some(key => key !== 'deviceId' && key !== 'idempotencyKey')
+        || query.getAll('deviceId').length !== 1 || query.getAll('idempotencyKey').length !== 1) return bad()
+      const id = query.get('deviceId')
       const key = query.get('idempotencyKey')
-      if (!lampId(id) || !key || !/^[A-Za-z0-9_-]{1,64}$/.test(key)) return bad()
-      call = () => service.receipt({ lampId: id, idempotencyKey: key })
+      if (!deviceId(id) || !key || !/^[A-Za-z0-9_-]{1,64}$/.test(key)) return bad()
+      call = () => service.receipt({ deviceId: id, idempotencyKey: key })
       break
     }
     default:
       if (keys.length) return bad()
       switch (url.pathname) {
-        case '/api/lamp/pair/cancel': call = () => service.pairCancel(); break
-        case '/api/lamp/pair/status': call = () => service.pairStatus(); break
-        case '/api/lamp/list': call = () => service.list(); break
+        case '/api/autonomous-device/pair/cancel': call = () => service.pairCancel(); break
+        case '/api/autonomous-device/pair/status': call = () => service.pairStatus(); break
+        case '/api/autonomous-device/list': call = () => service.list(); break
         default: call = () => service.status()
       }
   }
@@ -97,8 +97,8 @@ export async function lampLocalRequest(
   } catch (error) {
     if (object(error) && typeof error.code === 'string' && Object.hasOwn(errorStatus, error.code)) {
       return failure(errorStatus[error.code], error.code,
-        typeof error.message === 'string' ? error.message : 'Lamp management request failed')
+        typeof error.message === 'string' ? error.message : 'Autonomous device management request failed')
     }
-    return failure(500, 'INTERNAL_ERROR', 'Lamp management request failed')
+    return failure(500, 'INTERNAL_ERROR', 'Autonomous device management request failed')
   }
 }

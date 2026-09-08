@@ -89,10 +89,10 @@ import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/t
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
-import { LampTransport } from './lib/lamp/transport.js'
-import { LampService, LAMP_CAPABILITIES } from './lib/lamp/service.js'
-import { lampLocalRequest } from './lib/lamp/localApi.js'
-import { runLampCommand } from './lib/lamp/command.js'
+import { AutonomousDeviceTransport } from './lib/autonomous-device/transport.js'
+import { AutonomousDeviceService, AUTONOMOUS_DEVICE_CAPABILITIES } from './lib/autonomous-device/service.js'
+import { autonomousDeviceLocalRequest } from './lib/autonomous-device/localApi.js'
+import { runAutonomousDeviceCommand } from './lib/autonomous-device/command.js'
 import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
 import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
@@ -272,7 +272,7 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
-  harness lamp <command>       pair/status/list/revoke a LAN lamp
+  harness autonomous-device <command>     pair/status/list/revoke a LAN device
   harness pair <code>          pair a BROWSER (code shown on the machine page)
   harness pairings             list paired clients
   harness unpair <#|fp>        unpair one browser (by list number or fingerprint)
@@ -1254,8 +1254,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
     }
   }
-  let lampService: LampService | undefined
-  let lampTransport: LampTransport | undefined
+  let autonomousDeviceService: AutonomousDeviceService | undefined
+  let autonomousDeviceTransport: AutonomousDeviceTransport | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
 
@@ -1289,7 +1289,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   let openPaneAgents = new Set<string>()
   const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
 
-  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || lampTransport?.status().sessions === 1
+  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || autonomousDeviceTransport?.status().sessions === 1
   /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
   const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
   const terminalStreams = new TerminalStreamManager({
@@ -1666,7 +1666,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
-    onDelivery: (event) => lampService?.delivery(event),
+    onDelivery: (event) => autonomousDeviceService?.delivery(event),
     validateRuntime: validateTerminal,
     inject: submitTerminalAction,
     sendKey: keyTerminalAction,
@@ -1982,7 +1982,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         )
         console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · bytes=${Buffer.byteLength(event.payload.userMessage, 'utf8')}`)
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
-        lampService?.turnStarted(agentId)
+        autonomousDeviceService?.turnStarted(agentId)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
         // ...and anything already drawn belongs to the turn BEFORE this one.
@@ -1997,7 +1997,7 @@ async function runForeground(session: AuthSession): Promise<void> {
           `[turn] ${sid(sessionId)} ended${event.payload.aborted ? ' · aborted (interrupted)' : ''}` +
             `${startedAt ? ` · ${Date.now() - startedAt}ms` : ''}`,
         )
-        lampService?.turnEnded(agentId, event.payload.aborted === true)
+        autonomousDeviceService?.turnEnded(agentId, event.payload.aborted === true)
         input.onTurnEnded(agentIdFor(sessionId))
         // Command Code asks AFTER the turn: `ask_user_question` ends the turn (its Stop hook fires), the
         // dialog goes up, and the answer opens a NEW turn. Stopping the watcher here is what left the
@@ -2408,16 +2408,16 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
-    onLampRequest: async (method, target, body) => {
-      if (!lampTransport || !lampService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Lamp service is starting' } } }
-      const transport = lampTransport, service = lampService
-      return lampLocalRequest({
+    onAutonomousDeviceRequest: async (method, target, body) => {
+      if (!autonomousDeviceTransport || !autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
+      const transport = autonomousDeviceTransport, service = autonomousDeviceService
+      return autonomousDeviceLocalRequest({
         pairStart: options => transport.pairStart(options),
         pairCancel: () => { transport.pairCancel(); return { cancelled: true } },
         pairStatus: () => transport.pairStatus(),
-        list: () => ({ lamps: transport.list() }), status: () => transport.status(),
+        list: () => ({ devices: transport.list() }), status: () => transport.status(),
         revoke: target => ({ revoked: transport.revoke('all' in target ? 'all' : target.id) }),
-        receipt: target => ({ receipt: service.receipt(target.lampId, target.idempotencyKey) }),
+        receipt: target => ({ receipt: service.receipt(target.deviceId, target.idempotencyKey) }),
       }, method, target, body)
     },
     resolveHookAgent: async ({ engine, runtimeHints, callerPid }) => {
@@ -3058,7 +3058,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     commandcodeNormalizers.get(sessionId)?.closeTurn()
     cursorSubagents.forget(sessionId)
     const cancelled = confirmed ? input.cancelConfirmed(record?.agentId ?? sessionId) : (input.cancel(record?.agentId ?? sessionId), Promise.resolve(true))
-    lampService?.turnEnded(record?.agentId ?? sessionId, true)
+    autonomousDeviceService?.turnEnded(record?.agentId ?? sessionId, true)
     stopHeartbeat(sessionId)
     questionWatcher.stop(sessionId)
     mirror.cancel(sessionId) // close the device's "Working…" tile (bare done, no recap) — a cancel emits no turn_ended
@@ -3603,7 +3603,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
-    await lampTransport?.stop()
+    await autonomousDeviceTransport?.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -3702,7 +3702,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
-    await lampTransport?.stop()
+    await autonomousDeviceTransport?.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -3831,7 +3831,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
   cableRef = cable
 
-  lampService = new LampService({
+  autonomousDeviceService = new AutonomousDeviceService({
     machineId: backend.machineId,
     agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
       state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
@@ -3840,36 +3840,36 @@ async function runForeground(session: AuthSession): Promise<void> {
     stop: id => cancelAgent(id, true),
     answer: (agentId, requestId, answers) => questions.answer({ agentId, requestId, answers, allowPermissions: false }),
     recent: (id, n) => mirror.recent(registry.byAgent(id)?.sessionId ?? id, n),
-    emit: frame => { lampTransport?.send(frame) },
+    emit: frame => { autonomousDeviceTransport?.send(frame) },
   })
-  lampTransport = new LampTransport({
+  autonomousDeviceTransport = new AutonomousDeviceTransport({
     machineId: backend.machineId,
     machineName: (() => { try { return readFileSync(MACHINE_NAME_FILE, 'utf8').trim() || 'This machine' } catch { return 'This machine' } })(),
     identity: relayIdentityStore.getIdentity(), dataDir: env.ADAPTER_DATA_DIR,
-    serverInstanceId: lampService.serverInstanceId, capabilities: LAMP_CAPABILITIES,
-    bind: process.env.HARNESS_LAMP_BIND || '0.0.0.0',
-    port: process.env.HARNESS_LAMP_PORT ? Number(process.env.HARNESS_LAMP_PORT) : 18474,
-    resume: resume => lampService!.resume(resume),
-    onRequest: async (lampId, request, send, capabilities) => {
+    serverInstanceId: autonomousDeviceService.serverInstanceId, capabilities: AUTONOMOUS_DEVICE_CAPABILITIES,
+    bind: process.env.HARNESS_AUTONOMOUS_DEVICE_BIND || '0.0.0.0',
+    port: process.env.HARNESS_AUTONOMOUS_DEVICE_PORT ? Number(process.env.HARNESS_AUTONOMOUS_DEVICE_PORT) : 18474,
+    resume: resume => autonomousDeviceService!.resume(resume),
+    onRequest: async (deviceId, request, send, capabilities) => {
       if (!capabilities.includes(String(request.type))) { send({ type: `${request.type}_result`, requestId: request.requestId, error: { code: 'UNSUPPORTED_CAPABILITY', message: 'Capability not negotiated' } }); return }
-      send(await lampService!.request(lampId, request))
+      send(await autonomousDeviceService!.request(deviceId, request))
     },
-    onConnected: (_lampId, resume, send) => {
-      lampService!.replay(resume, send)
+    onConnected: (_deviceId, resume, send) => {
+      autonomousDeviceService!.replay(resume, send)
       setSummaryPoolDeviceConnected(true)
       mirror.replayAll(); questionWatcher.reset()
     },
     onDisconnected: () => setSummaryPoolDeviceConnected(deviceIsWatching()),
-    onRevoked: lampId => lampService!.revoke(lampId),
+    onRevoked: deviceId => autonomousDeviceService!.revoke(deviceId),
   })
-  try { await lampTransport.start() } catch {
-    console.error('[lamp] LAN listener unavailable; existing local and relay agent connections remain available')
+  try { await autonomousDeviceTransport.start() } catch {
+    console.error('[autonomous-device] LAN listener unavailable; existing local and relay agent connections remain available')
   }
 
   // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.
   backend.onOutboundCommander = (frame) => {
-    lampService?.commander(frame as Record<string, unknown>)
+    autonomousDeviceService?.commander(frame as Record<string, unknown>)
     // THIS COMPUTER'S cards, by definition — and every one of them belongs to a tile that is on the
     // carousel, because the carousel now spans machines. The old guard dropped them whenever the wheel
     // was pointed elsewhere, which would now silence this machine's own agents.
@@ -4837,8 +4837,8 @@ switch (cmd) {
     else runForeground(session).catch(onError)
     break
   }
-  case 'lamp':
-    runLampCommand(rest, env.ADAPTER_DATA_DIR, env.PORT).then(code => { process.exitCode = code }).catch(onError)
+  case 'autonomous-device':
+    runAutonomousDeviceCommand(rest, env.ADAPTER_DATA_DIR, env.PORT).then(code => { process.exitCode = code }).catch(onError)
     break
   case 'pair':
     pairCommand(args[0]).catch(onError)
