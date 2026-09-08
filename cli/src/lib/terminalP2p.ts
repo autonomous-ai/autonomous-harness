@@ -1,10 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import { RTCPeerConnection, type RTCDataChannel, type RTCIceCandidateInit } from 'werift'
+import { env } from '../config/env.js'
 import { pickTurnUrl, selectStunUrls, type StunSelector } from './stunSelect.js'
 
 export const TERMINAL_P2P_PROTOCOL_VERSION = 1
 export const TERMINAL_P2P_CHANNEL = 'terminal-v1'
-export const TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS = 10_000
+/**
+ * The budget covers BOTH peers' gathering, not just ours, and 10s was too tight for that.
+ *
+ * Measured: our own gather is 100-400ms, but a peer whose network drops UDP to the STUN server stalls
+ * the full 5s werift gather timeout (`getCandidatePromises(addresses, timeout = 5)`, hard-coded, not
+ * exposed through RTCPeerConnection) before it can answer — 5027ms with a dead STUN in the list versus
+ * 111ms with a live one. Add a TURN allocation over TLS and one relay round trip and the answer lands
+ * around 7.2s, leaving under 3s for relay-to-relay connectivity checks, which is not enough. Observed
+ * exactly that: `answer-in +7208ms` then death at +10001ms still in `connecting`.
+ *
+ * Raising it costs nothing user-visible: a terminal that opens before the channel is ready falls back
+ * to the ws relay after `openWaitMs` (2.5s) regardless, and negotiation continuing in the background
+ * only means LATER opens get p2p. Whichever side fires first aborts for both, so both ends need this.
+ */
+export const TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS = 25_000
 export const TERMINAL_P2P_MAX_BUFFERED_BYTES = 2 * 1024 * 1024
 
 export const TERMINAL_P2P_SIGNAL_TYPES = new Set([
@@ -65,6 +80,8 @@ export interface TerminalP2pInitiatorDeps {
   onUnavailable?: (reason: string) => void
   now?: () => number
   selectStunUrls?: StunSelector
+  /** Coarse negotiation milestones, for working out WHERE a slow setup spends its time. */
+  onStep?: (step: string, elapsedMs: number) => void
 }
 
 type ReadyWaiter = (ready: boolean) => void
@@ -93,6 +110,10 @@ function peerConfig(stunUrls: string[], turn?: TurnChoice): ConstructorParameter
   if (turn) iceServers.push({ urls: [turn.url], username: turn.username, credential: turn.credential })
   return {
     iceServers,
+    // Diagnostic only (TERMINAL_P2P_FORCE_RELAY): drops host and srflx so nothing but a TURN
+    // allocation can be nominated. Note it also skips STUN gathering entirely inside werift, which is
+    // why a forced run is fast even on a network where STUN is unreachable.
+    ...(env.TERMINAL_P2P_FORCE_RELAY ? { iceTransportPolicy: 'relay' as const } : {}),
     // Left at the default 'all' deliberately: that is what produces "direct first, relay only if
     // nothing else works". werift scores candidates host 126 > srflx 100 > relay 0, so a TURN relay
     // pair is only ever nominated once every direct pair has failed. Setting 'relay' here would force
@@ -123,6 +144,20 @@ function turnChoice(turn: TerminalP2pTurn | undefined, udpReachable: boolean | n
   return url ? { url, username: turn.username, credential: turn.credential } : undefined
 }
 
+/**
+ * Does the nominated pair send its bytes through a TURN allocation?
+ *
+ * BOTH ends decide this, not just ours. One relay candidate is enough for ICE to connect, so a pair of
+ * our srflx with the peer's relay is fully relayed by Cloudflare — and reading only the local side
+ * (which is what this did at first) reports it as 'direct' and under-counts exactly the traffic that
+ * gets billed per GB. werift's RTCIceCandidate carries only the SDP line, so the type comes out of
+ * the string.
+ */
+export function isRelayedPair(local: string, remote?: string): boolean {
+  const relay = /\btyp relay\b/
+  return relay.test(local) || (typeof remote === 'string' && relay.test(remote))
+}
+
 function channelCanSend(channel: RTCDataChannel | null): channel is RTCDataChannel {
   return channel?.readyState === 'open'
     && channel.bufferedAmount < TERMINAL_P2P_MAX_BUFFERED_BYTES
@@ -141,11 +176,16 @@ export class TerminalP2pInitiator {
   private finished = false
   private timeout: ReturnType<typeof setTimeout> | null = null
   private waiters: ReadyWaiter[] = []
+  private sawAnswer = false
 
   constructor(private readonly deps: TerminalP2pInitiatorDeps) {
     this.now = deps.now ?? (() => Date.now())
     this.selectStunUrls = deps.selectStunUrls ?? selectStunUrls
     this.startedAt = this.now()
+  }
+
+  private step(label: string): void {
+    this.deps.onStep?.(label, this.now() - this.startedAt)
   }
 
   get isReady(): boolean { return this.ready && channelCanSend(this.channel) }
@@ -155,13 +195,30 @@ export class TerminalP2pInitiator {
    * through Cloudflare TURN, which is billed per GB — without reporting this we would have no idea how
    * much of the traffic costs money. `null` while still negotiating, or if werift exposes no pair.
    */
+  /**
+   * Why a negotiation went nowhere, in one line. The distinction that matters is `answer=no`: it means
+   * the peer never replied to our offer, so no candidate of ours — STUN or TURN — was ever going to be
+   * tried. That is a peer problem, not a connectivity one, and no amount of relay fixes it.
+   */
+  get negotiationDetail(): string {
+    // Both sides gather before signalling (nothing subscribes to onIceCandidate), so the candidate
+    // types live in the descriptions, NOT in the trickle frames — counting those would always read 0
+    // and hide exactly the asymmetry that matters: whether the PEER managed a relay candidate too.
+    const types = (sdp: string): string =>
+      [...new Set([...sdp.matchAll(/typ (\w+)/g)].map((m) => m[1]))].join('/') || 'none'
+    return `answer=${this.sawAnswer ? 'yes' : 'no'}`
+      + ` ours=${types(this.pc?.localDescription?.sdp ?? '')}`
+      + ` peer=${types(this.pc?.remoteDescription?.sdp ?? '')}`
+      + ` ice=${this.pc?.connectionState ?? '-'}`
+  }
+
   get transport(): 'direct' | 'relay' | null {
     const pc = this.pc
     if (!pc || !this.ready) return null
     for (const iceTransport of pc.iceTransports) {
-      // werift's RTCIceCandidate carries only the SDP line, so the type comes out of the string.
-      const line = iceTransport.getSelectedCandidatePair?.()?.local?.candidate
-      if (typeof line === 'string' && line) return /\btyp relay\b/.test(line) ? 'relay' : 'direct'
+      const pair = iceTransport.getSelectedCandidatePair?.()
+      if (!pair?.local?.candidate) continue
+      return isRelayedPair(pair.local.candidate, pair.remote?.candidate) ? 'relay' : 'direct'
     }
     return null
   }
@@ -191,6 +248,7 @@ export class TerminalP2pInitiator {
     // stop()/fail() may have run while the race was in flight. Building the peer connection now would
     // strand it: nothing holds a reference any more, so its UDP sockets would never be closed.
     if (this.finished) return
+    this.step('stun-raced')
     const pc = new RTCPeerConnection(peerConfig(stunUrls, turnChoice(this.deps.policy.turn, udpReachable)))
     const channel = pc.createDataChannel(TERMINAL_P2P_CHANNEL, { ordered: true })
     this.pc = pc
@@ -216,6 +274,7 @@ export class TerminalP2pInitiator {
         stunUrls: this.deps.policy.stunUrls,
         ...(this.deps.policy.turn ? { turn: this.deps.policy.turn } : {}),
       })
+      this.step('offer-sent')
     } catch {
       this.fail('offer_failed')
     }
@@ -229,6 +288,8 @@ export class TerminalP2pInitiator {
     if (!pc) return true
     try {
       if (type === 'p2p_answer' && typeof payload.sdp === 'string') {
+        this.sawAnswer = true
+        this.step('answer-in')
         await pc.setRemoteDescription({ type: 'answer', sdp: payload.sdp })
       } else if (type === 'p2p_ice_candidate') {
         await pc.addIceCandidate(payload.candidate ?? null)
@@ -298,6 +359,7 @@ export class TerminalP2pInitiator {
   private wirePeer(pc: RTCPeerConnection): void {
     pc.connectionStateChange.subscribe((state) => {
       if (this.pc !== pc || this.finished) return
+      this.step(`ice-${state}`)
       if (state === 'failed' || state === 'disconnected') this.fail(`peer_${state}`)
     })
   }

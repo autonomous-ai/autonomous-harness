@@ -16,6 +16,7 @@ import { WebSocket, type RawData } from 'ws'
 import type { Frame, LocalClientSink } from '../backendSocket.js'
 import type { AuthSessionManager } from './authSession.js'
 import { b64d, type Identity } from './e2ee/core.js'
+import { sid } from './log.js'
 import type { MachinePeerStore } from './e2ee/machinePeers.js'
 import { RelaySessionCrypto } from './e2ee/relayClient.js'
 import { encodeTerminalLocal, TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
@@ -232,7 +233,17 @@ export class RemoteRelayPool {
               // in-flight dedupe: begin() joins THIS race instead of starting a second one, and its
               // cost hides behind the welcome round trip. Nothing here is load-bearing for
               // correctness; drop it and the only change is a slightly later first terminal.
-              if (entry.p2pPolicy) warmStunUrls(entry.p2pPolicy.stunUrls)
+              // Unconditional, one line per machine select. Whether the backend actually handed us a
+              // TURN credential is invisible everywhere else — not in LOG_FRAMES (which only covers
+              // backendSocket, never this relay client), not in the badge, not in p2p_result — and its
+              // absence is indistinguishable from "TURN is configured but ICE preferred direct".
+              // Names only, never the credential itself.
+              if (entry.p2pPolicy) {
+                const p = entry.p2pPolicy
+                console.log(`[p2p] policy · machine=${sid(machineId)} stun=${p.stunUrls.length}`
+                  + ` turn=${p.turn ? `${p.turn.urls.length} urls` : 'NONE'} openWait=${p.openWaitMs}ms`)
+                warmStunUrls(p.stunUrls)
+              }
               try { ws.send(JSON.stringify(crypto.helloFrame())) } catch { /* the close handler below rejects */ }
               return
             }
@@ -248,8 +259,17 @@ export class RemoteRelayPool {
           if (frame.type === 'e2e_welcome') {
             const ok = crypto.handleWelcome((frame.payload ?? {}) as Record<string, unknown>)
             if (!ok) { if (!settled) { settled = true; clearTimeout(timeout); reject(new RelayConnectError('E2EE_WELCOME_INVALID')) } ; return }
-            if (entry.p2pPolicy && crypto.terminalP2pVersion === TERMINAL_P2P_PROTOCOL_VERSION) {
-              this.startP2p(entry)
+            // Three ways p2p never even starts, and until now all three looked identical from outside —
+            // the terminal just quietly stayed on the ws relay. The peer-version case is the important
+            // one: a machine whose CLI predates p2p answers no offer, so NO amount of STUN or TURN can
+            // help it. That is a very different problem from "ICE tried and failed".
+            if (!entry.p2pPolicy) {
+              console.log(`[p2p] off · machine=${sid(machineId)} backend sent no policy (rollout or kill switch)`)
+            } else if (crypto.terminalP2pVersion !== TERMINAL_P2P_PROTOCOL_VERSION) {
+              console.log(`[p2p] off · machine=${sid(machineId)} peer speaks p2p v${crypto.terminalP2pVersion},`
+                + ` we speak v${TERMINAL_P2P_PROTOCOL_VERSION} — no data channel is possible, ws relay only`)
+            } else {
+              this.startP2p(machineId, entry)
             }
             if (!settled) { settled = true; clearTimeout(timeout); resolve() }
             return
@@ -379,7 +399,7 @@ export class RemoteRelayPool {
     }
   }
 
-  private startP2p(entry: Entry): void {
+  private startP2p(machineId: string, entry: Entry): void {
     const policy = entry.p2pPolicy
     if (!policy || entry.p2p) return
     let wasDirect = false
@@ -390,13 +410,24 @@ export class RemoteRelayPool {
         try { entry.ws.send(JSON.stringify(wrapped)) } catch { /* relay close handles cleanup */ }
       },
       onData: (data) => this.handleP2pData(entry, data),
+      // Milestones, so a slow setup can be attributed instead of guessed at: our own gather runs from
+      // start to `offer-sent` (setLocalDescription awaits gathering — nothing here trickles), the peer's
+      // gather plus one relay round trip lands on `answer-in`, and everything after that is ICE
+      // connectivity checks. A 10s failure looks completely different depending on which gap owns it.
+      onStep: (step, elapsedMs) => {
+        console.log(`[p2p] step · machine=${sid(machineId)} ${step} +${Math.round(elapsedMs)}ms`)
+      },
       onState: (state, setupMs, reason) => {
         if (state === 'direct') {
           wasDirect = true
           // 'relayed' distinguishes a Cloudflare TURN path from a truly direct one. Both are "p2p" as far
           // as the terminal is concerned, but only one of them is billed per GB.
-          this.reportP2pResult(entry, 'direct', setupMs, p2p.transport === 'relay' ? 'relayed' : undefined)
+          const relayed = p2p.transport === 'relay'
+          console.log(`[p2p] connected · machine=${sid(machineId)} via=${relayed ? 'turn' : 'direct'} setup=${Math.round(setupMs)}ms`)
+          this.reportP2pResult(entry, 'direct', setupMs, relayed ? 'relayed' : undefined)
         } else if (state === 'failed' && !wasDirect) {
+          console.log(`[p2p] gave up · machine=${sid(machineId)} reason=${reason ?? 'unknown'} after=${Math.round(setupMs)}ms`
+            + ` · ${p2p.negotiationDetail} — terminals stay on the ws relay`)
           this.reportP2pResult(entry, reason === 'negotiation_timeout' ? 'timeout' : 'failed', setupMs, reason)
         }
       },
@@ -425,6 +456,25 @@ export class RemoteRelayPool {
     this.noteTerminalResponse(entry, plain, 'p2p')
   }
 
+  /**
+   * Which of the three paths this stream's bytes are on, for the local app's badge.
+   *
+   *   'p2p'   — ICE nominated a direct candidate pair.
+   *   'turn'  — there IS a data channel, but ICE could only nominate a relay pair, so every byte goes
+   *             through Cloudflare TURN. Still WebRTC, still E2EE, but billed per GB.
+   *   'relay' — no data channel at all; the bytes are riding the backend WebSocket.
+   *
+   * 'turn' is additive: 'relay' keeps the exact meaning it has always had, so an older Desktop simply
+   * drops the unknown value and shows no badge rather than mislabelling a TURN session as a WS one.
+   *
+   * A null `transport` (channel open but werift exposed no candidate pair yet) reads as 'p2p' — the
+   * same optimistic answer this frame already gave before TURN existed.
+   */
+  private linkMode(entry: Entry, streamId: string): 'p2p' | 'turn' | 'relay' {
+    if (!entry.p2pStreams.has(streamId)) return 'relay'
+    return entry.p2p?.transport === 'relay' ? 'turn' : 'p2p'
+  }
+
   private noteTerminalResponse(entry: Entry, frame: Frame, transport: 'p2p' | 'relay'): void {
     const payload = framePayload(frame)
     const streamId = typeof payload.streamId === 'string' ? payload.streamId : ''
@@ -435,7 +485,7 @@ export class RemoteRelayPool {
       // entry.p2pStreams' own post-update membership (the routing source of truth just above), not a
       // naive echo of `transport`, so a stale/duplicate terminal_ready can never report a mode that
       // doesn't match what's actually routing.
-      entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: entry.p2pStreams.has(streamId) ? 'p2p' : 'relay' } })
+      entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: this.linkMode(entry, streamId) } })
     } else if (frame.type === 'terminal_error' && requestId) {
       entry.p2pPendingOpens.delete(requestId)
     } else if (frame.type === 'terminal_closed' && streamId) {

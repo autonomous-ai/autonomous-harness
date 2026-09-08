@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  isRelayedPair,
   readTurn,
+  TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS,
   TerminalP2pInitiator,
   TerminalP2pResponderPool,
   type TerminalP2pSignal,
@@ -125,7 +127,7 @@ describe('terminal WebRTC data channel', () => {
 
     try {
       initiator.start()
-      await vi.advanceTimersByTimeAsync(10_001)
+      await vi.advanceTimersByTimeAsync(TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS + 1)
       expect(states).toContainEqual({ state: 'failed', reason: 'negotiation_timeout' })
     } finally {
       vi.useRealTimers()
@@ -217,4 +219,29 @@ describe('terminal WebRTC data channel', () => {
       await responder.stop()
     }
   }, 15_000)
+
+  // Real candidate lines, captured from a forced relay-only run against Cloudflare.
+  const RELAY = 'candidate:856fe30cc 1 udp 16777215 104.30.136.14 29000 typ relay raddr 14.161.43.75 rport 55397'
+  const SRFLX = 'candidate:2b1f0a4c9 1 udp 1686052607 14.161.43.75 55397 typ srflx raddr 192.168.1.16 rport 55397'
+  const HOST = 'candidate:9d3e77bb1 1 udp 2130706431 192.168.1.16 55397 typ host'
+
+  it('counts a pair as relayed when EITHER end is a turn allocation', () => {
+    // The half that used to be missed: our side is srflx, the peer allocated the relay, and every byte
+    // still crosses Cloudflare — reading only the local candidate reported that as direct and
+    // under-counted the traffic that gets billed.
+    expect(isRelayedPair(SRFLX, RELAY)).toBe(true)
+    expect(isRelayedPair(RELAY, SRFLX)).toBe(true)
+    expect(isRelayedPair(RELAY, RELAY)).toBe(true)
+  })
+
+  it('counts a pair as direct only when neither end relays', () => {
+    expect(isRelayedPair(HOST, HOST)).toBe(false)
+    expect(isRelayedPair(SRFLX, SRFLX)).toBe(false)
+    expect(isRelayedPair(HOST, SRFLX)).toBe(false)
+    expect(isRelayedPair(SRFLX)).toBe(false) // remote unknown
+  })
+
+  it('does not mistake a host address that merely contains the word', () => {
+    expect(isRelayedPair('candidate:1 1 udp 1 10.0.0.1 1 typ host raddr relay.example')).toBe(false)
+  })
 })

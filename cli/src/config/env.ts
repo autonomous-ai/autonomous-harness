@@ -344,6 +344,10 @@ const envSchema = z.object({
   // encrypted on the wire, so a packet capture cannot answer "what did the adapter actually send".
   // Never prints message text, transcripts, tokens or payload bodies.
   LOG_FRAMES: z.string().default('false').transform((v) => v === 'true'),
+  // TEMPORARY / diagnostic. Forces iceTransportPolicy:'relay', so the ONLY candidate either peer can
+  // offer is a Cloudflare TURN allocation — the way to exercise the relay path on a pair that would
+  // otherwise always connect directly. Costs money per GB while it is on; never ship it enabled.
+  TERMINAL_P2P_FORCE_RELAY: z.string().default('false').transform((v) => v === 'true'),
 
   // ── OpenRouter gateway agents (`ori claude`, `ori codex`, …) ───────────────────────────────────
   // An agent whose CLI is pointed at OpenRouter has no vendor credential to spend, so its recap and

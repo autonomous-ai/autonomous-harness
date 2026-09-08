@@ -45,6 +45,36 @@ describe('RemoteRelayPool reports terminal_link_mode to the local sink', () => {
     })
   })
 
+  it.each([
+    ['relay', 'turn'],
+    ['direct', 'p2p'],
+    [null, 'p2p'],
+  ])('a p2p terminal_ready whose ICE pair is %s reports mode:%s', (transport, expected) => {
+    // The data channel is up either way; what differs is which candidate pair ICE nominated. A relay
+    // pair means every byte is going through Cloudflare TURN, which is the state that costs money —
+    // and the one the badge could not tell apart before. A null pair keeps the pre-TURN optimism.
+    const entry = fakeEntry({ p2pPendingOpens: new Set(['req-turn']), p2p: { transport } })
+    pool.noteTerminalResponse(entry, { type: 'terminal_ready', payload: { requestId: 'req-turn', streamId: 'stream-turn' } }, 'p2p')
+
+    expect(entry.p2pStreams.has('stream-turn')).toBe(true)
+    expect(entry.sink.sendFrame).toHaveBeenCalledWith({
+      type: 'terminal_link_mode',
+      payload: { streamId: 'stream-turn', mode: expected },
+    })
+  })
+
+  it('a stream with no data channel stays mode:relay however the ICE pair reads', () => {
+    // Guards the additive rename: 'relay' must keep meaning "on the backend WebSocket" so an older
+    // Desktop build can never read a TURN session as a WS one.
+    const entry = fakeEntry({ p2pPendingOpens: new Set(['req-ws']), p2p: { transport: 'relay' } })
+    pool.noteTerminalResponse(entry, { type: 'terminal_ready', payload: { requestId: 'req-ws', streamId: 'stream-ws' } }, 'relay')
+
+    expect(entry.sink.sendFrame).toHaveBeenCalledWith({
+      type: 'terminal_link_mode',
+      payload: { streamId: 'stream-ws', mode: 'relay' },
+    })
+  })
+
   it('a terminal_ready delivered over relay reports mode:relay', () => {
     const entry = fakeEntry({ p2pPendingOpens: new Set(['req-2']) })
     pool.noteTerminalResponse(entry, { type: 'terminal_ready', payload: { requestId: 'req-2', streamId: 'stream-2' } }, 'relay')
