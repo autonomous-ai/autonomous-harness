@@ -2412,6 +2412,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       if (!autonomousDeviceTransport || !autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
       const transport = autonomousDeviceTransport, service = autonomousDeviceService
       return autonomousDeviceLocalRequest({
+        pairListen: options => transport.pairListen(options),
         pairStart: options => transport.pairStart(options),
         pairCancel: () => { transport.pairCancel(); return { cancelled: true } },
         pairStatus: () => transport.pairStatus(),

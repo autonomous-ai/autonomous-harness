@@ -1,6 +1,7 @@
 # Tích hợp Autonomous device với Harness CLI — protocol v1
 
-Code đã được viết; **chưa hoàn tất kiểm thử xuyên suốt hoặc trên thiết bị thật**. Contract wire đầy đủ
+Code đã triển khai và kiểm thử loopback từ Go OS client thật tới CLI thành công; **chưa thử
+trên thiết bị vật lý**. Contract wire đầy đủ
 ở [bản tiếng Anh](../autonomous-device-integration.md). Đây là mô tả implementation, không phải chứng nhận
 interoperability từ các test chưa chạy.
 
@@ -17,7 +18,10 @@ Máy mới chưa pair không mở listener. Listener tồn tại khi có trust, 
 pairing; khi không còn thì đóng trong khoảng một giây. Máy có nhiều interface nên bind địa chỉ cụ
 thể nếu địa chỉ IPv4 đầu tiên không phù hợp.
 
-Người dùng mở cửa sổ pairing tại máy tính: mã sáu ký tự, hạn 60 giây, tối đa ba lần thử PAKE.
+Máy tính mở listener tuyển kết nối 60 giây qua pair/listen, không sinh mã. Autonomous device
+tự sinh và hiển thị mã sáu ký tự rồi kết nối tới địa chỉ máy tính. Desktop/CLI nhận mã do người
+dùng nhập từ thiết bị; chỉ khi pair/start nhận đúng pending pairId mới bắt đầu PAKE. Tối đa ba
+lần thử trong cửa sổ. Không response nào trả/echo mã.
 CLI là CPace initiator; device responder. CPace tái sử dụng crypto core hiện có (Ristretto255 XMD
 SHA-512; không tương thích wire draft IETF). Không có bước so fingerprint; fingerprint chỉ hiển thị.
 
@@ -41,11 +45,13 @@ Daemon phải đang chạy. Các lệnh:
 
 ```sh
 harness autonomous-device status --json
-harness autonomous-device pair
+harness autonomous-device listen
+harness autonomous-device pair <device-code>
 harness autonomous-device pair-status
 harness autonomous-device cancel
 harness autonomous-device list --json
-harness autonomous-device pair --replace
+harness autonomous-device listen --replace
+harness autonomous-device pair <device-code> --replace
 harness autonomous-device revoke '<base64-id>'
 harness autonomous-device revoke --all
 ```
@@ -55,16 +61,19 @@ LAN trong Flutter. Kết quả là JSON trực tiếp; lỗi `{error:{code,messa
 
 | Endpoint | Mục đích |
 |---|---|
-| POST `/api/autonomous-device/pair/start` | `{}` hoặc `{replace:true}` → mã, hạn, machineId/name, address, fingerprint |
+| POST `/api/autonomous-device/pair/listen` | `{replace?}` → state listening, hạn, machineId/name, address, fingerprint; không mã |
+| POST `/api/autonomous-device/pair/start` | `{code,pairId?,replace?}` → state running và metadata pending intent; không echo mã |
 | POST `/api/autonomous-device/pair/cancel` | Hủy ứng viên/cửa sổ; giữ device chính thức |
-| GET `/api/autonomous-device/pair/status` | idle/waiting/running/paired/failed; không trả mã |
+| GET `/api/autonomous-device/pair/status` | idle/listening/waiting/running/paired/failed; không trả mã |
 | GET `/api/autonomous-device/list` | `{devices:[...]}` với id, label, fingerprint, online, pendingFirstSession |
 | GET `/api/autonomous-device/status` | listening/bind/port/address/paired/sessions/serverInstanceId/proto |
 | POST `/api/autonomous-device/revoke` | `{id}` hoặc `{all:true}` → `{revoked:n}` |
 | GET `/api/autonomous-device/receipt?deviceId=…&idempotencyKey=…` | Receipt hoặc null; URL-encode query |
 
 `paired` đếm device chính thức; list có thể có thêm ứng viên `pendingFirstSession:true`.
-`online:false` không đồng nghĩa đã unpair. Mã chỉ có trong response của pair/start.
+`online:false` không đồng nghĩa đã unpair. Thiết bị sinh và hiển thị mã. Desktop dùng `pair --code-stdin --pair-id <id>` và đóng stdin sau
+khi ghi mã; không đưa mã vào argv/log. Cả listen/start yêu cầu replace:true nếu đã có incumbent.
+Sai pairId trả STALE_PAIR; chưa có intent trả NO_INTENT; đang PAKE trả BUSY.
 
 ## Session, thao tác và độ tin cậy
 
@@ -120,9 +129,11 @@ Fixture deterministic dùng **khóa test công khai** tại
 ISK/MAC, identity ciphertext, signed hello/welcome, session keys, encrypted autonomous_device_finished (client counter 0), autonomous_device_ready (server counter 0) và
 Unicode prompt (client counter 1). Challenge có chữ ký cùng bước finished là bắt buộc trong v1.
 Generator: từ `cli/` chạy `./node_modules/.bin/tsx src/lib/autonomous-device/vectors/generate.ts`.
-Đã sinh fixture; việc sinh không phải chạy test. Sau đổi tên cuối thành Autonomous device, `npm run typecheck` thành công. Full `npm test`
-đạt 141 file/1866 test, bỏ qua 5 file/50 test; hai test password cũ timeout 5 giây khi máy đang
-build song song. Chạy lại hai suite đó cùng `src/lib/autonomous-device` sau khi hết tải đạt
-6 file/75 test, không sửa test hoặc timeout. Trước release cần
+Đã sinh fixture; việc sinh không phải chạy test. Sau sửa chiều pairing, `npm run typecheck` đạt; full `npm test` đạt 144 file/1873 test,
+bỏ qua 5 file/50 test (30,41 giây). Trước release cần
 build CLI, fixture test chéo Go/TypeScript và thử pairing/voice trên thiết bị khi được cho phép.
 Chưa deploy hoặc pair thiết bị thật.
+
+Luồng thiết bị sinh mã đã đạt typecheck và 53 test CLI; kiểm thử Go OS client → CLI thật qua
+loopback đạt: sai mã bị từ chối, session mã hóa, list/send/dedupe, giữ incumbent khi thay thế lỗi
+và đổi thiết bị thành công. Không coi loopback là thử nghiệm trên thiết bị vật lý.

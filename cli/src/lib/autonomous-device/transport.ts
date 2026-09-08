@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http'
 import { networkInterfaces } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import WebSocket, { WebSocketServer } from 'ws'
-import { aeadOpen, aeadSeal, b64d, b64e, cpaceGenerator, cpaceISK, cpaceShared, cpaceStart, fingerprint, kcKeys, macTag, macVerify, newEphemeral, newPairCode, pairBindSig, pairBindVerify, pairKey, sessionKeys, transcriptHash, unwrapPayload, utf8, wrapPayload, type Identity } from '../e2ee/core.js'
+import { aeadOpen, aeadSeal, b64d, b64e, cpaceGenerator, cpaceISK, cpaceShared, cpaceStart, fingerprint, kcKeys, macTag, macVerify, newEphemeral, normalizeCode, pairBindSig, pairBindVerify, pairKey, sessionKeys, transcriptHash, unwrapPayload, utf8, wrapPayload, type Identity } from '../e2ee/core.js'
 import { ReplayWindow } from '../e2ee/replayWindow.js'
 import { decodeFixed, autonomousDeviceContext, signFrame, verifyFrame } from './crypto.js'
 import { AutonomousDeviceStore } from './store.js'
@@ -22,7 +22,7 @@ export interface AutonomousDeviceTransportOptions {
 export class AutonomousDeviceTransportError extends Error {
   constructor(public readonly code: string, message = code) { super(message) }
 }
-interface PairWindow { code: string; expiresAt: number; attempts: number; socket?: WebSocket; pairId?: string; y?: bigint; ya?: Uint8Array; th?: Uint8Array; key?: Uint8Array; label?: string }
+interface PairWindow { replace: boolean; expiresAt: number; attempts: number; socket?: WebSocket; pairId?: string; y?: bigint; ya?: Uint8Array; th?: Uint8Array; key?: Uint8Array; label?: string }
 interface Session { ws: WebSocket; deviceId: string; pub: string; keys: ReturnType<typeof sessionKeys>; rx: ReplayWindow; tx: number; ready: boolean; capabilities: string[]; resume?: AutonomousDeviceResume; challenge: string }
 export class AutonomousDeviceTransport {
   readonly store: AutonomousDeviceStore
@@ -72,15 +72,31 @@ export class AutonomousDeviceTransport {
     if (host === '0.0.0.0' || host === '::') host = Object.values(networkInterfaces()).flat().find(i => i?.family === 'IPv4' && !i.internal)?.address ?? '127.0.0.1'
     return `${host.includes(':') ? `[${host}]` : host}:${this.actualPort || this.options.port || 18474}`
   }
-  async pairStart(input: { replace?: boolean } = {}): Promise<AutonomousDeviceFrame> {
+  async pairListen(input: { replace?: boolean } = {}): Promise<AutonomousDeviceFrame> {
     if (this.window || this.pairingStarting) throw new AutonomousDeviceTransportError('BUSY')
     if (this.store.paired() && !input.replace) throw new AutonomousDeviceTransportError('ALREADY_PAIRED')
     this.pairingStarting = true
     try { await this.listen() } finally { this.pairingStarting = false }
     this.store.clearPending()
-    this.window = { code: newPairCode(), expiresAt: Date.now() + 60_000, attempts: 0 }
-    this.pairState = { state: 'waiting', expiresAt: this.window.expiresAt }
-    return { code: this.window.code, expiresAt: this.window.expiresAt, machineId: this.options.machineId, machineName: this.options.machineName, address: this.address(), fingerprint: fingerprint(this.options.identity.pub) }
+    this.window = { replace: input.replace === true, expiresAt: Date.now() + 60_000, attempts: 0 }
+    this.pairState = { state: 'listening', expiresAt: this.window.expiresAt, address: this.address() }
+    return { ...this.pairState, machineId: this.options.machineId, machineName: this.options.machineName, address: this.address(), fingerprint: fingerprint(this.options.identity.pub) }
+  }
+  pairStart(input: { code: string; pairId?: string; replace?: boolean }): AutonomousDeviceFrame {
+    const w = this.window
+    if (!w || w.expiresAt <= Date.now()) throw new AutonomousDeviceTransportError('EXPIRED')
+    if (this.store.paired() && (!input.replace || !w.replace)) throw new AutonomousDeviceTransportError('ALREADY_PAIRED')
+    if (!w.socket || w.socket.readyState !== WebSocket.OPEN || !w.pairId) throw new AutonomousDeviceTransportError('NO_INTENT')
+    if (input.pairId !== undefined && input.pairId !== w.pairId) throw new AutonomousDeviceTransportError('STALE_PAIR')
+    if (w.y || w.key) throw new AutonomousDeviceTransportError('BUSY')
+    if (w.attempts >= 3) throw new AutonomousDeviceTransportError('RATE_LIMITED')
+    const code = normalizeCode(input.code)
+    if (!/^[0-9A-HJKMNP-TV-Z]{6}$/.test(code)) throw new AutonomousDeviceTransportError('BAD_CODE')
+    const start = cpaceStart(cpaceGenerator(code, decodeFixed(w.pairId, 16), autonomousDeviceContext(this.options.machineId)))
+    w.attempts++; w.y = start.y; w.ya = start.Y
+    this.pairState = { state: 'running', pairId: w.pairId, deviceLabel: w.label, expiresAt: w.expiresAt, address: this.address() }
+    this.clear(w.socket, { type: 'autonomous_device_pake', pairId: w.pairId, round: 1, ya: b64e(start.Y) })
+    return this.pairStatus()
   }
   pairCancel(): { cancelled: true } { this.finishPair('CANCELLED'); this.store.clearPending(); return { cancelled: true } }
   pairStatus(): AutonomousDeviceFrame { return { ...this.pairState } }
@@ -222,14 +238,12 @@ export class AutonomousDeviceTransport {
         if (w.socket && w.socket !== ws) { this.clear(ws, { type: 'autonomous_device_pair_error', error: { code: 'BUSY' } }); return }
         if (w.attempts >= 3) { this.finishPair('RATE_LIMITED'); return }
         if (w.socket) throw new Error('unexpected intent')
-        const pairId = decodeFixed(f.pairId, 16)
+        decodeFixed(f.pairId, 16)
         if (f.role !== 'autonomous-device' || typeof f.label !== 'string' || f.label.length < 1 || f.label.length > 80 || /[\x00-\x1f\x7f]/.test(f.label)) throw new Error('invalid label')
-        w.attempts++; w.socket = ws; w.pairId = f.pairId as string; w.label = f.label
-        const start = cpaceStart(cpaceGenerator(w.code, pairId, autonomousDeviceContext(this.options.machineId)))
-        w.y = start.y; w.ya = start.Y
-        this.pairState = { state: 'running', expiresAt: w.expiresAt }
+        w.socket = ws; w.pairId = f.pairId as string; w.label = f.label
+        this.pairState = { state: 'waiting', pairId: w.pairId, deviceLabel: w.label, expiresAt: w.expiresAt, address: this.address() }
         this.clear(ws, { type: 'autonomous_device_pair_intent_result', accepted: true, machineId: this.options.machineId, machineName: this.options.machineName, ttl: Math.max(0, Math.floor((w.expiresAt - Date.now()) / 1000)) })
-        this.clear(ws, { type: 'autonomous_device_pake', pairId: w.pairId, round: 1, ya: b64e(start.Y) }); return
+        return
       }
       if (w.socket !== ws || f.pairId !== w.pairId) throw new Error('no intent')
       const ci = autonomousDeviceContext(this.options.machineId)
@@ -256,6 +270,7 @@ export class AutonomousDeviceTransport {
       this.clear(ws, { type: 'autonomous_device_pair_error', error: { code: 'CODE_MISMATCH' } })
       if (w.socket === ws) { w.socket = undefined; w.pairId = undefined; w.y = undefined; w.ya = undefined; w.key = undefined; w.th = undefined }
       if (w.attempts >= 3) this.finishPair('RATE_LIMITED')
+      else this.pairState = { state: 'listening', expiresAt: w.expiresAt, address: this.address(), error: 'CODE_MISMATCH' }
     }
   }
 }

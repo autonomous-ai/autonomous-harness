@@ -1,6 +1,7 @@
 # Autonomous device ↔ Harness CLI: implemented protocol v1
 
-Code is written; end-to-end validation and device testing are **not yet completed**. This document
+Code is implemented and the real Go OS client → CLI loopback pairing flow has passed. Physical
+device testing is **not yet completed**. This document
 replaces the proposed revisions and describes the current implementation. Do not treat fixtures or
 unexecuted tests as evidence of interoperability.
 
@@ -39,17 +40,18 @@ status, not an OS `status/data` wrapper.
 
 | Method and path | Body | Success |
 |---|---|---|
-| POST `/api/autonomous-device/pair/start` | `{}` or `{replace:true}` | `{code,expiresAt,machineId,machineName,address,fingerprint}` |
+| POST `/api/autonomous-device/pair/listen` | `{}` or `{replace:true}` | `{state:"listening",expiresAt,machineId,machineName,address,fingerprint}` |
+| POST `/api/autonomous-device/pair/start` | `{code,pairId?,replace?}` | `{state:"running",pairId,deviceLabel,expiresAt,address}` |
 | POST `/api/autonomous-device/pair/cancel` | `{}` | `{cancelled:true}` |
-| GET `/api/autonomous-device/pair/status` | — | `{state,expiresAt?,pendingFirstSession?,deviceLabel?,deviceFingerprint?,error?}` |
+| GET `/api/autonomous-device/pair/status` | — | `{state,pairId?,deviceLabel?,expiresAt?,address?,pendingFirstSession?,deviceFingerprint?,error?}` |
 | GET `/api/autonomous-device/list` | — | `{devices:[{id,label,fingerprint,pairedAt,lastSeenAt,enabled,online,pendingFirstSession}]}` |
 | POST `/api/autonomous-device/revoke` | `{id}` or `{all:true}` | `{revoked:number}` |
 | GET `/api/autonomous-device/status` | — | `{listening,bind,port,address,paired,sessions,serverInstanceId,proto:1}` |
 | GET `/api/autonomous-device/receipt?deviceId=…&idempotencyKey=…` | — | `{receipt:Receipt|null}` |
 
 `id` and `deviceId` are the **canonical base64 32-byte Ed25519 public key**, not fingerprint.
-Percent-encode query parameters. `pair/status.state` is idle/waiting/running/paired/failed. Pairing
-status never returns the code; only the initiating `pair/start` response does. `paired` in overall
+Percent-encode query parameters. `pair/status.state` is idle/listening/waiting/running/paired/failed. No management response returns a pairing code. The Autonomous device generates and displays it;
+Desktop/CLI accepts human input and sends it only through authenticated loopback management. `paired` in overall
 status counts confirmed incumbent, whereas list may also expose one pending candidate.
 `online:false` does not mean unpaired. `pendingFirstSession:true` means pairing awaits session
 confirmation. An already paired machine returns HTTP 409 `ALREADY_PAIRED`; use list for identity
@@ -59,21 +61,35 @@ CLI (daemon must already be running):
 
 ```sh
 harness autonomous-device status --json
-harness autonomous-device pair
+harness autonomous-device listen
+# Start pairing on the device with the returned computer address, then enter its displayed code:
+harness autonomous-device pair <device-code>
 harness autonomous-device pair-status
 harness autonomous-device cancel
 harness autonomous-device list --json
-harness autonomous-device pair --replace
+harness autonomous-device listen --replace
+harness autonomous-device pair <device-code> --replace
 harness autonomous-device revoke '<base64-id>'
 harness autonomous-device revoke --all
 ```
 
 ## Pairing and single-device trust
 
-Opening a local 60-second pairing window is the human authorization. CLI displays a six-character
-code. Autonomous device receives address and code. At most three PAKE attempts per window; a new window must
-be opened locally after lockout. No fingerprint matching gate: fingerprints are display metadata.
+The Autonomous device generates and displays a six-character code. To make the computer reachable,
+Desktop/CLI first opens a 60-second **enrollment listener** (`pair/listen`), which generates no code.
+The device connects to the displayed computer address and sends an intent. Desktop shows that
+pending device and asks the user for the code displayed on it. Entering that code via `pair/start`
+is the human authorization. Until then the CLI sends accepted metadata but **no PAKE round 1**.
+At most three PAKE attempts are permitted per listener window; opening a fresh window is local.
 Pairing label is 1–80 characters with no ASCII control characters.
+
+`pair/start` takes `{code,pairId?,replace?}`. Desktop must send the exact pending pairId it displayed.
+The terminal may omit pairId to target the sole pending intent. A stale supplied ID is `STALE_PAIR`,
+missing pending intent is `NO_INTENT`, an already running exchange is `BUSY`. Both listen and start
+require `replace:true` if a confirmed incumbent exists. Cancel/expiry never deletes that incumbent.
+Use `harness autonomous-device pair --code-stdin --pair-id <id> [--replace]` from Desktop: write the
+code followed by EOF to child stdin, never process arguments, logs or telemetry. Positional
+`pair <code>` remains available for deliberate terminal use. No API response echoes the code.
 
 The CLI is CPace initiator `a`; device is responder `b`. Pair ID is 16 random bytes, canonical base64.
 Only cryptographic handshake material and display metadata are cleartext.
@@ -84,7 +100,8 @@ DEVICE_CI = autonomous-e2e-pair|agent:<machineId>|a:adapter|b:autonomous-device
 
 1. Autonomous device sends `{type:"autonomous_device_pair_intent",pairId,role:"autonomous-device",label}`.
 2. CLI replies `{type:"autonomous_device_pair_intent_result",accepted:true,machineId,machineName,ttl}`,
-   then `{type:"autonomous_device_pake",pairId,round:1,ya}`. The received machine ID is provisional until PAKE
+   then waits for the human to enter the device code via `pair/start`. Only then it sends
+   `{type:"autonomous_device_pake",pairId,round:1,ya}`. The received machine ID is provisional until PAKE
    authentication succeeds; altering it changes the channel binding and fails authentication.
 3. Autonomous device derives generator from code, pair ID and CI, creates `(y,Yb)` and computes shared K,
    `isk=cpaceISK(sid,K,Ya,Yb)`, `th=transcriptHash(sid,CI,Ya,Yb)`, `kc=kcKeys(isk,CI)`.
@@ -271,10 +288,13 @@ key-confirmation step are mandatory protocol v1 fields, not an optional extensio
 ./node_modules/.bin/tsx src/lib/autonomous-device/vectors/generate.ts
 ```
 
-Generation is not a test. After the final Autonomous device rename, `npm run typecheck` passed. The full `npm test` run
-passed 141 files/1866 tests with 5 files/50 tests skipped and two unrelated 5-second password-test
-timeouts under concurrent build load. Once load cleared, rerunning the two failing suites plus
-`src/lib/autonomous-device` passed all 6 files/75 tests without changing those tests or timeouts.
-This includes real WebSocket pairing/reconnect/revoke/tamper and service/local API coverage. Before release complete
+The OS-generated-code flow passed CLI typecheck and focused tests (5 files/53 tests), plus a real
+Go OS client → CLI loopback run covering wrong-code rejection, encrypted session readiness,
+agent list/send/dedupe, incumbent preservation on failed replacement and successful replacement.
+
+Generation is not a test. Final validation after reversing pairing direction: `npm run typecheck`
+passed; full `npm test` passed 144 files/1873 tests, with 5 files/50 tests skipped (30.41 seconds).
+This includes real WebSocket pairing/reconnect/revoke/tamper, service/local API and stdin command
+coverage. Before release complete
 CLI build and cross-language fixture assertions, then an explicitly authorized physical-device
 pairing/voice flow. No device was deployed or paired here.

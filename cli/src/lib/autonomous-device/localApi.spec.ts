@@ -4,7 +4,8 @@ import { autonomousDeviceLocalRequest, type AutonomousDeviceManagement } from '.
 const id = Buffer.alloc(32, 255).toString('base64')
 function fixture() {
   return {
-    pairStart: vi.fn().mockResolvedValue({ code: 'ABC234' }),
+    pairListen: vi.fn().mockResolvedValue({ state: 'listening' }),
+    pairStart: vi.fn().mockResolvedValue({ state: 'running' }),
     pairCancel: vi.fn().mockReturnValue({ cancelled: true }),
     pairStatus: vi.fn().mockReturnValue({ state: 'waiting' }),
     list: vi.fn().mockReturnValue({ devices: [] }),
@@ -15,11 +16,20 @@ function fixture() {
 }
 
 describe('device local management validation', () => {
+  it('opens only enrollment listening and passes the device-displayed code to the matching intent', async () => {
+    const service = fixture(), pairId = Buffer.alloc(16, 1).toString('base64')
+    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/listen', { replace: true }))
+      .toEqual({ status: 200, body: { state: 'listening' } })
+    expect(service.pairListen).toHaveBeenCalledWith({ replace: true })
+    expect((await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start', { code: 'ABC234', pairId })).status).toBe(200)
+    expect(service.pairStart).toHaveBeenCalledWith({ code: 'ABC234', pairId })
+    expect((await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start', {})).status).toBe(400)
+  })
   it('passes explicit replacement and returns service data without an extra envelope', async () => {
     const service = fixture()
-    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start', { replace: true }))
-      .toEqual({ status: 200, body: { code: 'ABC234' } })
-    expect(service.pairStart).toHaveBeenCalledWith({ replace: true })
+    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start', { code: 'ABC234', replace: true }))
+      .toEqual({ status: 200, body: { state: 'running' } })
+    expect(service.pairStart).toHaveBeenCalledWith({ code: 'ABC234', replace: true })
   })
 
   it.each([null, [], true, { replace: 'true' }, { replace: 1 }, { replace: true, all: true }])(
@@ -81,10 +91,10 @@ describe('device local management validation', () => {
   it('maps already-paired to conflict and hides unexpected internal errors', async () => {
     const service = fixture()
     service.pairStart.mockRejectedValue(Object.assign(new Error('A device is already paired'), { code: 'ALREADY_PAIRED' }))
-    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start'))
+    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start', { code: 'ABC234' }))
       .toEqual({ status: 409, body: { error: { code: 'ALREADY_PAIRED', message: 'A device is already paired' } } })
     service.pairStart.mockRejectedValue(new Error('secret-file-content'))
-    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start'))
+    expect(await autonomousDeviceLocalRequest(service, 'POST', '/api/autonomous-device/pair/start', { code: 'ABC234' }))
       .toEqual({ status: 500, body: { error: { code: 'INTERNAL_ERROR', message: 'Autonomous device management request failed' } } })
   })
 

@@ -242,17 +242,21 @@ turn aborts a stale recap.
 
 ## Pair an Autonomous device over LAN
 
-Start the Harness daemon, then run `harness autonomous-device pair`. Enter the returned address and six-character
-code on the device within 60 seconds. Desktop may expose the same pairing controls; it does not need
+Start the Harness daemon, then run `harness autonomous-device listen`. Start pairing on the
+Autonomous device using the returned computer address. The device generates and displays a
+six-character code; enter it on the computer with `harness autonomous-device pair <device-code>`
+within the 60-second enrollment window. The computer never generates or displays that code. Desktop may expose the same pairing controls; it does not need
 to remain open after pairing. The device controls agents on this machine only.
 
 ```sh
 harness autonomous-device status --json
-harness autonomous-device pair
+harness autonomous-device listen
+harness autonomous-device pair <device-code>
 harness autonomous-device pair-status
 harness autonomous-device list --json
 harness autonomous-device cancel
-harness autonomous-device pair --replace
+harness autonomous-device listen --replace
+harness autonomous-device pair <device-code> --replace
 harness autonomous-device revoke '<base64 identity id from list>'
 harness autonomous-device revoke --all
 ```
@@ -270,3 +274,7 @@ See [the full contract](../docs/autonomous-device-integration.md) and
 [Vietnamese guide](../docs/vi/autonomous-device-integration_vi.md). CLI typecheck and tests pass; cross-repository
 and physical-device validation are pending. Do not automatically resend a voice command after a
 connection loss: reconcile its receipt first, since `unknown` does not mean it failed to send.
+
+Desktop integrations submit the device-displayed code with `harness autonomous-device pair --code-stdin
+--pair-id <pending-id>` (one command), writing the code to stdin and closing stdin. Add `--replace`
+to both listen and pair when explicitly replacing an incumbent. Management responses never echo codes.
