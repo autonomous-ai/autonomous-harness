@@ -31,7 +31,7 @@
  */
 
 import { ENGINES, type AgentEngine } from '../engines/types.js'
-import { engineBin } from './engineBin.js'
+import { engineBin, enginePathOverride } from './engineBin.js'
 import { commandAvailableInInteractiveShell } from './engineLaunch.js'
 import { engineInstallRecipe } from './engineInstall.js'
 
@@ -42,7 +42,7 @@ export interface EngineAvailability {
   readonly installed: boolean
   /** The command that was probed — `command[0]` of a launch. Null when the engine has no binary. */
   readonly command: string | null
-  /** Whether Harness has a citable install line for it (see `engineInstall.ts`). */
+  /** Whether Harness can apply the official recipe without overriding a custom launch path. */
   readonly installable: boolean
 }
 
@@ -90,10 +90,14 @@ export async function probeEngines(
       if (index >= engines.length) return
       const engine = engines[index]
       const command = launchCommand(engine)
+      // An explicit path is a user-owned launch contract. A vendor installer creates its own
+      // default binary; it cannot repair that path, so do not offer an install that would silently
+      // ignore the override.
+      const recipe = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
       let installed = false
       if (command) {
         try {
-          installed = await commandAvailableInInteractiveShell(command)
+          installed = await commandAvailableInInteractiveShell(command, undefined, recipe)
         } catch {
           // The probe has its own 5s timeout and resolves false rather than rejecting; this catch is
           // for the spawn itself failing. Unknown reads as not installed, which is the safe way
@@ -106,7 +110,7 @@ export async function probeEngines(
         engine,
         installed,
         command,
-        installable: !installed && command !== null && engineInstallRecipe(engine) !== null,
+        installable: !installed && command !== null && recipe !== undefined,
       }
     }
   }

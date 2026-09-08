@@ -1364,7 +1364,7 @@ export class BackendSocket {
                 installed: entry.installed,
                 command: entry.command,
                 installable: entry.installable,
-                installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
+                installCommand: entry.installable ? engineInstallRecipe(entry.engine).command : null,
               })),
             }))
             .catch(() => reply(type, requestId, { error: 'ENGINE_PROBE_FAILED' }))

@@ -26,7 +26,7 @@ describe('canonical engine CLI commands', () => {
     expect(ENGINES.map((engine) => [engine, ENGINE_CLI_COMMANDS[engine]])).toEqual([
       ['claude', 'claude'],
       ['codex', 'codex'],
-      ['cursor', 'agent'],
+      ['cursor', 'cursor-agent'],
       ['opencode', 'opencode'],
       ['pi', 'pi'],
       ['hermes', 'hermes'],

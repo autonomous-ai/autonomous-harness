@@ -20,7 +20,9 @@ export { ENGINES }
 export const ENGINE_CLI_COMMANDS: Readonly<Record<AgentEngine, string>> = {
   claude: 'claude',
   codex: 'codex',
-  cursor: 'agent',
+  // Cursor and Grok both publish `agent`; Cursor's documented, unambiguous command is
+  // `cursor-agent`, so creation must use that and keep `agent` for discovery only.
+  cursor: 'cursor-agent',
   opencode: 'opencode',
   pi: 'pi',
   hermes: 'hermes',
@@ -179,7 +181,8 @@ function vendorFallbackCommands(engine: AgentEngine): string[] {
   const home = homedir()
   switch (engine) {
     case 'claude': return [join(home, '.local', 'bin', 'claude')]
-    case 'cursor': return [join(home, '.local', 'bin', 'agent'), join(home, '.local', 'bin', 'cursor-agent')]
+    case 'codex': return [join(home, '.local', 'bin', 'codex')]
+    case 'cursor': return [join(home, '.local', 'bin', 'cursor-agent'), join(home, '.local', 'bin', 'agent')]
     case 'opencode': return [join(home, '.opencode', 'bin', 'opencode')]
     case 'hermes': return [join(home, '.local', 'bin', 'hermes')]
     case 'devin': return [join(home, '.local', 'bin', 'devin')]
@@ -412,7 +415,8 @@ export function engineBin(engine: AgentEngine): string {
   switch (engine) {
     case 'claude': return env.CLAUDE_PATH || ENGINE_CLI_COMMANDS.claude
     case 'codex': return process.env.CODEX_PATH || ENGINE_CLI_COMMANDS.codex
-    // Cursor's CLI is installed as `agent`, not `cursor`.
+    // `cursor-agent` is the vendor-documented command; `agent` remains a discovery alias only
+    // because Grok publishes the same basename.
     case 'cursor': return env.CURSOR_PATH || ENGINE_CLI_COMMANDS.cursor
     case 'opencode': return env.OPENCODE_PATH || ENGINE_CLI_COMMANDS.opencode
     case 'pi': return env.PI_PATH || ENGINE_CLI_COMMANDS.pi

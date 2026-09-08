@@ -44,7 +44,7 @@ import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession
 import { handOffToGrid } from './lib/gridHandoff.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
-import { ENGINE_CLI_COMMANDS, ENGINES, engineBin } from './lib/engineBin.js'
+import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
@@ -3111,7 +3111,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Do not start a second interactive login shell merely to ask whether the engine is installed.
     // The pane's own shell performs the same check before exec, and installs only when necessary.
     // This removes ~1s of shell startup from the click-to-terminal critical path.
-    const installIfMissing = engineInstallRecipe(engine)?.command
+    const installIfMissing = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
     // Clearing the vendor credentials this launch does NOT set is part of pointing an agent at a
     // grid, not an extra. An engine chooses its provider from whatever it can see, and an inherited
     // key wins on its own terms — OpenCode picked Anthropic over a grid it had been handed, and said
@@ -3181,7 +3181,7 @@ async function runForeground(session: AuthSession): Promise<void> {
             return
           }
           if (paneState.dead) {
-            const installed = await commandAvailableInInteractiveShell(command[0])
+            const installed = await commandAvailableInInteractiveShell(command[0], undefined, installIfMissing)
             const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
             const detail = installed
               ? `${engine} exited before its engine process became ready. See the terminal output for details.`

@@ -11,6 +11,7 @@ import {
 } from './engineLaunch.js'
 import { ENGINES } from '../engines/types.js'
 import { engineBin } from './engineBin.js'
+import type { EngineInstallRecipe } from './engineInstall.js'
 
 describe('buildEngineLaunchArgv', () => {
   it('wraps zsh in its interactive login form and execs the resolved binary', () => {
@@ -129,6 +130,22 @@ describe('commandAvailableInInteractiveShell', () => {
     await expect(commandAvailableInInteractiveShell('kilo', bashProbeShell())).resolves.toBe(true)
     await expect(commandAvailableInInteractiveShell('missing-engine', bashProbeShell())).resolves.toBe(false)
   })
+
+  it('recognizes an installed vendor path before the shell profile has it on PATH', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-engine-vendor-bin-'))
+    dirs.push(binDir)
+    const installed = executable(binDir, 'cursor-agent')
+    process.env.HARNESS_ENGINE_TEST_PATH = '/usr/bin:/bin'
+    const recipe: EngineInstallRecipe = {
+      command: 'false',
+      source: 'test fixture',
+      executable: { names: ['cursor-agent'], absolutePaths: [installed] },
+    }
+
+    await expect(
+      commandAvailableInInteractiveShell('cursor-agent', bashProbeShell(), recipe),
+    ).resolves.toBe(true)
+  })
 })
 
 describe('buildEngineLaunchArgv with installFirst', () => {
@@ -184,18 +201,43 @@ describe('buildEngineLaunchArgv with installFirst', () => {
 })
 
 describe('buildEngineLaunchArgv with installIfMissing', () => {
-  const script = (install: string): string =>
+  const recipe = (
+    command: string,
+    executable: EngineInstallRecipe['executable'] = { names: ['harness-no-such-engine'] },
+  ): EngineInstallRecipe => ({ command, source: 'test fixture', executable })
+  const script = (install: EngineInstallRecipe): string =>
     buildEngineLaunchArgv('opencode', { installIfMissing: install }, '/bin/zsh')[2]
 
   it('execs an installed engine without running the installer', async () => {
-    await expect(runPaneScript(script('false'))).resolves.toMatchObject({ code: 0, ranEngine: true })
+    await expect(runPaneScript(script(recipe('false')))).resolves.toMatchObject({ code: 0, ranEngine: true })
   })
 
   it('runs the installer inside the pane when the engine is absent', async () => {
-    const result = await runPaneScript(script('false'), 'harness-no-such-engine')
+    const result = await runPaneScript(script(recipe('false')), 'harness-no-such-engine')
     expect(result.ranEngine).toBe(false)
     expect(result.code).toBe(1)
     expect(result.stdout).toContain('engine is missing')
+  })
+
+  it('execs a vendor path after install even when the current PATH did not reload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'harness-engine-installed-'))
+    dirs.push(dir)
+    const source = join(dir, 'source-engine')
+    const installed = join(dir, 'new-engine')
+    writeFileSync(source, '#!/bin/sh\n/usr/bin/printf "%s" "$1"\n')
+    chmodSync(source, 0o700)
+    const install = `cp ${JSON.stringify(source)} ${JSON.stringify(installed)}`
+    const result = await runPaneScript(
+      script(recipe(install, { names: ['harness-no-such-engine'], absolutePaths: [installed] })),
+      'harness-no-such-engine',
+    )
+    expect(result).toMatchObject({ code: 0, ranEngine: true })
+  })
+
+  it('reports a successful install that did not provide an executable', async () => {
+    const result = await runPaneScript(script(recipe('true')), 'harness-no-such-engine')
+    expect(result).toMatchObject({ code: 1, ranEngine: false })
+    expect(result.stdout).toContain('install completed, but its executable could not be found')
   })
 })
 

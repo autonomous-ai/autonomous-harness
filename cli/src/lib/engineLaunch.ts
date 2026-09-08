@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
-import { userInfo } from 'node:os'
-import { isAbsolute, basename } from 'node:path'
+import { homedir, userInfo } from 'node:os'
+import { isAbsolute, basename, join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import { binaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
+import type { EngineInstallRecipe } from './engineInstall.js'
 
 /**
  * Best-effort "skip permission prompts" flag per engine, confirmed against each vendor's own docs.
@@ -56,7 +57,7 @@ export interface LaunchCommandOptions {
    */
   installFirst?: string
   /** Install only when command[0] is absent, checked inside the pane's already-started shell. */
-  installIfMissing?: string
+  installIfMissing?: EngineInstallRecipe
   /**
    * Environment variables to clear in the pane before the engine starts — the vendor credentials a
    * grid launch must not leave lying around. See `gridConflictingEnvToClear` in `gridLaunch.ts`,
@@ -232,19 +233,95 @@ function installThenExecScript(install: string): string {
   ].join('\n')
 }
 
-function installIfMissingThenExecScript(install: string): string {
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function installedPathCandidates(recipe: EngineInstallRecipe): string[] {
   return [
-    'resolved="$(command -v "$1" 2>/dev/null)" || true',
-    'if [ -n "$resolved" ] && [ -f "$resolved" ] && [ -x "$resolved" ]; then exec "$@"; fi',
+    ...(recipe.executable.homeRelativePaths ?? []).map((path) => join(homedir(), path)),
+    ...(recipe.executable.absolutePaths ?? []),
+  ]
+}
+
+/**
+ * Install-if-missing has to resolve twice: before installing, and again after it returns.
+ *
+ * A `curl | bash` installer cannot export PATH back into its parent shell. Several supported
+ * vendors correctly put their binary under ~/.local/bin and update a profile for the NEXT shell,
+ * which previously made this very pane print `command not found` after a successful install. The
+ * source-owned candidate paths below bridge that one-shell gap without sourcing arbitrary profile
+ * files a second time. npm installs also get their active global prefix as a fallback.
+ */
+function installIfMissingThenExecScript(recipe: EngineInstallRecipe): string {
+  const install = recipe.command
+  const names = recipe.executable.names.map(shellSingleQuote).join(' ')
+  const paths = installedPathCandidates(recipe).map(shellSingleQuote).join(' ')
+  const candidates = [names, paths].filter(Boolean).join(' ')
+  const tryCandidates = candidates
+    ? `for candidate in ${candidates}; do try_engine "$candidate" "$@" || true; done`
+    : ''
+  const tryNpmGlobal = recipe.executable.npmGlobal
+    ? [
+      'npm_prefix="$(npm prefix -g 2>/dev/null)" || true',
+      `if [ -n "$npm_prefix" ]; then for bin in ${names}; do try_engine "$npm_prefix/bin/$bin" "$@" || true; done; fi`,
+    ].join('\n')
+    : ''
+  return [
+    'resolve_engine() {',
+    '  candidate="$1"',
+    '  resolved=""',
+    '  case "$candidate" in',
+    '    */*) resolved="$candidate" ;;',
+    '    *) resolved="$(command -v "$candidate" 2>/dev/null)" || true ;;',
+    '  esac',
+    '  [ -n "$resolved" ] && [ -f "$resolved" ] && [ -x "$resolved" ]',
+    '}',
+    'try_engine() {',
+    '  candidate="$1"',
+    '  shift',
+    '  if ! resolve_engine "$candidate"; then return 1; fi',
+    '  shift',
+    '  exec "$resolved" "$@"',
+    '}',
+    'try_engine "$1" "$@" || true',
+    tryCandidates,
+    tryNpmGlobal,
     `printf '%s\\n' 'harness: engine is missing — installing it in this terminal' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
-    `if eval ${JSON.stringify(install)}; then exec "$@"; fi`,
+    `if eval ${JSON.stringify(install)}; then`,
+    '  hash -r 2>/dev/null || true',
+    '  try_engine "$1" "$@" || true',
+    `  ${tryCandidates}`,
+    tryNpmGlobal.split('\n').map((line) => `  ${line}`).join('\n'),
+    `  printf '\\n%s\\n' 'harness: the install completed, but its executable could not be found. Check the installer output and PATH above.'`,
+    '  exit 1',
+    'fi',
     `printf '\\n%s\\n' 'harness: the install failed, so the agent was not started. The command is above; fix it and create the agent again.'`,
+    'exit 1',
+  ].filter(Boolean).join('\n')
+}
+
+function availabilityScript(recipe: EngineInstallRecipe | undefined): string {
+  const names = recipe?.executable.names.map(shellSingleQuote).join(' ') ?? ''
+  const paths = recipe ? installedPathCandidates(recipe).map(shellSingleQuote).join(' ') : ''
+  const candidates = [names, paths].filter(Boolean).join(' ')
+  return [
+    `for candidate in "$@" ${candidates}; do`,
+    '  case "$candidate" in',
+    '    */*) resolved="$candidate" ;;',
+    '    *) resolved="$(command -v "$candidate" 2>/dev/null)" || true ;;',
+    '  esac',
+    '  if [ -n "$resolved" ] && [ -f "$resolved" ] && [ -x "$resolved" ]; then exit 0; fi',
+    'done',
+    ...(recipe?.executable.npmGlobal ? [
+      'npm_prefix="$(npm prefix -g 2>/dev/null)" || true',
+      'if [ -n "$npm_prefix" ]; then',
+      `  for bin in ${names}; do [ -f "$npm_prefix/bin/$bin" ] && [ -x "$npm_prefix/bin/$bin" ] && exit 0; done`,
+      'fi',
+    ] : []),
     'exit 1',
   ].join('\n')
 }
-
-const AVAILABILITY_SCRIPT = 'resolved="$(command -v "$1" 2>/dev/null)" || exit 1\n'
-  + '[ -n "$resolved" ] && [ -f "$resolved" ] && [ -x "$resolved" ]'
 
 /**
  * Does the same interactive shell that launches a new agent resolve this CLI?
@@ -255,13 +332,17 @@ const AVAILABILITY_SCRIPT = 'resolved="$(command -v "$1" 2>/dev/null)" || exit 1
 export async function commandAvailableInInteractiveShell(
   command: string,
   shell: string | undefined = undefined,
+  recipe: EngineInstallRecipe | undefined = undefined,
 ): Promise<boolean> {
   const interactive = interactiveEngineShell(shell)
-  if (!interactive) return binaryOnPath(command)
+  if (!interactive) {
+    return binaryOnPath(command)
+      || (recipe ? installedPathCandidates(recipe).some((candidate) => binaryOnPath(candidate)) : false)
+  }
   return await new Promise((resolve) => {
     execFile(
       interactive.path,
-      [...interactive.args, AVAILABILITY_SCRIPT, 'harness-engine-probe', command],
+      [...interactive.args, availabilityScript(recipe), 'harness-engine-probe', command],
       { timeout: 5_000 },
       (error) => resolve(!error),
     )
