@@ -562,6 +562,21 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('says how many of the agents it just sent are on the carousel', async () => {
+    // The dial walks the first N and merely knows the rest. A firmware that
+    // predates the field ignores it and walks them all, exactly as before.
+    const agents: CableAgent[] = [
+      { id: 'a1', name: 'one' },
+      { id: 'a2', name: 'two', offRing: true },
+    ]
+    const { session, port } = await connect(makeHost({ listAgents: async () => agents }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await session.pushAgents()
+
+    expect(port.sent.filter((m) => m.t === 'agents.end').at(-1)).toMatchObject({ ring: 1 })
+    await session.stop()
+  })
+
   it('marks a summary quiet when the window already has that agent on screen', async () => {
     const { session, port } = await connect(makeHost({}))
     port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })

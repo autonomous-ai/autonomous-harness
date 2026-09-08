@@ -8,6 +8,7 @@
 // read, the router is the one the backend already calls for remote machines, and the turn events arrive
 // as the very `commander_event` cards the WiFi device receives — teed at the socket rather than emitted
 // again here, so the two device surfaces cannot drift.
+import { deskRing, type DeskEdge } from './deskRing.js'
 import { join } from 'node:path'
 
 import { AuthSessionManager, readAuthSession } from '../lib/authSession.js'
@@ -43,7 +44,7 @@ export interface CableHostWiring {
   /** The runtime catalog, from the same provider the web and the WiFi device read. */
   listModels?: (agentId: string) => Promise<Array<{ id: string }>>
   /** The dial moved to another agent — the desktop window should show that agent on its own machine. */
-  focused?: (machineId: string, agentId: string) => void
+  focused?: (machineId: string, agentId: string, edge?: DeskEdge) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
   scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
   log: (line: string) => void
@@ -273,6 +274,41 @@ export class DaemonCableHost implements CableHost {
    * its whole life waiting on the network to answer a question whose answer changes every few minutes.
    * `refreshRemotes()` does the asking, off to the side, on its own slower clock.
    */
+  /**
+   * The window's tiles, in tile order. Empty until the app says otherwise, and
+   * empty is meaningful: with no tiles the ring is just the flat list.
+   */
+  private desk: string[] = []
+
+  /** Which edge of the desk an off-desk agent belongs to. Rebuilt with the ring. */
+  private deskEdge = new Map<string, DeskEdge>()
+
+  /**
+   * Every agent this daemon has listed since it started, by id.
+   *
+   * Kept for ONE purpose: a tile open in the window must always be a tile on the dial. A machine can
+   * leave the list for reasons that have nothing to do with its agents — the backend going quiet, the
+   * machine going offline while its work stays on screen — and a desk with a hole in it makes a swipe
+   * skip a tile and an agent chosen in the window have nowhere to land.
+   */
+  private knownAgents = new Map<string, CableAgent>()
+
+  /** Tiles currently held on the ring from that memory, so it is logged once and not every tick. */
+  private deskHeld = new Set<string>()
+
+  /** Last logged shape of the ring, so the line above prints on change only. */
+  private deskShape = ''
+
+  /**
+   * The window changed which agents have a tile, or what order they are in.
+   *
+   * Order is the payload, not just membership: the dial walks the same grid the
+   * eyes are on, so the tiles come first in the carousel and in their own order.
+   */
+  setDesk(agentIds: string[]): void {
+    this.desk = [...agentIds]
+  }
+
   async listAgents(): Promise<CableAgent[]> {
     const out = this.localAgents()
     const { machines } = await this.listMachines()
@@ -287,7 +323,66 @@ export class DaemonCableHost implements CableHost {
     const next = new Map<string, string>()
     for (const a of out) if (a.machineId) next.set(a.id, a.machineId)
     this.agentMachine = next
-    return out
+
+    // The order the dial actually walks: the window's tiles in the middle, and
+    // the rest arranged around them so one step off either edge is one step
+    // along the list from the tile you left. Computed HERE, on the same
+    // snapshot, because this is the only place that holds every machine's
+    // agents in one list — the window knows its tiles, not the wheel order they
+    // sit in.
+    const byId = new Map(out.map((a) => [a.id, a]))
+
+    for (const a of out) this.knownAgents.set(a.id, a)
+    // A tile the window has open, whose agent has left the list. Put it back — under the name and
+    // machine it was last seen with, so the dial's tile keeps saying what the window's tile says.
+    //
+    // Gated on being ON THE DESK, and only that: an agent that was deleted, or one simply never
+    // opened, must not be resurrected by this memory. The window holding a tile is the whole warrant.
+    const missing = this.desk.filter((id) => !byId.has(id))
+    for (const id of missing) {
+      const remembered = this.knownAgents.get(id)
+      if (!remembered) continue
+      // Appended, not slotted back where it was. When a machine drops out none of its agents are left
+      // to sit beside, so the end of the list is the only honest place; and the ring is built around
+      // the DESK, so where a tile sits in the flat list only shifts which agents the arcs reach.
+      // Never routed by position either — `agentMachine` below is what sends a turn home.
+      out.push(remembered)
+      byId.set(id, remembered)
+      if (remembered.machineId) this.agentMachine.set(id, remembered.machineId)
+      if (!this.deskHeld.has(id)) {
+        this.deskHeld.add(id)
+        this.wiring.log(`cable: holding ${id.slice(0, 8)} on the ring — the window has a tile for it`)
+      }
+    }
+    for (const id of [...this.deskHeld]) if (!missing.includes(id)) this.deskHeld.delete(id)
+
+    const ring = deskRing(out.map((a) => a.id), this.desk)
+    this.deskEdge = ring.edgeOf
+    // Walked agents first, then the ones the dial knows but does not walk to —
+    // the session sends the count of the first group, so the order is the split.
+    const listed = [...ring.order, ...ring.offRing]
+    // One line per CHANGE. The failure this catches is silent by nature: tiles
+    // whose ids this daemon does not know leave the ring flat and every agent
+    // edgeless, which looks exactly like the feature not being installed.
+    const onDesk = new Set(this.desk)
+    const short = (id: string) => `${onDesk.has(id) ? '*' : ''}${id.slice(0, 4)}`
+    // Both halves: what the thumb walks, and what the dial merely knows. Reading
+    // only the first half is how "the dial says 5 agents" looked like a counting
+    // bug rather than a list that had been cut in two.
+    const shape = ring.order.map(short).join(' ')
+      + (ring.offRing.length ? ` · off-ring ${ring.offRing.map(short).join(' ')}` : '')
+    if (shape !== this.deskShape) {
+      this.deskShape = shape
+      // The WHOLE ring, marked: `*` is a tile. Short of this the shape has to be
+      // guessed from behaviour, and every guess so far has been wrong about
+      // which end the agents nobody stepped onto ended up at.
+      this.wiring.log(`cable: ring ${shape}`)
+    }
+    const offRing = new Set(ring.offRing)
+    return listed
+      .map((id) => byId.get(id))
+      .filter((a): a is CableAgent => !!a)
+      .map((a) => (offRing.has(a.id) ? { ...a, offRing: true } : a))
   }
 
   /**
@@ -298,6 +393,11 @@ export class DaemonCableHost implements CableHost {
    */
   private machineOf(agentId: string): string {
     return this.agentMachine.get(agentId) ?? ''
+  }
+
+  /** Whether this daemon's last list held that agent — see CableHost.knows. */
+  knows(agentId: string): boolean {
+    return this.agentMachine.has(agentId)
   }
 
   /** True when the agent belongs to this computer (or is unknown, which is handled at the call site). */
@@ -316,6 +416,14 @@ export class DaemonCableHost implements CableHost {
    * blip is the common case, and dropping every one of a machine's tiles off the carousel for a few
    * seconds — then putting them back — is a far worse lie than briefly showing a list that is a minute
    * old.
+   *
+   * `unknown` is NOT a reason to drop anything, and reading it as one cost a morning. It means the
+   * backend could not be asked — `MachineListCache.degrade()` sets every machine to it in one go when
+   * the list cannot be refreshed, on the stated principle that the rows are "stale but not wrong". The
+   * agents follow the rows: kept, with no timer, until the backend actually says offline. Measured on
+   * the real dial, the old reading emptied a remote machine off the carousel mid-session with no log
+   * line, while the window went on showing those agents — which is what made a swipe run out of agents
+   * early, and an agent chosen in the window have no tile to move to.
    */
   private refreshRemotes(machines: CableMachine[]): void {
     if (!this.fleet) return
@@ -323,11 +431,18 @@ export class DaemonCableHost implements CableHost {
     for (const m of machines) {
       if (m.local) continue
       const entry = this.remoteAgents.get(m.id)
-      if (m.state !== 'ready') {
-        // Not an error and not worth a grace period: the machine itself says it has nothing to offer.
-        if (entry && entry.agents.length) this.remoteAgents.set(m.id, { agents: [], at: now, asked: entry.asked })
+      if (m.state === 'offline' || m.state === 'needs-link') {
+        // The machine ITSELF says it has nothing to offer, which is different from not being able to
+        // ask it. No grace period, but never silently: an agent leaving the carousel is exactly the
+        // event that is impossible to diagnose after the fact from its absence.
+        if (entry && entry.agents.length) {
+          this.remoteAgents.set(m.id, { agents: [], at: now, asked: entry.asked })
+          this.wiring.log(`cable: ${m.name} is ${m.state} — its ${entry.agents.length} agents left the carousel`)
+        }
         continue
       }
+      // Not ready and not refused: the backend could not be asked. Keep what it last said.
+      if (m.state !== 'ready') continue
       if (entry && now - entry.asked < REMOTE_REFRESH_MS) continue
       if (this.inFlight.has(m.id)) continue
       this.inFlight.add(m.id)
@@ -386,8 +501,13 @@ export class DaemonCableHost implements CableHost {
       this.wiring.log(`cable: ignored focus for unknown agent ${agentId}`)
       return
     }
-    this.wiring.log(`cable: focus ${machineId}/${agentId}`)
-    this.wiring.focused?.(machineId, agentId)
+    // Which tile the window should put this agent in, for one it has no tile
+    // for: the edge of the desk the agent belongs to. The dial never says which
+    // way the thumb went — it does not have to, because an agent's side of the
+    // ring already answers it.
+    const edge = this.deskEdge.get(agentId)
+    this.wiring.log(`cable: focus ${machineId}/${agentId}${edge ? ` (off-desk, ${edge})` : ''}`)
+    this.wiring.focused?.(machineId, agentId, edge)
   }
 
   scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void {

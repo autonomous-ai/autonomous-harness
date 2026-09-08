@@ -238,6 +238,86 @@ describe('DaemonCableHost.listAgents across machines', () => {
     expect(agents.map((a) => a.machineId)).toEqual(['mine', 'other', 'third'])
   })
 
+  it('keeps a machine\'s agents when the backend cannot be asked', async () => {
+    // The failure this exists for, measured on the real dial: `unknown` means the backend could not be
+    // reached — MachineListCache.degrade() marks EVERY machine with it in one go — and reading it as
+    // "the machine is gone" emptied a remote machine off the carousel mid-session, silently, while the
+    // window went on showing those agents.
+    AGENTS.length = 0
+    const machines: FleetMachine[] = [{ ...REMOTE }]
+    const host = new DaemonCableHost(wiring(), crossFleet({ other: [{ id: 'r1', name: 'api' }] }, machines))
+    expect((await settled(host)).map((a) => a.id)).toEqual(['r1'])
+
+    machines[0].state = 'unknown'
+    // Well past REMOTE_GRACE_MS: this is not a grace period, it is a different question.
+    vi.setSystemTime(Date.now() + 10 * 60_000)
+    expect((await settled(host)).map((a) => a.id)).toEqual(['r1'])
+    vi.useRealTimers()
+  })
+
+  it('drops them when the machine itself says it is offline, and says so', async () => {
+    AGENTS.length = 0
+    const log = vi.fn()
+    const machines: FleetMachine[] = [{ ...REMOTE }]
+    const host = new DaemonCableHost(wiring({ log }), crossFleet({ other: [{ id: 'r1', name: 'api' }] }, machines))
+    expect((await settled(host)).map((a) => a.id)).toEqual(['r1'])
+
+    machines[0].state = 'offline'
+    expect((await settled(host)).map((a) => a.id)).toEqual([])
+    // An agent leaving the carousel is the one event that cannot be diagnosed from its absence.
+    expect(log.mock.calls.flat().join('\n')).toContain('left the carousel')
+  })
+
+  it('holds a tile the window has open even when its machine goes offline', async () => {
+    // The desk is the contract between the two screens. A hole in it makes a swipe skip a tile and an
+    // agent chosen in the window have nowhere to land.
+    AGENTS.length = 0
+    const machines: FleetMachine[] = [{ ...REMOTE }]
+    const host = new DaemonCableHost(wiring(), crossFleet({ other: [{ id: 'r1', name: 'api' }] }, machines))
+    await settled(host)
+    host.setDesk(['r1'])
+
+    machines[0].state = 'offline'
+    const agents = await settled(host)
+    expect(agents.map((a) => a.id)).toEqual(['r1'])
+    // Under the name and machine it was last seen with, not a placeholder.
+    expect(agents[0]).toMatchObject({ name: 'api', machineId: 'other', machine: 'office-imac' })
+    expect(host.knows('r1')).toBe(true)
+  })
+
+  it('lists every agent, marking the ones the carousel does not walk', async () => {
+    // Ring first, then the rest — the session sends the count of the first
+    // group, so the ORDER is the split. Every agent is still listed, because
+    // the dial's own count and its switcher read this list.
+    AGENTS.length = 0
+    for (const agentId of ['a1', 'a2', 'a3', 'a4']) {
+      AGENTS.push({ agentId, registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    }
+    const host = new DaemonCableHost(wiring())
+    await settled(host)
+    // Tiles at both ends of the list: a2 and a3 are between them, so neither is
+    // reached by stepping off an edge.
+    host.setDesk(['a1', 'a4'])
+
+    const agents = await host.listAgents()
+    expect(agents.map((a) => a.id)).toEqual(['a1', 'a4', 'a2', 'a3'])
+    expect(agents.filter((a) => !a.offRing).map((a) => a.id)).toEqual(['a1', 'a4'])
+    expect(agents.filter((a) => a.offRing).map((a) => a.id)).toEqual(['a2', 'a3'])
+  })
+
+  it('does not resurrect an agent that has no tile', async () => {
+    // The memory is only a warrant for what the window is showing. An agent that was deleted must stay
+    // deleted.
+    AGENTS.length = 0
+    const machines: FleetMachine[] = [{ ...REMOTE }]
+    const host = new DaemonCableHost(wiring(), crossFleet({ other: [{ id: 'r1', name: 'api' }] }, machines))
+    await settled(host)
+
+    machines[0].state = 'offline'
+    expect((await settled(host)).map((a) => a.id)).toEqual([])
+    expect(host.knows('r1')).toBe(false)
+  })
+
   it('sends a turn to the agent’s OWN machine, not to the selected one', async () => {
     // The single worst outcome this feature can produce is a turn delivered to a different computer, so
     // the routing is asserted with the wheel deliberately pointed somewhere else.
@@ -262,7 +342,50 @@ describe('DaemonCableHost.listAgents across machines', () => {
 
     host.focus('r1')
 
-    expect(focused).toHaveBeenCalledWith('other', 'r1')
+    // No edge: the window has reported no tiles, so there is no desk to be off
+    // the end of and nothing for it to replace.
+    expect(focused).toHaveBeenCalledWith('other', 'r1', undefined)
+  })
+
+  it('tells the window which end of the desk an off-desk agent belongs to', async () => {
+    // The dial never reports which way the thumb went. It does not have to: an
+    // agent's side of the ring is the answer, and the ring is built here.
+    AGENTS.length = 0
+    for (const agentId of ['a1', 'a2', 'a3']) {
+      AGENTS.push({ agentId, registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    }
+    const focused = vi.fn()
+    const host = new DaemonCableHost(wiring({ focused }))
+    await settled(host)
+
+    host.setDesk(['a2'])
+    await host.listAgents()
+
+    host.focus('a3')
+    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a3', 'tail')
+    host.focus('a1')
+    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a1', 'head')
+    // On the desk already: the window focuses that tile rather than replacing
+    // one, so there is no edge to name.
+    host.focus('a2')
+    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a2', undefined)
+  })
+
+  it('pushes the agents in ring order, tiles first', async () => {
+    AGENTS.length = 0
+    for (const agentId of ['a1', 'a2', 'a3', 'a4']) {
+      AGENTS.push({ agentId, registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    }
+    const host = new DaemonCableHost(wiring({}))
+    await settled(host)
+
+    host.setDesk(['a3', 'a1'])
+    const ids = (await host.listAgents()).map((a) => a.id)
+    // Tiles in TILE order in the middle; a2 is nearer a1's end walking back,
+    // a4 nearer a3's end walking forward.
+    expect(ids.slice(ids.indexOf('a3'), ids.indexOf('a3') + 2)).toEqual(['a3', 'a1'])
+    expect(ids).toHaveLength(4)
+    expect(new Set(ids).size).toBe(4)
   })
 
   it('does not guess a machine for an unknown dial focus', async () => {

@@ -39,6 +39,8 @@ export interface CommanderMirrorOpts {
    *  badges. Omitted → defaults to hasDevice (single-machine firmware: attached == active, streams as before). */
   active?: () => boolean
   summarize: (text: string, signal?: AbortSignal, userMessage?: string, sessionId?: string) => Promise<string | null>
+  /** True when `summarize` is a local derivation rather than a model call — see startSummary. */
+  summarizeIsLocal?: boolean
   /** Agent display name for a sessionId — rides the summary's outer frame so a BACKGROUND machine's device
    *  notification shows the agent name on line 2 (its tile isn't loaded). */
   nameFor?: (sessionId: string) => string | undefined
@@ -532,8 +534,14 @@ export class CommanderMirror {
     this.trace(sessionId, `${sid} summarizing · source=${source} · textLen=${text.length} · device=${device}${this.opts.recapForce ? ' · recapForce' : ''}${ask ? ` · ask="${ask}"` : ''}`)
     // Device: busy "Summarizing…" card. Web: the "Summarizing for device…" indicator (mirrors the
     // node's handleBrainSummaryEvent — the web ignores the summary text, only toggles the flag).
-    this.emit(sessionId, { kind: 'processing', text: 'Summarizing…' })
-    this.opts.sendWeb({ type: 'turn_summary_pending', dbSessionId: sessionId, payload: { sessionId } })
+    //
+    // Both are skipped when the summary is derived locally: it lands in the same tick, so the card
+    // would be a flash of "Summarizing…" replaced before anyone could read it — a waiting state for a
+    // wait that no longer happens.
+    if (!this.opts.summarizeIsLocal) {
+      this.emit(sessionId, { kind: 'processing', text: 'Summarizing…' })
+      this.opts.sendWeb({ type: 'turn_summary_pending', dbSessionId: sessionId, payload: { sessionId } })
+    }
 
     this.opts
       .summarize(text, ac.signal, userMessage, sessionId)
@@ -553,7 +561,9 @@ export class CommanderMirror {
         } else {
           this.trace(sessionId, `${sid} summarizer returned NULL after ${ms}ms → done`)
           this.emit(sessionId, { kind: 'done', text: 'done' })
-          this.opts.sendWeb({ type: 'turn_summary_pending', dbSessionId: sessionId, payload: { sessionId, done: true } })
+          if (!this.opts.summarizeIsLocal) {
+            this.opts.sendWeb({ type: 'turn_summary_pending', dbSessionId: sessionId, payload: { sessionId, done: true } })
+          }
         }
       })
       .catch((err) => {

@@ -100,7 +100,7 @@ import { CommanderMirror } from './lib/commander.js'
 import {
   setSummaryPoolDeviceConnected,
   shutdownSummaryPool,
-  summarizeTurnText,
+  deriveTurnSummary,
   syncSummaryPoolSessions,
 } from './lib/summarize.js'
 import { setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter } from './lib/voiceRouter.js'
@@ -193,6 +193,18 @@ let cableRef: CableSession | null = null
 /** The same object the session holds — module scope so the recap gates can ask which machine is selected
  *  without threading it through every constructor between here and there. */
 let cableHostRef: DaemonCableHost | null = null
+/**
+ * The window's tiles, in tile order, as last reported.
+ *
+ * Kept HERE rather than only handed to the cable host, because the window can
+ * report them before that host exists: the local websocket server is listening
+ * long before the cable is wired up, and a daemon restart has the app
+ * reconnecting into that window. The roster is only re-sent when it CHANGES, so
+ * one early report used to leave the dial's ring flat and edgeless for as long
+ * as the tiles held still — which looks exactly like the feature not being
+ * installed, and cost most of a morning proving otherwise.
+ */
+let appPaneAgents: string[] = []
 /** Module scope for the same reason cableRef is: shutdown() has to release the socket. */
 let deviceLinkRef: DeviceLink | null = null
 
@@ -1817,15 +1829,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Live cards stream to whatever is actually rendering. The dial has one screen and it is always the
     // one in front of the user, so a cable session counts as active by construction.
     active: () => backend.hasActiveCommander() || cableWatchingLocal(),
-    summarize: async (text, signal, userMessage, sessionId) => {
-      const session = sessionId ? registry.bySession(sessionId) : undefined
-      // Gateway agents recap through OpenRouter directly (no vendor credential to spend). The probe is
-      // cached per live process, so this resolves without touching the process table again.
-      const gateway = session?.gateway === 'ori' && session.processIdentity
-        ? await probeGatewayRuntime(session.processIdentity)
-        : undefined
-      return summarizeTurnText(text, signal, userMessage, session?.engine ?? 'claude', gateway)
-    },
+    // NO MODEL IN THE LOOP. The dial is cabled to the Mac whose window already shows this text in
+    // full, so the recap is a glance and the detail is one turn of the head away. A one-shot recap
+    // cost ~9s of the user's turn to say something they were already looking at.
+    summarize: async (text) => deriveTurnSummary(text),
+    summarizeIsLocal: true,
     nameFor: (sessionId) => { const s = registry.bySession(sessionId); return s ? projectDisplayName(s) : undefined },
     agentIdFor: (sessionId) => registry.bySession(sessionId)?.agentId,
     readLastTurn: async (sessionId) => {
@@ -2762,6 +2770,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     // tiles on a grid all four are on screen, and asking which one the eye is
     // on is a question the window cannot answer honestly anyway.
     onAppPanes: (agentIds) => {
+      // ORDER matters here, not just membership. The dial's carousel is built
+      // around these — tiles first, in tile order — so the thumb walks the same
+      // grid the eyes are on. `openPaneAgents` below only ever asks "is this
+      // one on screen", which is why it can stay a set.
+      appPaneAgents = agentIds
+      cableHostRef?.setDesk(agentIds)
       const next = new Set(agentIds)
       // Logged on CHANGE only. It fires on every pane add, close and reconnect,
       // and it is the one place the whole feature is observable from — without
@@ -3762,11 +3776,18 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Both of these are LOCAL-ONLY on purpose (backend.sendLocal, not backend.send): they describe a hand
     // at this desk, not a change in what the machine is doing, and the cloud web audience may be sitting
     // at another computer entirely.
-    focused: (machineId, agentId) => backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId } }),
+    // `edge` is present only for an agent the window has NO tile for, and says
+    // which end of the desk it belongs to — so the window replaces the first
+    // tile or the last one rather than guessing, and the dial never has to
+    // report which way the thumb moved.
+    focused: (machineId, agentId, edge) =>
+      backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId, ...(edge ? { edge } : {}) } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
     log: (line) => console.log(`[cable] ${line}`),
   }, fleet)
   cableHostRef = cableHost
+  // Anything the window said while this was still being built.
+  cableHost.setDesk(appPaneAgents)
   const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
   cableRef = cable
 

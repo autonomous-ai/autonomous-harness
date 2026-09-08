@@ -215,6 +215,95 @@ async function cleanupRecapSession(engine: AgentEngine, scratch: string, session
   if (engine === 'cursor') await cleanupCursorOneShotSession(sessionId)
 }
 
+/** The tile headline. */
+export const RECAP_MAX_CHARS = 60
+/** The body the dial's tap-to-read screen shows. */
+export const BODY_MAX_CHARS = 250
+
+/**
+ * Turn the engine's own final message into the dial's `recap\n\nbody`, with no model in the loop.
+ *
+ * The dial is cabled to a Mac whose window is already showing this text in full, so the recap is a
+ * GLANCE, not a substitute for reading: whoever wants the detail turns their head. That is what buys
+ * the ~9s the one-shot used to cost on every turn, and it is why this truncates with an ellipsis where
+ * the model-written recap never did — "…" is honest here precisely because the rest is one glance away.
+ *
+ * The work is not the cut, it is what gets cut. An engine's last message is markdown: a heading, then
+ * bullets, then maybe a table. `slice(0, 60)` of that yields "## Kết quả\n\n- **SJC**: 149,1 triệu
+ * đồng/lượn" — a markdown heading and a severed word. So the text is flattened to prose first, and the
+ * recap comes from the first line that carries any.
+ */
+export function deriveTurnSummary(text: string): string | null {
+  // Markers go, LINE BREAKS STAY. Flattening first merges a label into the sentence under it — "Kết
+  // quả:" and its answer become one run with no boundary left to find, and the recap opens on the
+  // word that says least.
+  const stripped = stripMarkdown(text)
+  const body = stripped.replace(/\s+/g, ' ').trim()
+  if (!body) return null
+  const recap = clip(firstProseLine(stripped) || body, RECAP_MAX_CHARS)
+  return `${recap}\n\n${clip(body, BODY_MAX_CHARS)}`
+}
+
+/** Cut to `max` characters on a word boundary, marking the cut. Never mid-word if it can be helped. */
+function clip(text: string, max: number): string {
+  const t = text.trim()
+  if (t.length <= max) return t
+  const head = t.slice(0, max - 1)
+  const space = head.lastIndexOf(' ')
+  // Only honour the word boundary when it is not throwing most of the budget away — a long unbroken
+  // token (a path, a URL) would otherwise collapse the line to nothing.
+  return `${(space > max * 0.6 ? head.slice(0, space) : head).replace(/[\s,;:–—-]+$/, '')}…`
+}
+
+/**
+ * Markdown → one flat run of prose the dial can draw.
+ *
+ * Fenced code and tables go entirely: a tile is 466px of round glass, and half a shell command wrapped
+ * across three lines says less than the sentence next to it.
+ */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '\n')         // fenced code
+    .replace(/^\s*\|.*\|\s*$/gm, '')           // table rows
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')        // headings — the marker, not the words
+    .replace(/^\s*[-*+]\s+/gm, '')            // bullet markers
+    .replace(/^\s*\d+\.\s+/gm, '')            // ordered-list markers
+    .replace(/^\s*>\s?/gm, '')                // block quotes
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')  // links and images → their label
+    .replace(/[*_~`]/g, '')                   // emphasis and inline code marks
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+}
+
+/**
+ * The first line with real words in it.
+ *
+ * Skips lead-ins that name the shape of the answer rather than the answer — "Kết quả:", "Here's what I
+ * found:" — because those are exactly what a heading collapses into once its `##` is gone, and a tile
+ * reading "Kết quả" has told the user nothing.
+ */
+function firstProseLine(stripped: string): string {
+  // Lines first, then sentences within a line: the line is the structure markdown actually carries,
+  // and a label only reads as a label while it still has a line of its own.
+  const candidates: string[] = []
+  for (const line of stripped.split(/\n+/)) {
+    for (const piece of line.split(/(?<=[.!?])\s+/)) {
+      const candidate = piece.trim()
+      if (candidate.length < 3) continue
+      if (/^[^\p{L}\p{N}]+$/u.test(candidate)) continue   // punctuation or symbols only
+      candidates.push(candidate)
+    }
+  }
+  // A LABEL is a short line that never finishes a thought — "Kết quả:", and the same words again once
+  // a heading's `##` has been taken off it. Both name the shape of the answer instead of giving it, so
+  // skip past them while there is anything else to say. Alone, a short line IS the answer.
+  const answer = candidates.find((c) => c.length > LABEL_MAX_CHARS || /[.!?]$/.test(c)) ?? candidates[0]
+  return (answer ?? '').replace(/:$/, '')
+}
+
+/** Longer than this and a line is saying something, not naming a section. */
+const LABEL_MAX_CHARS = 24
+
 export async function summarizeTurnText(
   text: string,
   signal?: AbortSignal,

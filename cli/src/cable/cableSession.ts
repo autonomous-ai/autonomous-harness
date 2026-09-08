@@ -88,6 +88,16 @@ export interface CableAgent {
   model?: string
   effort?: string
   /**
+   * An agent the dial KNOWS but does not walk to.
+   *
+   * The carousel is built around the window's tiles, and an agent sitting
+   * between them in list order is off neither edge — see `deskRing`. It is
+   * still sent: the dial counts its agents on the overview and lists them in
+   * the pull-down switcher, and a dial that says "5 agents" to someone who has
+   * eleven is simply wrong. What it is left out of is the walk.
+   */
+  offRing?: boolean
+  /**
    * The machine this agent lives on, and that machine's name.
    *
    * THE CAROUSEL IS NO LONGER ONE MACHINE'S. Every agent on every machine is on it at once, so an agent
@@ -155,6 +165,14 @@ export interface CableHost {
    */
   answer(agentId: string, requestId: string, answers: Record<string, string>): void
   focus(agentId: string): void
+  /**
+   * Does this daemon's own agent list hold that id?
+   *
+   * Only for saying so. A `focus` for an agent the dial has no tile for lands on nothing, and from the
+   * outside that is indistinguishable from the dial ignoring the window — which is exactly the report
+   * that took a morning to explain. Optional, so a host that cannot answer simply says nothing.
+   */
+  knows?(agentId: string): boolean
   /** A finger moving on the dial's glass, on its way to whatever window is open on this computer. */
   scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void
   updateAgent(agentId: string, model?: string, effort?: string): void
@@ -886,7 +904,10 @@ export class CableSession {
       })
 
     }
-    await this.send({ t: 'agents.end' })
+    // How many of the agents just sent are on the CAROUSEL. They come first, so
+    // a count is enough, and a firmware that predates the field walks all of
+    // them exactly as it did before.
+    await this.send({ t: 'agents.end', ring: agents.filter((a) => !a.offRing).length })
   }
 
   /**
@@ -1076,7 +1097,9 @@ export class CableSession {
         // A newer selection can arrive while the remote machine RPC/list push is in flight. Never let
         // this older transaction focus after it finishes.
         if (generation !== this.appFocusGeneration || agentId === this.dialFocus) return
-        this.host.log(`cable: following the app to agent ${agentId}`)
+        // Said before the frame goes out, not after: the frame itself succeeds either way.
+        const unknown = this.host.knows?.(agentId) === false
+        this.host.log(`cable: following the app to agent ${agentId}${unknown ? ' — NOT in this daemon\'s list, the dial has no tile for it' : ''}`)
         this.expectedAppFocusEcho = agentId
         this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
         await this.focusAgent(agentId)
