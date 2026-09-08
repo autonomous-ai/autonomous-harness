@@ -1005,6 +1005,44 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(reloaded.unbound()).toHaveLength(1)
   })
 
+  it('opens a route-only pending agent and adopts the engine process without changing agentId', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%7' }],
+      cwd: '/tmp/demo',
+    })
+    expect(pending).toMatchObject({ sessionId: '', processIdentity: null, launch: { state: 'starting' } })
+    expect(registry.terminalAvailable(pending!.agentId)).toBe(true)
+
+    const adopted = registry.openProcessAgent({
+      engine: 'claude', tmuxPane: '%7', cwd: '/tmp/demo', processIdentity: processIdentity(707),
+    })
+    expect(adopted?.entry.agentId).toBe(pending?.agentId)
+    expect(adopted?.entry.launch).toEqual({ state: 'ready' })
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('persists a failed launch for reconnect while keeping its terminal route', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const pending = registry.openPendingAgent({
+      engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%8' }], cwd: '/tmp/demo',
+    })!
+    registry.setLaunch(pending.agentId, {
+      state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'See terminal output.',
+    })
+
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(pending.agentId)).toMatchObject({
+      active: false,
+      launch: { state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'See terminal output.' },
+      tmuxPane: '%8',
+    })
+  })
+
   it('keeps a name given before the agent had a session', async () => {
     // Names live under the ENGINE session id — that is what survives the launcher and comes back on a
     // resume, since the agent id is minted fresh each launch. An agent renamed while still unbound has

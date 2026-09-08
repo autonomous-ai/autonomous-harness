@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { RTCPeerConnection, type RTCDataChannel, type RTCIceCandidateInit } from 'werift'
-import { selectStunUrls, type StunSelector } from './stunSelect.js'
+import { pickTurnUrl, selectStunUrls, type StunSelector } from './stunSelect.js'
 
 export const TERMINAL_P2P_PROTOCOL_VERSION = 1
 export const TERMINAL_P2P_CHANNEL = 'terminal-v1'
@@ -27,11 +27,19 @@ export const TERMINAL_P2P_UP_TYPES = new Set([
 export type TerminalP2pState = 'connecting' | 'direct' | 'failed' | 'closed'
 export type TerminalP2pData = string | Buffer
 
+/** Cloudflare hands out one credential covering several urls; werift will only ever use one of them. */
+export interface TerminalP2pTurn {
+  urls: string[]
+  username: string
+  credential: string
+}
+
 export interface TerminalP2pPolicy {
   enabled: boolean
   protocolVersion: number
   stunUrls: string[]
   openWaitMs: number
+  turn?: TerminalP2pTurn
 }
 
 export interface TerminalP2pSignal {
@@ -41,6 +49,12 @@ export interface TerminalP2pSignal {
   candidate?: RTCIceCandidateInit | null
   reason?: string
   stunUrls?: string[]
+  /**
+   * The responder is never sent a policy of its own — the backend only checks `enabled` on that side —
+   * so the offer is the only way TURN credentials can reach it. Safe: this frame is E2EE between the
+   * two peers, the credential is short-lived, and the backend minted it in the first place.
+   */
+  turn?: TerminalP2pTurn
 }
 
 export interface TerminalP2pInitiatorDeps {
@@ -67,13 +81,46 @@ function parseSignal(value: unknown): TerminalP2pSignal | null {
   return payload as unknown as TerminalP2pSignal
 }
 
-function peerConfig(stunUrls: string[]): ConstructorParameters<typeof RTCPeerConnection>[0] {
+interface TurnChoice {
+  url: string
+  username: string
+  credential: string
+}
+
+function peerConfig(stunUrls: string[], turn?: TurnChoice): ConstructorParameters<typeof RTCPeerConnection>[0] {
+  const iceServers: Array<{ urls: string[]; username?: string; credential?: string }> = []
+  if (stunUrls.length > 0) iceServers.push({ urls: stunUrls })
+  if (turn) iceServers.push({ urls: [turn.url], username: turn.username, credential: turn.credential })
   return {
-    iceServers: stunUrls.length > 0 ? [{ urls: stunUrls }] : [],
+    iceServers,
+    // Left at the default 'all' deliberately: that is what produces "direct first, relay only if
+    // nothing else works". werift scores candidates host 126 > srflx 100 > relay 0, so a TURN relay
+    // pair is only ever nominated once every direct pair has failed. Setting 'relay' here would force
+    // every session through Cloudflare — and bill for it.
     // Terminal keyframes can approach 480 KiB. SCTP fragments them, but advertise enough room so
     // the peer never rejects the message at the WebRTC API boundary before fragmentation happens.
     maxMessageSize: 512 * 1024,
   }
+}
+
+/** Shared by both sides: same validation, same reason. Anything malformed degrades to STUN-only. */
+export function readTurn(value: unknown): TerminalP2pTurn | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const { username, credential } = raw
+  if (typeof username !== 'string' || !username || username.length > 512) return undefined
+  if (typeof credential !== 'string' || !credential || credential.length > 512) return undefined
+  const urls = Array.isArray(raw.urls)
+    ? raw.urls.filter((url): url is string => typeof url === 'string' && /^turns?:/i.test(url)).slice(0, 8)
+    : []
+  if (urls.length === 0) return undefined
+  return { urls, username, credential }
+}
+
+function turnChoice(turn: TerminalP2pTurn | undefined, udpReachable: boolean | null): TurnChoice | undefined {
+  if (!turn) return undefined
+  const url = pickTurnUrl(turn.urls, udpReachable)
+  return url ? { url, username: turn.username, credential: turn.credential } : undefined
 }
 
 function channelCanSend(channel: RTCDataChannel | null): channel is RTCDataChannel {
@@ -103,6 +150,22 @@ export class TerminalP2pInitiator {
 
   get isReady(): boolean { return this.ready && channelCanSend(this.channel) }
 
+  /**
+   * Which path ICE actually nominated, once the channel is open. 'relay' means the bytes are going
+   * through Cloudflare TURN, which is billed per GB — without reporting this we would have no idea how
+   * much of the traffic costs money. `null` while still negotiating, or if werift exposes no pair.
+   */
+  get transport(): 'direct' | 'relay' | null {
+    const pc = this.pc
+    if (!pc || !this.ready) return null
+    for (const iceTransport of pc.iceTransports) {
+      // werift's RTCIceCandidate carries only the SDP line, so the type comes out of the string.
+      const line = iceTransport.getSelectedCandidatePair?.()?.local?.candidate
+      if (typeof line === 'string' && line) return /\btyp relay\b/.test(line) ? 'relay' : 'direct'
+    }
+    return null
+  }
+
   start(): void {
     // `starting`, not `this.pc`: the peer connection is only built after the STUN race below, so for
     // those few hundred ms `this.pc` is still null and would let a second start() build a second one.
@@ -119,13 +182,16 @@ export class TerminalP2pInitiator {
 
   private async begin(): Promise<void> {
     let stunUrls = this.deps.policy.stunUrls
+    let udpReachable: boolean | null = null
     try {
-      stunUrls = await this.selectStunUrls(stunUrls)
+      const selection = await this.selectStunUrls(stunUrls)
+      stunUrls = selection.urls
+      udpReachable = selection.udpReachable
     } catch { /* the selector contract is that it never rejects; keep the policy order regardless */ }
     // stop()/fail() may have run while the race was in flight. Building the peer connection now would
     // strand it: nothing holds a reference any more, so its UDP sockets would never be closed.
     if (this.finished) return
-    const pc = new RTCPeerConnection(peerConfig(stunUrls))
+    const pc = new RTCPeerConnection(peerConfig(stunUrls, turnChoice(this.deps.policy.turn, udpReachable)))
     const channel = pc.createDataChannel(TERMINAL_P2P_CHANNEL, { ordered: true })
     this.pc = pc
     this.channel = channel
@@ -145,7 +211,10 @@ export class TerminalP2pInitiator {
         sessionId: this.sessionId,
         protocolVersion: TERMINAL_P2P_PROTOCOL_VERSION,
         sdp: local.sdp,
+        // The RAW policy list, not the raced order: the responder runs its own race, and the two peers
+        // need not agree on a server — a srflx candidate is each peer's own public address.
         stunUrls: this.deps.policy.stunUrls,
+        ...(this.deps.policy.turn ? { turn: this.deps.policy.turn } : {}),
       })
     } catch {
       this.fail('offer_failed')
@@ -364,9 +433,10 @@ export class TerminalP2pResponderPool {
       : []
     // The offerer raced these too, and may well have landed on a different server. That is fine: a
     // srflx candidate is each peer's own public address, so the two sides need not agree on who to ask.
-    const ordered = await this.selectStunUrls(offeredStunUrls)
+    const selection = await this.selectStunUrls(offeredStunUrls)
     if (this.offerSeq.get(connId) !== seq) return
-    const pc = new RTCPeerConnection(peerConfig(ordered))
+    const turn = turnChoice(readTurn(payload.turn), selection.udpReachable)
+    const pc = new RTCPeerConnection(peerConfig(selection.urls, turn))
     const entry: ResponderEntry = {
       sessionId: payload.sessionId,
       pc,

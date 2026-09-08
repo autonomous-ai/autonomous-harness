@@ -35,4 +35,13 @@ describe('agentFrame', () => {
     expect(await agentFrame(session(null), { selectedModel: 'opus', terminalAvailable: false }))
       .toMatchObject({ selectedModel: 'opus', terminal: { available: false, primary: 'tmux/%1' } })
   })
+
+  it('reports launch state and defaults legacy agents to ready', async () => {
+    const legacy = session(null)
+    expect(await agentFrame(legacy, { selectedModel: null, terminalAvailable: true }))
+      .toMatchObject({ launch: { state: 'ready' } })
+    legacy.launch = { state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'See terminal.' }
+    expect(await agentFrame(legacy, { selectedModel: null, terminalAvailable: true }))
+      .toMatchObject({ launch: { state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'See terminal.' } })
+  })
 })

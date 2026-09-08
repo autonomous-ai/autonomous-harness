@@ -826,38 +826,6 @@ export function tmuxPaneState(pane: string): Promise<TmuxPaneState | null> {
 }
 
 /**
- * The SESSION environment behind a pane, as tmux holds it.
- *
- * This is what `new-session -e` wrote and what every process in the pane inherits at exec, so it
- * answers the same question `readProcessEnv` does — with one difference that matters on macOS: tmux
- * will say, and `ps` will not. `ps` refuses to print the environment of an Apple platform binary,
- * and the pane's own shell (`/bin/zsh`) is one, so between `new-session` and the engine's `exec`
- * there is no process anyone is allowed to read. During an engine install that gap is minutes long.
- *
- * It is NOT a substitute for reading the process. tmux describes what a pane's children WILL be
- * given; only the process says what it actually got, which is the whole point of `gridAssignment.ts`
- * and the reason an agent the user started themselves reports the truth. Use this for the window
- * where no readable process exists yet, and let discovery replace it the moment one does.
- *
- * `-VAR` lines are tmux's way of saying a variable is unset for the session; they are dropped rather
- * than parsed, because "unset" and "absent" are the same thing to every caller here.
- */
-export function tmuxPaneEnvironment(pane: string): Promise<Record<string, string> | null> {
-  return new Promise((resolve) => {
-    execFile('tmux', ['show-environment', '-t', pane], { timeout: 2_000, maxBuffer: 4 << 20 }, (err, stdout) => {
-      if (err && !stdout) { resolve(null); return }
-      const env: Record<string, string> = {}
-      for (const line of stdout.split('\n')) {
-        const eq = line.indexOf('=')
-        if (eq <= 0 || line.startsWith('-')) continue
-        env[line.slice(0, eq)] = line.slice(eq + 1)
-      }
-      resolve(Object.keys(env).length > 0 ? env : null)
-    })
-  })
-}
-
-/**
  * Hand a pane back to tmux's default disposal after `create()` asked tmux to keep it when dead.
  *
  * Called as soon as a created pane becomes a real agent: from then on it must vanish when its engine

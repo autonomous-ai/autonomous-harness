@@ -47,7 +47,7 @@ import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
 import { ENGINE_CLI_COMMANDS, ENGINES, engineBin } from './lib/engineBin.js'
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
-import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, interactiveEngineShell } from './lib/engineLaunch.js'
+import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
 import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridEngineLaunch } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
@@ -60,16 +60,10 @@ import { TmuxBackend } from './lib/tmuxBackend.js'
 import { basename } from 'node:path'
 import {
   bypassPermissionActive,
-  captureTmuxPane,
   clearPaneRemainOnExit,
   resolvePaneEngineProcess,
-  resolvePaneRootProcess,
-  tmuxPaneEnvironment,
-  tmuxPaneProcessTree,
   tmuxPaneState,
-  type TmuxPaneState,
 } from './lib/tmux.js'
-import { describeAgentCreateFailure, summarizePaneOutput } from './lib/agentCreateDiagnosis.js'
 import { HerdrBackend } from './lib/herdrBackend.js'
 import {
   discoverRunningHerdrSessions,
@@ -154,7 +148,7 @@ import {
   lastCommandCodeTurnText,
 } from './engines/commandcode/normalizer.js'
 import { probeGatewayRuntime } from './lib/gatewayRuntime.js'
-import { gridAssignmentFromEnv, probeGridAssignment, sameGridAssignment } from './lib/gridAssignment.js'
+import { probeGridAssignment, sameGridAssignment } from './lib/gridAssignment.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { SessionInputController } from './lib/sessionInput.js'
 import { adaptSlashCommand } from './lib/goalCommand.js'
@@ -2276,6 +2270,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     beforeProbe: refreshHerdrTargets,
     transaction: (apply) => registry.transaction(apply),
     onDiscovered: async (observed) => {
+      const launching = observed.runtimes
+        .map((runtime) => registry.byRuntimeEngine(runtime, observed.engine))
+        .find((entry) => entry?.launch?.state !== 'ready')
       const opened = registry.openProcessAgent({
         engine: observed.engine,
         runtimes: observed.runtimes,
@@ -2301,7 +2298,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         })
       }
 
-      if (opened.isNew) {
+      if (opened.isNew || launching) {
         console.log(`[discovery] ${sid(opened.entry.agentId)} opened · engine=${observed.engine} · terminal=${observed.primaryRuntimeKey}`)
         announceSession(opened.entry)
       }
@@ -2313,10 +2310,12 @@ async function runForeground(session: AuthSession): Promise<void> {
       // could not look, which never counts as a move — see `probeGridAssignment`'s three answers.
       const gridMoved = observed.grid !== undefined
         && !sameGridAssignment(current.grid ?? null, observed.grid)
+      const wasLaunching = current.launch?.state !== undefined && current.launch.state !== 'ready'
       registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
       registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
+      if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
       await bindObservedAgent(observed)
-      if (wasDormant) {
+      if (wasDormant || wasLaunching) {
         const active = registry.byAgent(current.agentId)
         if (!active) return
         if (active.sessionId && !await attachSession(active)) {
@@ -3095,34 +3094,19 @@ async function runForeground(session: AuthSession): Promise<void> {
       // normally launched one. The key is never printed.
       console.log(describeGridLaunch(engine, grid))
     }
-    // Is the engine even here? Asked BEFORE the pane opens, because the answer changes what the pane
-    // is told to run. The New Agent dialog asked the same question through `engines_probe` and showed
-    // the user the line below — but a dialog can sit open for minutes, and the machine is what
-    // decides, so the check is repeated here rather than trusted from the wire. Nothing from the
-    // request reaches `install`: it is looked up from our own table by engine id.
-    const installFirst = await (async (): Promise<string | undefined> => {
-      const recipe = engineInstallRecipe(engine)
-      if (!recipe) return undefined
-      try {
-        if (await commandAvailableInInteractiveShell(engineBin(engine))) return undefined
-      } catch {
-        // The probe failing is not evidence the engine is missing. Launch as we always did and let
-        // the existing diagnosis explain a real absence — prepending an install on a machine that
-        // already has the engine would reinstall it behind the user's back.
-        return undefined
-      }
-      return recipe.command
-    })()
+    // Do not start a second interactive login shell merely to ask whether the engine is installed.
+    // The pane's own shell performs the same check before exec, and installs only when necessary.
+    // This removes ~1s of shell startup from the click-to-terminal critical path.
+    const installIfMissing = engineInstallRecipe(engine)?.command
     // Clearing the vendor credentials this launch does NOT set is part of pointing an agent at a
     // grid, not an extra. An engine chooses its provider from whatever it can see, and an inherited
     // key wins on its own terms — OpenCode picked Anthropic over a grid it had been handed, and said
     // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
-    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installFirst, clearEnv }
+    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
-    if (installFirst) console.log(`[agent] create ${engine} · installing first · ${installFirst}`)
     const spawned = await tmuxBackend.create({
       cwd,
       label,
@@ -3142,212 +3126,74 @@ async function runForeground(session: AuthSession): Promise<void> {
         detail: spawned.reason,
       }
     }
-    /**
-     * Follow a pane through its install, for the one thing the early return leaves undone.
-     *
-     * `create` sets `remain-on-exit` so a pane that dies can still be read, and the discovery loop
-     * clears it the moment a real agent appears. The install path returns before that loop runs, so
-     * nothing would ever clear it — and an agent whose pane lingers as a corpse after the engine
-     * quits behaves unlike every other agent on the machine.
-     *
-     * The asymmetry is deliberate and is the whole design: cleared on SUCCESS, left in place on
-     * FAILURE. A failed install must keep its pane, because the npm output in it is the only
-     * explanation the person will get, and this feature's answer to a failed install is to show them
-     * the reason rather than retry on their behalf.
-     *
-     * Fire-and-forget, and it must never throw into the caller: this is bookkeeping, and an agent
-     * that installed correctly is not made wrong by a tmux option that stayed set.
-     */
-    async function watchInstallingPane(
-      runtime: TmuxRuntimeRef,
-      installingEngine: AgentEngine,
-      agentId: string,
-    ): Promise<void> {
-      // Generous, because it is bounded by the slowest thing a vendor's installer does on a cold
-      // cache over a bad connection, not by anything the app is waiting for. Nothing blocks on it.
+    // A tmux route is enough to stream its screen. Register it before looking for a process so both
+    // loopback and relayed Desktop clients can attach while the login shell/installer is still busy.
+    const pending = registry.openPendingAgent({
+      engine,
+      runtimes: [spawned.runtime],
+      primaryRuntimeKey: terminalRouteKey(spawned.runtime),
+      cwd,
+      grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
+    })
+    if (!pending) {
+      await tmuxBackend.kill(spawned.runtime)
+      return { ok: false, error: 'REGISTRATION_FAILED', detail: 'tmux pane could not be registered' }
+    }
+    announceSession(pending)
+
+    const watchCreatedPane = async (): Promise<void> => {
       const budgetMs = 10 * 60_000
       const startedAt = Date.now()
+      let delayMs = 50
       try {
         while (Date.now() - startedAt < budgetMs) {
-          await new Promise((resolve) => setTimeout(resolve, 3_000))
-          const paneState = await tmuxPaneState(runtime.paneId)
-          // Dead pane: either the install failed (keep remain-on-exit — the output IS the report) or
-          // the agent was closed. Either way there is nothing left to clear.
-          if (!paneState || paneState.dead) return
-          // Registry entry gone — the agent was deleted while installing. Stop following it.
-          if (!registry.byAgent(agentId)) return
-          const live = await resolvePaneEngineProcess(runtime.paneId, installingEngine)
-          if (!live) continue
-          // The engine exists now. Discovery adopts the record on its own; this only returns the pane
-          // to tmux's normal disposal, the same call the discovery loop makes.
-          await clearPaneRemainOnExit(runtime.paneId)
-          console.log(`[agent] install finished · ${installingEngine} · agent ${agentId}`)
-          return
+          if (!registry.byAgent(pending.agentId)) return
+          const processIdentity = await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
+          if (processIdentity) {
+            registry.updateProcessIdentity(pending.agentId, processIdentity)
+            const ready = registry.setLaunch(pending.agentId, { state: 'ready' })
+            await clearPaneRemainOnExit(spawned.runtime.paneId)
+            if (ready) announceSession(ready)
+            void agentReconciler.triggerHint(spawned.runtime, engine).catch((error) => {
+              console.warn(`[agent] background bind failed · ${engine} · ${error instanceof Error ? error.message : error}`)
+            })
+            console.log(`[agent] create ready · ${engine} · agent ${pending.agentId} · ${Date.now() - startedAt}ms`)
+            return
+          }
+          const paneState = await tmuxPaneState(spawned.runtime.paneId)
+          if (!paneState) {
+            registry.setTerminalAvailable(pending.agentId, false)
+            announceSession(pending)
+            return
+          }
+          if (paneState.dead) {
+            const installed = await commandAvailableInInteractiveShell(command[0])
+            const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
+            const detail = installed
+              ? `${engine} exited before its engine process became ready. See the terminal output for details.`
+              : `${engine} is not installed, or its automatic install failed. See the terminal output for details.`
+            const failed = registry.setLaunch(pending.agentId, { state: 'failed', error, detail })
+            if (failed) announceSession(failed)
+            console.warn(`[agent] create failed · ${engine} · ${detail}`)
+            return
+          }
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, delayMs)
+            timer.unref?.()
+          })
+          delayMs = Math.min(delayMs * 2, 750)
         }
-        console.warn(`[agent] install watch gave up after ${Math.round(budgetMs / 60_000)}m · ${installingEngine} · agent ${agentId}`)
+        const detail = `${engine} did not expose an engine process within 10 minutes. The terminal remains available.`
+        const failed = registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT', detail })
+        if (failed) announceSession(failed)
+        console.warn(`[agent] create timed out · ${engine} · agent ${pending.agentId}`)
       } catch (error) {
-        console.warn(`[agent] install watch failed · ${installingEngine} · ${error instanceof Error ? error.message : error}`)
+        console.warn(`[agent] create watch failed · ${engine} · ${error instanceof Error ? error.message : error}`)
       }
     }
-
-    const createdAt = Date.now()
-    if (installFirst) {
-      // An install runs for tens of seconds; the discovery budget below is eight, and the app gives
-      // up on this reply at twenty. Waiting is therefore not on the table — the create would report
-      // ENGINE_DID_NOT_START for a pane that is working perfectly.
-      //
-      // So the agent is registered NOW, against the process that actually owns the pane: the user's
-      // shell, running the installer. That record is what the app opens a terminal onto, which is the
-      // whole point — the install is watched, not waited out behind a spinner.
-      //
-      // It is a placeholder for seconds, not a second kind of agent. When the engine execs, discovery
-      // registers it against this same pane and `openProcessAgent` ADOPTS this record in place — the
-      // `routeAgent` branch in registry.ts, which matches on terminal route exactly while an agent has
-      // no engine session bound. Same agentId, same tile, no flicker.
-      const placeholder = await resolvePaneRootProcess(spawned.runtime.paneId)
-      // The grid, read from TMUX rather than from the shell running the installer.
-      //
-      // Reading the shell was the obvious move and it does not work on macOS: `ps` refuses to print
-      // the environment of an Apple platform binary, and the pane's own `/bin/zsh` is one. It refuses
-      // by exiting 0 with argv alone, so the probe came back "this agent is on no grid" — a finding,
-      // from a read that never happened — and the app said "own login" over an agent already pointed
-      // at a grid, for the whole length of the install. Linux never showed it: `/proc/<pid>/environ`
-      // answers for any process of your own.
-      //
-      // tmux holds the same fact and will say it. `new-session -e` wrote this environment before
-      // anything ran, and it is what the engine inherits at exec — so this is the launch's own
-      // routing, read back, not a note we wrote about what we intended. Discovery replaces it with
-      // the process's answer the moment there is a process anyone is allowed to read.
-      const paneEnv = await tmuxPaneEnvironment(spawned.runtime.paneId)
-      const placeholderGrid = paneEnv
-        ? await gridAssignmentFromEnv(engine, paneEnv, argv.join(' '))
-        : undefined
-      const opened = placeholder
-        ? registry.openProcessAgent({
-          engine,
-          runtimes: [spawned.runtime],
-          cwd,
-          processIdentity: placeholder,
-          ...(placeholderGrid !== undefined ? { grid: placeholderGrid } : {}),
-        })
-        : null
-      if (opened) {
-        registry.setTerminalAvailable(opened.entry.agentId, true)
-        void watchInstallingPane(spawned.runtime, engine, opened.entry.agentId)
-        console.log(`[agent] create ${engine} · pane open, installing · agent ${opened.entry.agentId}`)
-        return { ok: true, session: opened.entry }
-      }
-      // No placeholder identity means `ps` or tmux could not be read — not that the pane is bad. Fall
-      // through to the normal path: the install still runs, and the worst case is the reply the app
-      // already knows how to show while the periodic reconcile picks the agent up behind it.
-      console.warn(`[agent] create ${engine} · installing, but the pane's process could not be read; falling back to discovery`)
-    }
-    // The launch runs the user's INTERACTIVE login shell before `exec`ing the engine, and that shell
-    // is the slow half: ~0.9s on a plain zsh, before the engine has even begun. Engine startup then
-    // lands past 1.3s — measured on one machine, grok at 1.38s, codex at 1.41s, claude at 1.52s. The
-    // ladder here used to total 1.35s, so all three lost the race by tens of milliseconds and a
-    // perfectly good agent was reported as ENGINE_DID_NOT_START, while its pane kept running and the
-    // periodic reconcile registered it seconds later. Dotfile-heavy setups (nvm, oh-my-zsh, asdf)
-    // are slower still. The app waits 20s for this reply, so a budget several times the measured
-    // worst case is free — and a pane that DIES is detected below, not waited out.
-    const DISCOVERY_BUDGET_MS = 8_000
-    let paneState: TmuxPaneState | null = null
-    let delayMs = 150
-    while (true) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-      await agentReconciler.triggerHint(spawned.runtime, engine)
-      const session = registry.byRuntimeEngine(spawned.runtime, engine)
-      if (session) {
-        // A real agent now: give the pane back tmux's normal disposal so it vanishes when the engine
-        // exits, like every organically started one does.
-        await clearPaneRemainOnExit(spawned.runtime.paneId)
-        return { ok: true, session }
-      }
-      // Read the pane BEFORE the availability probe further below — that probe spends up to 5s in
-      // the user's login shell, long enough for a dying engine's pane to change under us.
-      paneState = await tmuxPaneState(spawned.runtime.paneId)
-      // An engine that has already exited will never be discovered. Report it now rather than
-      // holding the dialog for the rest of the budget.
-      if (!paneState || paneState.dead) break
-      if (Date.now() - createdAt >= DISCOVERY_BUDGET_MS) break
-      // Cheap fast probes first for an engine that starts instantly, then a steady poll rather than
-      // hammering `ps` for eight seconds.
-      delayMs = Math.min(delayMs * 2, 750)
-    }
-
-    // Close the race between the last scheduled discovery snapshot and the error snapshot below.
-    // Claude's native launcher can still identify as its versioned install target during the former,
-    // then become a matchable `claude` process while painting its first-run trust prompt. This lookup
-    // owns the exact pane just created, so adopt that verified observation directly instead of asking
-    // the best-effort all-terminal inventory to see it one more time. It never sends input to the pane:
-    // folder trust remains the user's choice.
-    let engineProcess = paneState && !paneState.dead
-      ? await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
-      : null
-    if (engineProcess) {
-      const session = await agentReconciler.adoptVerified({
-        engine,
-        cwd,
-        processIdentity: engineProcess,
-        args: command.join(' '),
-        resumeSessionId: null,
-        runtimes: [spawned.runtime],
-        primaryRuntimeKey: terminalRouteKey(spawned.runtime),
-      })
-      if (session) {
-        await clearPaneRemainOnExit(spawned.runtime.paneId)
-        return { ok: true, session }
-      }
-      // Keep the diagnosis tied to the latest pane state if registration itself failed.
-      paneState = await tmuxPaneState(spawned.runtime.paneId)
-      if (!paneState || paneState.dead) engineProcess = null
-    }
-    const diagnosis = describeAgentCreateFailure({
-      state: paneState,
-      output: summarizePaneOutput(
-        await captureTmuxPane(spawned.runtime.paneId, 40, { ansi: false }) ?? '',
-      ),
-      engineBin: command[0],
-      // A dead or vanished pane has no tree; every live failure includes one for remote diagnosis.
-      processes: paneState && !paneState.dead
-        ? await tmuxPaneProcessTree(spawned.runtime.paneId)
-        : [],
-      engineProcessFound: !!engineProcess,
-      shellName: (() => {
-        const path = interactiveEngineShell()?.path
-        return path ? basename(path) : null
-      })(),
-      elapsedMs: Date.now() - createdAt,
-    })
-    // A dead pane exists only because `create` asked tmux to keep it, and its output has now been
-    // read. Dispose of it so a failed create leaves nothing behind, as it did before. A pane that is
-    // still ALIVE is deliberately left alone: it is usually a slow engine that the periodic
-    // reconcile picks up seconds later, and killing it would destroy a working agent.
-    if (paneState?.dead) await tmuxBackend.kill(spawned.runtime)
-    else await clearPaneRemainOnExit(spawned.runtime.paneId)
-    if (engineProcess) {
-      const detail = `the verified ${engine} process is running, but the local registry rejected its process-agent · ${diagnosis}`
-      console.warn(`[agent] create ${engine} failed · ${detail}`)
-      return { ok: false, error: 'REGISTRATION_FAILED', detail }
-    }
-    // A detached daemon and an already-running tmux server do not necessarily have the user's terminal
-    // PATH. The launch above therefore used the interactive shell; inspect that same context before
-    // claiming a binary is absent. Checking process.env here was a false "not installed" report on
-    // macOS and Ubuntu whenever the CLI lived in .zshrc/.bashrc (nvm, asdf, vendor installers).
-    const bin = command[0]
-    // `detail` rides back to the New Agent dialog, which already renders it. That is the whole point:
-    // the machine that knows why is frequently not the machine the person is sitting at, and the
-    // error code alone sent them to a log file they cannot open.
-    if (!await commandAvailableInInteractiveShell(bin)) {
-      const shell = interactiveEngineShell()
-      const detail = `"${bin}" is not on PATH in the user's ${shell?.label ?? 'daemon PATH'} · ${diagnosis}`
-      console.warn(`[agent] create ${engine} failed · ${detail}`)
-      return { ok: false, error: 'ENGINE_NOT_INSTALLED', detail }
-    }
-    const shell = interactiveEngineShell()
-    const detail = `"${bin}" resolves from the user's ${shell?.label ?? 'daemon PATH'} · ${diagnosis}`
-    console.warn(`[agent] create ${engine} failed · ${detail}`)
-    return { ok: false, error: 'ENGINE_DID_NOT_START', detail }
+    void watchCreatedPane()
+    console.log(`[agent] create pane open · ${engine} · agent ${pending.agentId}`)
+    return { ok: true, session: pending }
   }
 
   /**

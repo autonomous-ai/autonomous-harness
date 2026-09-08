@@ -55,6 +55,8 @@ export interface LaunchCommandOptions {
    * is the case above.
    */
   installFirst?: string
+  /** Install only when command[0] is absent, checked inside the pane's already-started shell. */
+  installIfMissing?: string
   /**
    * Environment variables to clear in the pane before the engine starts — the vendor credentials a
    * grid launch must not leave lying around. See `gridConflictingEnvToClear` in `gridLaunch.ts`,
@@ -182,9 +184,11 @@ export function buildEngineLaunchArgv(
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
   const prelude = clearEnvPrelude(opts.clearEnv)
-  const body = opts.installFirst
-    ? installThenExecScript(opts.installFirst)
-    : 'exec "$@"'
+  const body = opts.installIfMissing
+    ? installIfMissingThenExecScript(opts.installIfMissing)
+    : opts.installFirst
+      ? installThenExecScript(opts.installFirst)
+      : 'exec "$@"'
   return [interactive.path, ...interactive.args, prelude + body, 'harness-engine', ...command]
 }
 
@@ -222,6 +226,17 @@ function clearEnvPrelude(names: readonly string[] | undefined): string {
 function installThenExecScript(install: string): string {
   return [
     `printf '%s\\n' 'harness: installing the engine — this pane becomes the agent when it finishes' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
+    `if eval ${JSON.stringify(install)}; then exec "$@"; fi`,
+    `printf '\\n%s\\n' 'harness: the install failed, so the agent was not started. The command is above; fix it and create the agent again.'`,
+    'exit 1',
+  ].join('\n')
+}
+
+function installIfMissingThenExecScript(install: string): string {
+  return [
+    'resolved="$(command -v "$1" 2>/dev/null)" || true',
+    'if [ -n "$resolved" ] && [ -f "$resolved" ] && [ -x "$resolved" ]; then exec "$@"; fi',
+    `printf '%s\\n' 'harness: engine is missing — installing it in this terminal' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
     `if eval ${JSON.stringify(install)}; then exec "$@"; fi`,
     `printf '\\n%s\\n' 'harness: the install failed, so the agent was not started. The command is above; fix it and create the agent again.'`,
     'exit 1',

@@ -34,6 +34,7 @@ export type AgentFrame = {
   userId: string
   name: string
   status: string
+  launch: NonNullable<RegisteredSession['launch']>
   createdAt: string
   updatedAt: string
   tmuxPane: string | null
@@ -69,6 +70,7 @@ export async function agentFrame(
     userId: '',
     name: projectDisplayName(s),
     status: s.active ? 'active' : 'offline',
+    launch: s.launch ?? { state: 'ready' },
     createdAt: new Date(s.registeredAt).toISOString(),
     updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
     tmuxPane: s.tmuxPane || null,

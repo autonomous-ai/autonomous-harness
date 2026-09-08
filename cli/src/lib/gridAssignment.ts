@@ -220,11 +220,10 @@ export async function probeGridAssignment(
 /**
  * The same classification, over an environment the caller already holds.
  *
- * Split out for the one window where no readable process exists yet: between `tmux new-session` and
- * the engine's `exec`, the pane belongs to `/bin/zsh`, whose environment macOS will not show to
- * `ps` at all. `tmuxPaneEnvironment` can still say what that pane was given, and this turns it into
- * the same answer by the same rules — including the two engines whose provider lives in a file
- * rather than a variable, which is precisely the part a caller would get wrong on its own.
+ * Split from the read so the RULES live in one place: which variable each engine's endpoint is in,
+ * and the two engines whose provider is in a file rather than a variable at all. That last part is
+ * what a second caller would get wrong on its own, which is the whole reason this is a function and
+ * not a comment.
  *
  * There is no `undefined` here: the caller decided it could look, and did. Only [probeGridAssignment]
  * distinguishes "could not read the process".

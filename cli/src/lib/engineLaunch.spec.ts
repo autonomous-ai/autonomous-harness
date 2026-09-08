@@ -183,16 +183,33 @@ describe('buildEngineLaunchArgv with installFirst', () => {
   })
 })
 
+describe('buildEngineLaunchArgv with installIfMissing', () => {
+  const script = (install: string): string =>
+    buildEngineLaunchArgv('opencode', { installIfMissing: install }, '/bin/zsh')[2]
+
+  it('execs an installed engine without running the installer', async () => {
+    await expect(runPaneScript(script('false'))).resolves.toMatchObject({ code: 0, ranEngine: true })
+  })
+
+  it('runs the installer inside the pane when the engine is absent', async () => {
+    const result = await runPaneScript(script('false'), 'harness-no-such-engine')
+    expect(result.ranEngine).toBe(false)
+    expect(result.code).toBe(1)
+    expect(result.stdout).toContain('engine is missing')
+  })
+})
+
 /** Run one generated pane script under /bin/sh and report what it did. */
 async function runPaneScript(
   paneScript: string,
+  command = '/usr/bin/printf',
 ): Promise<{ code: number; stdout: string; ranEngine: boolean }> {
   const { execFile } = await import('node:child_process')
   const marker = 'HARNESS-TEST-ENGINE-RAN'
   return await new Promise((resolve) => {
     execFile(
       '/bin/sh',
-      ['-c', paneScript, 'harness-engine', 'printf', `${marker}\n`],
+      ['-c', paneScript, 'harness-engine', command, `${marker}\n`],
       { timeout: 10_000 },
       (error, stdout) => {
         const code = error && typeof (error as { code?: unknown }).code === 'number'
