@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { fingerprint as e2eeCoreFingerprint, b64d as e2eeCoreDecode } from './lib/e2ee/core.js'
+import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
 /**
  * machine-adapter CLI (the `harness` command) — connect this computer to a "remote" agent.
  *
@@ -89,8 +91,7 @@ import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/t
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
-import { AutonomousDeviceTransport } from './lib/autonomous-device/transport.js'
-import { AutonomousDeviceService, AUTONOMOUS_DEVICE_CAPABILITIES } from './lib/autonomous-device/service.js'
+import { AutonomousDeviceService } from './lib/autonomous-device/service.js'
 import { autonomousDeviceLocalRequest } from './lib/autonomous-device/localApi.js'
 import { runAutonomousDeviceCommand } from './lib/autonomous-device/command.js'
 import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
@@ -272,7 +273,7 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
-  harness autonomous-device <command>     pair/status/list/revoke a LAN device
+  harness autonomous-device <command>     pair/status/list/revoke an Autonomous device
   harness pair <code>          pair a BROWSER (code shown on the machine page)
   harness pairings             list paired clients
   harness unpair <#|fp>        unpair one browser (by list number or fingerprint)
@@ -1254,8 +1255,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
     }
   }
+  let autonomousDeviceDirect: AutonomousDeviceDirect | undefined
   let autonomousDeviceService: AutonomousDeviceService | undefined
-  let autonomousDeviceTransport: AutonomousDeviceTransport | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
 
@@ -1289,7 +1290,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   let openPaneAgents = new Set<string>()
   const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
 
-  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || autonomousDeviceTransport?.status().sessions === 1
+  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || backend.autonomousDeviceConnected()
   /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
   const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
   const terminalStreams = new TerminalStreamManager({
@@ -2409,16 +2410,23 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
     onAutonomousDeviceRequest: async (method, target, body) => {
-      if (!autonomousDeviceTransport || !autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
-      const transport = autonomousDeviceTransport, service = autonomousDeviceService
+      if (!autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
       return autonomousDeviceLocalRequest({
-        pairListen: options => transport.pairListen(options),
-        pairStart: options => transport.pairStart(options),
-        pairCancel: () => { transport.pairCancel(); return { cancelled: true } },
-        pairStatus: () => transport.pairStatus(),
-        list: () => ({ devices: transport.list() }), status: () => transport.status(),
-        revoke: target => ({ revoked: transport.revoke('all' in target ? 'all' : target.id) }),
-        receipt: target => ({ receipt: service.receipt(target.deviceId, target.idempotencyKey) }),
+        discover: async () => ({ devices: await autonomousDeviceDirect!.discover() }),
+        pairStart: ({ code, device }) => autonomousDeviceDirect!.pair(device, code),
+        pairStatus: () => {
+          const pending = backend.pendingPair()
+          return pending?.role === 'device' ? { state: pending.active ? 'running' : 'waiting', pairId: pending.pairId, deviceLabel: pending.label, expiresAt: pending.expiresAt } : { state: 'idle' }
+        },
+        list: () => ({ devices: backend.listPairs().filter(p => p.role === 'device').map(p => ({ ...p, id: p.fingerprint })) }),
+        status: () => ({ transport: 'direct', connected: backend.directAutonomousDeviceSessions() > 0, paired: backend.listPairs().filter(p => p.role === 'device').length, sessions: backend.directAutonomousDeviceSessions(), proto: 1 }),
+        revoke: ({ id }) => {
+          if (!backend.listPairs().some(p => p.role === 'device' && p.fingerprint === id)) throw Object.assign(new Error('Device pairing not found'), { code: 'UNKNOWN_DEVICE' })
+          const result = backend.revoke(id)
+          if (!result.ok) throw Object.assign(new Error(result.error), { code: result.error })
+          return { revoked: 1 }
+        },
+        receipt: target => ({ receipt: autonomousDeviceService!.receipt(target.deviceId, target.idempotencyKey) }),
       }, method, target, body)
     },
     resolveHookAgent: async ({ engine, runtimeHints, callerPid }) => {
@@ -3030,9 +3038,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   }, PANE_TITLE_SYNC_MS)
 
   // A device joined mid-turn (count rise or join generation; no adapter heartbeat) → replay live state.
-  backend.onCommanderJoin = () => { mirror.replayAll(); questionWatcher.reset() } // re-announce an open question
+  backend.onCommanderJoin = () => { setSummaryPoolDeviceConnected(deviceIsWatching()); mirror.replayAll(); questionWatcher.reset() } // re-announce an open question
   backend.onCommanderPresenceChanged = (connected) => {
-    setSummaryPoolDeviceConnected(connected)
+    setSummaryPoolDeviceConnected(connected || backend.autonomousDeviceConnected())
     setVoiceRouterDeviceConnected(connected)   // warm the voice-router worker while a device is connected
   }
 
@@ -3604,11 +3612,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
-    await autonomousDeviceTransport?.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
+    autonomousDeviceDirect?.stop()
     await backend.stop() // graceful WS close → releases the Redis machine-owner claim
     await new Promise((r) => setTimeout(r, 1000)) // grace before the same-machine reclaim
 
@@ -3703,11 +3711,11 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
-    await autonomousDeviceTransport?.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
+    autonomousDeviceDirect?.stop()
     await backend.stop()
     try { if (readPid() === process.pid) rmSync(PID_FILE, { force: true }) } catch { /* ignore */ }
     process.exit(0)
@@ -3841,31 +3849,22 @@ async function runForeground(session: AuthSession): Promise<void> {
     stop: id => cancelAgent(id, true),
     answer: (agentId, requestId, answers) => questions.answer({ agentId, requestId, answers, allowPermissions: false }),
     recent: (id, n) => mirror.recent(registry.byAgent(id)?.sessionId ?? id, n),
-    emit: frame => { autonomousDeviceTransport?.send(frame) },
+    emit: frame => backend.emitAutonomousDeviceEvent(frame),
   })
-  autonomousDeviceTransport = new AutonomousDeviceTransport({
-    machineId: backend.machineId,
-    machineName: (() => { try { return readFileSync(MACHINE_NAME_FILE, 'utf8').trim() || 'This machine' } catch { return 'This machine' } })(),
-    identity: relayIdentityStore.getIdentity(), dataDir: env.ADAPTER_DATA_DIR,
-    serverInstanceId: autonomousDeviceService.serverInstanceId, capabilities: AUTONOMOUS_DEVICE_CAPABILITIES,
-    bind: process.env.HARNESS_AUTONOMOUS_DEVICE_BIND || '0.0.0.0',
-    port: process.env.HARNESS_AUTONOMOUS_DEVICE_PORT ? Number(process.env.HARNESS_AUTONOMOUS_DEVICE_PORT) : 18474,
-    resume: resume => autonomousDeviceService!.resume(resume),
-    onRequest: async (deviceId, request, send, capabilities) => {
-      if (!capabilities.includes(String(request.type))) { send({ type: `${request.type}_result`, requestId: request.requestId, error: { code: 'UNSUPPORTED_CAPABILITY', message: 'Capability not negotiated' } }); return }
-      send(await autonomousDeviceService!.request(deviceId, request))
-    },
-    onConnected: (_deviceId, resume, send) => {
-      autonomousDeviceService!.replay(resume, send)
-      setSummaryPoolDeviceConnected(true)
-      mirror.replayAll(); questionWatcher.reset()
-    },
-    onDisconnected: () => setSummaryPoolDeviceConnected(deviceIsWatching()),
-    onRevoked: deviceId => autonomousDeviceService!.revoke(deviceId),
-  })
-  try { await autonomousDeviceTransport.start() } catch {
-    console.error('[autonomous-device] LAN listener unavailable; existing local and relay agent connections remain available')
-  }
+  backend.setAutonomousDeviceService(autonomousDeviceService)
+  autonomousDeviceDirect = new AutonomousDeviceDirect({
+    machineId: backend.machineId, label: hostname(),
+    receive: (connId, frame, pairing) => backend.receiveDirectDevice(connId, frame, pairing),
+    attach: (connId, send) => backend.attachDirectDevice(connId, send),
+    detach: connId => backend.detachDirectDevice(connId),
+    pending: () => backend.pendingPair(), pendingConnection: () => backend.e2ee.pendingConnection(),
+    authenticatedFingerprint: connId => { const pub = backend.e2ee.sessionIdentity(connId); return pub ? e2eeCoreFingerprint(e2eeCoreDecode(pub)) : null },
+    pairedFingerprint: connId => backend.pairedDirectFingerprint(connId),
+    pair: code => backend.pair(code), paired: () => backend.listPairs(),
+  }, env.ADAPTER_DATA_DIR)
+  backend.onDirectDeviceRevoked = fp => autonomousDeviceDirect?.revoked(fp)
+  autonomousDeviceDirect.start()
+
 
   // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.

@@ -1,205 +1,115 @@
-# Autonomous device ↔ Harness CLI: implemented protocol v1
+# Autonomous device ↔ Mac: direct discovery and original Harness E2EE
 
-Code is implemented and the real Go OS client → CLI loopback pairing flow has passed. Physical
-device testing is **not yet completed**. This document
-replaces the proposed revisions and describes the current implementation. Do not treat fixtures or
-unexecuted tests as evidence of interoperability.
+The Mac discovers Autonomous OS on the local network and connects **directly to the device**.
+No manual IP address, device backend credentials, cloud device registration, or backend relay is
+involved in this path. The existing Harness Mac login/start behavior is unchanged; an already
+running daemon can pair and operate while its backend connection is offline. Buddy is untouched.
 
-## Architecture and scope
+## Discovery and pairing
 
-Autonomous device connects to a dedicated LAN WebSocket on the CLI. Desktop manages pairing through the
-existing authenticated loopback hook API. Desktop need not stay open. No cloud/backend changes,
-device SSO token, raw terminal access, shell execution, agent creation/deletion, remote-machine
-access, model changes, or tool-permission approval are provided. Autonomous Buddy is untouched
-in this repository. OS owns conversation target selection; every targeted request must explicitly
-name `machineId` and `agentId`.
-
-Implementation: `cli/src/lib/autonomous-device/{transport,crypto,store,service,localApi,command}.ts` and wiring in
-`cli/src/cli.ts`. Existing SessionInputController remains the delivery path. Existing E2EE
-`core.ts` is unchanged; USB dial, cloud device links and Desktop loopback remain separate.
-
-## Listener and management
-
-Default bind `0.0.0.0`, port `18474`; configure `HARNESS_AUTONOMOUS_DEVICE_BIND` and `HARNESS_AUTONOMOUS_DEVICE_PORT`.
-`HARNESS_AUTONOMOUS_DEVICE_IFACE` and mDNS are not implemented. Pairing returns a manually entered
-`host:port` address. On multi-interface machines the default address is the first external IPv4
-address; bind an explicit address if that is inappropriate.
-
-No LAN listener opens on a fresh daemon until pairing starts. It stays open while an incumbent,
-pending candidate or pairing window exists, including after restart with stored trust. With no
-trust/window it closes on the next housekeeping tick (approximately one second).
-
-LAN URL: `ws://<host>:18474/api/autonomous-device-ws`. No TLS; authenticated application encryption supplies
-confidentiality. No query parameters, Origin, Cookie, Authorization header or subprotocol. The LAN
-HTTP server exposes no management routes. At most 16 simultaneous sockets, 64 KiB frames,
-10-second session-auth deadline, WS ping every 20 seconds; missing the next pong terminates.
-
-Management uses existing loopback hook server and `Authorization: Bearer <hook credential>`.
-Origin is refused. Success is direct JSON below; failure is `{error:{code,message}}` with HTTP
-status, not an OS `status/data` wrapper.
-
-| Method and path | Body | Success |
-|---|---|---|
-| POST `/api/autonomous-device/pair/listen` | `{}` or `{replace:true}` | `{state:"listening",expiresAt,machineId,machineName,address,fingerprint}` |
-| POST `/api/autonomous-device/pair/start` | `{code,pairId?,replace?}` | `{state:"running",pairId,deviceLabel,expiresAt,address}` |
-| POST `/api/autonomous-device/pair/cancel` | `{}` | `{cancelled:true}` |
-| GET `/api/autonomous-device/pair/status` | — | `{state,pairId?,deviceLabel?,expiresAt?,address?,pendingFirstSession?,deviceFingerprint?,error?}` |
-| GET `/api/autonomous-device/list` | — | `{devices:[{id,label,fingerprint,pairedAt,lastSeenAt,enabled,online,pendingFirstSession}]}` |
-| POST `/api/autonomous-device/revoke` | `{id}` or `{all:true}` | `{revoked:number}` |
-| GET `/api/autonomous-device/status` | — | `{listening,bind,port,address,paired,sessions,serverInstanceId,proto:1}` |
-| GET `/api/autonomous-device/receipt?deviceId=…&idempotencyKey=…` | — | `{receipt:Receipt|null}` |
-
-`id` and `deviceId` are the **canonical base64 32-byte Ed25519 public key**, not fingerprint.
-Percent-encode query parameters. `pair/status.state` is idle/listening/waiting/running/paired/failed. No management response returns a pairing code. The Autonomous device generates and displays it;
-Desktop/CLI accepts human input and sends it only through authenticated loopback management. `paired` in overall
-status counts confirmed incumbent, whereas list may also expose one pending candidate.
-`online:false` does not mean unpaired. `pendingFirstSession:true` means pairing awaits session
-confirmation. An already paired machine returns HTTP 409 `ALREADY_PAIRED`; use list for identity
-before a deliberate `replace:true`. Concurrent pairing starts return `BUSY`.
-
-CLI (daemon must already be running):
+Autonomous OS already advertises `_autonomous._tcp` using Avahi. CLI uses `bonjour-service` to
+browse that existing service for three seconds. It returns stable DNS-SD instance IDs and the
+advertised host/port; no new Avahi service or script is needed. Metadata is untrusted discovery,
+not authorization. The user selects a discovered device and enters the code displayed by it.
 
 ```sh
+harness autonomous-device discover --json
+harness autonomous-device pair --device '<discovery id>' --code-stdin
 harness autonomous-device status --json
-harness autonomous-device listen
-# Start pairing on the device with the returned computer address, then enter its displayed code:
-harness autonomous-device pair <device-code>
-harness autonomous-device pair-status
-harness autonomous-device cancel
 harness autonomous-device list --json
-harness autonomous-device listen --replace
-harness autonomous-device pair <device-code> --replace
-harness autonomous-device revoke '<base64-id>'
-harness autonomous-device revoke --all
+harness autonomous-device revoke '<full fingerprint>'
 ```
 
-## Pairing and single-device trust
+Desktop writes the device code to stdin and closes stdin. Terminal users can use
+`pair <device-code> --device <discovery-id>`. No response echoes the code. No address entry, listen,
+replace or blanket revoke command exists. A stale discovery ID returns DEVICE_NOT_FOUND; if the
+selected device has not opened pairing, NO_INTENT. Wrong code fails the original PAKE and closes
+the attempted socket; a retry makes a fresh socket and requests a new device intent.
 
-The Autonomous device generates and displays a six-character code. To make the computer reachable,
-Desktop/CLI first opens a 60-second **enrollment listener** (`pair/listen`), which generates no code.
-The device connects to the displayed computer address and sends an intent. Desktop shows that
-pending device and asks the user for the code displayed on it. Entering that code via `pair/start`
-is the human authorization. Until then the CLI sends accepted metadata but **no PAKE round 1**.
-At most three PAKE attempts are permitted per listener window; opening a fresh window is local.
-Pairing label is 1–80 characters with no ASCII control characters.
-
-`pair/start` takes `{code,pairId?,replace?}`. Desktop must send the exact pending pairId it displayed.
-The terminal may omit pairId to target the sole pending intent. A stale supplied ID is `STALE_PAIR`,
-missing pending intent is `NO_INTENT`, an already running exchange is `BUSY`. Both listen and start
-require `replace:true` if a confirmed incumbent exists. Cancel/expiry never deletes that incumbent.
-Use `harness autonomous-device pair --code-stdin --pair-id <id> [--replace]` from Desktop: write the
-code followed by EOF to child stdin, never process arguments, logs or telemetry. Positional
-`pair <code>` remains available for deliberate terminal use. No API response echoes the code.
-
-The CLI is CPace initiator `a`; device is responder `b`. Pair ID is 16 random bytes, canonical base64.
-Only cryptographic handshake material and display metadata are cleartext.
-
-```
-DEVICE_CI = autonomous-e2e-pair|agent:<machineId>|a:adapter|b:autonomous-device
-```
-
-1. Autonomous device sends `{type:"autonomous_device_pair_intent",pairId,role:"autonomous-device",label}`.
-2. CLI replies `{type:"autonomous_device_pair_intent_result",accepted:true,machineId,machineName,ttl}`,
-   then waits for the human to enter the device code via `pair/start`. Only then it sends
-   `{type:"autonomous_device_pake",pairId,round:1,ya}`. The received machine ID is provisional until PAKE
-   authentication succeeds; altering it changes the channel binding and fails authentication.
-3. Autonomous device derives generator from code, pair ID and CI, creates `(y,Yb)` and computes shared K,
-   `isk=cpaceISK(sid,K,Ya,Yb)`, `th=transcriptHash(sid,CI,Ya,Yb)`, `kc=kcKeys(isk,CI)`.
-   Sends `{type:"autonomous_device_pake",pairId,round:2,yb,mac:base64(macTag(kc.web,th))}`.
-4. CLI verifies MAC and returns round 3 with `mac=base64(macTag(kc.adapter,th))` and encrypted
-   identity `enc`. Autonomous device verifies MAC, decrypts identity, verifies pair binding and retains a
-   provisional CLI pin for reconnect recovery.
-5. Autonomous device returns round 4 with its encrypted identity and pair binding signature. CLI durably stages
-   the candidate, preserving incumbent, then replies round 5 `{ok:true,fingerprint,deviceId}`.
-6. Autonomous device completes the session handshake below. **Only encrypted `autonomous_device_finished` promotes the
-   candidate and replaces the incumbent.** A failed/expired/cancelled attempt cannot remove the old
-   device. Losing round 5 is recoverable using the provisional pin and a normal signed session.
-
-For rounds 3 and 4, plaintext is `JSON.stringify({id:base64(identityPub),sig:base64(pairBindSig(priv,th))})`.
-`enc=base64(aeadSeal(pairKey(isk,CI),round,utf8("e2e-id"),utf8(plaintext)))`.
-All byte fields are canonical base64. Implement **the existing noble CPace construction**, which
-uses Ristretto255 hash-to-group with XMD SHA-512, not the IETF CPace draft wire format.
-
-Pair errors use `{type:"autonomous_device_pair_error",error:{code}}`; current state machine returns
-`EXPIRED`, `BUSY`, `RATE_LIMITED`, `CANCELLED`, or `CODE_MISMATCH` (the latter also covers
-malformed/out-of-order PAKE input). A client must not send user requests during pairing.
-
-Trust file `${ADAPTER_DATA_DIR}/e2e/autonomous-devices.json` is atomically replaced, mode 0600 in directory 0700:
+CLI connects `ws://<discovered-host>:<SRV-port>/api/harness/ws`. The service may advertise port80;
+its existing nginx must forward WebSocket upgrade for that exact route to OS-server. Never hardcode
+OS port5000 or ask the user to type it. First message:
 
 ```json
-{"v":1,"paired":null,"pending":null}
+{"type":"machine_select","payload":{"machineId":"stable-harness-machine-id","label":"Mac name"}}
 ```
 
-Reads/writes use the existing secureState guards: no symlink directory/file, owner UID/type checks,
-refusal of group/world-writable preexisting state, and 16 KiB maximum file size. Temporary files
-are exclusive/no-follow 0600, fsynced before atomic rename; the directory is fsynced afterward.
+OS responds machine_selected. During device pairing it sends original e2e_pair_intent role device;
+CLI accepts the human code and delegates to the existing E2eeManager. After original PAKE, OS
+sends original e2e_hello on the same direct socket. CLI waits for authentication as the exact newly
+paired device before reporting success. On reconnect, OS sends e2e_hello using its stored pin.
 
-Each non-null record has `{id,identityPub,label,pairedAt,lastSeenAt,enabled:true,pendingFirstSession}`.
-At most one incumbent and one provisional candidate; candidate expires after five minutes, also
-on restart. Confirmed trust does not expire on disconnect. Malformed trust fails closed instead of
-silently clearing identities. CLI reuses the existing durable computer identity. Revoke deletes
-matching trust, immediately closes sessions, drops queued delivery and clears retained receipt
-history for the old device. It cannot undo an already injected prompt.
+The Mac retains only `{discoveryId,fingerprint}` association metadata in
+`${ADAPTER_DATA_DIR}/autonomous-device-connections.json`; keys and trust remain exclusively in
+original E2eeManager/paired.json. Every 15 seconds it rediscovers disconnected saved devices.
+Discovered reconnect identity must match the saved fingerprint, even if a different identity is
+already trusted elsewhere. Revocation deletes the association, closes its direct socket and stops
+reconnect. Browser/dial pairings retain their existing behavior and are never blanket-revoked.
 
-## Session authentication and encryption
+Direct connections enter the **same** daemon manager via isolated connIds and targeted sends.
+Inbound direct whitelist is original device PAKE/cancel/hello/status plus Autonomous device app
+RPC, never generic backend/terminal/admin handlers, setup claims or remote-password PAKE.
+Pair intent/PAKE is accepted only during an explicit direct pairing attempt. Backend disconnection
+drops relay sessions but preserves direct ones. Offline pairing availability is checked for the
+specific pending connection, so a direct socket cannot authorize pairing an offline browser slot.
+Only an authenticated application hello activates recap generation/notifications.
 
-Hello fields:
+## Local management facade
 
-```json
-{"type":"autonomous_device_hello","proto":1,"deviceId":"<base64 identity pub>","ephPub":"<base64 X25519 pub>","machineId":"machine","capabilities":["agents.list","turn.send","turn.stop","status","recap","question.answer","receipt.get"],"client":{"name":"autonomous-device","version":"1"},"resume":{"serverInstanceId":"previous","cursor":4},"sig":"<base64>"}
-```
+All routes remain on the credential-checked loopback hook server. There is no new Mac LAN listener.
 
-`client` and `resume` are optional. Resume cursor is a nonnegative safe integer. Canonical JSON
-sorts object keys recursively, preserves array order and omits only the **top-level** `sig`.
-Nested fields named `sig` remain authenticated. Use exact UTF-8 JSON and length-prefixed `lvCat`:
-
-```
-H(frame) = sha256(utf8(canonical(frame without top-level sig)))
-helloMessage = lvCat("autonomous-device-hello-v1", machineId, H(hello))
-welcomeMessage = lvCat("autonomous-device-welcome-v1", machineId, H(welcome), deviceEphemeralPubBytes)
-sig = base64(Ed25519.sign(identityPrivate, message))
-```
-
-CLI verifies against stored pin. Unknown identity → `UNKNOWN_DEVICE`; wrong signature →
-`UNAUTHORIZED`; signed unsupported proto → `PROTO_UNSUPPORTED`.
-
-Welcome is `{type:"autonomous_device_welcome",proto:1,machineId,machineName,ephPub,serverInstanceId,
-capabilities,limits,resumed,cursor,challenge,sig}`. Capabilities are intersection; `challenge` is a
-fresh UUID signed with the whole welcome. Session key derivation uses existing `sessionKeys` with
-ordering `(deviceEphPub,cliEphPub)` on both sides. Autonomous device verifies the pinned CLI signature before
-using keys. Then device sends encrypted `{type:"autonomous_device_finished",challenge}`. CLI promotes trust,
-closes the older session and sends encrypted `{type:"autonomous_device_ready",serverInstanceId}`, followed by
-replay/resync. A replayed signed hello without ephemeral possession cannot disconnect a live device.
-
-Every encrypted frame:
-
-```json
-{"type":"turn.send","agentId":"agent","payload":{"__e2e":{"v":1,"k":"p","n":1,"ct":"<base64>"}}}
-```
-
-Plaintext is the **full request/result/event object**, including `type` and optional `agentId`.
-Outer/inner fields must match. AEAD is ChaCha20-Poly1305; AAD is exactly
-`1|<outer type>|<outer agentId or empty>|p|`. No epoch/group key. Nonce is 8-byte big-endian
-counter followed by four zero bytes. Directional counters start at zero; `autonomous_device_finished` uses
-client counter zero and `autonomous_device_ready` uses server counter zero. Replay window is 4096 counters;
-invalid authentication does not consume the counter. User content is never sent plaintext.
-
-| Close code | Meaning |
+| Route | Input/result |
 |---|---|
-| 4401 | Unauthorized/invalid frame/authentication timeout |
-| 4403 | Revoked |
-| 4404 | Unknown device |
-| 4408 | Same device superseded: old socket must not reconnect |
-| 4409 | Unsupported protocol |
-| 4410 | Different device replaced incumbent |
-| 4413 | Outbound frame exceeds size limit |
-| 1009 | Inbound WS message exceeds 64 KiB (ws library) |
-| 1011 | Backpressure: reconnect with backoff and resync |
-| 1001 | Daemon stopping |
+| GET `/api/autonomous-device/discover` | `{devices:[{id,name,host,port}]}` discovered candidates |
+| POST `/api/autonomous-device/pair/start` | `{code,device:<discovery-id>}` → `{state:"paired",label,fingerprint}` |
+| GET `/api/autonomous-device/pair/status` | existing pending device status idle/waiting/running |
+| GET `/api/autonomous-device/status` | `{transport:"direct",connected,paired,sessions,proto:1}`; connected/sessions count authenticated application-ready direct sessions only |
+| GET `/api/autonomous-device/list` | `{devices:[{id:fingerprint,fingerprint,label,pairedAt,online,role,current}]}` existing trusted device-role identities |
+| POST `/api/autonomous-device/revoke` | `{id:<full fingerprint>}` → `{revoked:1}` |
+| GET `/api/autonomous-device/receipt?deviceId=…&idempotencyKey=…` | existing receipt; deviceId here is canonical public key |
 
-Untrusted `autonomous_device_denied` cleartext has `{error:{code,message}}`. OS must not let a network attacker
-silently erase durable trust based solely on an unauthenticated denial; surface and require re-pair
-when appropriate. A malformed trusted-session payload is dropped if AEAD/schema validation fails.
+Discovery id and trusted fingerprint are distinct identifiers. A user chooses a discovery record
+for pairing; revoke targets the exact existing trusted fingerprint. Original `harness pair` and
+browser/dial UI behavior are unchanged. Direct pairing is initiated by the named facade above.
+
+## Existing encrypted wire, unchanged
+
+Client identity and session use `cli/src/lib/e2ee/core.ts` and `manager.ts` exactly:
+
+- `e2e_pair_intent`, `e2e_pair_intent_result`, `e2e_pair_cancel`, `e2e_pake` payload rounds 1–5;
+  CPace CI `autonomous-e2e-pair|agent:<machineId>|a:adapter|b:device`.
+- `e2e_hello` payload `{identityPub,ephPub,sig}` using existing `helloSig`.
+- `e2e_welcome` payload `{webEphPub,ephPub,sig,enc}` using existing `welcomeSig`. `enc` is AEAD
+  server counter 0, AAD `e2e-welcome`, plaintext `{groupKey,epoch,features}`.
+- Existing X25519 sessionKeys, pairwise counters/replay window and `e2e_rekey` behavior.
+- No custom canonical hello/welcome signature, challenge, `autonomous_device_finished`, or custom
+  identity file. The device needs its own existing E2EE identity/pin, separate from Buddy.
+
+After original E2EE session establishment on the direct socket, application RPC uses:
+
+```json
+{"type":"autonomous_device_request","machineId":"selected-machine","payload":{"__e2e":{"v":1,"k":"p","n":0,"ct":"..."}}}
+```
+
+AAD uses existing wrapPayload: `1|autonomous_device_request||p|`; no dbSessionId on this envelope.
+The encrypted payload is the full application request. CLI intercepts before frame logging,
+requires an authenticated role-device session and ciphertext, and derives receipt identity from
+that session, never from a client-supplied identifier. Results use outer `autonomous_device_result`
+and events use outer `autonomous_device_event`, encrypted via existing wrapTarget with the same
+empty dbSessionId AAD convention. Machine targeting is explicit in the inner application request. No cloud routing is involved.
+
+First encrypted application request:
+
+```json
+{"type":"hello","requestId":"uuid","proto":1,"resume":{"serverInstanceId":"previous","cursor":4}}
+```
+
+Result plaintext: `{type:"hello_result",requestId,proto:1,machineId,serverInstanceId,capabilities,
+resumed,cursor}`. Resume is optional. This is application capability/resume negotiation, not a new
+cryptographic handshake. Existing session proof is the encrypted request. Then replay/resync and
+normal requests below follow. Result plaintext retains the service's `<operation>_result` type.
+Events retain full `{type:"event",...}` inside their encrypted outer envelope. Old browsers and
+dials remain on their existing request/event protocol.
 
 ## Application requests, results and events
 
@@ -271,30 +181,23 @@ before resending. Never automatically replay mutations on reconnect.
 Application errors include `INVALID_REQUEST`, `UNSUPPORTED_CAPABILITY`, `MISSING_TARGET`,
 `MACHINE_MISMATCH`, `AGENT_NOT_FOUND`, `PAYLOAD_TOO_LARGE`, `QUESTION_STALE`,
 `IDEMPOTENCY_CONFLICT`, `BACKPRESSURE`, `RATE_LIMITED`, `REVOKED`, `INTERNAL`.
-A per-identity token bucket permits burst 20, refilling one request/second, with at most four async
-requests in flight; these limits survive same-identity reconnect. Excess returns an error result.
-Outbound buffered data >1 MiB closes the session (1011); the OS reconnects/resyncs rather than
-receiving silent event gaps. There is currently no server-wide request timeout guarantee.
+A per-relay-connection token bucket permits burst 20, refilling one request/second, with at most four async
+requests in flight; a new relay connection starts a new quota. Excess returns an error result.
+Direct transport uses an outbound WebSocket; reconnection rediscovers the saved service identity. There is
+currently no server-wide request timeout guarantee.
 
-## Fixtures and validation status
+## Implementation and validation
 
-`cli/src/lib/autonomous-device/vectors/autonomous-device-protocol.json` contains **public test keys** and deterministic
-CPace generator/scalars/shared secret/ISK/MACs, identity ciphertext, signed session messages,
-X25519 session keys, encrypted `autonomous_device_finished` (client counter 0), encrypted `autonomous_device_ready`
-(server counter 0), and a Unicode prompt (client counter 1). The signed welcome challenge and
-key-confirmation step are mandatory protocol v1 fields, not an optional extension. Regenerate from CLI directory:
-
-```sh
-./node_modules/.bin/tsx src/lib/autonomous-device/vectors/generate.ts
-```
-
-The OS-generated-code flow passed CLI typecheck and focused tests (5 files/53 tests), plus a real
-Go OS client → CLI loopback run covering wrong-code rejection, encrypted session readiness,
-agent list/send/dedupe, incumbent preservation on failed replacement and successful replacement.
-
-Generation is not a test. Final validation after reversing pairing direction: `npm run typecheck`
-passed; full `npm test` passed 144 files/1873 tests, with 5 files/50 tests skipped (30.41 seconds).
-This includes real WebSocket pairing/reconnect/revoke/tamper, service/local API and stdin command
-coverage. Before release complete
-CLI build and cross-language fixture assertions, then an explicitly authorized physical-device
-pairing/voice flow. No device was deployed or paired here.
+`discovery.ts` browses existing mDNS with bonjour-service; `direct.ts` owns outbound sockets and
+non-secret reconnect associations. `relay.ts` is the retained application/E2EE adapter name, not a
+network backend dependency; it sends on the direct connId through existing manager wrapTarget.
+`service.ts` retains local agent dispatch and bounded receipt/dedupe logic.
+Focused CLI tests and typecheck pass, including discovered-target-only pairing, failed-attempt
+fresh retry, authentication before success and reconnect identity mismatch. Real mDNS discovery and direct Go OS ↔ CLI integration passed with the backend never connected:
+advertised SRV port, wrong-code/fresh retry, original PAKE/session, encrypted list/send/dedupe,
+restart/reconnect and revoke/unpair. This is a real local client/server test, not physical-device deployment.
+Full CLI regression passed: `npm test -- --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000`
+(144 files / 1,871 tests passed; 5 files / 50 tests skipped), plus `npm run typecheck`.
+The default 5-second test deadline timed out in existing password/scrypt tests under local load;
+the serial run uses command-line deadlines only and does not change test files or configuration.
+No physical device deployment.

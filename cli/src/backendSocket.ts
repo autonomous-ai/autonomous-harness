@@ -1,3 +1,5 @@
+import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
+import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/autonomous-device/service.js'
 /**
  * BackendSocket — the CLI's dial-out connection to the backend's `/api/adapter-ws`.
  *
@@ -58,7 +60,7 @@ import {
   TerminalHopDirection,
   type TerminalBinaryClear,
 } from './lib/terminalBinary.js'
-import { ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
+import { b64d, fingerprint, ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
 import { shouldReplayCommander } from './lib/commanderReplay.js'
 import { RuntimeProfileControlError, type RuntimeProfileErrorCode } from './lib/runtimeProfileController.js'
@@ -376,7 +378,10 @@ export class BackendSocket {
     this.commanderCount = commander
     this.commanderActive = active
     if (hadCommander !== (commander > 0)) this.onCommanderPresenceChanged?.(commander > 0)
-    if (commander <= 0) this.e2ee.dropSessionsByRole('device')
+    if (commander <= 0) {
+      if (this.directDeviceSinks.size) this.e2ee.dropSessionsByRole('device', id => this.directDeviceSinks.has(id))
+      else this.e2ee.dropSessionsByRole('device')
+    }
   }
 
   /** True while at least one device (commander) client is connected — gates the LLM recap. */
@@ -406,6 +411,29 @@ export class BackendSocket {
   deviceE2eeConnected(): boolean {
     return this.e2ee.deviceConnected()
   }
+
+  private readonly directDeviceSinks = new Map<string, (frame: Record<string, unknown>) => void>()
+  private readonly directDevicePins = new Map<string, string>()
+  onDirectDeviceRevoked?: (fingerprint: string) => void
+  attachDirectDevice(connId: string, send: (frame: Record<string, unknown>) => void): void { this.directDeviceSinks.set(connId, send) }
+  detachDirectDevice(connId: string): void { this.directDeviceSinks.delete(connId); this.directDevicePins.delete(connId); this.e2ee.dropSession(connId); this.autonomousDeviceRelay?.drop(connId); this.onCommanderPresenceChanged?.(this.hasCommander()) }
+  pairedDirectFingerprint(connId: string): string | null { const pub = this.directDevicePins.get(connId); return pub ? fingerprint(b64d(pub)) : null }
+  async receiveDirectDevice(connId: string, frame: Record<string, unknown>, pairingAllowed: boolean): Promise<void> {
+    if (!this.directDeviceSinks.has(connId)) return
+    const type = frame.type
+    if (type === 'machine_selected') return
+    if (type === 'autonomous_device_request') { await this.autonomousDeviceRelay?.handle(connId, frame); return }
+    const controls = pairingAllowed ? ['e2e_pair_intent', 'e2e_pair_cancel', 'e2e_pake', 'e2e_hello', 'e2e_status'] : ['e2e_hello', 'e2e_status']
+    if ((type === 'e2e_pake' || type === 'e2e_pair_cancel') && this.e2ee.pendingConnection() !== connId) return
+    if (typeof type === 'string' && controls.includes(type)) this.e2ee.handleFrame(connId, frame)
+  }
+  private autonomousDeviceRelay?: AutonomousDeviceRelay
+  setAutonomousDeviceService(service: AutonomousDeviceService): void {
+    this.autonomousDeviceRelay = new AutonomousDeviceRelay(this.e2ee, (connId, frame) => this.sendTo(connId, frame), service, this.machineId, () => this.onCommanderJoin?.())
+  }
+  directAutonomousDeviceSessions(): number { return this.autonomousDeviceRelay?.count(id => this.directDeviceSinks.has(id)) ?? 0 }
+  autonomousDeviceConnected(): boolean { return this.autonomousDeviceRelay?.connected() ?? false }
+  emitAutonomousDeviceEvent(frame: AutonomousDeviceFrame): void { this.autonomousDeviceRelay?.emit(frame) }
 
   /** Live backend link state (local dashboard + E2EE gating). */
   isConnected(): boolean {
@@ -443,6 +471,9 @@ export class BackendSocket {
       sendTo: (connId, frame) => this.sendTo(connId, frame),
       sendUser: (frame) => this.sendUser(frame),
       isConnected: () => this.isConnected(),
+      isConnectionAvailable: connId => this.directDeviceSinks.has(connId) || this.isConnected(),
+      onIdentityPaired: (connId, pub) => { if (this.directDeviceSinks.has(connId)) this.directDevicePins.set(connId, pub) },
+      onIdentityRevoked: identity => { this.autonomousDeviceRelay?.revoke(identity); this.onDirectDeviceRevoked?.(fingerprint(b64d(identity))) },
     })
     this.terminalP2p = new TerminalP2pResponderPool({
       sendSignal: (connId, type, payload) => this.sendP2pSignal(connId, type, payload),
@@ -637,6 +668,8 @@ export class BackendSocket {
 
   /** Send an up-frame to exactly ONE web connection (E2EE pairing/welcome + targeted RPC replies). */
   sendTo(connId: string, frame: Frame): void {
+    const direct = this.directDeviceSinks.get(connId)
+    if (direct) { direct(frame); return }
     const local = this.localClients.get(connId)
     if (local) {
       if (!local.sendFrame(frame)) void this.unregisterLocalClient(connId)
@@ -953,6 +986,10 @@ export class BackendSocket {
       this.e2ee.handleFrame(connId, frame)
       return
     }
+    if (type === 'autonomous_device_request') {
+      if (!local) await this.autonomousDeviceRelay?.handle(connId, frame)
+      return
+    }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
     if (!local && isEncryptedDownType(type)) {
@@ -1005,6 +1042,7 @@ export class BackendSocket {
       // The backend is authoritative for the outer connId. Drop both kinds of
       // connection-scoped state immediately; otherwise a dead Desktop keeps a
       // terminal controller lease until the 30-second heartbeat timeout.
+      this.autonomousDeviceRelay?.drop(connId)
       this.e2ee.dropSession(connId)
       await this.terminalP2p.closeConnection(connId, 'client_disconnected', false)
       this.p2pPendingOpens.delete(connId)

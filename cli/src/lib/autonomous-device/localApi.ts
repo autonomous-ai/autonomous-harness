@@ -1,21 +1,19 @@
-/** Management stays on the authenticated hook server, never the LAN listener. */
+/** Thin local facade for the existing relay pairing manager. */
 export interface AutonomousDeviceManagement {
-  pairListen(options: { replace?: boolean }): unknown | Promise<unknown>
-  pairStart(options: { code: string; pairId?: string; replace?: boolean }): unknown | Promise<unknown>
-  pairCancel(): unknown | Promise<unknown>
+  discover(): unknown | Promise<unknown>
+  pairStart(options: { code: string; device: string }): unknown | Promise<unknown>
   pairStatus(): unknown | Promise<unknown>
   list(): unknown | Promise<unknown>
   status(): unknown | Promise<unknown>
-  revoke(target: { id: string } | { all: true }): unknown | Promise<unknown>
+  revoke(target: { id: string }): unknown | Promise<unknown>
   receipt(target: { deviceId: string; idempotencyKey: string }): unknown | Promise<unknown>
 }
 
 export interface AutonomousDeviceLocalResponse { status: number; body: unknown }
 
 const routes: Record<string, string> = {
-  '/api/autonomous-device/pair/listen': 'POST',
+  '/api/autonomous-device/discover': 'GET',
   '/api/autonomous-device/pair/start': 'POST',
-  '/api/autonomous-device/pair/cancel': 'POST',
   '/api/autonomous-device/pair/status': 'GET',
   '/api/autonomous-device/list': 'GET',
   '/api/autonomous-device/status': 'GET',
@@ -25,7 +23,7 @@ const routes: Record<string, string> = {
 
 const errorStatus: Record<string, number> = {
   BAD_REQUEST: 400, UNKNOWN_DEVICE: 404, ALREADY_PAIRED: 409, BUSY: 409,
-  BAD_CODE: 400, NO_INTENT: 409, STALE_PAIR: 409, RATE_LIMITED: 429, EXPIRED: 410, CANCELLED: 409,
+  DEVICE_NOT_FOUND: 404, BAD_CODE: 400, NO_INTENT: 409, STALE_PAIR: 409, CODE_MISMATCH: 403, BACKEND_DOWN: 503, TIMEOUT: 504, RATE_LIMITED: 429, EXPIRED: 410, CANCELLED: 409,
 }
 
 function failure(status: number, code: string, message: string): AutonomousDeviceLocalResponse {
@@ -63,23 +61,14 @@ export async function autonomousDeviceLocalRequest(
   const keys = Object.keys(input)
   let call: () => unknown | Promise<unknown>
   switch (url.pathname) {
-    case '/api/autonomous-device/pair/listen':
-      if (keys.some(key => key !== 'replace') || ('replace' in input && typeof input.replace !== 'boolean')) return bad()
-      call = () => service.pairListen('replace' in input ? { replace: input.replace as boolean } : {})
-      break
     case '/api/autonomous-device/pair/start':
-      if (keys.some(key => !['code', 'pairId', 'replace'].includes(key)) || typeof input.code !== 'string' || input.code.length > 32
-        || ('replace' in input && typeof input.replace !== 'boolean')
-        || ('pairId' in input && (typeof input.pairId !== 'string' || Buffer.from(input.pairId, 'base64').length !== 16 || Buffer.from(input.pairId, 'base64').toString('base64') !== input.pairId))) return bad()
-      call = () => service.pairStart({ code: input.code as string, ...(input.pairId ? { pairId: input.pairId as string } : {}), ...('replace' in input ? { replace: input.replace as boolean } : {}) })
+      if (keys.some(key => !['code', 'device'].includes(key)) || typeof input.code !== 'string' || input.code.length > 32 || typeof input.device !== 'string' || !input.device || input.device.length > 255) return bad()
+      call = () => service.pairStart({ code: input.code as string, device: input.device as string })
       break
     case '/api/autonomous-device/revoke':
-      if (keys.length !== 1) return bad()
-      if (keys[0] === 'all' && input.all === true) call = () => service.revoke({ all: true })
-      else if (keys[0] === 'id' && deviceId(input.id)) {
-        const id = input.id
-        call = () => service.revoke({ id })
-      } else return bad()
+      if (keys.length !== 1 || keys[0] !== 'id' || typeof input.id !== 'string' || !/^[A-F0-9]{4}(?:·[A-F0-9]{4}){3}$/.test(input.id)) return bad()
+      const id = input.id
+      call = () => service.revoke({ id })
       break
     case '/api/autonomous-device/receipt': {
       const query = url.searchParams
@@ -94,7 +83,7 @@ export async function autonomousDeviceLocalRequest(
     default:
       if (keys.length) return bad()
       switch (url.pathname) {
-        case '/api/autonomous-device/pair/cancel': call = () => service.pairCancel(); break
+        case '/api/autonomous-device/discover': call = () => service.discover(); break
         case '/api/autonomous-device/pair/status': call = () => service.pairStatus(); break
         case '/api/autonomous-device/list': call = () => service.list(); break
         default: call = () => service.status()

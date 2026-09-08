@@ -240,41 +240,25 @@ body ≤200`, shows a `Summarizing…` indicator while it runs, persists it per 
 (`${ADAPTER_DATA_DIR}/summaries.json`), and returns it on `project_recent` at device boot. A newer
 turn aborts a stale recap.
 
-## Pair an Autonomous device over LAN
+## Pair an Autonomous device directly
 
-Start the Harness daemon, then run `harness autonomous-device listen`. Start pairing on the
-Autonomous device using the returned computer address. The device generates and displays a
-six-character code; enter it on the computer with `harness autonomous-device pair <device-code>`
-within the 60-second enrollment window. The computer never generates or displays that code. Desktop may expose the same pairing controls; it does not need
-to remain open after pairing. The device controls agents on this machine only.
+Harness discovers the OS's existing `_autonomous._tcp` advertisement. Select a discovered device
+and enter the code displayed on it; no IP address or device backend login is needed.
 
 ```sh
+harness autonomous-device discover --json
+harness autonomous-device pair --device '<discovery-id>' --code-stdin
 harness autonomous-device status --json
-harness autonomous-device listen
-harness autonomous-device pair <device-code>
-harness autonomous-device pair-status
 harness autonomous-device list --json
-harness autonomous-device cancel
-harness autonomous-device listen --replace
-harness autonomous-device pair <device-code> --replace
-harness autonomous-device revoke '<base64 identity id from list>'
-harness autonomous-device revoke --all
+harness autonomous-device revoke '<full fingerprint from list>'
 ```
 
-One device is active per CLI. Replacement preserves the current device until the candidate completes
-an authenticated encrypted session. Offline devices remain paired. `pendingFirstSession` identifies a
-candidate awaiting confirmation; it expires after five minutes.
+Desktop writes the code to stdin and closes stdin. Terminal users may use
+`pair <device-code> --device <discovery-id>`. Mac connects directly to the advertised OS endpoint,
+reusing the original Harness E2eeManager and identity store. Saved associations rediscover/reconnect
+automatically. Revoke closes only the selected device connection. Existing Harness Mac login/start
+requirements remain unchanged; the running daemon's direct device transport works offline from
+its backend. Browser/dial behavior and Buddy are unchanged.
 
-The separate listener defaults to `0.0.0.0:18474`; set `HARNESS_AUTONOMOUS_DEVICE_BIND` and
-`HARNESS_AUTONOMOUS_DEVICE_PORT` before starting the daemon to override it. An unpaired daemon opens no device
-LAN listener until pairing starts. Manual address entry is supported; mDNS is not. Content uses
-application-level authenticated encryption; the credential-free Desktop loopback is never exposed.
-
-See [the full contract](../docs/autonomous-device-integration.md) and
-[Vietnamese guide](../docs/vi/autonomous-device-integration_vi.md). CLI typecheck and tests pass; cross-repository
-and physical-device validation are pending. Do not automatically resend a voice command after a
-connection loss: reconcile its receipt first, since `unknown` does not mean it failed to send.
-
-Desktop integrations submit the device-displayed code with `harness autonomous-device pair --code-stdin
---pair-id <pending-id>` (one command), writing the code to stdin and closing stdin. Add `--replace`
-to both listen and pair when explicitly replacing an incumbent. Management responses never echo codes.
+See [the contract](../docs/autonomous-device-integration.md) and
+[Vietnamese guide](../docs/vi/autonomous-device-integration_vi.md).

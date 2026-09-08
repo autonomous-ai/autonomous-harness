@@ -11,32 +11,31 @@ async function stdinCode(): Promise<string> {
 }
 export async function runAutonomousDeviceCommand(argv: string[], dataDir: string, port: number): Promise<number> {
   const json = argv.includes('--json'), args: string[] = []
-  let pairId: string | undefined
+  let device: string | undefined
   const flags = new Set<string>()
   let invalid = false
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '--pair-id') { if (pairId !== undefined || !argv[i + 1] || argv[i + 1].startsWith('--')) invalid = true; else pairId = argv[++i] }
-    else if (a.startsWith('--')) { if (!['--json', '--replace', '--all', '--code-stdin'].includes(a) || flags.has(a)) invalid = true; flags.add(a) }
+    if (a === '--device') { if (device !== undefined || !argv[i + 1] || argv[i + 1].startsWith('--')) invalid = true; else device = argv[++i] }
+    else if (a.startsWith('--')) { if (!['--json', '--code-stdin'].includes(a) || flags.has(a)) invalid = true; flags.add(a) }
     else args.push(a)
   }
   const verb = args[0] ?? 'status', fromStdin = flags.has('--code-stdin')
-  const route = ({ status: 'status', list: 'list', listen: 'pair/listen', pair: 'pair/start', cancel: 'pair/cancel', 'pair-status': 'pair/status', revoke: 'revoke' } as Record<string, string>)[verb]
+  const route = ({ discover: 'discover', status: 'status', list: 'list', pair: 'pair/start', 'pair-status': 'pair/status', revoke: 'revoke' } as Record<string, string>)[verb]
   const print = (value: unknown) => console.log(JSON.stringify(value, null, json ? undefined : 2))
-  if (invalid || !route || (flags.has('--replace') && !['listen', 'pair'].includes(verb)) || (flags.has('--all') && verb !== 'revoke')
-    || ((fromStdin || pairId !== undefined) && verb !== 'pair')
-    || args.length !== (verb === 'pair' ? fromStdin ? 1 : 2 : verb === 'revoke' ? flags.has('--all') ? 1 : 2 : args[0] ? 1 : 0)) {
-    print({ error: { code: 'INVALID_ARGUMENT', message: 'Usage: harness autonomous-device listen [--replace] | pair <code> [--pair-id <id>] [--replace] | pair --code-stdin [--pair-id <id>] [--replace] | cancel | pair-status | list | status | revoke <id|--all> [--json]' } })
+  if (invalid || !route || (verb === 'pair' && !device) || ((fromStdin || device !== undefined) && verb !== 'pair')
+    || args.length !== (verb === 'pair' ? fromStdin ? 1 : 2 : verb === 'revoke' ? 2 : args[0] ? 1 : 0)) {
+    print({ error: { code: 'INVALID_ARGUMENT', message: 'Usage: harness autonomous-device pair <code> --device <id> | pair --code-stdin --device <id> | discover | pair-status | list | status | revoke <fingerprint> [--json]' } })
     return 1
   }
   const credential = readHookCredential(dataDir)
   if (!credential) { print({ error: { code: 'DAEMON_UNAVAILABLE', message: 'Start Harness with harness start first.' } }); return 1 }
-  const mutation = ['listen', 'pair', 'cancel', 'revoke'].includes(verb)
+  const mutation = ['pair', 'revoke'].includes(verb)
   try {
-    const body = verb === 'pair' ? { code: fromStdin ? await stdinCode() : args[1], ...(pairId ? { pairId } : {}), replace: flags.has('--replace') }
-      : verb === 'listen' ? { replace: flags.has('--replace') } : verb === 'revoke' ? flags.has('--all') ? { all: true } : { id: args[1] } : {}
+    const body = verb === 'pair' ? { code: fromStdin ? await stdinCode() : args[1], ...(device ? { device } : {}) }
+      : verb === 'revoke' ? { id: args[1] } : {}
     const result = await fetch(`http://127.0.0.1:${port}/api/autonomous-device/${route}`, {
-      method: mutation ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(15_000),
+      method: mutation ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(45_000),
       headers: { Authorization: `Bearer ${credential}`, ...(mutation ? { 'Content-Type': 'application/json' } : {}) },
       ...(mutation ? { body: JSON.stringify(body) } : {}),
     })

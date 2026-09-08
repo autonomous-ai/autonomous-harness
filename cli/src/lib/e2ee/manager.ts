@@ -106,6 +106,9 @@ export interface E2eeManagerDeps {
   sendUser?: (frame: Frame) => void
   /** Is the backend link up right now (for onPair BACKEND_DOWN)? */
   isConnected: () => boolean
+  isConnectionAvailable?: (connId: string) => boolean
+  onIdentityPaired?: (connId: string, identityPub: string) => void
+  onIdentityRevoked?: (identityPub: string) => void
 }
 
 export class E2eeManager {
@@ -149,15 +152,17 @@ export class E2eeManager {
     }
   }
   hasSession(connId: string): boolean { return this.sessions.has(connId) }
+  sessionIdentity(connId: string): string | null { return this.sessions.get(connId)?.webIdentityPub ?? null }
   sessionRole(connId: string): C.PairRole | null { return this.sessions.get(connId)?.role ?? null }
   deviceConnected(): boolean { return [...this.sessions.values()].some((s) => s.role === 'device') }
-  dropSessionsByRole(role: C.PairRole): void {
+  dropSessionsByRole(role: C.PairRole, preserve: (connId: string) => boolean = () => false): void {
     for (const [connId, s] of [...this.sessions.entries()]) {
-      if (s.role === role) this.sessions.delete(connId)
+      if (s.role === role && !preserve(connId)) this.sessions.delete(connId)
     }
   }
 
   /** A browser currently waiting to pair (for the local dashboard), or null. `active` = CPace running. */
+  pendingConnection(): string | null { return this.slot?.connId ?? null }
   pendingPair(): PendingPairInfo | null {
     if (!this.slot) return null
     return {
@@ -198,6 +203,7 @@ export class E2eeManager {
 
   private revokeIdentity(identityPub: string): void {
     this.store.removePaired(identityPub)
+    try { this.deps.onIdentityRevoked?.(identityPub) } catch { /* Optional device cleanup must not interrupt trust revocation. */ }
     this.denyAndDropSessionsFor(identityPub)
     this.rotateGroupKey()
   }
@@ -229,6 +235,7 @@ export class E2eeManager {
   revokeAll(): { count: number } {
     const count = this.store.count()
     for (const s of [...this.sessions.entries()]) { this.deny(s[0]); this.sessions.delete(s[0]) }
+    for (const paired of this.store.list()) { try { this.deps.onIdentityRevoked?.(paired.identityPub) } catch { /* Continue revoking every stored identity. */ } }
     this.store.clear()
     this.rotateGroupKey()
     return { count }
@@ -512,7 +519,7 @@ export class E2eeManager {
       if (!slot) { resolve({ ok: false, error: 'NO_INTENT' }); return }
       if (slot.active) { resolve({ ok: false, error: 'BUSY' }); return }
       if (this.now() > slot.expiresAt) { this.slot = null; resolve({ ok: false, error: 'EXPIRED' }); return }
-      if (!this.deps.isConnected()) { resolve({ ok: false, error: 'BACKEND_DOWN' }); return }
+      if (!(this.deps.isConnectionAvailable?.(slot.connId) ?? this.deps.isConnected())) { resolve({ ok: false, error: 'BACKEND_DOWN' }); return }
       clearTimeout(slot.ttlTimer)
 
       const ci = C.pairContext(this.deps.machineId, slot.role)
@@ -556,6 +563,7 @@ export class E2eeManager {
         if (!C.pairBindVerify(C.b64d(webId.id), slot.active.th, C.b64d(webId.sig))) { this.failPair('CODE_MISMATCH'); return true }
         // pin the paired client identity
         this.store.addPaired(webId.id, slot.label, this.now(), slot.role)
+        this.deps.onIdentityPaired?.(connId, webId.id)
         const fp = this.fingerprint()
         this.deps.sendTo(connId, { type: 'e2e_pake', payload: { pairId: slot.pairIdB64, round: 5, ok: true, fingerprint: fp } })
         const resolve = slot.active.resolve
