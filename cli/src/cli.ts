@@ -3780,6 +3780,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // which end of the desk it belongs to — so the window replaces the first
     // tile or the last one rather than guessing, and the dial never has to
     // report which way the thumb moved.
+    // A notification tap, which asks for a tile of its OWN — see CableHost.openAgent.
+    opened: (machineId, agentId) => backend.sendLocal({ type: 'dial_open', payload: { machineId, agentId } }),
     focused: (machineId, agentId, edge) =>
       backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId, ...(edge ? { edge } : {}) } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),

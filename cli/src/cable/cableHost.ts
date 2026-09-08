@@ -45,6 +45,8 @@ export interface CableHostWiring {
   listModels?: (agentId: string) => Promise<Array<{ id: string }>>
   /** The dial moved to another agent — the desktop window should show that agent on its own machine. */
   focused?: (machineId: string, agentId: string, edge?: DeskEdge) => void
+  /** A notification was tapped: the window gives that agent a tile of its own. */
+  opened?: (machineId: string, agentId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
   scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
   log: (line: string) => void
@@ -393,6 +395,18 @@ export class DaemonCableHost implements CableHost {
    */
   private machineOf(agentId: string): string {
     return this.agentMachine.get(agentId) ?? ''
+  }
+
+  openAgent(agentId: string): void {
+    const machineId = this.machineOf(agentId)
+    if (!machineId) {
+      // Same rule as focus: an agent id without its machine is not routable, and guessing is how a
+      // remote move used to land on a local agent.
+      this.wiring.log(`cable: ignored open for unknown agent ${agentId}`)
+      return
+    }
+    this.wiring.log(`cable: open ${machineId}/${agentId} (notification)`)
+    this.wiring.opened?.(machineId, agentId)
   }
 
   /** Whether this daemon's last list held that agent — see CableHost.knows. */

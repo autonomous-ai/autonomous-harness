@@ -89,6 +89,7 @@ function makeHost(over: Partial<CableHost> = {}) {
     scrolled: vi.fn(),
     answer: vi.fn(),
     focus: vi.fn(),
+    openAgent: vi.fn(),
     updateAgent: vi.fn(),
     listModels: async () => ['runtime-v1:s1:claude:opus@high', 'runtime-v1:s1:claude:sonnet@low'],
     recentSummaries: async () => [],
@@ -314,6 +315,120 @@ describe('cable session', () => {
     await settle()
 
     expect(port.sent.filter((m) => m.t === 'focus')).toEqual([])
+    await session.stop()
+  })
+
+  it('says again where the window is looking after the list is re-sorted', async () => {
+    // The gap left by making re-anchors silent: the dial rebuilds when a re-sorted list lands, and if it
+    // lands on the wrong tile nobody notices. Measured — a swipe pulled `a2` into a pane, the window
+    // showed `a2`, the dial sat on the first agent. The daemon is the only side that knows both, so it
+    // repeats itself after every push.
+    let agents: CableAgent[] = [{ id: 'a1', name: 'one' }, { id: 'a2', name: 'two' }]
+    const { session, port } = await connect(makeHost({ listAgents: async () => agents }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    await session.followApp('', 'a2')          // the window is on a2
+    await settle()
+    port.sent.length = 0
+
+    agents = [{ id: 'a2', name: 'two' }, { id: 'a1', name: 'one' }]   // the desk re-sorted the ring
+    port.say({ t: 'focus', agentId: 'a1' })    // and the dial drifted onto another tile
+    await settle()
+    await session.pushAgents()
+    await settle()
+
+    expect(port.sent.filter((m) => m.t === 'focus').map((m) => m.agentId)).toEqual(['a2'])
+    await session.stop()
+  })
+
+  it('a re-push after the window FOLLOWED the dial does not send it back', async () => {
+    // Reported from the desk as a tile going 3 → 4 → 3 → 4 on its own.
+    //
+    // There were two memories of the same fact: where the dial was, and what the window last said. When
+    // the window follows the DIAL, followApp returns early — the dial is already there — so the window's
+    // memory kept an OLDER agent, and the next list push re-asserted that stale one. The dial jumped back
+    // to it, the window's next report pulled it forward, and the two took turns.
+    let agents: CableAgent[] = [{ id: 'a3', name: 'three' }, { id: 'a4', name: 'four' }]
+    const { session, port } = await connect(makeHost({ listAgents: async () => agents }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    await session.followApp('', 'a3')     // the window led: both screens on a3
+    await settle()
+
+    port.say({ t: 'focus', agentId: 'a4' })   // a hand turns the dial to a4
+    await settle()
+    await session.followApp('', 'a4')          // the window follows — early return, nothing commanded
+    await settle()
+    port.sent.length = 0
+
+    agents = [{ id: 'a4', name: 'four' }, { id: 'a3', name: 'three' }]   // the desk re-sorts the ring
+    await session.pushAgents()
+    await settle()
+
+    // The re-assert says a4 — where both screens actually are — and never a3.
+    expect(port.sent.filter((m) => m.t === 'focus').map((m) => m.agentId)).toEqual(['a4'])
+    await session.stop()
+  })
+
+  it('a swipe made DURING a slow machine switch still reaches the window', async () => {
+    // Measured on the real desk: selecting a remote machine took ten seconds, and for all ten every dial
+    // report was discarded as "the window is mid-switch". The dial walked on, the window stayed put, and
+    // the two screens named different agents with nothing left to correct them.
+    //
+    // The repaint this guards against answers the command at once. A hand, seconds later, does not.
+    let finishSelection!: () => void
+    const gate = new Promise<void>((resolve) => { finishSelection = resolve })
+    const focus = vi.fn()
+    const host = makeHost({
+      focus,
+      selectMachine: vi.fn(async () => { await gate; return { ok: true as const } }),
+    })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    const following = session.followApp('remote-machine', 'r1')
+    await settle()
+    port.say({ t: 'focus', agentId: 'a1' })      // the switch's own repaint: discarded
+    await settle()
+    expect(focus).not.toHaveBeenCalled()
+
+    vi.setSystemTime(Date.now() + 5_000)          // the switch is still going
+    port.say({ t: 'focus', agentId: 'a2' })      // …and a hand turns the dial
+    await settle()
+    expect(focus).toHaveBeenCalledWith('a2')
+
+    finishSelection()
+    await following
+    vi.useRealTimers()
+    await session.stop()
+  })
+
+  it('a swipe a second after the window clicked is a SWIPE, not an echo', async () => {
+    // This window was 4s for one afternoon, to catch a re-anchor the dial should never have reported in
+    // the first place. It caught real swipes instead: click something in the window, turn the dial within
+    // four seconds, and the move vanished — the two screens then sat on different agents with nothing to
+    // correct them, which is exactly the report that followed.
+    //
+    // The echo is stopped at its source now: a dial told where to look moves through code, and a move made
+    // by code is not reported at all. So a report arriving a second later is a hand.
+    const focus = vi.fn()
+    const { session, port } = await connect(makeHost({ focus }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    await session.followApp('', 'a2')
+    await settle()
+    focus.mockClear()
+
+    vi.setSystemTime(Date.now() + 1_000)
+    port.say({ t: 'focus', agentId: 'a1' })
+    await settle()
+
+    expect(focus).toHaveBeenCalledWith('a1')
+    vi.useRealTimers()
     await session.stop()
   })
 

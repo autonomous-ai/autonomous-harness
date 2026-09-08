@@ -73,7 +73,31 @@ const MACHINES_POLL_MS = 15_000
  * that write. Real hardware delivered that stale report 23 ms after the machine switch completed; keep
  * a short transaction open until the commanded tile echoes, without making the dial feel unresponsive.
  */
+/**
+ * How long a focus COMMANDED by the window keeps the dial's own reports out.
+ *
+ * Deliberately SHORT, and it was briefly 4s — which broke the thing it was meant to protect. The echo it
+ * guards against is gone at the source now: a dial told where to look moves through code, and a move made
+ * by code is not reported at all (carousel_goto in ui_screens.c). What a long window does instead is
+ * swallow a REAL swipe made in the seconds after any click in the window — the two screens then sit on
+ * different agents with nothing to correct them, which is exactly the report that followed.
+ *
+ * So it stays only as long as a stale echo from an OLDER firmware could take, and every report it drops
+ * now says so in the log.
+ */
 const APP_FOCUS_SETTLE_MS = 750
+
+/**
+ * How long after an app-driven switch begins its own repaint can still arrive.
+ *
+ * The switch itself is NOT the measure, and using it as one is what broke: selecting a remote machine
+ * takes seconds — ten, measured — and while `drivingAppFocus` was true every report was discarded, so a
+ * swipe made during it vanished and the two screens ended up on different agents.
+ *
+ * A repaint answers the command almost at once; a hand does not. So the guard lasts as long as the first,
+ * not as long as the whole errand.
+ */
+const APP_SWITCH_REPAINT_MS = 1_000
 
 /** What a `voice.begin` without an `sr` is assumed to be — firmware old enough not to say. */
 const DEFAULT_VOICE_RATE = 16_000
@@ -166,6 +190,15 @@ export interface CableHost {
   answer(agentId: string, requestId: string, answers: Record<string, string>): void
   focus(agentId: string): void
   /**
+   * "Put this one in front of me" — a NOTIFICATION was tapped.
+   *
+   * A different verb from [focus], and the difference is the whole point: focus
+   * says where the eye is and the window moves a tile to match, while this asks
+   * for a tile of its own. A turn that just finished is a new thing to look at,
+   * not a replacement for whatever the person was already watching.
+   */
+  openAgent(agentId: string): void
+  /**
    * Does this daemon's own agent list hold that id?
    *
    * Only for saying so. A `focus` for an agent the dial has no tile for lands on nothing, and from the
@@ -250,14 +283,27 @@ export class CableSession {
   /** Which images have already been written to which dial, and when. Survives the port, unlike `offered`. */
   private readonly written = new Set<string>()
   private readonly writeLog = new Map<string, number[]>()
-  /** The agent the dial is on, as last observed or commanded. See followApp() for why this exists. */
-  private dialFocus = ''
+  /**
+   * THE agent both screens are meant to be on. One memory, written by whichever side moved last.
+   *
+   * There were two — where the dial was, and what the window last said — and they drifted apart in the
+   * one case that matters most: when the WINDOW follows the DIAL, `followApp` returns early (the dial is
+   * already there), so the window's memory was never updated and kept an older agent. Anything that then
+   * re-asserted "where the window is" sent that stale agent, the dial jumped back to it, and the window's
+   * next report pulled it forward again. Measured on the real dial as a tile going 3 → 4 → 3 → 4.
+   *
+   * A single field cannot disagree with itself. Both sides write it on a real move, the last write wins,
+   * and it is the only thing the daemon ever re-asserts.
+   */
+  private desiredFocus = ''
   /**
    * App-driven machine/focus changes are one transaction. Without this queue, two quick desktop clicks
    * can interleave their machine lists and let the older click focus last.
    */
   private appFocusTail: Promise<void> = Promise.resolve()
   private appFocusGeneration = 0
+  /** When the app-driven switch began — see APP_SWITCH_REPAINT_MS. */
+  private drivingSince = 0
   /** While the app is rebuilding the dial's machine/list state, focus reports describe that rebuild. */
   private drivingAppFocus = false
   /** The dial may echo a focus command after its write promise resolves; consume that one echo. */
@@ -623,10 +669,14 @@ export class CableSession {
             && now <= this.expectedAppFocusEchoUntil
           if (expectationActive) {
             // Until the commanded tile echoes, every other focus is from the carousel/list repaint that
-            // command caused. Do not even update dialFocus: the daemon already commanded the newer truth.
+            // command caused. Do not even update the record: the daemon already commanded the newer truth.
             if (agentId === this.expectedAppFocusEcho) {
               this.expectedAppFocusEcho = ''
               this.expectedAppFocusEchoUntil = 0
+            } else {
+              // SAID OUT LOUD. A dropped report is a dial and a window on different agents, and dropping
+              // it silently is how that state became impossible to explain from the log.
+              this.host.log(`cable: dropped dial focus ${agentId} — waiting for ${this.expectedAppFocusEcho}`)
             }
             return
           }
@@ -634,14 +684,27 @@ export class CableSession {
             this.expectedAppFocusEcho = ''
             this.expectedAppFocusEchoUntil = 0
           }
-          // A machine switch re-paints the carousel and may report its old tile while the new list is in
-          // flight. That is not a hand choosing an agent, so it must not drive the desktop back.
-          if (this.drivingAppFocus) return
+          // A machine switch re-paints the carousel and may report its OLD tile while the new list is in
+          // flight. That one report is not a hand and must not drive the window back.
+          //
+          // ONLY that one. This used to drop everything for as long as the switch took, and a remote
+          // machine's switch takes seconds — measured at ten. Every swipe made in that window vanished,
+          // so the dial walked on and the window stayed where it was, with the two screens naming
+          // different agents and nothing left to correct them. A dial that reports a move it did not make
+          // is fixed at the source now (carousel_goto in the firmware), which leaves only the stale repeat
+          // of the tile the dial was already on to guard against.
+          if (this.drivingAppFocus && now - this.drivingSince < APP_SWITCH_REPAINT_MS) {
+            this.host.log(`cable: dropped dial focus ${agentId} — repaint from the switch in flight`)
+            return
+          }
           // Remember where the dial IS, not just that it said so: followApp() compares against this to
           // avoid echoing the dial's own move back at it.
-          this.dialFocus = agentId
+          this.desiredFocus = agentId
           this.host.focus(agentId)
         }
+        return
+      case 'agent.open':
+        if (str('agentId')) this.host.openAgent(str('agentId')!)
         return
       case 'scroll': {
         // Forwarded verbatim, including the reports carrying no travel: the two ends of a stroke are the
@@ -908,6 +971,18 @@ export class CableSession {
     // a count is enough, and a firmware that predates the field walks all of
     // them exactly as it did before.
     await this.send({ t: 'agents.end', ring: agents.filter((a) => !a.offRing).length })
+
+    // The list just changed shape under the dial, so say again which agent both screens are on.
+    //
+    // This is the ONLY thing the daemon re-asserts, and it is the current record rather than a second
+    // memory of it — see desiredFocus. A re-anchor after a push is silent by design (the dial reports
+    // nothing it did not do itself), so without this a dial that landed on the wrong tile would sit there
+    // with nobody to notice.
+    if (this.desiredFocus) {
+      this.expectedAppFocusEcho = this.desiredFocus
+      this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
+      await this.focusAgent(this.desiredFocus)
+    }
   }
 
   /**
@@ -1062,19 +1137,20 @@ export class CableSession {
   }
 
   async focusAgent(agentId: string): Promise<void> {
-    this.dialFocus = agentId
+    this.desiredFocus = agentId
     await this.send({ t: 'focus', agentId })
   }
 
   /**
    * The desktop window moved to an agent — bring the dial with it.
    *
-   * ⚠️ THE `dialFocus` GUARD IS WHAT KEEPS THIS FROM OSCILLATING. The two screens drive each other: the
+   * ⚠️ THE `desiredFocus` GUARD IS WHAT KEEPS THIS FROM OSCILLATING. The two screens drive each other: the
    * dial's own carousel reports `focus` up, the daemon hands that to the app, the app opens that agent's
    * terminal, and the app opening a terminal is exactly what calls this. Answering it with another `focus`
-   * closes the ring. It happens to settle today — the dial does not re-report a carousel that never moved
-   * — but that is a property of the far end's UI, not of this protocol, and it is one jittery settle away
-   * from a loop. So: say nothing when the dial is already there.
+   * closes the ring. So: say nothing when the record already names that agent.
+   *
+   * The record is one field written by both sides (see desiredFocus). It used to be two, and the ring
+   * closed through the gap between them.
    *
    * The machine comes first when it differs. Sending `focus` for an agent on a machine the dial is not on
    * would name an id its list has never heard of, and the tile it would have to move to does not exist
@@ -1088,6 +1164,7 @@ export class CableSession {
     const task = this.appFocusTail.then(async () => {
       // A newer desktop selection made this queued one obsolete before it started.
       if (generation !== this.appFocusGeneration) return
+      this.drivingSince = Date.now()
       this.drivingAppFocus = true
       try {
         if (machineId && machineId !== this.host.selectedMachine()) {
@@ -1096,13 +1173,15 @@ export class CableSession {
         }
         // A newer selection can arrive while the remote machine RPC/list push is in flight. Never let
         // this older transaction focus after it finishes.
-        if (generation !== this.appFocusGeneration || agentId === this.dialFocus) return
+        // Already where the window is: nothing to command. The record is right either way — this is the
+        // window FOLLOWING the dial, and the dial's own report wrote it.
+        if (generation !== this.appFocusGeneration || agentId === this.desiredFocus) return
         // Said before the frame goes out, not after: the frame itself succeeds either way.
         const unknown = this.host.knows?.(agentId) === false
         this.host.log(`cable: following the app to agent ${agentId}${unknown ? ' — NOT in this daemon\'s list, the dial has no tile for it' : ''}`)
         this.expectedAppFocusEcho = agentId
         this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
-        await this.focusAgent(agentId)
+        await this.focusAgent(agentId)   // writes the record
       } finally {
         this.drivingAppFocus = false
       }
