@@ -46,6 +46,11 @@ import type { HookTerminalHint, ProcessIdentity, TerminalRuntimeRef } from './te
 
 export type { ProcessIdentity } from './terminalTypes.js'
 
+export type AgentLaunch =
+  | { state: 'starting' }
+  | { state: 'ready' }
+  | { state: 'failed'; error: string; detail?: string }
+
 /** Claude Code's hooks report `model` as {id, display_name}; Codex/Cursor report a plain string. This is
  *  the boundary where hook JSON becomes persisted state, so anything else is dropped rather than stored —
  *  a non-string here reaches runtimeProfile's `.toLowerCase()` and takes the daemon down AT STARTUP, which
@@ -61,11 +66,14 @@ export interface RegisteredSession {
   schemaVersion: 2
   /** Whether the supported engine process is currently identified; terminal liveness is tracked separately. */
   active: boolean
+  /** Harness-created panes can be rendered before their engine process exists. Absent on legacy rows. */
+  launch?: AgentLaunch
   /**
    * THE AGENT. Public identity: this is what web tabs, device tiles and every inbound frame address.
    *
-   * It is minted when a top-level engine process is first discovered. The persisted process identity lets
-   * the same UUID survive daemon restarts while the engine underneath rotates sessions (`/clear`, `/new`).
+   * It is normally minted when a top-level engine process is discovered. Harness-created panes mint it
+   * immediately so clients can render the terminal while the engine starts. Persisted route/process identity
+   * keeps the UUID stable across daemon restarts and engine session rotations (`/clear`, `/new`).
    */
   agentId: string
   /**
@@ -338,6 +346,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
   const normalizedPrimary = selectedRuntimeKey(runtimes, primary)
   const active = row.active === true
   const projectedTmuxPane = tmuxProjection(runtimes)
+  const launch = normalizedLaunch(row.launch)
   if (row.schemaVersion !== 2
     || typeof row.active !== 'boolean'
     || typeof row.agentId !== 'string' || !row.agentId
@@ -358,6 +367,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     ...row,
     schemaVersion: 2,
     active,
+    ...(launch ? { launch } : {}),
     agentId: row.agentId,
     sessionId: row.sessionId,
     boundAt: typeof row.boundAt === 'number' ? row.boundAt : null,
@@ -378,6 +388,18 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     lastHookAt: typeof row.lastHookAt === 'number' ? row.lastHookAt : Date.now(),
     lastTranscriptAt: typeof row.lastTranscriptAt === 'number' ? row.lastTranscriptAt : Date.now(),
   }
+}
+
+function normalizedLaunch(value: unknown): AgentLaunch | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const launch = value as { state?: unknown; error?: unknown; detail?: unknown }
+  if (launch.state === 'starting' || launch.state === 'ready') return { state: launch.state }
+  if (launch.state !== 'failed' || typeof launch.error !== 'string' || !launch.error) return undefined
+  const error = launch.error.slice(0, 80)
+  const detail = typeof launch.detail === 'string' && launch.detail
+    ? launch.detail.slice(0, 500)
+    : undefined
+  return { state: 'failed', error, ...(detail ? { detail } : {}) }
 }
 
 function validatedRows(values: readonly unknown[]): RegisteredSession[] | null {
@@ -702,9 +724,11 @@ class Registry {
         if (agentId !== raw.agentId) changed = true
         const now = Date.now()
         const active = raw.active !== false
+        const launch = normalizedLaunch(raw.launch)
         const s: RegisteredSession = {
           schemaVersion: 2,
           active,
+          ...(launch ? { launch } : {}),
           agentId,
           boundAt: bound ? (typeof raw.boundAt === 'number' ? raw.boundAt : (raw.registeredAt ?? now)) : null,
           engine,
@@ -733,6 +757,7 @@ class Registry {
           raw.engine !== engine
           || raw.schemaVersion !== 2
           || typeof raw.active !== 'boolean'
+          || JSON.stringify(raw.launch) !== JSON.stringify(s.launch)
           || raw.tmuxPane !== pane
           || JSON.stringify(raw.runtimes) !== JSON.stringify(runtimes)
           || raw.primaryRuntimeKey !== s.primaryRuntimeKey
@@ -839,6 +864,7 @@ class Registry {
       existing.cwd = input.cwd ?? existing.cwd
       existing.processIdentity = processIdentity
       existing.active = true
+      if (existing.launch) existing.launch = { state: 'ready' }
       // Only a successful read speaks: an undefined probe (ps failed, /proc unreadable) keeps whatever
       // the last good one said rather than silently downgrading a gateway agent to a vendor one.
       if (input.gateway !== undefined) existing.gateway = input.gateway
@@ -901,6 +927,52 @@ class Registry {
     this.terminalAvailableAgents.add(entry.agentId)
     this.save()
     return { entry, isNew: true, evicted }
+  }
+
+  /** Register a terminal route before its engine process exists. */
+  openPendingAgent(input: {
+    engine: AgentEngine
+    runtimes: TerminalRuntimeRef[]
+    primaryRuntimeKey?: string
+    cwd?: string | null
+    grid?: GridAssignment | null
+  }): RegisteredSession | null {
+    if (this.writeBlocked) return null
+    const runtimes = normalizedRuntimes(input.runtimes)
+    if (!runtimes.length) return null
+    if (runtimes.some((runtime) => this.runtimeIndex.has(terminalRouteKey(runtime)))) return null
+    const now = Date.now()
+    const agentId = randomUUID()
+    const entry: RegisteredSession = {
+      schemaVersion: 2,
+      active: true,
+      launch: { state: 'starting' },
+      agentId,
+      sessionId: '',
+      boundAt: null,
+      engine: input.engine,
+      gateway: null,
+      grid: input.grid ?? null,
+      transcriptPath: null,
+      projectDir: basename(input.cwd ?? '') || agentId,
+      cwd: input.cwd ?? null,
+      runtimes,
+      primaryRuntimeKey: selectedRuntimeKey(runtimes, input.primaryRuntimeKey),
+      tmuxPane: tmuxProjection(runtimes),
+      source: null,
+      title: null,
+      model: null,
+      cliVersion: null,
+      processIdentity: null,
+      registeredAt: now,
+      updatedAt: now,
+      lastHookAt: now,
+      lastTranscriptAt: now,
+    }
+    this.index(entry)
+    this.terminalAvailableAgents.add(entry.agentId)
+    this.save()
+    return entry
   }
 
   /** Discovered process agents that have no engine session bound yet. */
@@ -1123,6 +1195,16 @@ class Registry {
     entry.updatedAt = Date.now()
     this.save()
     return true
+  }
+
+  setLaunch(agentId: string, launch: AgentLaunch): RegisteredSession | null {
+    const entry = this.agents.get(agentId)
+    if (!entry) return null
+    entry.launch = normalizedLaunch(launch)
+    entry.active = launch.state !== 'failed'
+    entry.updatedAt = Date.now()
+    this.save()
+    return entry
   }
 
   /** Mark whether at least one backend placement was verified by this daemon process. */

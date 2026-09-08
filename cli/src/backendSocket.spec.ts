@@ -326,6 +326,42 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('does not let a slow engines_probe block agent_create on the same connection', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:create', {
+      sendFrame: (frame) => { frames.push(frame); return true },
+      sendBinary: () => true,
+    })
+    let finishProbe!: () => void
+    socket.engineProbeProvider = () => new Promise((resolve) => { finishProbe = () => resolve([]) })
+    const pending: RegisteredSession = {
+      schemaVersion: 2, active: true, launch: { state: 'starting' },
+      agentId: 'pending-1', sessionId: '', boundAt: null, engine: 'claude',
+      transcriptPath: null, projectDir: 'work', cwd: '/tmp/work',
+      runtimes: [{ backend: 'tmux', paneId: '%9' }], primaryRuntimeKey: 'tmux/%9', tmuxPane: '%9',
+      source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+      registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+    }
+    socket.onCreateAgent = async () => ({ ok: true, session: pending })
+
+    socket.handleLocalFrame('local:create', {
+      type: 'engines_probe', payload: { requestId: 'probe-1', engines: ['claude'] },
+    })
+    socket.handleLocalFrame('local:create', {
+      type: 'agent_create', payload: { requestId: 'create-1', engine: 'claude', cwd: '/tmp/work' },
+    })
+
+    await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+      type: 'agent_create_result', payload: expect.objectContaining({ requestId: 'create-1' }),
+    })))
+    expect(frames.some((frame) => frame.type === 'engines_probe_result')).toBe(false)
+    finishProbe()
+    await vi.waitFor(() => expect(frames.some((frame) => frame.type === 'engines_probe_result')).toBe(true))
+    await socket.unregisterLocalClient('local:create')
+    await socket.stop()
+  })
+
   it('hands a blocked agent to the window without putting the question on the cloud leg', async () => {
     const socket = new BackendSocket('token')
     expect(socket.hasLocalClient()).toBe(false)

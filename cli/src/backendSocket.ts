@@ -315,6 +315,8 @@ export class BackendSocket {
     grid: GridLaunchOverride | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
+  /** Injectable for queue-isolation tests; production uses the machine-local probe. */
+  engineProbeProvider: typeof probeEngines = probeEngines
   /**
    * Called on `agent_retarget` — cli.ts re-execs an EXISTING agent's pane against a different grid,
    * or, when `grid` is null, back onto its own login.
@@ -1352,19 +1354,20 @@ export class BackendSocket {
             ? payload.engines.filter((id): id is AgentEngine =>
               typeof id === 'string' && (ENGINES as readonly string[]).includes(id))
             : undefined
-          const availability = await probeEngines(asked && asked.length > 0 ? asked : undefined)
-          reply(type, requestId, {
-            engines: availability.map((entry) => ({
-              engine: entry.engine,
-              installed: entry.installed,
-              command: entry.command,
-              installable: entry.installable,
-              // The line the user is about to consent to. Sent with the probe so the dialog can name
-              // it without a second round trip — and so the machine that will RUN it is the machine
-              // that said what it is.
-              installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
-            })),
-          })
+          // A full probe starts interactive login shells and is intentionally detached from this
+          // connection's ordered RPC chain. Request ids make its eventual reply safe to deliver out
+          // of order; keeping it awaited here made a Create click sit behind an unrelated sweep.
+          void this.engineProbeProvider(asked && asked.length > 0 ? asked : undefined)
+            .then((availability) => reply(type, requestId, {
+              engines: availability.map((entry) => ({
+                engine: entry.engine,
+                installed: entry.installed,
+                command: entry.command,
+                installable: entry.installable,
+                installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
+              })),
+            }))
+            .catch(() => reply(type, requestId, { error: 'ENGINE_PROBE_FAILED' }))
           return
         }
 
