@@ -59,6 +59,7 @@ export interface QuestionRow {
 
 export interface QuestionView {
   kind: 'question'
+  permission?: boolean
   question: string
   rows: QuestionRow[]
   multi: boolean
@@ -128,13 +129,16 @@ export function shapeQuestions(questions: unknown): ShapedQuestion[] {
  * Claude and Command Code share one shape (see parseQuestionPane); devin draws a different one and gets
  * its own parser rather than more branches in here.
  */
+function permissionView(view: PaneView): PaneView {
+  return view?.kind === 'question' ? { ...view, permission: true } : view
+}
 export function parseEngineQuestionPane(engine: AgentEngine, capture: string): PaneView {
   // Devin's two dialogs are told apart by one word in the footer (`↵ select` vs `↵ confirm`), so they can
   // never both match. Only one can be on screen anyway: answering either replaces it with a summary line.
-  if (engine === 'devin') return parseDevinQuestionPane(capture) ?? parseDevinPermissionPane(capture)
+  if (engine === 'devin') return parseDevinQuestionPane(capture) ?? permissionView(parseDevinPermissionPane(capture))
   // Cursor has no ask-the-user tool, so its permission prompt is the ONLY dialog it ever draws — and it
   // numbers nothing, stating each row's key in the row instead.
-  if (engine === 'cursor') return parseCursorPermissionPane(capture)
+  if (engine === 'cursor') return permissionView(parseCursorPermissionPane(capture))
   // Muse pairs each option with a description on the same line and floats a live Preview box above the
   // rows — both confuse the shared parser, so it reads its own. Its PERMISSION prompt is a different
   // dialog entirely (`Would you like to allow this network access?` over `1. Yes, proceed (y)` rows under
@@ -142,11 +146,15 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
   // reads exactly, so it falls through rather than getting a parser of its own.
   if (engine === 'muse') return parseMuseQuestionPane(capture) ?? parseQuestionPane(capture)
   // Amp's is a permission prompt with unnumbered rows — nothing the shared parser can anchor on.
-  if (engine === 'amp') return parseAmpQuestionPane(capture)
+  if (engine === 'amp') return permissionView(parseAmpQuestionPane(capture))
   // Kilo's is the same kind of prompt but laid out HORIZONTALLY, sharing its line with the key hints —
   // it is a fork of opencode that did not keep opencode's dialog.
-  if (engine === 'kilo') return parseKiloQuestionPane(capture)
-  if (engine === 'grok') return parseGrokQuestionPane(capture)
+  if (engine === 'kilo') return permissionView(parseKiloQuestionPane(capture))
+  if (engine === 'grok') {
+    const view = parseGrokQuestionPane(capture)
+    // Grok prints this footer only for tool approval, never its questionnaire.
+    return /always-approve|Ctrl\+o:/i.test(capture) ? permissionView(view) : view
+  }
   // agy's ask-the-user dialog anchors on `Question N/M:` under an `↑/↓ Navigate` footer, which the
   // shared parser cannot see. Its PERMISSION prompt is numbered rows under `Do you want to proceed?`
   // and the shared parser reads that one exactly, so it falls through.
@@ -166,7 +174,7 @@ export function parseEngineQuestionPane(engine: AgentEngine, capture: string): P
     // than copied. Tried FIRST because that dialog numbers nothing: the shared parser would still match
     // its `enter confirm` footer and then walk up into whatever numbered rows the scrollback holds.
     const permission = parseKiloQuestionPane(capture)
-    if (permission) return permission
+    if (permission) return permissionView(permission)
     const plain = unframe(capture)
     return opencodeReview(plain) ?? parseQuestionPane(plain)
   }
@@ -432,7 +440,7 @@ export function parsePermissionPane(lines: string[]): { view: QuestionView; inde
   // Single-select, and no free-text row: every option here is a choice to be TAPPED. Verified on live
   // panes for claude, codex, devin and grok \u2014 one digit selects and submits, exactly as `rowKeys` assumes.
   return {
-    view: { kind: 'question', question: permissionTitle(lines, start), rows, multi: false, typeRow: null },
+    view: { kind: 'question', permission: true, question: permissionTitle(lines, start), rows, multi: false, typeRow: null },
     index: start,
   }
 }
@@ -563,6 +571,7 @@ export interface AskQuestionDeps {
 }
 
 export interface QuestionAnswerPayload {
+  allowPermissions?: boolean
   requestId?: string
   sessionId?: string
   agentId?: string
@@ -614,7 +623,7 @@ export class AskQuestionController {
     }
     this.driving.add(sessionId)
     try {
-      const ok = await this.drive(terminalTarget, answers, this.deps.getSession(sessionId)?.engine ?? 'claude')
+      const ok = await this.drive(terminalTarget, answers, this.deps.getSession(sessionId)?.engine ?? 'claude', payload.allowPermissions !== false)
       this.pending.delete(requestId)
       console.log(`[question] ${sessionId.slice(0, 8)} answered from device · ${ok ? 'submitted' : 'FAILED'}`)
       return ok
@@ -625,7 +634,7 @@ export class AskQuestionController {
   }
 
   /** Key the answers into the pane's dialog, question by question, ending on the review screen. */
-  private async drive(terminalTarget: string, answers: Record<string, string>, engine: AgentEngine): Promise<boolean> {
+  private async drive(terminalTarget: string, answers: Record<string, string>, engine: AgentEngine, allowPermissions = true): Promise<boolean> {
     const wait = this.deps.wait ?? sleep
     const used = new Set<string>()
     let lastQuestion = ''
@@ -639,7 +648,9 @@ export class AskQuestionController {
         // Nothing on screen: either the dialog was never open, or the last keystroke submitted it.
         return answered > 0
       }
+      if (!allowPermissions && view.kind === 'question' && view.permission) return false
       if (view.kind === 'review') {
+        if (!allowPermissions && answered === 0) return false
         return this.deps.sendKey(terminalTarget, view.submitRow)
       }
       // The same question still showing after we acted on it: give the TUI one more beat to repaint,

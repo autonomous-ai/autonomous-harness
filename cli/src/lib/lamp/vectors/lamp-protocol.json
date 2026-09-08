@@ -1,0 +1,139 @@
+{
+  "v": 1,
+  "note": "Public deterministic test-only keys. All byte strings base64 unless named Hex. CPace uses noble hashToRistretto255 (XMD SHA-512), not IETF draft wire format.",
+  "pairing": {
+    "machineId": "lamp-vector-machine",
+    "code": "K7P4X9",
+    "pairId": "AAECAwQFBgcICQoLDA0ODw==",
+    "ci": "autonomous-e2e-pair|agent:lamp-vector-machine|a:adapter|b:lamp",
+    "generator": "pKHTGlVSN7/TTqKC0eyEb+KMRA9nuguMTemuWWYF1Ao=",
+    "aScalarLEHex": "c91e0907d114fd83c1edc396490bb2dafa43c19815b0354e70dc80c317c3cb0a",
+    "bScalarLEHex": "2b7ca133ae48e2e38e0fefd8894f81823cecf9d3ca70d936e5c13f76eb4f0801",
+    "ya": "XH1XajpQ9iwtG0WRTFb5gZiUIfcUGRsKXWCe3LPozkg=",
+    "yb": "oJiRv4M4C+sx/3/qID7ni1UOTk4ZSlZtAnADcpKXgjU=",
+    "shared": "4n5pwOgsweY7DdwRIY4yTFQMaDIKuTjk4wh+deAbCBs=",
+    "isk": "MCLs/GDqd3U6yr0KTmWsMNNR3Emex/+7dOqqm8R9ZxjTUtHQN2Mdq6sjuvLtNVnkI/j0XCT1qoVhVdz5Ilqdlg==",
+    "transcriptHash": "kYT32cX+YlVptPZLh1xu/XT+rN1qx1ELscf+0ce1gUis6jL9kUUxe979LexJsQo8W98tqIbe/2FEwKDsbPBEkA==",
+    "kcAdapter": "E/S1mevlB1sj+BbUg490ZVAycS2ENhWsnAyolu874Gs=",
+    "kcLamp": "U4CmTBeqCcZcM4mil2H6zGy6E7ffYYfp2a2WaNqak4M=",
+    "macAdapter": "quV8vDnyzC0nW0AYBS1lDqyTZUQg1nPR1OWefZDs3+Q=",
+    "macLamp": "8EBhBQC8uSZKFTJcV6QQEbuSJcjn2WDt4rvxv0EO2TU=",
+    "pairKey": "tB6nHYQPEIw7uUeHO1wZROM/Hc0j8+/oReT60bHKwCA=",
+    "round3Plaintext": {
+      "id": "AgvUJ0RrcjQk2A0srTUro982SdDvj6rgyn6yVEOUGyk=",
+      "sig": "3CDNG179ImqHHxXxc+LQXs/ObPO8ESlllyiBH1HLwQtOWrRCYZ8v/t9rFIN70CyfpxqPuEuRrTRdKh8SgC6bDQ=="
+    },
+    "round3Enc": "0IcBpJ0f/PE4yGOk8KvJCrerErR9GLatI/oPRpX1l7xOAM3WKYhEuZnub0LKsLcqRymkf5ZbLI930bvl4SThnm26aTbw8eQuu7lgKqq6wGC+5408fkyT4v9utER9+nLdSxAKy93b5/jqGzX/kVrBkjknhG4DQwXuWeHt/ewk7DDARFykajtUya2J3wmNAEVej4bv7dButjolgwk9vjX1N65D3OWxvw=="
+  },
+  "identity": {
+    "adapterPriv": "gYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6A=",
+    "adapterPub": "AgvUJ0RrcjQk2A0srTUro982SdDvj6rgyn6yVEOUGyk=",
+    "lampPriv": "oaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8A=",
+    "lampPub": "C0eCPnEJXdWb54rCccV27zifh7ZFYasHz5pOvNAtIEE="
+  },
+  "session": {
+    "adapterEphPriv": "wcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+A=",
+    "adapterEphPub": "OlU9dHktcn76m5pM3j2hrZPxotDAnLY5saPA/aFMviQ=",
+    "lampEphPriv": "4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wA=",
+    "lampEphPub": "SJzrunoWbGGYNf4S7txYHb/Bs23hDIMOTwvBxIc0hks=",
+    "hello": {
+      "type": "lamp_hello",
+      "proto": 1,
+      "machineId": "lamp-vector-machine",
+      "lampId": "C0eCPnEJXdWb54rCccV27zifh7ZFYasHz5pOvNAtIEE=",
+      "ephPub": "SJzrunoWbGGYNf4S7txYHb/Bs23hDIMOTwvBxIc0hks=",
+      "capabilities": [
+        "agents.list",
+        "turn.send",
+        "receipt.get"
+      ],
+      "client": {
+        "name": "autonomous-lamp",
+        "version": "1"
+      },
+      "resume": {
+        "serverInstanceId": "previous",
+        "cursor": 4
+      },
+      "sig": "PSIChXRmhn7htpR9dcuzx6eMj3jthhmT2UKQ6XsV5BVA4tNESdxS13tLYn2DgQCoQlQC5oWf6ngd0bQhOEiGDQ=="
+    },
+    "helloSigningMessage": "AAAADWxhbXAtaGVsbG8tdjEAAAATbGFtcC12ZWN0b3ItbWFjaGluZQAAACC9toVwOt4ONeNWoLgqrHAuzRC2l5oHIEhfVHDorZCAyw==",
+    "welcome": {
+      "type": "lamp_welcome",
+      "proto": 1,
+      "machineId": "lamp-vector-machine",
+      "machineName": "Vector machine",
+      "ephPub": "OlU9dHktcn76m5pM3j2hrZPxotDAnLY5saPA/aFMviQ=",
+      "serverInstanceId": "instance",
+      "capabilities": [
+        "agents.list",
+        "turn.send",
+        "receipt.get"
+      ],
+      "limits": {
+        "maxFrameBytes": 65536
+      },
+      "resumed": false,
+      "cursor": 0,
+      "challenge": "00000000-0000-4000-8000-000000000001",
+      "sig": "dGM+HhatPsGZQ8g91xlNDNwBdu2K0X9imN58sv+7o6tKrczjzsFCeQhUAu6oSqpYrxcy9+YipvIwiMXvMIhzDQ=="
+    },
+    "welcomeSigningMessage": "AAAAD2xhbXAtd2VsY29tZS12MQAAABNsYW1wLXZlY3Rvci1tYWNoaW5lAAAAINRxqmEUbKZrNztGe5pm+nkDQaMyXFRaJ6QjPG9fPvLEAAAAIEic67p6FmxhmDX+Eu7cWB2/wbNt4QyDDk8LwcSHNIZL",
+    "c2s": "o24fc/btVoW8MjYvGIOJw8X+hfpnc7EKocdBp8J9D0I=",
+    "s2c": "okDg64U40Xb7mhYpuwFk7hnE5gUoSIg0BCwwvSFxRhM=",
+    "finished": {
+      "type": "lamp_finished",
+      "challenge": "00000000-0000-4000-8000-000000000001"
+    },
+    "finishedEnvelope": {
+      "__e2e": {
+        "v": 1,
+        "k": "p",
+        "n": 0,
+        "ct": "3hroEK8+JqB8WEQZmmxFV2pEppyu4CQ4kjSIzLITRYiYjFrF0DrlQxW66opGh/u6C1c2ON0nex3uc/X90g0zjE8rjPvsgg6Omq75/vPKIrKd8p5cujJb5PvMfQ=="
+      }
+    },
+    "ready": {
+      "type": "lamp_ready",
+      "serverInstanceId": "instance"
+    },
+    "readyEnvelope": {
+      "__e2e": {
+        "v": 1,
+        "k": "p",
+        "n": 0,
+        "ct": "v/gkyvljcjWw8MlL9dNxmQykh6YAq5/Qjz+V9+zI8dfXxrcdegkkEGLnGcFFZoy/I70UW1ZQMTSzm5kPT4WJrVA92w=="
+      }
+    },
+    "request": {
+      "type": "turn.send",
+      "requestId": "00000000-0000-4000-8000-000000000002",
+      "idempotencyKey": "lamp-vector-1",
+      "machineId": "lamp-vector-machine",
+      "agentId": "agent-vector",
+      "text": "Xin chào lamp"
+    },
+    "requestEnvelope": {
+      "__e2e": {
+        "v": 1,
+        "k": "p",
+        "n": 1,
+        "ct": "hdECPXGlrbobLAmJQ/7NP3OX2fMPDCjpMZYuK/pVbNAlR/3GabplNv6qhukHHPX905Aeb6IzAU2UB0brUL46joipqIy1rQZnnv92dCNkdOe7uqayAo576PMjMIlelmGT+7a3UR7ZqT0vrY2tETGkObxOVGMHN3NqFfQUUJe3k9X129pzwkWaz8nW7JC79gaEu0hl0ab8YJr7D4AW0/vY5OHiLQH3q0Iz5F5NRF306yhzum/X0897GnLPl2phPFlkLOWb2Gp4UfY7ncU="
+      }
+    }
+  },
+  "canonical": {
+    "input": {
+      "z": 1,
+      "a": {
+        "sig": "nested sig must remain",
+        "b": [
+          true,
+          null,
+          "lamp"
+        ]
+      }
+    },
+    "output": "{\"a\":{\"b\":[true,null,\"lamp\"],\"sig\":\"nested sig must remain\"},\"z\":1}"
+  }
+}

@@ -89,6 +89,10 @@ import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/t
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
+import { LampTransport } from './lib/lamp/transport.js'
+import { LampService, LAMP_CAPABILITIES } from './lib/lamp/service.js'
+import { lampLocalRequest } from './lib/lamp/localApi.js'
+import { runLampCommand } from './lib/lamp/command.js'
 import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
 import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
@@ -268,6 +272,7 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
+  harness lamp <command>       pair/status/list/revoke a LAN lamp
   harness pair <code>          pair a BROWSER (code shown on the machine page)
   harness pairings             list paired clients
   harness unpair <#|fp>        unpair one browser (by list number or fingerprint)
@@ -1249,6 +1254,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
     }
   }
+  let lampService: LampService | undefined
+  let lampTransport: LampTransport | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
 
@@ -1282,7 +1289,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   let openPaneAgents = new Set<string>()
   const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
 
-  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal()
+  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || lampTransport?.status().sessions === 1
   /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
   const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
   const terminalStreams = new TerminalStreamManager({
@@ -1659,6 +1666,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
+    onDelivery: (event) => lampService?.delivery(event),
     validateRuntime: validateTerminal,
     inject: submitTerminalAction,
     sendKey: keyTerminalAction,
@@ -1974,6 +1982,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         )
         console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · bytes=${Buffer.byteLength(event.payload.userMessage, 'utf8')}`)
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
+        lampService?.turnStarted(agentId)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
         // ...and anything already drawn belongs to the turn BEFORE this one.
@@ -1988,6 +1997,7 @@ async function runForeground(session: AuthSession): Promise<void> {
           `[turn] ${sid(sessionId)} ended${event.payload.aborted ? ' · aborted (interrupted)' : ''}` +
             `${startedAt ? ` · ${Date.now() - startedAt}ms` : ''}`,
         )
+        lampService?.turnEnded(agentId, event.payload.aborted === true)
         input.onTurnEnded(agentIdFor(sessionId))
         // Command Code asks AFTER the turn: `ask_user_question` ends the turn (its Stop hook fires), the
         // dialog goes up, and the answer opens a NEW turn. Stopping the watcher here is what left the
@@ -2398,6 +2408,18 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
+    onLampRequest: async (method, target, body) => {
+      if (!lampTransport || !lampService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Lamp service is starting' } } }
+      const transport = lampTransport, service = lampService
+      return lampLocalRequest({
+        pairStart: options => transport.pairStart(options),
+        pairCancel: () => { transport.pairCancel(); return { cancelled: true } },
+        pairStatus: () => transport.pairStatus(),
+        list: () => ({ lamps: transport.list() }), status: () => transport.status(),
+        revoke: target => ({ revoked: transport.revoke('all' in target ? 'all' : target.id) }),
+        receipt: target => ({ receipt: service.receipt(target.lampId, target.idempotencyKey) }),
+      }, method, target, body)
+    },
     resolveHookAgent: async ({ engine, runtimeHints, callerPid }) => {
       if (!callerPid) return null
       const resolved: TerminalRuntimeRef[] = []
@@ -3017,7 +3039,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   // heartbeat and mark the turn closed here (mirrors the hosted runtime stopping its heartbeat on cancel). We do
   // NOT emit turn_ended: the web clears its own dots on cancel, and a turn_ended would fire a device
   // recap for a killed turn. The next real prompt reopens a fresh turn.
-  backend.onCancel = (id) => {
+  const cancelAgent = (id: string, confirmed = false): Promise<boolean> => {
     const record = registry.resolve(id)
     const sessionId = record?.sessionId ?? id
     const st = turnStates.get(sessionId)
@@ -3035,11 +3057,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     devinReaders.get(sessionId)?.closeTurn()
     commandcodeNormalizers.get(sessionId)?.closeTurn()
     cursorSubagents.forget(sessionId)
-    input.cancel(record?.agentId ?? sessionId)
+    const cancelled = confirmed ? input.cancelConfirmed(record?.agentId ?? sessionId) : (input.cancel(record?.agentId ?? sessionId), Promise.resolve(true))
+    lampService?.turnEnded(record?.agentId ?? sessionId, true)
     stopHeartbeat(sessionId)
     questionWatcher.stop(sessionId)
     mirror.cancel(sessionId) // close the device's "Working…" tile (bare done, no recap) — a cancel emits no turn_ended
+    return cancelled
   }
+  backend.onCancel = id => { void cancelAgent(id) }
 
   /**
    * Web requested a new agent (`agent_create`): spawn a fresh tmux session running the chosen engine in
@@ -3511,7 +3536,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
   }
 
-  backend.onMessage = (id, content) => {
+  const submitAgent = (id: string, content: string, deliveryId?: string): void => {
     const record = registry.resolve(id)
     const sessionId = record?.sessionId ?? id
     const engine = record?.engine ?? 'claude'
@@ -3524,8 +3549,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine}`)
     }
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
-    input.submit(record?.agentId ?? sessionId, adapted)
+    input.submit(record?.agentId ?? sessionId, adapted, deliveryId)
   }
+  backend.onMessage = (id, content) => submitAgent(id, content)
 
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone
@@ -3577,6 +3603,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
+    await lampTransport?.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -3675,6 +3702,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
+    await lampTransport?.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -3803,9 +3831,45 @@ async function runForeground(session: AuthSession): Promise<void> {
   const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
   cableRef = cable
 
+  lampService = new LampService({
+    machineId: backend.machineId,
+    agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
+      state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
+    submit: submitAgent,
+    cancelDelivery: id => input.cancelDelivery(id),
+    stop: id => cancelAgent(id, true),
+    answer: (agentId, requestId, answers) => questions.answer({ agentId, requestId, answers, allowPermissions: false }),
+    recent: (id, n) => mirror.recent(registry.byAgent(id)?.sessionId ?? id, n),
+    emit: frame => { lampTransport?.send(frame) },
+  })
+  lampTransport = new LampTransport({
+    machineId: backend.machineId,
+    machineName: (() => { try { return readFileSync(MACHINE_NAME_FILE, 'utf8').trim() || 'This machine' } catch { return 'This machine' } })(),
+    identity: relayIdentityStore.getIdentity(), dataDir: env.ADAPTER_DATA_DIR,
+    serverInstanceId: lampService.serverInstanceId, capabilities: LAMP_CAPABILITIES,
+    bind: process.env.HARNESS_LAMP_BIND || '0.0.0.0',
+    port: process.env.HARNESS_LAMP_PORT ? Number(process.env.HARNESS_LAMP_PORT) : 18474,
+    resume: resume => lampService!.resume(resume),
+    onRequest: async (lampId, request, send, capabilities) => {
+      if (!capabilities.includes(String(request.type))) { send({ type: `${request.type}_result`, requestId: request.requestId, error: { code: 'UNSUPPORTED_CAPABILITY', message: 'Capability not negotiated' } }); return }
+      send(await lampService!.request(lampId, request))
+    },
+    onConnected: (_lampId, resume, send) => {
+      lampService!.replay(resume, send)
+      setSummaryPoolDeviceConnected(true)
+      mirror.replayAll(); questionWatcher.reset()
+    },
+    onDisconnected: () => setSummaryPoolDeviceConnected(deviceIsWatching()),
+    onRevoked: lampId => lampService!.revoke(lampId),
+  })
+  try { await lampTransport.start() } catch {
+    console.error('[lamp] LAN listener unavailable; existing local and relay agent connections remain available')
+  }
+
   // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.
   backend.onOutboundCommander = (frame) => {
+    lampService?.commander(frame as Record<string, unknown>)
     // THIS COMPUTER'S cards, by definition — and every one of them belongs to a tile that is on the
     // carousel, because the carousel now spans machines. The old guard dropped them whenever the wheel
     // was pointed elsewhere, which would now silence this machine's own agents.
@@ -4773,6 +4837,9 @@ switch (cmd) {
     else runForeground(session).catch(onError)
     break
   }
+  case 'lamp':
+    runLampCommand(rest, env.ADAPTER_DATA_DIR, env.PORT).then(code => { process.exitCode = code }).catch(onError)
+    break
   case 'pair':
     pairCommand(args[0]).catch(onError)
     break

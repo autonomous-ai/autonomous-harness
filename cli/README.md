@@ -239,3 +239,34 @@ connected*, the adapter runs a disposable one-shot from the session's own CLI en
 body ≤200`, shows a `Summarizing…` indicator while it runs, persists it per session
 (`${ADAPTER_DATA_DIR}/summaries.json`), and returns it on `project_recent` at device boot. A newer
 turn aborts a stale recap.
+
+## Pair an Autonomous Lamp over LAN
+
+Start the Harness daemon, then run `harness lamp pair`. Enter the returned address and six-character
+code on the lamp within 60 seconds. Desktop may expose the same pairing controls; it does not need
+to remain open after pairing. The lamp controls agents on this machine only.
+
+```sh
+harness lamp status --json
+harness lamp pair
+harness lamp pair-status
+harness lamp list --json
+harness lamp cancel
+harness lamp pair --replace
+harness lamp revoke '<base64 identity id from list>'
+harness lamp revoke --all
+```
+
+One lamp is active per CLI. Replacement preserves the current lamp until the candidate completes
+an authenticated encrypted session. Offline lamps remain paired. `pendingFirstSession` identifies a
+candidate awaiting confirmation; it expires after five minutes.
+
+The separate listener defaults to `0.0.0.0:18474`; set `HARNESS_LAMP_BIND` and
+`HARNESS_LAMP_PORT` before starting the daemon to override it. An unpaired daemon opens no lamp
+LAN listener until pairing starts. Manual address entry is supported; mDNS is not. Content uses
+application-level authenticated encryption; the credential-free Desktop loopback is never exposed.
+
+See [the full contract](../docs/lamp-integration.md) and
+[Vietnamese guide](../docs/vi/lamp-integration_vi.md). Code and tests are written; cross-repository
+and physical-device validation are pending. Do not automatically resend a voice command after a
+connection loss: reconcile its receipt first, since `unknown` does not mean it failed to send.
