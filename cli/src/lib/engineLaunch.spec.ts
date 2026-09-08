@@ -205,8 +205,8 @@ describe('buildEngineLaunchArgv with installIfMissing', () => {
     command: string,
     executable: EngineInstallRecipe['executable'] = { names: ['harness-no-such-engine'] },
   ): EngineInstallRecipe => ({ command, source: 'test fixture', executable })
-  const script = (install: EngineInstallRecipe): string =>
-    buildEngineLaunchArgv('opencode', { installIfMissing: install }, '/bin/zsh')[2]
+  const script = (install: EngineInstallRecipe, runtimeNode?: string): string =>
+    buildEngineLaunchArgv('opencode', { installIfMissing: install }, '/bin/zsh', runtimeNode)[2]
 
   it('execs an installed engine without running the installer', async () => {
     await expect(runPaneScript(script(recipe('false')))).resolves.toMatchObject({ code: 0, ranEngine: true })
@@ -239,12 +239,48 @@ describe('buildEngineLaunchArgv with installIfMissing', () => {
     expect(result).toMatchObject({ code: 1, ranEngine: false })
     expect(result.stdout).toContain('install completed, but its executable could not be found')
   })
+
+  it('enables npm from the managed Node runtime when the pane PATH has no npm', async () => {
+    const runtimeBin = mkdtempSync(join(tmpdir(), 'harness-managed-node-bin-'))
+    const emptyPath = mkdtempSync(join(tmpdir(), 'harness-empty-path-'))
+    dirs.push(runtimeBin, emptyPath)
+    const runtimeNode = executable(runtimeBin, 'node')
+    const engineSource = join(runtimeBin, 'engine-source')
+    writeFileSync(engineSource, '#!/bin/sh\n/usr/bin/printf "HARNESS-TEST-ENGINE-RAN\\n"\n')
+    chmodSync(engineSource, 0o700)
+    const installed = join(runtimeBin, 'installed-engine')
+    const npm = join(runtimeBin, 'npm')
+    writeFileSync(npm, `#!/bin/sh
+if [ "$1" = prefix ]; then exit 0; fi
+/bin/cp ${JSON.stringify(engineSource)} ${JSON.stringify(installed)}
+/bin/chmod 700 ${JSON.stringify(installed)}
+`)
+    chmodSync(npm, 0o700)
+
+    const result = await runPaneScript(
+      script(recipe('npm install -g fixture', {
+        names: ['harness-no-such-engine'],
+        absolutePaths: [installed],
+        npmGlobal: true,
+      }), runtimeNode),
+      'harness-no-such-engine',
+      { PATH: emptyPath },
+    )
+
+    expect(result).toMatchObject({ code: 0, ranEngine: true })
+    expect(result.stdout).toContain('enabling Harness managed Node.js/npm')
+  })
+
+  it('does not add the npm bootstrap to non-npm installers', () => {
+    expect(script(recipe('true'))).not.toContain('managed Node.js/npm')
+  })
 })
 
 /** Run one generated pane script under /bin/sh and report what it did. */
 async function runPaneScript(
   paneScript: string,
   command = '/usr/bin/printf',
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ code: number; stdout: string; ranEngine: boolean }> {
   const { execFile } = await import('node:child_process')
   const marker = 'HARNESS-TEST-ENGINE-RAN'
@@ -252,7 +288,7 @@ async function runPaneScript(
     execFile(
       '/bin/sh',
       ['-c', paneScript, 'harness-engine', command, `${marker}\n`],
-      { timeout: 10_000 },
+      { timeout: 10_000, env },
       (error, stdout) => {
         const code = error && typeof (error as { code?: unknown }).code === 'number'
           ? (error as unknown as { code: number }).code

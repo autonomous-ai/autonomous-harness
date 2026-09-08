@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
 import { homedir, userInfo } from 'node:os'
-import { isAbsolute, basename, join } from 'node:path'
+import { isAbsolute, basename, dirname, join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import { binaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
+import { managedNodePath } from './nodeRuntime.js'
 
 /**
  * Best-effort "skip permission prompts" flag per engine, confirmed against each vendor's own docs.
@@ -176,6 +177,7 @@ export function buildEngineLaunchArgv(
   engine: AgentEngine,
   opts: LaunchCommandOptions = {},
   shell: string | undefined = undefined,
+  runtimeNode: string = managedNodePath(),
 ): string[] {
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
@@ -186,7 +188,7 @@ export function buildEngineLaunchArgv(
   // of this launch is that the agent's environment is the one the user asked for.
   const prelude = clearEnvPrelude(opts.clearEnv)
   const body = opts.installIfMissing
-    ? installIfMissingThenExecScript(opts.installIfMissing)
+    ? installIfMissingThenExecScript(opts.installIfMissing, runtimeNode)
     : opts.installFirst
       ? installThenExecScript(opts.installFirst)
       : 'exec "$@"'
@@ -245,6 +247,43 @@ function installedPathCandidates(recipe: EngineInstallRecipe): string[] {
 }
 
 /**
+ * Make npm recipes work on machines where Harness owns Node instead of installing it system-wide.
+ *
+ * The verified Node archive provisioned by `harness start` includes npm, but the daemon deliberately
+ * does not mutate the user's PATH. A tmux login shell can therefore have neither `node` nor `npm`
+ * even though the runtime executing Harness has both. Prefer any npm the user already configured;
+ * otherwise prepend the managed runtime's bin directory for this pane only. This is portable across
+ * macOS and Linux and avoids an interactive/root package-manager install in an agent launch.
+ */
+function npmRuntimePrelude(recipe: EngineInstallRecipe, runtimeNode: string, required: boolean): string {
+  if (!recipe.executable.npmGlobal) return ''
+  const bins = [...new Set([dirname(runtimeNode), dirname(process.execPath)])]
+    .map(shellSingleQuote)
+    .join(' ')
+  return [
+    'if ! command -v npm >/dev/null 2>&1; then',
+    `  for harness_node_bin in ${bins}; do`,
+    '    if [ -x "$harness_node_bin/node" ] && [ -x "$harness_node_bin/npm" ]; then',
+    '      PATH="$harness_node_bin${PATH:+:$PATH}"',
+    '      export PATH',
+    '      hash -r 2>/dev/null || true',
+    ...(required ? [
+      `      printf '%s\\n' 'harness: npm is missing from PATH — enabling Harness managed Node.js/npm'`,
+    ] : []),
+    '      break',
+    '    fi',
+    '  done',
+    'fi',
+    ...(required ? [
+      'if ! command -v npm >/dev/null 2>&1; then',
+      `  printf '%s\\n' 'harness: npm is unavailable and the managed Node.js/npm runtime could not be used.'`,
+      '  exit 1',
+      'fi',
+    ] : []),
+  ].join('\n')
+}
+
+/**
  * Install-if-missing has to resolve twice: before installing, and again after it returns.
  *
  * A `curl | bash` installer cannot export PATH back into its parent shell. Several supported
@@ -253,7 +292,7 @@ function installedPathCandidates(recipe: EngineInstallRecipe): string[] {
  * source-owned candidate paths below bridge that one-shell gap without sourcing arbitrary profile
  * files a second time. npm installs also get their active global prefix as a fallback.
  */
-function installIfMissingThenExecScript(recipe: EngineInstallRecipe): string {
+function installIfMissingThenExecScript(recipe: EngineInstallRecipe, runtimeNode: string): string {
   const install = recipe.command
   const names = recipe.executable.names.map(shellSingleQuote).join(' ')
   const paths = installedPathCandidates(recipe).map(shellSingleQuote).join(' ')
@@ -286,6 +325,7 @@ function installIfMissingThenExecScript(recipe: EngineInstallRecipe): string {
     '}',
     'try_engine "$1" "$@" || true',
     tryCandidates,
+    npmRuntimePrelude(recipe, runtimeNode, true),
     tryNpmGlobal,
     `printf '%s\\n' 'harness: engine is missing — installing it in this terminal' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
     `if eval ${JSON.stringify(install)}; then`,
@@ -306,6 +346,7 @@ function availabilityScript(recipe: EngineInstallRecipe | undefined): string {
   const paths = recipe ? installedPathCandidates(recipe).map(shellSingleQuote).join(' ') : ''
   const candidates = [names, paths].filter(Boolean).join(' ')
   return [
+    ...(recipe ? [npmRuntimePrelude(recipe, managedNodePath(), false)] : []),
     `for candidate in "$@" ${candidates}; do`,
     '  case "$candidate" in',
     '    */*) resolved="$candidate" ;;',
