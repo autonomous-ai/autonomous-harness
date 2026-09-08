@@ -44,12 +44,6 @@
 export const GRID_MCP_SERVER_NAME = 'grid-web'
 
 /**
- * Codex's spelling of that name. Its config keys are TOML paths and `-` is not a bare TOML key,
- * which is why `grid mcp config` prints `[mcp_servers.grid_web]` too.
- */
-const GRID_MCP_CODEX_KEY = GRID_MCP_SERVER_NAME.replace(/-/g, '_')
-
-/**
  * The variable Codex reads its header out of.
  *
  * Its own rather than the launch's key variable, because `env_http_headers` holds the WHOLE header
@@ -92,11 +86,18 @@ export function claudeMcpConfig(mcpUrl: string, keyVar: string): string {
 /**
  * The same server as Codex `-c` overrides, which is how its provider is configured too — so this
  * needs no config file either. Values are quoted as JSON because a `-c` value is parsed as TOML.
+ *
+ * ⚠️ The name keeps its HYPHEN here, like everywhere else. A dotted `-c` path looks like it would
+ * need `grid_web` — TOML bare keys do allow `-`, and `codex mcp add` writes `[mcp_servers.grid-web]`
+ * itself. Renaming it for this one harness would rename its TOOLS too: an agent would see
+ * `mcp__grid_web__web_search` on Codex and `mcp__grid-web__web_search` everywhere else, so a prompt
+ * or skill naming one would silently miss on the other. Measured against codex 0.144.6, which reads
+ * the hyphenated key back from `-c` without complaint.
  */
 export function codexMcpArgs(mcpUrl: string): string[] {
   return [
-    '-c', `mcp_servers.${GRID_MCP_CODEX_KEY}.url=${JSON.stringify(mcpUrl)}`,
-    '-c', `mcp_servers.${GRID_MCP_CODEX_KEY}.env_http_headers.Authorization=${JSON.stringify(GRID_MCP_AUTH_VAR)}`,
+    '-c', `mcp_servers.${GRID_MCP_SERVER_NAME}.url=${JSON.stringify(mcpUrl)}`,
+    '-c', `mcp_servers.${GRID_MCP_SERVER_NAME}.env_http_headers.Authorization=${JSON.stringify(GRID_MCP_AUTH_VAR)}`,
   ]
 }
 

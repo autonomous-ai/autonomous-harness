@@ -447,9 +447,9 @@ describe('web tools (grid ADR 0041)', () => {
   })
 
   it("points Codex at it through env_http_headers, which carries the WHOLE header value", () => {
-    expect(codexArg('mcp_servers.grid_web.url')).toBe(`mcp_servers.grid_web.url="${MCP_URL}"`)
-    expect(codexArg('mcp_servers.grid_web.env_http_headers.Authorization'))
-      .toBe('mcp_servers.grid_web.env_http_headers.Authorization="GRID_MCP_AUTHORIZATION"')
+    expect(codexArg('mcp_servers.grid-web.url')).toBe(`mcp_servers.grid-web.url="${MCP_URL}"`)
+    expect(codexArg('mcp_servers.grid-web.env_http_headers.Authorization'))
+      .toBe('mcp_servers.grid-web.env_http_headers.Authorization="GRID_MCP_AUTHORIZATION"')
     // Bearer included — `bearer_token_env_var` takes a bare token, this one does not, and ADR 0041
     // D-d calls confusing the two a silent 401.
     expect(launchOf('codex', WITH_MCP).env.GRID_MCP_AUTHORIZATION).toBe(`Bearer ${WIRE.apiKey}`)
@@ -491,6 +491,21 @@ describe('web tools (grid ADR 0041)', () => {
     expect(Object.keys(JSON.parse(file.content))).toEqual(['mcp_servers'])
   })
 
+  it('calls the server the same thing in every harness', () => {
+    // The tools are named after it — an agent sees `mcp__grid-web__web_search` — so a harness that
+    // spells it differently gets differently-named tools, and a prompt or skill naming one silently
+    // misses on the other. Codex is where this is easy to get wrong: its config keys are dotted TOML
+    // paths, which look like they could not carry a `-`. They can.
+    expect(Object.keys(claudeMcpJson().mcpServers)).toEqual(['grid-web'])
+    expect(Object.keys(opencodeConfig().mcp)).toEqual(['grid-web'])
+    expect(Object.keys(JSON.parse(launchOf('hermes', WITH_MCP).configDir!.files[0]!.content).mcp_servers))
+      .toEqual(['grid-web'])
+    for (const arg of launchOf('codex', WITH_MCP).args) {
+      expect(arg, 'codex renamed the server, and with it every tool').not.toContain('grid_web')
+    }
+    expect(codexArg('mcp_servers.grid-web.url')).toBeDefined()
+  })
+
   it('never writes the key to disk or to an argv', () => {
     for (const engine of ['claude', 'codex', 'opencode', 'hermes'] as const) {
       const launch = launchOf(engine, WITH_MCP)
@@ -519,7 +534,7 @@ describe('web tools (grid ADR 0041)', () => {
     // An older desktop, and the no-regression promise: the launch is byte-for-byte what it was.
     expect(launchOf('claude', WITH_MODEL).args).toEqual([])
     expect(launchOf('claude', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
-    expect(codexArg('mcp_servers.grid_web.url', WITH_MODEL)).toBeUndefined()
+    expect(codexArg('mcp_servers.grid-web.url', WITH_MODEL)).toBeUndefined()
     expect(launchOf('codex', WITH_MODEL).env.GRID_MCP_AUTHORIZATION).toBeUndefined()
     expect(opencodeConfig(WITH_MODEL).mcp).toBeUndefined()
     // Hermes had no config directory at all before web tools, so it goes back to having none.
