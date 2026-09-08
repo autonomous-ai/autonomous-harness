@@ -1181,6 +1181,22 @@ export class CableSession {
         this.host.log(`cable: following the app to agent ${agentId}${unknown ? ' — NOT in this daemon\'s list, the dial has no tile for it' : ''}`)
         this.expectedAppFocusEcho = agentId
         this.expectedAppFocusEchoUntil = Date.now() + APP_FOCUS_SETTLE_MS
+        // THE LIST FIRST, THEN THE FOCUS — the fix for "clicking a rail agent that has no tile does not
+        // move the dial".
+        //
+        // A focus names a tile the dial has to CENTRE, and the dial can only centre what its ring walks.
+        // The click that brought us here is usually the very thing that changed the ring: opening an
+        // agent that had no tile puts it on the desk, and until that list is pushed the dial is still
+        // walking a ring where that agent sits off it — where the device drops the focus, by design, with
+        // no column to move to. Racing the two produced exactly the reported symptom: mostly it worked
+        // (the tick's push arrived first), sometimes it did not, and nothing in either log said which.
+        //
+        // The record is written BEFORE the push so the re-assert at the end of syncAgents names the agent
+        // we are moving to, not the one we are leaving — otherwise the dial visibly steps onto the old
+        // tile on its way. Cheap when nothing changed: syncAgents returns without sending a frame.
+        this.desiredFocus = agentId
+        await this.syncAgents()
+        if (generation !== this.appFocusGeneration) return
         await this.focusAgent(agentId)   // writes the record
       } finally {
         this.drivingAppFocus = false

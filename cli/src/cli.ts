@@ -2774,6 +2774,14 @@ async function runForeground(session: AuthSession): Promise<void> {
       // around these — tiles first, in tile order — so the thumb walks the same
       // grid the eyes are on. `openPaneAgents` below only ever asks "is this
       // one on screen", which is why it can stay a set.
+      //
+      // THE RING IS A FUNCTION OF THIS LIST, so a change here is a new ring and has to be pushed at once.
+      // Leaving it to the next tick opened a one-second window with a real failure in it: clicking a rail
+      // agent that has NO tile yet changes the desk and then immediately follows with the focus, and a
+      // focus for an agent the dial's CURRENT ring does not walk is dropped on the device — it has no
+      // column to centre on. The window moved, the dial did not, and nothing anywhere said why.
+      const deskChanged = agentIds.length !== appPaneAgents.length
+        || agentIds.some((id, at) => id !== appPaneAgents[at])
       appPaneAgents = agentIds
       cableHostRef?.setDesk(agentIds)
       const next = new Set(agentIds)
@@ -2783,6 +2791,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       const changed = next.size !== openPaneAgents.size || [...next].some((id) => !openPaneAgents.has(id))
       openPaneAgents = next
       if (changed) console.log(`[cable] window tiles: ${next.size ? [...next].map(sid).join(' ') : '(none)'}`)
+      // Ordered, not set-wise: two tiles swapping places is the same set and a different ring.
+      if (deskChanged) void cableRef?.syncAgents()
     },
     machineId: backend.machineId,
     backend,

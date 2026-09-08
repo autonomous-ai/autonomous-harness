@@ -297,6 +297,31 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('pushes the ring BEFORE the focus that needs it', async () => {
+    // Reported from the desk: clicking a rail agent that has NO tile yet moves the window and leaves the
+    // dial where it was — often, not always.
+    //
+    // A focus names a tile the dial has to centre, and the dial centres only what its ring WALKS; an
+    // agent with no tile can be sitting off that ring entirely, where the device drops the focus with
+    // nothing to move to. The click is what changes the ring — it opens a tile — so the list and the
+    // focus are one transaction, and the list has to go first.
+    let agents: CableAgent[] = [{ id: 'a1', name: 'one' }, { id: 'a2', name: 'two' }]
+    const { session, port } = await connect(makeHost({ listAgents: async () => agents }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+    port.sent.length = 0
+
+    agents = [{ id: 'a2', name: 'two' }, { id: 'a1', name: 'one' }]   // the click re-shaped the desk
+    await session.followApp('', 'a2')
+    await settle()
+
+    const order = port.types().filter((t) => t === 'agents.end' || t === 'focus')
+    expect(order[0]).toBe('agents.end')                      // the ring the focus lands on, first
+    expect(order).toContain('focus')
+    expect(port.sent.filter((m) => m.t === 'focus').every((m) => m.agentId === 'a2')).toBe(true)
+    await session.stop()
+  })
+
   it("never echoes the dial's own move back at it", async () => {
     // THE RING: the dial's carousel reports `focus` up, the daemon hands that to the window, the window
     // opens that agent's terminal, and a window opening a terminal is exactly what calls followApp. Left
