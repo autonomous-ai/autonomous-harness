@@ -191,9 +191,9 @@ describe('TerminalStreamManager', () => {
     expect(stream.pastes).toEqual([longPaste])
     expect(stream.writes).toHaveLength(0)
 
-    // Ctrl+C pasted alongside real content must never reach the pane, same rule as input().
+    // Ctrl+C pasted alongside real content is forwarded like any other byte, same as input().
     await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'a\x03b' })
-    expect(stream.pastes.at(-1)).toBe('ab')
+    expect(stream.pastes.at(-1)).toBe('a\x03b')
 
     await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: '' })
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
