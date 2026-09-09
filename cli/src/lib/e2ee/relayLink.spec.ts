@@ -5,6 +5,12 @@ import { join } from 'path'
 import { WebSocketServer } from 'ws'
 import type { AddressInfo } from 'net'
 
+// The one module here imported statically rather than in beforeAll: a test timeout is needed when
+// `it()` is DEFINED, long before beforeAll runs. Safe because passwordPake.js is pure crypto —
+// noble plus core.js — and reaches config/env.js by no path, which is the only thing the deferral
+// above exists to keep out until ADAPTER_DATA_DIR is set.
+import { PW_SCRYPT_TEST_TIMEOUT_MS } from './passwordPake.js'
+
 // Same reason as manager.test.ts: ADAPTER_DATA_DIR must be set before any transitive import of
 // config/env.js, so every module under test is dynamically imported after the temp dir is set.
 type Frame = Record<string, unknown>
@@ -278,7 +284,8 @@ describe('remote-password link + relay session crypto (interop with the real E2e
     } finally {
       await close()
     }
-  })
+    // One scrypt per wrong-password attempt — see PW_SCRYPT_TEST_TIMEOUT_MS.
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
 
   it('setting a new password clears an existing lockout', async () => {
     const { manager, wsBase, close } = fakeMachine()
@@ -313,7 +320,8 @@ describe('remote-password link + relay session crypto (interop with the real E2e
     } finally {
       await close()
     }
-  })
+    // One scrypt per wrong-password attempt — see PW_SCRYPT_TEST_TIMEOUT_MS.
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
 })
 
 describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
