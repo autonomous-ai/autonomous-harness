@@ -17,6 +17,15 @@ export interface AutonomousDeviceServiceOptions {
   stop: (agentId: string) => Promise<boolean>
   answer: (agentId: string, questionRequestId: string, answers: Record<string, string>) => Promise<boolean>
   recent: (agentId: string, n: number) => unknown[]
+  /**
+   * The newest turn's COMPLETE final answer for an agent, or undefined.
+   *
+   * Read here rather than taken off the `commander_event` payload on purpose. That frame is broadcast to
+   * every device on the account, and the USB dial's own encoder throws above an 8 KiB payload
+   * (cable/cableFrame.ts) — widening the shared card to serve one consumer would put a limit nobody
+   * looks at between the dial and its turn cards.
+   */
+  fullText?: (agentId: string) => string | undefined
   emit?: (frame: AutonomousDeviceFrame) => void
 }
 interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt }
@@ -142,7 +151,8 @@ export class AutonomousDeviceService {
       if (this.questions.get(agentId)?.requestId === p.requestId) this.questions.delete(agentId)
       this.event('question.close', agentId, { questionRequestId: p.requestId })
     } else if (frame.type === 'commander_event' && agentId && ['summary', 'tool', 'error'].includes(String(p.kind))) {
-      this.event(p.kind === 'summary' ? 'turn.summary' : p.kind === 'tool' ? 'turn.tool' : 'agent.error', agentId, p)
+      const full = p.kind === 'summary' ? this.options.fullText?.(agentId) : undefined
+      this.event(p.kind === 'summary' ? 'turn.summary' : p.kind === 'tool' ? 'turn.tool' : 'agent.error', agentId, full ? { ...p, fullText: full } : p)
     }
   }
   async request(deviceId: string, req: Record<string, unknown>): Promise<AutonomousDeviceFrame> {

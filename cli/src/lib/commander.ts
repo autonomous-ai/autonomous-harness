@@ -197,6 +197,31 @@ function splitSummary(summary: string): { recap: string; body: string } {
  *  agent's subject from another's, few enough that one chatty agent cannot crowd the others out. */
 const RECENT_TURNS = 3
 
+/**
+ * The cap on ONE stored final answer, in bytes of UTF-8.
+ *
+ * Not a taste judgement — it is arithmetic against the narrowest transport that carries this. The
+ * Autonomous device link opens its socket with `maxPayload: 65536` (lib/autonomous-device/direct.ts),
+ * a `recap` may ask for five turns at once, and every payload is sealed and base64'd on the way out
+ * (wrapPayload → roughly +37%). Five of these is 40 KiB, which lands near 55 KiB on the wire and still
+ * fits. Raising it without redoing that multiplication is how frames start disappearing with no error
+ * anywhere: an oversized one is dropped by the socket, not rejected by anything that logs.
+ */
+const FULL_TEXT_MAX_BYTES = 8192
+
+/**
+ * Truncate to a byte budget without splitting a character.
+ *
+ * `slice()` counts UTF-16 units, so cutting Vietnamese or emoji by a byte figure lands mid-sequence and
+ * ships a broken string. Decoding the truncated buffer non-fatally turns whatever was severed into
+ * U+FFFD, which is then dropped along with a trailing lone surrogate.
+ */
+function clipBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= max) return text
+  const decoded = new TextDecoder('utf-8').decode(Buffer.from(text, 'utf8').subarray(0, max - 3))
+  return `${decoded.replace(/\uFFFD+$/, '').replace(/[\uD800-\uDBFF]$/, '')}\u2026`
+}
+
 export class CommanderMirror {
   private states = new Map<string, SessionState>()
   private summaries = new Map<string, string>() // sessionId → "recap\n\nbody" (the LATEST turn)
@@ -210,13 +235,27 @@ export class CommanderMirror {
    * history lives beside it where an older reader simply never looks.
    */
   private history = new Map<string, string[]>()
+  /**
+   * The same turns' COMPLETE final answers, newest first and index-aligned with `history`.
+   *
+   * A third file for the reason the second one exists (see above): the two beside it keep their exact
+   * shape, so a rollback reads them unchanged and simply never looks here.
+   *
+   * It is kept at all because `history` cannot answer for it. What is stored there has already been
+   * flattened to one line and clipped to 250 characters by deriveTurnSummary — enough for a dial that
+   * is cabled to the screen already showing the answer, and not enough for anything reading the answer
+   * aloud in another room.
+   */
+  private fullTexts = new Map<string, string[]>()
   private file: string
   private historyFile: string
+  private fullTextFile: string
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private opts: CommanderMirrorOpts) {
     this.file = join(opts.dataDir, 'summaries.json')
     this.historyFile = join(opts.dataDir, 'summaries-history.json')
+    this.fullTextFile = join(opts.dataDir, 'summaries-fulltext.json')
     this.load()
   }
 
@@ -552,6 +591,9 @@ export class CommanderMirror {
         if (summary) {
           this.summaries.set(sessionId, summary)
           this.remember(sessionId, summary)
+          // Recorded in the SAME branch as the summary, so the two arrays cannot drift out of step —
+          // a turn that produced no summary produces no row in either.
+          this.rememberFullText(sessionId, text)
           this.saveSoon()
           const { recap, body } = splitSummary(summary)
           this.trace(sessionId, `${sid} done in ${ms}ms · recap="${recap}" · bodyLen=${body.length}`)
@@ -624,25 +666,42 @@ export class CommanderMirror {
    * Falls back to the single latest summary when the history is empty, so the recaps already on disk from
    * before this existed are usable on the first run rather than after three more turns.
    */
-  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string }> {
+  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string; fullText?: string }> {
     const want = Math.max(1, n)
     const stored = this.history.get(sessionId) ?? []
     const latest = this.summaries.get(sessionId)
     // The latest lives in both places once a turn has run under this build; dedupe so it is not read twice.
-    const all = stored.length ? stored : latest ? [latest] : []
+    const usingHistory = stored.length > 0
+    const all = usingHistory ? stored : latest ? [latest] : []
+    const fulls = this.fullTexts.get(sessionId) ?? []
     return all
       .slice(0, want)
-      .filter((summary) => summary && summary.trim())
-      .map((summary) => {
+      // PAIRED BEFORE FILTERING, not after. The filter below drops empty summaries, and dropping them
+      // from one array while reading the other by position is how a turn ends up carrying the previous
+      // turn's answer — wrong in the one way nobody would think to check.
+      .map((summary, at) => ({ summary, full: fulls[usingHistory ? at : 0] }))
+      .filter(({ summary }) => summary && summary.trim())
+      .map(({ summary, full }) => {
         const { recap, body } = splitSummary(summary)
-        return { kind: 'summary', text: body || recap, recap }
+        return { kind: 'summary', text: body || recap, recap, ...(full ? { fullText: full } : {}) }
       })
+  }
+
+  /** The newest turn's complete final answer, for a consumer that reads rather than glances. */
+  lastFullText(sessionId: string): string | undefined {
+    return this.fullTexts.get(sessionId)?.[0]
   }
 
   /** Keep the last few turns for this session, newest first. */
   private remember(sessionId: string, summary: string): void {
     const kept = [summary, ...(this.history.get(sessionId) ?? [])].slice(0, RECENT_TURNS)
     this.history.set(sessionId, kept)
+  }
+
+  /** The same, for the unclipped answer. Always called with `remember`, so the two stay aligned. */
+  private rememberFullText(sessionId: string, text: string): void {
+    const kept = [clipBytes(text.trim(), FULL_TEXT_MAX_BYTES), ...(this.fullTexts.get(sessionId) ?? [])].slice(0, RECENT_TURNS)
+    this.fullTexts.set(sessionId, kept)
   }
 
   /** Turn cancelled (web/device C-c). The claude turn is killed with no end_turn line, so no turn_ended
@@ -679,6 +738,10 @@ export class CommanderMirror {
     // is exactly what this method exists to prevent, and the router reads the history, not the latest.
     const past = this.history.get(fromSessionId)
     if (past?.length && !this.history.get(toSessionId)?.length) this.history.set(toSessionId, past)
+    // Moved with it, or the rotated session would answer `recap` with summaries whose full answers are
+    // missing — index-aligned arrays where only one side survived is worse than neither surviving.
+    const pastFull = this.fullTexts.get(fromSessionId)
+    if (pastFull?.length && !this.fullTexts.get(toSessionId)?.length) this.fullTexts.set(toSessionId, pastFull)
     this.save()
   }
 
@@ -708,6 +771,14 @@ export class CommanderMirror {
         if (Array.isArray(v)) this.history.set(k, v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_TURNS))
       }
     } catch { /* no history yet — recent() falls back to the latest summary */ }
+    try {
+      const obj = JSON.parse(readFileSync(this.fullTextFile, 'utf-8')) as Record<string, unknown>
+      for (const [k, v] of Object.entries(obj)) {
+        // Re-clipped on the way in: the cap may have been lowered since this was written, and a stored
+        // row is not evidence that it still fits the wire.
+        if (Array.isArray(v)) this.fullTexts.set(k, v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_TURNS).map(t => clipBytes(t, FULL_TEXT_MAX_BYTES)))
+      }
+    } catch { /* no full answers yet — recap simply omits the field */ }
   }
 
   private saveSoon(): void {
@@ -720,6 +791,7 @@ export class CommanderMirror {
       mkdirSync(this.opts.dataDir, { recursive: true, mode: 0o700 })
       writeFileSync(this.file, JSON.stringify(Object.fromEntries(this.summaries), null, 2))
       writeFileSync(this.historyFile, JSON.stringify(Object.fromEntries(this.history), null, 2))
+      writeFileSync(this.fullTextFile, JSON.stringify(Object.fromEntries(this.fullTexts), null, 2))
     } catch (err) {
       console.error('[commander] save summaries failed:', err)
     }

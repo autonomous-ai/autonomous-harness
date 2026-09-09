@@ -122,7 +122,7 @@ a duplicate may return any retained receipt state. Supported operations:
 |---|---|---|
 | `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state}]` |
 | `status` | `machineId,agentId` | `machineId,agentId,state,openQuestion:null\|{requestId,questions}` |
-| `recap` | `machineId,agentId,n?` (default 3, integer 1–5) | `machineId,agentId,turns:[{kind,text,recap?}]` |
+| `recap` | `machineId,agentId,n?` (default 3, integer 1–5) | `machineId,agentId,turns:[{kind,text,recap?,fullText?}]` |
 | `turn.send` | `machineId,agentId,idempotencyKey,text` | `status,receipt` |
 | `turn.stop` | `machineId,agentId,idempotencyKey` | `status,receipt` |
 | `question.answer` | `machineId,agentId,idempotencyKey,questionRequestId,answers` | `status,receipt` |
@@ -168,7 +168,26 @@ Events are encrypted full objects:
 ```
 
 Kinds include `receipt.updated`, `turn.started`, `turn.done`, `turn.error`, `turn.summary`,
-`turn.tool`, `agent.error`, `question.open`, `question.close`. Question-open payload is
+`turn.tool`, `agent.error`, `question.open`, `question.close`.
+
+`turn.summary` payload and `recap` turn entries carry three views of one answer, and a consumer should
+prefer `turns[].fullText`, then `turn.summary.fullText`, then `text`:
+
+| Field | Limit | What it is |
+|---|---|---|
+| `recap` | 60 chars | the first prose sentence — a tile headline |
+| `text` | 250 chars | the answer flattened to one line and clipped — a glance |
+| `fullText` | 8192 bytes UTF-8 | the assistant's final message as shown on screen, markdown and line breaks intact |
+
+`fullText` is optional and absent when no answer was recorded, so read it defensively. It holds only the
+final user-facing response — never tool transcripts, hidden reasoning or terminal output — and it costs
+no extra model call: it is the same text the local summarizer already receives.
+
+The 8192-byte cap is arithmetic, not taste: the direct socket accepts 65536 bytes, `recap` may return
+five turns at once, and sealed payloads grow by roughly 37% through AEAD and base64. Oversized truncation
+is UTF-8 safe and marked with a trailing `…`. `text` and `recap` are unchanged byte-for-byte, and the
+shared `commander_event` card is not widened — the USB dial's encoder throws above an 8 KiB frame, so the
+field is added only to the events this service emits. Question-open payload is
 `{questionRequestId,questions}`. Status uses `openQuestion.requestId` for that same identifier.
 Only device-origin turns with known correlation include `idempotencyKey`/`turnId`.
 Ring capacity 500; cursor is `(serverInstanceId,eventId)`. Matching retained cursor replays newer
