@@ -33,6 +33,23 @@ PATH="${binDir}" exec /bin/sh -c "$@"
   return shell
 }
 
+/** A shell that answers ONLY when asked as a login shell — a bash user with PATH in ~/.bash_profile. */
+function loginOnlyShell(binDir: string): string {
+  const dir = scratch('tmux-onpath-login-')
+  const shell = join(dir, 'bash')
+  writeFileSync(shell, `#!/bin/sh
+# The daemon asks bash with '-ic'; only '-lic' reads the file this user's PATH lives in.
+case "$1" in
+  -lic) ;;
+  *) exit 0 ;;
+esac
+shift
+PATH="${binDir}" exec /bin/sh -c "$@"
+`)
+  chmodSync(shell, 0o700)
+  return shell
+}
+
 function fakeTmux(): string {
   const dir = scratch('tmux-onpath-bin-')
   const tmux = join(dir, 'tmux')
@@ -54,6 +71,19 @@ describe('ensureTmuxOnPath', () => {
     // The point of the whole exercise: every later execFile('tmux', …) now resolves.
     expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
     expect(env.PATH).toContain('/nonexistent-for-this-test')
+  })
+
+  it('asks again as a login shell when the interactive one comes back empty', async () => {
+    // A bash machine, measured here: `bash -ic` resolved nothing and `bash -lic` returned
+    // /usr/local/bin/tmux, so the daemon logged "tmux: unavailable (spawn tmux ENOENT)" and served
+    // ZERO agents while nine tmux sessions were running. zsh keeps PATH in .zshrc, which `-i` reads;
+    // bash keeps it in .bash_profile, which only `-l` does.
+    const binDir = fakeTmux()
+    const env: NodeJS.ProcessEnv = { PATH: '/nonexistent' }
+    const outcome = await ensureTmuxOnPath(env, loginOnlyShell(binDir))
+
+    expect(outcome.state).toBe('adopted')
+    expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
   })
 
   it('leaves an already-working PATH untouched', async () => {

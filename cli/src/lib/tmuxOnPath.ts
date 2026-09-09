@@ -36,10 +36,34 @@ export async function resolveViaLoginShell(
 ): Promise<string | null> {
   const interactive = interactiveEngineShell(shell)
   if (!interactive) return null
-  return await new Promise<string | null>((resolve) => {
+  const found = await probe(interactive.path, interactive.args, command)
+  if (found) return found
+  // ASK AGAIN AS A LOGIN SHELL, because for bash the first ask reads the wrong file.
+  //
+  // interactiveEngineShell gives zsh `-lic` and bash `-ic`, and that asymmetry is deliberate: a
+  // deliberate test pins bash to interactive-only startup files. It is right for LAUNCHING an engine
+  // and wrong for ASKING WHERE A BINARY IS, because the two conventions differ — a zsh user's PATH is
+  // in .zshrc, which `-i` reads, and a bash user's is conventionally in .bash_profile, which only `-l`
+  // reads (.bashrc runs for every subshell, so a PATH built there compounds).
+  //
+  // Measured on a bash machine here: `bash -ic` resolved nothing, `bash -lic` returned
+  // /usr/local/bin/tmux. The daemon therefore logged "tmux: unavailable (spawn tmux ENOENT)" and served
+  // ZERO agents while nine tmux sessions were running — the dial showed an empty wheel and nothing said
+  // why. Terminal.app runs a login shell on macOS, so this second ask is also the one that matches what
+  // the user sees in their own terminal.
+  //
+  // Only ever a FALLBACK: the first ask stands when it answers, so nothing changes for the shells that
+  // already worked, and this costs one extra spawn only on a machine that was about to fail anyway.
+  if (interactive.args.includes('-lic')) return null
+  return await probe(interactive.path, ['-lic'], command)
+}
+
+/** One question to one shell: where is `command`? Null unless it answers with an absolute path. */
+function probe(shellPath: string, args: readonly string[], command: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
     execFile(
-      interactive.path,
-      [...interactive.args, RESOLVE_SCRIPT, 'harness-tmux-probe', command],
+      shellPath,
+      [...args, RESOLVE_SCRIPT, 'harness-tmux-probe', command],
       { timeout: 5_000 },
       (error, stdout) => {
         const first = String(stdout ?? '').trim().split('\n')[0]?.trim() ?? ''

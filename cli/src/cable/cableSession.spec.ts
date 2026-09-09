@@ -274,7 +274,10 @@ describe('cable session', () => {
         return new LoopbackPort(onData, onClosed)
       })
       session.start()
-      await vi.advanceTimersByTimeAsync(20_000)
+      // Comfortably past OPEN_TIMEOUT_MS plus the reopen tick. It used to advance exactly 20s, which was
+      // fine while the budget was 8s and became a coin toss the moment the budget itself became 20 —
+      // the retry lands after the deadline, not on it.
+      await vi.advanceTimersByTimeAsync(35_000)
 
       expect(attempts).toBeGreaterThan(1)
       await session.stop()

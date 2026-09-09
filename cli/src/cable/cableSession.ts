@@ -43,7 +43,25 @@ const REOPEN_EVERY_MS = 2_000
 // `stty` against a device that may have just re-enumerated mid-flash; if that call hangs, the dial is
 // gone until the daemon is restarted — no error, no retry, no log line saying why. Observed once: the
 // link closed at 14:14 and nothing tried again for twelve minutes.
-const OPEN_TIMEOUT_MS = 8_000
+//
+// TWENTY SECONDS, RAISED FROM EIGHT, because eight was under the cost of the thing it was timing.
+// Measured on a dial that had just re-enumerated after a flash — the whole reason this budget mentions
+// re-enumeration in the first place:
+//
+//   22:26:28.077  cannot open the dial: open timed out after 8000ms   ← gave up
+//   22:26:29.660  dial 28:84:85:90:5F:78 on fw 0.0.58 proto 3         ← opened, 1.58s late
+//   22:26:29.661  machines → 3 · agents → 8 (attach)                  ← FULL handshake, succeeded
+//   22:26:29.662  closed (abandoned — open timed out)                 ← and thrown away
+//
+// The open costs about 9.6s there, every time, so the deadline never once let a working link live: the
+// cycle repeated on an exact 8-second beat for as long as anyone watched, and the dial sat on "Not
+// connected" while the daemon greeted it successfully every eight seconds and hung up on it. That is
+// the worst shape a timeout can take — not a slow failure, a discarded success.
+//
+// The stall this guards against is a `stty` that never returns, which twenty seconds catches as surely
+// as eight. What it costs is the wait after a replug, and the honest number for that is the ~10s the
+// open actually takes, not the 8 it was being given.
+const OPEN_TIMEOUT_MS = 20_000
 
 /** What this dial must call itself. A greeting that does not say exactly this is another product's. */
 const CABLE_PRODUCT = 'harness'
