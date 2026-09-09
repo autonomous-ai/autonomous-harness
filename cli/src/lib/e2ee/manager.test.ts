@@ -3,6 +3,12 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
+// The one module here imported statically rather than in beforeAll: a test timeout is needed when
+// `it()` is DEFINED, long before beforeAll runs. Safe because passwordPake.js is pure crypto —
+// noble plus core.js — and reaches config/env.js by no path, which is the only thing the deferral
+// above exists to keep out until ADAPTER_DATA_DIR is set.
+import { PW_SCRYPT_TEST_TIMEOUT_MS } from './passwordPake.js'
+
 // The manager transitively imports config/env (validated at load) + writes the paired store to disk,
 // so point ADAPTER_DATA_DIR at a temp dir BEFORE importing it (dynamic import in beforeAll).
 type Frame = Record<string, unknown>
@@ -463,7 +469,8 @@ describe('E2eeManager persistent remote-password pairing', () => {
     const result = takeLast('e2e_pw_pair_result').payload as Record<string, unknown>
     expect(result).toMatchObject({ ok: false, error: 'RATE_LIMITED' })
     expect(typeof result.retryAt).toBe('number')
-  })
+    // One scrypt per wrong-password attempt — see PW_SCRYPT_TEST_TIMEOUT_MS.
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
 
   it('setting a new password clears an existing lockout', async () => {
     const { mgr, takeLast } = machine()
@@ -488,7 +495,8 @@ describe('E2eeManager persistent remote-password pairing', () => {
     const r4 = joiner.onPake(takeLast('e2e_pw_pake'))!
     mgr.handleFrame(conn, r4)
     expect(takeLast('e2e_pw_pake').payload).toMatchObject({ round: 5, ok: true })
-  })
+    // One scrypt per wrong-password attempt — see PW_SCRYPT_TEST_TIMEOUT_MS.
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
 
   it('clearRemotePassword removes it — a subsequent intent gets NO_REMOTE_PASSWORD again', async () => {
     const { mgr, takeLast } = machine()

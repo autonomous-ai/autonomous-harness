@@ -1,0 +1,116 @@
+name: CI
+
+# Modelled on autonomous-harness-desktop's ci.yml, with ONE deliberate difference: that one has no
+# `pull_request` trigger and this one does.
+#
+# The desktop repo is private, and everything that reaches its main branch was pushed by a
+# maintainer who could run the suite locally; a per-commit run there is the same verdict paid for
+# twice. THIS repo is public, takes fork PRs (CONTRIBUTING.md walks through it), and until this file
+# existed said so out loud: "there is no CI on pull requests yet. Nothing runs automatically when
+# you push, so what you report is what a reviewer starts from." A contributor's own report is not a
+# verdict — it is a claim about a machine nobody else can see — and a maintainer pulling every
+# branch to find out is the manual step CI exists to delete.
+#
+# `pull_request`, never `pull_request_target`: a fork's PR runs with a read-only token and no access
+# to secrets, and this job wants neither. It checks out and runs the contributor's code, which is
+# exactly why it must not be handed a writable token.
+#
+# There is still no `push` trigger. Nobody pushes to main directly (CONTRIBUTING.md step 2) and
+# merges are squashed, so a push run would re-test the commit the PR run just cleared.
+on:
+  pull_request:
+    branches: [main]
+  # Deliberately unfiltered by `paths`. A docs-only PR running the CLI suite is 90 seconds of noise;
+  # a `paths` filter that makes the check never REPORT is a PR nobody can merge the day somebody
+  # turns on branch protection. The cheap failure is the better one, and public repos do not pay for
+  # standard runners.
+  #
+  # It is also the escape hatch for a verdict on any branch without opening a PR:
+  # Actions -> CI -> Run workflow.
+  workflow_dispatch:
+  # release.yml calls this. It also hands the release the Node this suite actually ran on (see
+  # below), so a published bundle can never be built on a runtime the tests did not use.
+  workflow_call:
+    outputs:
+      node-version:
+        description: The Node the suite ran on. release.yml bundles the release with it.
+        value: ${{ jobs.typecheck-test.outputs.node-version }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-ci-${{ github.workflow }}-${{ github.ref }}
+  # A second push to an open PR makes the first run's verdict worthless, so that one is cancelled.
+  # Everything else — a release's gate, a run somebody started by hand — is the record of whether a
+  # commit was green, and is never killed to make room.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # `make cli-test`, exactly: typecheck then the vitest suite. Nothing else — the repo has no lint
+  # or format gate, and inventing one here would fail on code no reviewer ever agreed to.
+  typecheck-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      node-version: ${{ steps.pin.outputs.node-version }}
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v7
+
+      # THE runtime pin for the whole repo — CI and the release bundle read this one line.
+      #
+      # It is not a taste in Node versions: it is the version of the MANAGED runtime the shipped CLI
+      # actually executes on. `harness/runtime/metadata.json` in the release bucket serves
+      # node v22.23.2 for darwin-arm64, darwin-x64, linux-x64 and linux-arm64, `install.sh` unpacks
+      # it under ~/.harness/runtime, and the launcher names that binary absolutely — so the user's
+      # own node, if any, never runs this bundle. Testing on anything else measures a runtime no
+      # machine in the field has. Bump this together with `make upload-node-runtime` in
+      # autonomous-harness-desktop, never on its own.
+      #
+      # (package.json's `engines` says >=20, which is the floor a THIRD PARTY may run it on. A floor
+      # is not a pin: a floating 22.x turns an unrelated upstream release into a red build on an
+      # untouched commit.)
+      - id: pin
+        run: echo "node-version=22.23.2" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.pin.outputs.node-version }}
+          cache: npm
+          # Relative to the repo root, not to `defaults.working-directory` — this is an action
+          # input, not a `run:`.
+          cache-dependency-path: cli/package-lock.json
+
+      # TWO lockfiles are tracked here, and only one of them has ever been guarded.
+      #
+      # `package-lock.json` is the one the released bytes are built from — every build path in this
+      # repo shells out to `npm run bundle` (install-cli.sh, upload-cli.sh, remote-machine.sh) — and
+      # `npm ci` below refuses to run when it disagrees with package.json, so npm's half checks
+      # itself.
+      #
+      # `pnpm-lock.yaml` is checked by nothing, and on 2026-09-09 that cost a maintainer an
+      # afternoon: `bonjour-service` was added to package.json with only package-lock.json updated,
+      # main went green, and `make install-cli` then died at `Could not resolve "bonjour-service"`
+      # on every machine whose node_modules came from pnpm. Deleting the file would also fix that;
+      # keeping it and checking it is the choice made here, because contributors do use it.
+      #
+      # `--lockfile-only` resolves without installing (~5s) and writes nothing under --frozen-lockfile.
+      # Verified against this repo: it exits 1 on the stale lockfile that shipped in c4de318, naming
+      # the added dependency, and 0 once it is regenerated.
+      - name: Check pnpm-lock.yaml still matches package.json
+        run: |
+          npm i -g pnpm@11 >/dev/null
+          pnpm install --frozen-lockfile --lockfile-only
+
+      # `npm ci`, not `npm install`: the lockfile is the input, not a suggestion.
+      - run: npm ci
+
+      - run: npx tsc --noEmit
+
+      # 1,871 tests over 144 files, ~30s. The four `*.real.spec.ts` / `localE2e.spec.ts` suites that
+      # need a live tmux, Herdr or Cursor are gated behind RUN_* env vars and stay skipped here —
+      # `npm run test:tmux-real` and friends are how those are run, on a machine that has them.
+      - run: npx vitest run

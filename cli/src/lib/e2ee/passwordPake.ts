@@ -41,6 +41,14 @@ const SCRYPT_R = 8
 const SCRYPT_P = 1
 const SCRYPT_DKLEN = 32
 
+/** Budget for a TEST that spends several `stretchPassword` calls back to back — the lockout suites
+ *  in manager.test.ts and relayLink.spec.ts burn one per wrong-password attempt. Five attempts plus
+ *  a rotation measure ~3s on an M-series laptop, i.e. 61% of vitest's 5s default before CI is even
+ *  involved, and a 4-core runner is roughly half that speed. The cost parameters above are a
+ *  security control and are never lowered to fit a test budget, so the budget moves instead. This
+ *  is a hang detector, not a performance assertion. */
+export const PW_SCRYPT_TEST_TIMEOUT_MS = 30_000
+
 /** Slow-hash a persistent remote password into a 32-byte verifier/key-material seed, salted per
  *  machineId so the same password chosen on two different machines derives unrelated verifiers (and
  *  therefore unrelated CPace generators). Deterministic for a given (password, machineId) pair. */
