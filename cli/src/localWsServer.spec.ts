@@ -181,8 +181,8 @@ describe('local CLI WebSocket', () => {
       onRouteTask: async (text) => {
         asked.push(text)
         return {
-          agentId: 'a1', name: 'auth-api', confidence: 0.86, reason: 'name matches',
-          candidates: [{ agentId: 'a1', name: 'auth-api', recent: 'token rotation' }],
+          agentId: 'a1', machineId: 'm-local', name: 'auth-api', confidence: 0.86, reason: 'name matches',
+          candidates: [{ agentId: 'a1', machineId: 'm-local', name: 'auth-api', machine: 'this computer', recent: 'token rotation' }],
         }
       },
     })
@@ -201,7 +201,7 @@ describe('local CLI WebSocket', () => {
     // The requestId comes back UNTOUCHED — it is the window's own rpc id, and the only thing tying this
     // answer to the spinner it is holding open.
     expect(reply.type).toBe('route_result')
-    expect(reply.payload).toMatchObject({ requestId: 'q-7', agentId: 'a1', name: 'auth-api', confidence: 0.86 })
+    expect(reply.payload).toMatchObject({ requestId: 'q-7', agentId: 'a1', machineId: 'm-local', name: 'auth-api', confidence: 0.86 })
     expect(asked).toEqual(['fix the retry'])
     // Asking is not sending. Nothing reached the machine.
     expect(backend.frames.map((frame) => frame.type)).toEqual([])
@@ -244,7 +244,10 @@ describe('local CLI WebSocket', () => {
     local = attachLocalWsServer(server, {
       machineId,
       backend,
-      onRouteSend: (agentId, text) => sent.push({ agentId, text }),
+      onRouteSend: (agentId, text) => {
+        sent.push({ agentId, text })
+        return { ok: true as const }
+      },
     })
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
     const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
@@ -255,12 +258,46 @@ describe('local CLI WebSocket', () => {
     ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
     await connected
 
-    ws.send(JSON.stringify({ type: 'route_send', payload: { agentId: 'a2', text: 'do the thing' } }))
-    ws.send(JSON.stringify({ type: 'route_send', payload: { agentId: '', text: 'nobody' } }))
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    // The half-formed one is dropped rather than delivered to whoever sorts first.
+    const delivered = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'route_send', payload: { requestId: 's-1', agentId: 'a2', text: 'do the thing' } }))
+    expect((await delivered).payload).toMatchObject({ requestId: 's-1', ok: true })
+
+    // The half-formed one is dropped rather than delivered to whoever sorts first — and it is REFUSED
+    // out loud, because the window is waiting on this id either way.
+    const refused = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'route_send', payload: { requestId: 's-2', agentId: '', text: 'nobody' } }))
+    expect((await refused).payload).toMatchObject({ requestId: 's-2', ok: false })
+
     expect(sent).toEqual([{ agentId: 'a2', text: 'do the thing' }])
     expect(backend.frames.map((frame) => frame.type)).toEqual([])
+    ws.close()
+  })
+
+  it('says so when the agent could not be delivered to', async () => {
+    // The remote leg carries no ack of its own: a machine that has gone deaf takes the turn and nothing
+    // comes back. With the palette closing silently on a confident route, that is a task that vanishes
+    // without a mark anywhere — so the refusal has to travel.
+    const backend = new FakeBackend()
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onRouteSend: () => ({ ok: false as const, machine: 'mac-mini', reason: 'the last request to it did not come back' }),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    const answered = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'route_send', payload: { requestId: 's-3', agentId: 'a9', text: 'work' } }))
+    expect((await answered).payload).toMatchObject({
+      requestId: 's-3', ok: false, machine: 'mac-mini', reason: 'the last request to it did not come back',
+    })
     ws.close()
   })
 

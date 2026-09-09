@@ -285,6 +285,30 @@ describe('DaemonCableHost.listAgents across machines', () => {
     expect(host.knows('r1')).toBe(true)
   })
 
+  it('answers the RAIL\'s order flat, and the dial\'s ring separately, from one snapshot', async () => {
+    // Two questions, two right answers, and they must not be confused for each other. The dial walks a
+    // ring cut around the window's open tiles; ⌘K weighs "the first fifteen agents" against a list the
+    // person is reading top to bottom in their rail. Serving the ring to ⌘K makes the fifteen it picks
+    // impossible to predict from the screen — the tile someone happened to open last silently reorders
+    // what a typed task is even compared against.
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'local-1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    AGENTS.push({ agentId: 'local-2', registeredAt: 2, active: true, terminalAvailable: true, engine: 'claude' })
+    const host = new DaemonCableHost(wiring(), crossFleet({ other: [{ id: 'r1', name: 'api' }] }))
+    await settled(host)
+    // Two tiles, in an order the rail does not have: the remote agent first. ONE tile would not show the
+    // difference — a single-tile desk cuts the ring into head + tile + tail, which reassembles into the
+    // flat order exactly, so a test built on it would pass against either implementation.
+    host.setDesk(['r1', 'local-1'])
+
+    // The rail: this computer's agents in their own order, then the other machine's.
+    expect((await host.listAgentsFlat()).map((a) => a.id)).toEqual(['local-1', 'local-2', 'r1'])
+    // The ring: the same three, re-cut around the desk — the tiles in tile order, the rest off its edges.
+    const ring = await host.listAgents()
+    expect([...ring].map((a) => a.id).sort()).toEqual(['local-1', 'local-2', 'r1'])
+    expect(ring.map((a) => a.id)).toEqual(['r1', 'local-1', 'local-2'])
+  })
+
   it('lists every agent, marking the ones the carousel does not walk', async () => {
     // Ring first, then the rest — the session sends the count of the first
     // group, so the ORDER is the split. Every agent is still listed, because

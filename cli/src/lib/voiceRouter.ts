@@ -217,7 +217,22 @@ export function parseRouteOutput(raw: string, agents: RouterAgent[]): RouteDecis
 }
 
 // Route a transcript to an agent. Skips the LLM for the trivial cases (0 / 1 agent).
-export async function routeVoiceTask(transcript: string, agents: RouterAgent[], signal?: AbortSignal): Promise<RouteDecision> {
+/**
+ * How long the classifier gets before the name matcher answers instead.
+ *
+ * 12s is what every caller had, and it was chosen to stay under a backend RPC deadline that no longer
+ * carries this: the dial routes over the cable now, straight to this daemon. Callers that are not under
+ * someone else's clock can therefore ask for more — and a caller that IS should not be given it, because
+ * overshooting their deadline turns a fallback answer into no answer at all.
+ */
+export const ROUTE_CLASSIFY_MS = 12_000
+
+export async function routeVoiceTask(
+  transcript: string,
+  agents: RouterAgent[],
+  signal?: AbortSignal,
+  timeoutMs: number = ROUTE_CLASSIFY_MS,
+): Promise<RouteDecision> {
   // What the backend handed down, and what it may choose between. Logged before anything can fail, so a
   // route that times out still shows the task and the candidates it was weighing.
   console.log(
@@ -241,7 +256,7 @@ export async function routeVoiceTask(transcript: string, agents: RouterAgent[], 
     if (apiKey) {
       console.log(`[voice-route] classifying with openrouter · model=${env.ORI_VOICE_ROUTE_MODEL}`)
       const text = await openRouterComplete({
-        prompt, model: env.ORI_VOICE_ROUTE_MODEL, apiKey, signal, timeoutMs: 12_000, maxTokens: 256,
+        prompt, model: env.ORI_VOICE_ROUTE_MODEL, apiKey, signal, timeoutMs, maxTokens: 256,
       })
       if (text) return logDecision('openrouter', agents, parseRouteOutput(text, agents))
       console.log('[voice-route] openrouter classification unavailable → engine one-shot')
@@ -259,11 +274,11 @@ export async function routeVoiceTask(transcript: string, agents: RouterAgent[], 
   const model = routerModelFor(engine)
   ensureRouterConfigured(engine)   // so runRouterOneShot matches the pool config and uses the warm worker
   // BEFORE the call: on a timeout this is the only record of which CLI was asked.
-  console.log(`[voice-route] classifying with ${engine} · model=${model || '(engine default)'}`)
+  console.log(`[voice-route] classifying with ${engine} · model=${model || '(engine default)'} · budget=${timeoutMs}ms · prompt=${prompt.length}c`)
   try {
-    // Served from the warm router worker (no cold spawn). Cap under the backend's 15s nodeRequest budget so
-    // a slow route surfaces before the RPC deadline.
-    const options = { prompt, model, effort: 'low' as const, cwd: ensureRouteScratch(), signal, timeoutMs: 12_000 }
+    // Served from the warm router worker (no cold spawn). The budget is the CALLER's — see
+    // ROUTE_CLASSIFY_MS for why it is no longer one number for everyone.
+    const options = { prompt, model, effort: 'low' as const, cwd: ensureRouteScratch(), signal, timeoutMs }
     const { text } = engine === 'grok'
       ? await runGrokOneShot(options)
       : await runRouterOneShot(engine, options)

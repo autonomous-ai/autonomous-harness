@@ -73,6 +73,13 @@ export interface MachineFleet {
   updateAgent(machineId: string, agentId: string, model?: string, effort?: string): void
   listModels(machineId: string, agentId: string): Promise<string[]>
   recentSummaries(machineId: string, agentId: string): Promise<RecentTurn[]>
+  /**
+   * How the last round trip to this machine went, or null if nobody has asked it yet.
+   *
+   * Optional because it is a witness, not a contract: an implementation that keeps no record simply
+   * cannot say, and callers must treat "cannot say" the same as "never asked" — never as unreachable.
+   */
+  reachable?(machineId: string): { ok: boolean; at: number } | null
   /** Cards + liveness from the attached machine. Returns an unsubscribe. */
   onEvent(cb: (event: FleetEvent) => void): () => void
 }

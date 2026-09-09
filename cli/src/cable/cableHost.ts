@@ -312,6 +312,49 @@ export class DaemonCableHost implements CableHost {
   }
 
   async listAgents(): Promise<CableAgent[]> {
+    const out = await this.listAgentsFlat()
+
+    const ring = deskRing(out.map((a) => a.id), this.desk)
+    this.deskEdge = ring.edgeOf
+    // Walked agents first, then the ones the dial knows but does not walk to —
+    // the session sends the count of the first group, so the order is the split.
+    const listed = [...ring.order, ...ring.offRing]
+    // One line per CHANGE. The failure this catches is silent by nature: tiles
+    // whose ids this daemon does not know leave the ring flat and every agent
+    // edgeless, which looks exactly like the feature not being installed.
+    const onDesk = new Set(this.desk)
+    const short = (id: string) => `${onDesk.has(id) ? '*' : ''}${id.slice(0, 4)}`
+    // Both halves: what the thumb walks, and what the dial merely knows. Reading
+    // only the first half is how "the dial says 5 agents" looked like a counting
+    // bug rather than a list that had been cut in two.
+    const shape = ring.order.map(short).join(' ')
+      + (ring.offRing.length ? ` · off-ring ${ring.offRing.map(short).join(' ')}` : '')
+    if (shape !== this.deskShape) {
+      this.deskShape = shape
+      // The WHOLE ring, marked: `*` is a tile. Short of this the shape has to be
+      // guessed from behaviour, and every guess so far has been wrong about
+      // which end the agents nobody stepped onto ended up at.
+      this.wiring.log(`cable: ring ${shape}`)
+    }
+    const offRing = new Set(ring.offRing)
+    const byId = new Map(out.map((a) => [a.id, a]))
+    return listed
+      .map((id) => byId.get(id))
+      .filter((a): a is CableAgent => !!a)
+      .map((a) => (offRing.has(a.id) ? { ...a, offRing: true } : a))
+  }
+
+  /**
+   * The same agents in LIST order — this computer first, then each machine in wheel order — with no ring
+   * laid over them.
+   *
+   * It is the order the desktop app's rail draws, and the two must not drift: ⌘K reads this to decide
+   * which agents a typed task is weighed against, and a person looking at their rail while they type has
+   * every right to expect "the first fifteen" to mean the first fifteen they can see. `listAgents()` is
+   * the DIAL's view of the same snapshot — the same agents, re-cut around the tiles the window has open,
+   * which is a different question with a different right answer.
+   */
+  async listAgentsFlat(): Promise<CableAgent[]> {
     const out = this.localAgents()
     const { machines } = await this.listMachines()
     for (const m of machines) {
@@ -358,33 +401,7 @@ export class DaemonCableHost implements CableHost {
     }
     for (const id of [...this.deskHeld]) if (!missing.includes(id)) this.deskHeld.delete(id)
 
-    const ring = deskRing(out.map((a) => a.id), this.desk)
-    this.deskEdge = ring.edgeOf
-    // Walked agents first, then the ones the dial knows but does not walk to —
-    // the session sends the count of the first group, so the order is the split.
-    const listed = [...ring.order, ...ring.offRing]
-    // One line per CHANGE. The failure this catches is silent by nature: tiles
-    // whose ids this daemon does not know leave the ring flat and every agent
-    // edgeless, which looks exactly like the feature not being installed.
-    const onDesk = new Set(this.desk)
-    const short = (id: string) => `${onDesk.has(id) ? '*' : ''}${id.slice(0, 4)}`
-    // Both halves: what the thumb walks, and what the dial merely knows. Reading
-    // only the first half is how "the dial says 5 agents" looked like a counting
-    // bug rather than a list that had been cut in two.
-    const shape = ring.order.map(short).join(' ')
-      + (ring.offRing.length ? ` · off-ring ${ring.offRing.map(short).join(' ')}` : '')
-    if (shape !== this.deskShape) {
-      this.deskShape = shape
-      // The WHOLE ring, marked: `*` is a tile. Short of this the shape has to be
-      // guessed from behaviour, and every guess so far has been wrong about
-      // which end the agents nobody stepped onto ended up at.
-      this.wiring.log(`cable: ring ${shape}`)
-    }
-    const offRing = new Set(ring.offRing)
-    return listed
-      .map((id) => byId.get(id))
-      .filter((a): a is CableAgent => !!a)
-      .map((a) => (offRing.has(a.id) ? { ...a, offRing: true } : a))
+    return out
   }
 
   /**
@@ -483,9 +500,36 @@ export class DaemonCableHost implements CableHost {
     }
   }
 
-  sendTurn(agentId: string, text: string): void {
-    if (!this.isLocalAgent(agentId)) { this.fleet!.sendTurn(this.machineOf(agentId), agentId, text); return }
+  /**
+   * Deliver a turn, and SAY whether it could be.
+   *
+   * The remote leg is fire-and-forget by protocol — `message` frames carry no ack — so a machine that
+   * has stopped answering takes the turn and nothing comes back. Measured: the fleet's own `agents_list`
+   * was timing out every twenty seconds while a ⌘K route was handed to an agent on that machine, and
+   * every side stayed silent about it. The E2EE session still said `ready`, because it handshook while
+   * the machine was alive; the backend's list still called it online.
+   *
+   * So the check is the one thing that actually knows: did the LAST request to that machine come back.
+   * Never asked (null) is not a refusal — a cold start must not read as a failure.
+   *
+   * Callers that do not care may ignore the result; nothing here changes for them.
+   */
+  sendTurn(agentId: string, text: string): { ok: true } | { ok: false; machine: string; reason: string } {
+    if (!this.isLocalAgent(agentId)) {
+      const machineId = this.machineOf(agentId)
+      const machine = this.knownAgents.get(agentId)?.machine || machineId.slice(0, 8)
+      if (!machineId) return { ok: false, machine, reason: 'that agent has no machine on this daemon' }
+      const seen = this.fleet?.reachable?.(machineId)
+      if (seen && !seen.ok) {
+        const ago = Math.round((Date.now() - seen.at) / 1000)
+        this.wiring.log(`cable: refused a turn for ${agentId.slice(0, 8)} — ${machine} last failed ${ago}s ago`)
+        return { ok: false, machine, reason: 'the last request to it did not come back' }
+      }
+      this.fleet!.sendTurn(machineId, agentId, text)
+      return { ok: true }
+    }
     this.wiring.sendTurn(agentId, text)
+    return { ok: true }
   }
 
   stopTurn(agentId: string): void {

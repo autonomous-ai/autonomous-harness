@@ -39,20 +39,32 @@ export interface LocalWsServerOptions {
    * here, where nothing knows what the person is looking at.
    */
   onRouteTask?: (text: string) => Promise<RouteAnswer>
-  /** The window committed to an agent — deliver the task the way every other message is delivered. */
-  onRouteSend?: (agentId: string, text: string) => void
+  /**
+   * The window committed to an agent — deliver the task, and SAY whether it could be delivered.
+   *
+   * It answers for the same reason `route_task` does. The remote leg carries no ack of its own, so a
+   * machine that has gone deaf takes the turn and nothing comes back; with the palette closing silently
+   * on a confident route, that is a spoken instruction that vanishes with no mark anywhere.
+   */
+  onRouteSend?: (agentId: string, text: string) => { ok: true } | { ok: false; machine: string; reason: string }
 }
 
 /** One candidate, as the window draws it in the picker. */
 export interface RouteCandidate {
   agentId: string
+  /** Which machine to open the pane on. Names are for reading; this is for acting. */
+  machineId: string
   name: string
+  /** Which computer it runs on. The list spans every machine, and two agents called "api" on two of them
+   *  are otherwise the same row twice. */
+  machine: string
   /** What it was last doing — the line under the name when the window has to ask. */
   recent: string
 }
 
 export interface RouteAnswer {
   agentId: string
+  machineId: string
   name: string
   confidence: number
   reason: string
@@ -254,12 +266,12 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
             // An answer ALWAYS goes back, even for a question we cannot serve: the window is holding a
             // spinner open on this id, and silence is the one reply it cannot recover from.
-            let answer: RouteAnswer = { agentId: '', name: '', confidence: 0, reason: 'empty task', candidates: [] }
+            let answer: RouteAnswer = { agentId: '', machineId: '', name: '', confidence: 0, reason: 'empty task', candidates: [] }
             if (text) {
               try {
                 answer = await options.onRouteTask(text)
               } catch (err) {
-                answer = { agentId: '', name: '', confidence: 0, reason: (err as Error).message.slice(0, 120), candidates: [] }
+                answer = { agentId: '', machineId: '', name: '', confidence: 0, reason: (err as Error).message.slice(0, 120), candidates: [] }
               }
             }
             sink.sendFrame({ type: 'route_result', payload: { requestId, ...answer } })
@@ -267,9 +279,24 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           }
           if (asked?.type === 'route_send' && options.onRouteSend) {
             const payload = asked.payload as Record<string, unknown> | undefined
+            const requestId = typeof payload?.requestId === 'string' ? payload.requestId : ''
             const agentId = typeof payload?.agentId === 'string' ? payload.agentId : ''
             const text = typeof payload?.text === 'string' ? payload.text : ''
-            if (agentId && text) options.onRouteSend(agentId, text)
+            let sent: { ok: true } | { ok: false; machine: string; reason: string } =
+              { ok: false, machine: '', reason: 'nothing to send' }
+            if (agentId && text) {
+              try {
+                sent = options.onRouteSend(agentId, text)
+              } catch (err) {
+                sent = { ok: false, machine: '', reason: (err as Error).message.slice(0, 120) }
+              }
+            }
+            sink.sendFrame({
+              type: 'route_send_result',
+              payload: sent.ok
+                ? { requestId, ok: true }
+                : { requestId, ok: false, machine: sent.machine, reason: sent.reason },
+            })
             return
           }
         }

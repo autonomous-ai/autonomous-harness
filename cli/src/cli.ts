@@ -108,6 +108,7 @@ import {
   deriveTurnSummary,
   syncSummaryPoolSessions,
 } from './lib/summarize.js'
+import type { CableAgent } from './cable/cableSession.js'
 import { routeVoiceTask, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { E2eeStore } from './lib/e2ee/store.js'
@@ -198,6 +199,18 @@ let cableRef: CableSession | null = null
 /** The same object the session holds — module scope so the recap gates can ask which machine is selected
  *  without threading it through every constructor between here and there. */
 let cableHostRef: DaemonCableHost | null = null
+/**
+ * How many agents ⌘K weighs at once.
+ *
+ * A classifier budget, not a UI one: each candidate spends its name, its machine and three recaps inside
+ * one prompt, and past a point the window that decides the pick is more crowded than it is informed.
+ * Fifteen is the owner's number; the ordering that decides WHICH fifteen is in onRouteTask.
+ */
+const ROUTE_MAX_CANDIDATES = 15
+/** Each recent turn, cut to this before it enters the classifier's prompt. See onRouteTask. */
+const ROUTE_RECAP_CHARS = 60
+/** What ⌘K gives the classifier before the name matcher answers instead. */
+const ROUTE_CLASSIFY_APP_MS = 20_000
 /**
  * The window's tiles, in tile order, as last reported.
  *
@@ -2848,47 +2861,97 @@ async function runForeground(session: AuthSession): Promise<void> {
     // is new is the answer coming back to something that can SHOW it: the dial had to act on the pick,
     // the window can ask.
     //
-    // LOCAL AGENTS ONLY (owner's call). It is what keeps this fast: the dial's cross-machine route pays an
-    // RPC per remote agent to fetch recaps, and that is most of its latency. The cost is real and chosen —
-    // ⌘K cannot reach an agent on another computer, even while its pane is on screen.
+    // EVERY AGENT, EVERY MACHINE. The candidate list is the dial's own — this computer first, then each
+    // machine in wheel order — because the agent that fits the words is not always the one on the desk in
+    // front of you, and a router that cannot see the others cannot say so.
+    //
+    // CAPPED AT FIFTEEN, and the cap is about the CLASSIFIER, not about us: every candidate spends its
+    // name and three recaps in one prompt, and a list long enough to crowd that window makes the pick
+    // worse, not slower.
+    //
+    // WHICH fifteen is the rail's own order — this computer's agents, then each other machine's — because
+    // that is the list the person is looking at while they type, and "the first fifteen" has to mean the
+    // first fifteen they can SEE. An earlier cut put open tiles first, on the theory that working on
+    // something is a statement about relevance; it is, but it also made the fifteen unpredictable from
+    // the screen, and predictable beat clever here (owner's call).
     onRouteTask: async (text) => {
-      const sessions = registry.advertised()
-      sessions.sort((a, b) => a.registeredAt - b.registeredAt || a.agentId.localeCompare(b.agentId))
-      const candidates: RouterAgent[] = sessions.map((session) => ({
-        id: session.agentId,
-        name: projectDisplayName(session),
-        engine: session.engine,
-        // The same three recaps the dial's router weighs. `recent` reads the mirror this daemon already
-        // keeps, so this costs nothing and cannot be stale in a way the rest of the app is not.
-        recentSummary: mirror.recent(session.sessionId || session.agentId, 3)
-          .map((turn) => turn.recap || turn.text || '')
+      const host = cableHostRef
+      if (!host) return { agentId: '', machineId: '', name: '', confidence: 0, reason: 'no agent list yet', candidates: [] }
+      // Whatever the daemon knows right now. This also kicks a refresh of the remote machines, so a list
+      // that is short because a machine has not been asked yet fills in for the NEXT question rather than
+      // holding this one open.
+      // FLAT, not the dial's ring: listAgents() re-cuts the same snapshot around the window's open
+      // tiles, which is the right answer for a carousel and the wrong one for a list the person reads
+      // top to bottom.
+      const all = await host.listAgentsFlat()
+      const ranked = all.slice(0, ROUTE_MAX_CANDIDATES)
+      if (ranked.length < all.length) {
+        // Never a silent truncation: a route that could not have picked the right agent must not read
+        // like a route that considered it and said no.
+        console.log(`[route] ${all.length} agents · weighing the first ${ranked.length} (open tiles first)`)
+      }
+      // Recaps AFTER the cap, and in parallel: a remote agent's recap is an RPC to its machine, so
+      // fetching for agents that were never going to be weighed is latency spent on nothing. They are
+      // cached per agent on the fleet side, so a second ⌘K costs no round trip at all.
+      const candidates: RouterAgent[] = await Promise.all(ranked.map(async (agent) => ({
+        id: agent.id,
+        name: agent.name,
+        engine: agent.engine,
+        machine: agent.machine,
+        // EACH TURN CUT TO 60 CHARS before it goes anywhere near the prompt.
+        //
+        // Nothing trimmed these: the 120-char cut further down is for the PICKER, which the person reads,
+        // and the classifier was being handed three recaps at full length per agent. That is what turned a
+        // list of ten into a 12-second timeout while eight had answered in nine — the agents cost little,
+        // their recent work cost a lot. Sixty characters still separates "webhook retry fix" from
+        // "round 3 standings", which is all the router is being asked to tell apart.
+        recentSummary: (await host.recentSummaries(agent.id))
+          .map((turn) => (turn.recap || turn.text || '').replace(/\s+/g, ' ').trim().slice(0, ROUTE_RECAP_CHARS))
           .filter(Boolean)
           .join(' · '),
-      }))
-      const decision = await routeVoiceTask(text, candidates)
+      })))
+      // 20s, not the shared 12s: this path answers a person watching a spinner in their own window, and
+      // it is under nobody else's deadline — the app's rpc waits longer still. The dial and the web keep
+      // the default; overshooting a deadline they DO have would turn a late answer into no answer.
+      const decision = await routeVoiceTask(text, candidates, undefined, ROUTE_CLASSIFY_APP_MS)
       const named = (id: string) => candidates.find((agent) => agent.id === id)
-      // The runners-up, for the window to offer when the pick is weak. Scored the same way the fallback
-      // matcher scores — name over recent — so the list the person reads is ordered by the same rule the
-      // router used, not by registry position.
-      const others = candidates
-        .filter((agent) => agent.id !== decision.agentId)
-        .slice(0, 2)
+      const others = candidates.filter((agent) => agent.id !== decision.agentId).slice(0, 2)
       return {
         agentId: decision.agentId,
+        machineId: all.find((entry) => entry.id === decision.agentId)?.machineId ?? '',
         name: named(decision.agentId)?.name ?? '',
         confidence: decision.confidence,
         reason: decision.reason,
         candidates: [decision.agentId ? named(decision.agentId) : null, ...others]
           .filter((agent): agent is RouterAgent => !!agent)
-          .map((agent) => ({ agentId: agent.id, name: agent.name, recent: (agent.recentSummary ?? '').slice(0, 120) })),
+          .map((agent) => {
+            const listed = all.find((entry) => entry.id === agent.id)
+            return {
+              agentId: agent.id,
+              name: agent.name,
+              // The machine travels twice, and both are needed: the NAME because two agents called "api"
+              // on two computers are otherwise one row twice, and the ID because the window has to open
+              // the pane on the machine the agent actually lives on.
+              machineId: listed?.machineId ?? '',
+              machine: agent.machine ?? '',
+              recent: (agent.recentSummary ?? '').slice(0, 120),
+            }
+          }),
       }
     },
-    // Committed. Delivered through the SAME door as every other message — the web's, the dial's, a
-    // hook's — so queueing, retries and the per-engine slash-command adaptation are not re-implemented
-    // for the one caller that types instead of speaking.
+    // Committed. Sent through cableHost.sendTurn — the dial's own dispatch — and NOT straight into
+    // backend.onMessage.
+    //
+    // That distinction is the whole of remote support: onMessage resolves the id against THIS computer's
+    // registry, so a remote agent lands as "This agent is no longer available" — an error about an agent
+    // that is alive and answering on another machine. sendTurn is the fork that already knows the
+    // difference (local → the same door the web and the hooks use, remote → the fleet), and it is the
+    // one the dial has been using for every voice turn.
     onRouteSend: (agentId, text) => {
-      console.log(`[route] ⌘K → ${sid(agentId)} · bytes=${Buffer.byteLength(text, 'utf8')}`)
-      backend.onMessage?.(agentId, text)
+      const sent = cableHostRef?.sendTurn(agentId, text) ?? { ok: false as const, machine: '', reason: 'no agent list yet' }
+      console.log(`[route] ⌘K → ${sid(agentId)} · bytes=${Buffer.byteLength(text, 'utf8')}`
+        + (sent.ok ? '' : ` · REFUSED: ${sent.reason}${sent.machine ? ` (${sent.machine})` : ''}`))
+      return sent
     },
     machineId: backend.machineId,
     backend,
