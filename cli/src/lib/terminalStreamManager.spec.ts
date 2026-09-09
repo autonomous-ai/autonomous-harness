@@ -201,10 +201,9 @@ describe('TerminalStreamManager', () => {
     expect(stream.pastes).toEqual([longPaste])
     expect(stream.writes).toHaveLength(0)
 
-    // Same reason as input(): the engine in the pane has no job-control fallback for an uncaught
-    // SIGINT, so a stray 0x03 pasted alongside real content must never reach it.
+    // Forwarded verbatim, same as input() — no filtering of its own.
     await manager.handleBinary('web-1', paste('a\x03b'))
-    expect(stream.pastes.at(-1)).toBe('ab')
+    expect(stream.pastes.at(-1)).toBe('a\x03b')
 
     await manager.handleBinary('web-1', paste(''))
     expect(stream.pastes).toHaveLength(2)

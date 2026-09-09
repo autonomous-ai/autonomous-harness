@@ -441,10 +441,6 @@ export class TerminalStreamManager {
       this.sendError(state.connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId, message: 'paste was not valid UTF-8' })
       return
     }
-    // Same reason as input(): the engine in the pane has no job-control fallback for an uncaught
-    // SIGINT, so a stray 0x03 pasted alongside real content must never reach it.
-    if (text.includes('\x03')) text = text.replaceAll('\x03', '')
-    if (text.length === 0) return
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
     const result = await state.handle.pasteRaw(text)
     if (result.state !== 'succeeded') {
