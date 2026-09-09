@@ -894,6 +894,22 @@ export function sendLiteralToTmux(pane: string, text: string): Promise<boolean> 
   return tmuxPasteText(pane, text, false)
 }
 
+/**
+ * Dump a live terminal stream's clipboard paste into a pane as ONE bracketed paste, no submit.
+ *
+ * The desktop app's raw keyboard/paste path used to run a large clipboard paste through the same
+ * byte-oriented pipeline as ordinary typing (`TerminalStreamHandle.writeRaw`), which chunks at
+ * `INPUT_CHUNK_BYTES` to stay under tmux's `send-keys -H` command-line length — and each chunk landed
+ * in the pane far enough apart that the engine's own paste-detector (readline/Ink) registered it as a
+ * separate paste, producing dozens of `[Pasted text #N]` markers for what was one clipboard paste.
+ * `tmuxPasteText`'s stdin-loaded buffer has no such length limit, so it is the same single-shot
+ * mechanism `sendToTmux` already uses for composer messages — just without the trailing Enter, since a
+ * paste into a live terminal must not auto-submit.
+ */
+export function pasteRawIntoTmux(pane: string, text: string): Promise<boolean> {
+  return tmuxPasteText(pane, text, true)
+}
+
 export function sendKeyToTmux(pane: string, key: string): Promise<boolean> {
   return new Promise((resolve) => {
     execFile('tmux', ['send-keys', '-t', pane, key], { timeout: 2000 }, (err) => resolve(!err))

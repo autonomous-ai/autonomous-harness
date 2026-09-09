@@ -149,6 +149,9 @@ export class TerminalStreamManager {
       case 'terminal_resize':
         await this.resize(connId, payload)
         return true
+      case 'terminal_paste':
+        await this.paste(connId, payload)
+        return true
       case 'terminal_scroll':
         await this.scroll(connId, payload)
         return true
@@ -183,6 +186,10 @@ export class TerminalStreamManager {
         keyframe: true,
         sync: true,
         compression: ['none', 'zlib'],
+        // A client old enough to predate `terminal_paste` must keep sending a direct terminal paste
+        // through `terminal_input` — checked here rather than assumed, so it degrades instead of
+        // silently going nowhere against a CLI that doesn't recognize the newer frame type.
+        pasteRaw: true,
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
     })
@@ -409,6 +416,36 @@ export class TerminalStreamManager {
       return
     }
     await this.sendKeyframe(state)
+  }
+
+  /**
+   * A clipboard paste made directly into the terminal (not the composer), delivered whole via
+   * `TerminalStreamHandle.pasteRaw` instead of the chunked `writeRaw`/`send-keys -H` keystroke path —
+   * see `pasteRawIntoTmux` for why the two cannot share a pipe. No seq/ordering guard, unlike `input()`:
+   * a paste is one self-contained unit, not part of an ordered keystroke stream.
+   */
+  private async paste(connId: string, payload: FramePayload): Promise<void> {
+    const state = this.streamFor(connId, payload)
+    if (!state) return
+    const text = payload.text
+    if (typeof text !== 'string' || text.length === 0) {
+      this.sendError(connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId })
+      return
+    }
+    if (Buffer.byteLength(text, 'utf8') > INPUT_MAX_BYTES) {
+      this.sendError(connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId, message: 'paste too large' })
+      return
+    }
+    state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    // Same reason as input(): the engine in the pane has no job-control fallback for an uncaught
+    // SIGINT, so a stray 0x03 pasted alongside real content must never reach it.
+    const filtered = text.includes('\x03') ? text.replaceAll('\x03', '') : text
+    if (filtered.length === 0) return
+    const result = await state.handle.pasteRaw(filtered)
+    if (result.state !== 'succeeded') {
+      this.sendError(connId, 'TERMINAL_PASTE_FAILED', { streamId: state.streamId, message: result.reason })
+      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+    }
   }
 
   /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,

@@ -40,6 +40,7 @@ function streamHandle(): TerminalStreamHandle {
     })),
     endSnapshot: vi.fn(),
     writeRaw: vi.fn(),
+    pasteRaw: vi.fn(),
     resize: vi.fn(),
     scroll: vi.fn(),
     pauseOutput: vi.fn(),

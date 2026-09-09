@@ -38,6 +38,7 @@ export const TERMINAL_P2P_SIGNAL_TYPES = new Set([
 export const TERMINAL_P2P_DOWN_TYPES = new Set([
   'terminal_capabilities', 'terminal_open', 'terminal_alive', 'terminal_ack',
   'terminal_input', 'terminal_resize', 'terminal_resync', 'terminal_close', 'terminal_scroll',
+  'terminal_paste',
 ])
 
 export const TERMINAL_P2P_UP_TYPES = new Set([

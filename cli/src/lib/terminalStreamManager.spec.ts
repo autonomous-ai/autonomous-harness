@@ -9,6 +9,7 @@ import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.j
 class FakeStream implements TerminalStreamHandle {
   readonly runtime = { backend: 'tmux' as const, paneId: '%1' }
   writes: Uint8Array[] = []
+  pastes: string[] = []
   sizes: Array<{ cols: number; rows: number }> = []
   scrolls: Array<{ direction: 'up' | 'down'; lines: number }> = []
   closed = false
@@ -29,6 +30,7 @@ class FakeStream implements TerminalStreamHandle {
   }
   endSnapshot() { this.snapshotEnds++; this.onEndSnapshot?.() }
   async writeRaw(bytes: Uint8Array) { this.writes.push(bytes); return TERMINAL_ACTION_SUCCEEDED }
+  async pasteRaw(text: string) { this.pastes.push(text); return TERMINAL_ACTION_SUCCEEDED }
   async resize(size: { cols: number; rows: number }) { this.sizes.push(size); return TERMINAL_ACTION_SUCCEEDED }
   async scroll(direction: 'up' | 'down', lines: number) { this.scrolls.push({ direction, lines }); return TERMINAL_ACTION_SUCCEEDED }
   async pauseOutput() { this.pauses++; return TERMINAL_ACTION_SUCCEEDED }
@@ -176,6 +178,30 @@ describe('TerminalStreamManager', () => {
     await manager.handleFrame('web-1', 'terminal_scroll', { streamId, direction: 'down', lines: 0 })
     expect(stream.scrolls).toHaveLength(1)
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_SCROLL_INVALID')
+  })
+
+  it('routes terminal_paste to pasteRaw as one unit, never through writeRaw', async () => {
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-paste', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    const streamId = sent[0].payload.streamId as string
+
+    const longPaste = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n')
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: longPaste })
+    expect(stream.pastes).toEqual([longPaste])
+    expect(stream.writes).toHaveLength(0)
+
+    // Ctrl+C pasted alongside real content must never reach the pane, same rule as input().
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'a\x03b' })
+    expect(stream.pastes.at(-1)).toBe('ab')
+
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: '' })
+    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
+    expect(stream.pastes).toHaveLength(2)
+
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'x'.repeat(65 * 1024) })
+    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
+    expect(stream.pastes).toHaveLength(2)
   })
 
   it('does not replay pre-snapshot repaint bytes after the authoritative keyframe', async () => {

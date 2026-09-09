@@ -167,6 +167,9 @@ export interface TerminalStreamHandle<Ref extends TerminalRuntimeRef = TerminalR
   /** Release output produced strictly after the snapshot cut. */
   endSnapshot(): void
   writeRaw(bytes: Uint8Array): Promise<TerminalActionResult>
+  /** A clipboard paste, delivered as one atomic unit rather than chunked like `writeRaw` — see
+   *  `pasteRawIntoTmux` for why a paste needs its own path instead of reusing the keystroke one. */
+  pasteRaw(text: string): Promise<TerminalActionResult>
   resize(size: TerminalStreamSize): Promise<TerminalActionResult>
   /** Scroll via the backend's own history mechanism (tmux copy-mode for `TmuxControlStream`) rather
    *  than writing bytes into the pty — a program that owns terminal mouse-tracking but doesn't

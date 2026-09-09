@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { pasteRawIntoTmux } from './tmux.js'
 import {
   TERMINAL_ACTION_SUCCEEDED,
   terminalActionNotStarted,
@@ -676,6 +677,21 @@ export class TmuxControlStream implements TerminalStreamHandle<TmuxRuntimeRef> {
     return failedAt === 0
       ? terminalActionNotStarted('tmux raw input could not be sent')
       : terminalActionPossiblyExecuted('tmux raw input stopped after a partial write')
+  }
+
+  /**
+   * A clipboard paste, delivered as one bracketed `paste-buffer` rather than chunked `send-keys -H`
+   * bursts like `writeRaw` — see `pasteRawIntoTmux` for why a paste needs this instead of the
+   * keystroke path (chunking there is fine for typing, but reads as several separate pastes to a
+   * program's own paste-detector once split across multiple `send-keys` commands).
+   */
+  async pasteRaw(text: string): Promise<TerminalActionResult> {
+    if (this.closed) return terminalActionNotStarted('terminal stream is closed')
+    if (text.length === 0) return TERMINAL_ACTION_SUCCEEDED
+    const pasted = await pasteRawIntoTmux(this.runtime.paneId, text)
+    return pasted
+      ? TERMINAL_ACTION_SUCCEEDED
+      : terminalActionNotStarted('tmux paste-buffer could not be sent')
   }
 
   /** Scroll via tmux's own copy-mode rather than writing bytes into the pty. Some remote CLIs (e.g.

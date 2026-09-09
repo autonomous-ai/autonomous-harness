@@ -124,6 +124,45 @@ run('TmuxControlStream real tmux', () => {
     }
   })
 
+  it('delivers a paste via pasteRaw as one atomic paste-buffer, whole and in order', async () => {
+    // Same shape as the writeRaw multi-chunk test above, but through pasteRaw — the point of this
+    // test is that a payload big enough to span several `send-keys -H` commands via writeRaw still
+    // lands as ONE `tmux paste-buffer` here, which is what lets the program in the pane (readline,
+    // Ink, ...) see it as a single paste instead of one per chunk.
+    const directory = await mkdtemp(join(tmpdir(), 'harness-pasteraw-'))
+    const sink = join(directory, 'paste.txt')
+    const pasteSession = `harness-pasteraw-${randomUUID().slice(0, 8)}`
+    const pastePane = await tmux([
+      'new-session', '-d', '-P', '-F', '#{pane_id}', '-s', pasteSession,
+      'bash', '--noprofile', '--norc', '-c', `cat > ${sink}`,
+    ])
+
+    try {
+      const opened = await TmuxControlStream.open(pastePane, { cols: 120, rows: 30 }, {
+        onData: () => { /* echo is irrelevant; the file is the assertion */ },
+        onClose: () => { /* torn down below */ },
+      })
+      expect(opened.state).toBe('succeeded')
+      if (opened.state !== 'succeeded') return
+
+      const lines = Array.from({ length: 100 }, (_, index) => `${String(index).padStart(4, '0')}${'z'.repeat(96)}`)
+      const text = `${lines.join('\n')}\n`
+      // Same size class as the writeRaw test — big enough that writeRaw would span 5+ send-keys
+      // commands, so pasteRaw's single paste-buffer path is genuinely exercised, not a size where
+      // the two approaches would coincide anyway.
+      expect(Math.ceil(Buffer.byteLength(text) / 2048)).toBeGreaterThanOrEqual(5)
+
+      expect((await opened.value.pasteRaw(text)).state).toBe('succeeded')
+      await eventually(async () => (await readFile(sink, 'utf8')).split('\n').length > lines.length)
+
+      const written = (await readFile(sink, 'utf8')).split('\n').filter((line) => line.length > 0)
+      expect(written).toEqual(lines)
+      await opened.value.close()
+    } finally {
+      await tmux(['kill-session', '-t', pasteSession]).catch(() => { /* best effort */ })
+    }
+  })
+
   it('runs every catalog engine through the same manager and real tmux stream', async () => {
     for (const [index, engine] of ENGINES.entries()) {
       const agentId = `real-tmux-${engine}`
