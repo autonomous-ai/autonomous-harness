@@ -1,0 +1,285 @@
+name: Release
+
+# Cut a release by pushing a tag:  git tag -a v0.1.72 -F notes.md && git push origin v0.1.72
+#
+# Publishes the `cli` key of harness/cli/metadata.json — the manifest EVERY RUNNING DAEMON POLLS
+# EVERY 60 SECONDS (src/config/env.ts: ADAPTER_UPDATE_URL / ADAPTER_UPDATE_CHECK_MS). That is the
+# one way this workflow is not the desktop's: there is no download page and no user clicking
+# "install". A minute after the manifest moves, every machine on the fleet is running these bytes.
+# Everything below that looks like belt-and-braces is sized against that blast radius.
+#
+# Shape borrowed from autonomous-harness-desktop's release.yml, minus the parts that do not apply:
+#
+#   * SAME bucket, SAME `GCP_SA_KEY` service account, SAME preflight, SAME "the tag is the version"
+#     rule, SAME annotated-tag release notes, SAME `metadata_path` dry run.
+#   * NO scratch-manifest merge. The desktop fans out to three build jobs that each own a manifest
+#     key, so it points each at its own scratch file and merges once at the end. The CLI is ONE
+#     platform-independent bundle under ONE key, published by ONE job — the race the desktop
+#     designs around cannot occur here, so inventing a merge step would be ceremony.
+#   * NO signing or notarization. The artifacts are two JavaScript files; integrity is the sha256
+#     in the manifest, which selfUpdate.ts verifies in memory before it writes anything to disk.
+#
+# cli/scripts/upload-cli.sh is used EXACTLY as it is, with no flag this file invented: GCS_BUCKET,
+# METADATA_PATH and OTA_KEY are env overrides it already supports. The script is the production
+# release path — `make upload-cli` runs the same bytes from a laptop — and CI adapts to it.
+#
+# The TAG is the version. CI never auto-bumps: left to itself the script reads the current version
+# out of the remote manifest and adds one, so what publishes would depend on when the job ran.
+#
+# Dry run first: Actions -> Release -> Run workflow, with metadata_path = harness/cli/
+# metadata-test.json. No daemon polls that file, so nothing self-updates. Note that the ARTIFACTS
+# still go to their real home, harness/cli/<version>/ — the script hardcodes that path and this
+# file does not edit scripts. Use an unmistakable version (9.9.9) and delete
+# gs://<bucket>/harness/cli/9.9.9/ afterwards.
+#
+# There is no undo. selfUpdate.ts only ever moves forward, so a bad release is rolled back by
+# publishing a HIGHER version containing the older code — never by deleting the new one, which just
+# leaves every daemon pointed at a 404.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (X.Y.Z)'
+        required: true
+      metadata_path:
+        description: 'Manifest to write. Leave as-is for a real release; metadata-test.json for a dry run.'
+        required: false
+        default: harness/cli/metadata.json
+
+permissions:
+  contents: read
+  id-token: write   # only used by the Workload Identity Federation variant of the auth steps below
+
+concurrency:
+  # Two releases overlapping would interleave their manifest writes, and the loser's version would
+  # be the one the fleet installs. Never cancelled in progress: a run killed between "artifacts
+  # uploaded" and "manifest written" leaves bytes nobody references, which is harmless — one killed
+  # a second later leaves the manifest pointing at a build whose job never finished.
+  group: cli-release
+  cancel-in-progress: false
+
+env:
+  GCS_BUCKET: s3-autonomous-upgrade-3   # upload-cli.sh reads this too — one place, not three
+
+jobs:
+  # Resolve and validate before anything else starts. A malformed tag fails here in seconds.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      metadata_path: ${{ steps.resolve.outputs.metadata_path }}
+    steps:
+      - id: resolve
+        # Through env, never `${{ }}` inline in run:. Git permits quotes, backticks and $() in a ref
+        # name, so interpolating one into the shell would let a tag name execute as code.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_METADATA_PATH: ${{ inputs.metadata_path }}
+        run: |
+          set -euo pipefail
+          ver="${INPUT_VERSION:-${REF_NAME#v}}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$ver' must look like X.Y.Z — tag as vX.Y.Z"
+            exit 1
+          fi
+          meta="${INPUT_METADATA_PATH:-harness/cli/metadata.json}"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "metadata_path=$meta" >> "$GITHUB_OUTPUT"
+          echo "Publishing **$ver** to \`$meta\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # Proving the credential now means a broken one costs seconds instead of a whole test run. Runs
+  # beside `version` and `tests`, so it is free in wall clock.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify GCS write access
+        run: |
+          set -euo pipefail
+          probe="gs://${GCS_BUCKET}/harness/cli/.ci-preflight/${GITHUB_RUN_ID}"
+          echo "$GITHUB_RUN_ID" | gsutil cp - "$probe"
+          gsutil rm "$probe"
+
+  tests:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: [version, tests, preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The script's own env override. For a real release this IS harness/cli/metadata.json; for a
+      # dry run it is the scratch manifest nothing polls.
+      METADATA_PATH: ${{ needs.version.outputs.metadata_path }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The Node the suite just ran on, not a second opinion about which Node is current.
+          node-version: ${{ needs.tests.outputs.node-version }}
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
+
+      - run: npm ci
+        working-directory: cli
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # From the repo root, the way `make upload-cli` calls it. The script bundles with
+      # ADAPTER_VERSION="$VERSION" baked in, refuses to upload if `node dist/cli.js version` does
+      # not read back that exact string, uploads cli.js + notify.mjs to harness/cli/$VERSION/, then
+      # merges the `cli` key into $METADATA_PATH.
+      #
+      # Expect `>> could not read remote metadata` on a dry run: METADATA_PATH points at a file that
+      # does not exist yet, and that line is only the auto-bump's input. The version that publishes
+      # is the one passed here.
+      - name: Bundle and publish the CLI
+        run: bash cli/scripts/upload-cli.sh "$VERSION"
+
+      # Do exactly what a daemon does one minute from now, and fail the release if it does not work.
+      #
+      # upload-cli.sh already checks the bundle before uploading; this checks the PUBLISHED result —
+      # manifest actually served, URLs actually reachable, sha256 actually matching the bytes GCS
+      # hands out, and the downloaded cli.js actually able to print its own version. Those are
+      # different failures (a half-written manifest, a botched Cache-Control, an object that landed
+      # in the wrong bucket) and none of them are visible from the upload side.
+      #
+      # selfUpdate.ts refuses a digest mismatch, so the fleet is safe either way. What it does NOT
+      # do is tell anyone: every daemon simply keeps the version it has and the release looks green.
+      - name: Verify the published release the way a daemon would
+        run: |
+          set -euo pipefail
+          # Built here from $GCS_BUCKET and $METADATA_PATH, both already in this job's environment,
+          # rather than interpolated into the script by Actions — same rule as the tag name above.
+          # (A workflow expression is substituted into `run:` BEFORE any shell sees it, so writing
+          # one is not made safe by putting it in a comment: an empty pair of braces here is a
+          # workflow syntax error, not a comment. actionlint catches that; nothing else does.)
+          curl -fsSL "https://storage.googleapis.com/${GCS_BUCKET}/${METADATA_PATH}" -o manifest.json
+          echo "::group::manifest"; cat manifest.json; echo "::endgroup::"
+
+          # The layout install.sh writes next to the downloaded bundle, and it is load-bearing: the
+          # bundle is ESM, and node decides that from the nearest package.json. Without this file it
+          # would parse a 2MB ES module as CommonJS. (Node 22 would probably rescue it by sniffing
+          # the syntax; a verification step must not depend on probably.)
+          mkdir -p verify && printf '{"type":"module"}\n' > verify/package.json
+
+          # The single quotes are the point: this is JavaScript, and its `${...}` template literals
+          # must reach node unexpanded by the shell.
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("node:fs"), crypto = require("node:crypto")
+            const { execFileSync } = require("node:child_process")
+
+            const main = async () => {
+              const want = process.env.VERSION
+              const entry = JSON.parse(fs.readFileSync("manifest.json", "utf8")).cli
+              if (!entry) throw new Error("manifest has no `cli` key")
+              if (entry.version !== want) throw new Error(`manifest says ${entry.version}, expected ${want}`)
+
+              for (const [key, file] of [["cli", "cli.js"], ["notify", "notify.mjs"]]) {
+                const ref = entry[key]
+                if (!ref || !ref.url || !ref.sha256) throw new Error(`${key}: manifest entry has no url/sha256`)
+                const res = await fetch(ref.url, { cache: "no-store" })
+                if (!res.ok) throw new Error(`${key}: GET ${ref.url} -> ${res.status}`)
+                const buf = Buffer.from(await res.arrayBuffer())
+                const got = crypto.createHash("sha256").update(buf).digest("hex")
+                if (got !== String(ref.sha256).toLowerCase()) throw new Error(`${key}: sha256 ${got} != manifest ${ref.sha256}`)
+                if (buf.length !== ref.size) throw new Error(`${key}: ${buf.length} bytes != manifest ${ref.size}`)
+                fs.writeFileSync(`verify/${file}`, buf)
+                console.log(`  ${file}: ${buf.length} bytes, sha256 ok`)
+              }
+
+              // The bytes a daemon would install, asked their own version. This is the one check
+              // that proves the manifest and the object describe the SAME build — every check above
+              // would still pass if a correct manifest pointed at a correctly-hashed wrong file.
+              const said = execFileSync(process.execPath, ["verify/cli.js", "version"], { encoding: "utf8" }).trim()
+              if (said !== want) throw new Error(`downloaded cli.js reports ${said}, expected ${want}`)
+              console.log(`  verify/cli.js reports ${said}`)
+            }
+
+            main().catch(err => { console.error(`::error::${err.message}`); process.exit(1) })
+          '
+          {
+            echo "Verified \`$VERSION\` at \`$METADATA_PATH\`"
+            echo ""
+            echo "Running daemons self-update within ~1 min."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The GitHub Release. Notes are the tag's OWN message, verbatim — the same rule the desktop repo
+  # follows. CI generates nothing: what a human wrote and reviewed at tag time is exactly what
+  # publishes, and `generate_release_notes` would append a second, differently-built list under it
+  # that silently omits anything which reached main without a PR.
+  #
+  # No binaries attached. GCS is the distribution channel — install.sh and the self-updater both
+  # read the manifest — so a copy here would be a second set of bytes that can disagree with the
+  # one machines actually install. The notes link to the real ones instead.
+  github-release:
+    needs: [version, publish]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # narrower than the workflow default only here, where a release is created
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Take the release notes from the tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # actions/checkout replaces the pushed annotated tag with a LIGHTWEIGHT local ref, even at
+          # fetch-depth: 0, so `git cat-file -t` below would see "commit" and reject a properly
+          # annotated tag. Re-fetch the tag object to restore the annotation before reading it.
+          git fetch --force origin tag "$REF_NAME"
+          # A lightweight tag has no message of its own, and %(contents) would quietly fall through
+          # to the commit's — publishing "chore(release): vX.Y.Z" as the notes.
+          if [ "$(git cat-file -t "$REF_NAME")" != tag ]; then
+            echo "::error::$REF_NAME is a lightweight tag, so it carries no release notes."
+            echo "::error::Re-tag with:  git tag -a $REF_NAME --cleanup=verbatim -F notes.md"
+            exit 1
+          fi
+          git tag -l --format='%(contents)' "$REF_NAME" > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::$REF_NAME has an empty tag message — no notes to publish."
+            exit 1
+          fi
+          base="https://storage.googleapis.com/${GCS_BUCKET}/harness/cli/${VERSION}"
+          cat >> RELEASE_NOTES.md <<EOF
+
+          ---
+
+          ## Install
+
+          \`\`\`bash
+          curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
+          \`\`\`
+
+          Already running \`harness\`? The daemon self-updates within a minute — nothing to do.
+
+          | Artifact | |
+          |---|---|
+          | \`cli.js\` | [download](${base}/cli.js) |
+          | \`notify.mjs\` | [download](${base}/notify.mjs) |
+          EOF
+          echo "::group::RELEASE_NOTES.md"; cat RELEASE_NOTES.md; echo "::endgroup::"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
