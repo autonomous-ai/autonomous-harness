@@ -622,21 +622,29 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // directory. So it gets a private one per agent: the provider block lands there, the user's
   // ~/.pi/agent/models.json is never opened, and their skills are handed back through settings.json.
   //
-  // The model is not optional — the provider block has to name the model it serves, and Pi selects
-  // it as `grid/<model>`.
+  // The provider block has to name the model it serves, and Pi selects it as `grid/<model>` — so
+  // something must always be named. No model chosen means the grid routes: `Auto` is the router's
+  // own id and the relay answers it like any other, exactly as OpenCode's block above relies on.
+  //
+  // This used to be `requiresModel: true`, which refused the launch outright. That made Pi the one
+  // grid-capable engine a person could not start from the New agent dialog at all, since the dialog
+  // always creates on Auto and no longer offers a model field — a dead end, not a prompt to go and
+  // pick something.
   pi: {
-    requiresModel: true,
-    build: (override) => ({
-      env: { [GRID_KEY_VAR]: override.apiKey },
-      args: ['--model', `${GRID_PROVIDER_ID}/${override.model as string}`],
-      configDir: {
-        envVar: 'PI_CODING_AGENT_DIR',
-        files: [
-          { name: 'models.json', content: piModelsJson(relayBaseUrl(override.baseUrl), override.model as string) },
-          { name: 'settings.json', content: piSettingsJson(userPiSkillsDir()) },
-        ],
-      },
-    }),
+    build: (override) => {
+      const model = override.model ?? GRID_ROUTER_MODEL
+      return {
+        env: { [GRID_KEY_VAR]: override.apiKey },
+        args: ['--model', `${GRID_PROVIDER_ID}/${model}`],
+        configDir: {
+          envVar: 'PI_CODING_AGENT_DIR',
+          files: [
+            { name: 'models.json', content: piModelsJson(relayBaseUrl(override.baseUrl), model) },
+            { name: 'settings.json', content: piSettingsJson(userPiSkillsDir()) },
+          ],
+        },
+      }
+    },
   },
 
   // GitHub's documented BYOK path for Copilot CLI (docs.github.com … /use-byok-models). Copilot

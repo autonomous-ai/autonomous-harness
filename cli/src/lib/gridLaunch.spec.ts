@@ -182,8 +182,19 @@ describe('the launch each engine gets', () => {
     expect(parsed).not.toHaveProperty('defaultProjectTrust')
   })
 
-  it('refuses Pi without a model — its provider block has to name one', () => {
-    expect(buildGridEngineLaunch('pi', OVERRIDE)).toMatchObject({ ok: false, error: 'GRID_MODEL_REQUIRED' })
+  it('routes Pi through Auto when the user picked no model, rather than refusing', () => {
+    // Pi's provider block has to name a model, so "none" cannot be left blank — but the answer is
+    // the router's own id, the way OpenCode's block already does it, not a refusal. This was
+    // GRID_MODEL_REQUIRED, which made Pi the one grid-capable engine the New agent dialog could
+    // never start: that dialog always creates on Auto and offers no model field.
+    const launch = launchOf('pi', OVERRIDE)
+    expect(launch.args).toEqual(['--model', 'grid/Auto'])
+    const models = launch.configDir?.files.find((file) => file.name === 'models.json')
+    const parsed = JSON.parse(models!.content) as {
+      providers: Record<string, { models: { id: string; name: string }[] }>
+    }
+    // Named in the block too, not just in argv — Pi resolves `grid/Auto` against this list.
+    expect(parsed.providers.grid.models.map((m) => m.id)).toEqual(['Auto'])
   })
 
   it('never puts the key in argv, or on disk, for any engine', () => {
