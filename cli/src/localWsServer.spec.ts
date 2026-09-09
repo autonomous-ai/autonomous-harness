@@ -171,6 +171,99 @@ describe('local CLI WebSocket', () => {
     ws.close()
   })
 
+  it('answers a routed task on the id it was asked with, and sends nothing', async () => {
+    const backend = new FakeBackend()
+    const asked: string[] = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onRouteTask: async (text) => {
+        asked.push(text)
+        return {
+          agentId: 'a1', name: 'auth-api', confidence: 0.86, reason: 'name matches',
+          candidates: [{ agentId: 'a1', name: 'auth-api', recent: 'token rotation' }],
+        }
+      },
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    const answered = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'route_task', payload: { requestId: 'q-7', text: '  fix the retry  ' } }))
+    const reply = await answered   // onceMessage already parses
+    // The requestId comes back UNTOUCHED — it is the window's own rpc id, and the only thing tying this
+    // answer to the spinner it is holding open.
+    expect(reply.type).toBe('route_result')
+    expect(reply.payload).toMatchObject({ requestId: 'q-7', agentId: 'a1', name: 'auth-api', confidence: 0.86 })
+    expect(asked).toEqual(['fix the retry'])
+    // Asking is not sending. Nothing reached the machine.
+    expect(backend.frames.map((frame) => frame.type)).toEqual([])
+    ws.close()
+  })
+
+  it('still answers when there is nothing to answer with', async () => {
+    // The window holds a spinner on the id it asked with, so silence is the one reply it cannot recover
+    // from — an empty task and a router that throws must both come back as frames.
+    const backend = new FakeBackend()
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onRouteTask: async () => { throw new Error('router unavailable') },
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    const blank = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'route_task', payload: { requestId: 'q-empty', text: '   ' } }))
+    expect((await blank).payload).toMatchObject({ requestId: 'q-empty', agentId: '', reason: 'empty task' })
+
+    const failed = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'route_task', payload: { requestId: 'q-throw', text: 'anything' } }))
+    expect((await failed).payload).toMatchObject({ requestId: 'q-throw', agentId: '', reason: 'router unavailable' })
+    ws.close()
+  })
+
+  it('delivers a committed route, and keeps the frame off the wire', async () => {
+    const backend = new FakeBackend()
+    const sent: Array<{ agentId: string; text: string }> = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onRouteSend: (agentId, text) => sent.push({ agentId, text }),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    ws.send(JSON.stringify({ type: 'route_send', payload: { agentId: 'a2', text: 'do the thing' } }))
+    ws.send(JSON.stringify({ type: 'route_send', payload: { agentId: '', text: 'nobody' } }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // The half-formed one is dropped rather than delivered to whoever sorts first.
+    expect(sent).toEqual([{ agentId: 'a2', text: 'do the thing' }])
+    expect(backend.frames.map((frame) => frame.type)).toEqual([])
+    ws.close()
+  })
+
   it('does not require a credential on the loopback transport', async () => {
     const url = await start(new FakeBackend())
     const ws = new WebSocket(url, ['legacy-client-label'])

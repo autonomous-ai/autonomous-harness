@@ -31,6 +31,33 @@ export interface LocalWsServerOptions {
   onAppFocus?: (machineId: string, agentId: string) => void
   /** Every agent the window currently has a tile for, across all its machines. */
   onAppPanes?: (agentIds: string[]) => void
+  /**
+   * The window asked WHICH AGENT a typed task belongs to (⌘K). Answers, and sends NOTHING.
+   *
+   * Two frames rather than one, and the split is the design: the window decides whether the answer is
+   * good enough to act on. Fold them together with a `commit` flag and the confidence threshold moves in
+   * here, where nothing knows what the person is looking at.
+   */
+  onRouteTask?: (text: string) => Promise<RouteAnswer>
+  /** The window committed to an agent — deliver the task the way every other message is delivered. */
+  onRouteSend?: (agentId: string, text: string) => void
+}
+
+/** One candidate, as the window draws it in the picker. */
+export interface RouteCandidate {
+  agentId: string
+  name: string
+  /** What it was last doing — the line under the name when the window has to ask. */
+  recent: string
+}
+
+export interface RouteAnswer {
+  agentId: string
+  name: string
+  confidence: number
+  reason: string
+  /** The best few, most confident first. Only read when the window decides to ask. */
+  candidates: RouteCandidate[]
 }
 
 export interface LocalWsServer {
@@ -207,6 +234,42 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             const ids = Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string' && id !== '') : []
             sentPanes = true
             options.onAppPanes(ids)
+            return
+          }
+        }
+        // ⌘K: the only REQUEST/RESPONSE pair this socket serves. Everything else on it is one-way.
+        //
+        // It rides the app's OWN rpc convention — `payload.requestId` out, the same id back — which the
+        // window already implements end to end: the pending map, the timeout, the queue-across-reconnect
+        // and the logging are all there (ws_conn.dart `request()`). Inventing a second correlation field
+        // here would have meant a second, thinner copy of all of it on the side that already had one.
+        //
+        // Consumed here like app_focus: it describes a hand at this desk, not anything the machine could
+        // act on.
+        if (!isBinary && (options.onRouteTask || options.onRouteSend)) {
+          const asked = jsonFrame(raw)
+          if (asked?.type === 'route_task' && options.onRouteTask) {
+            const payload = asked.payload as Record<string, unknown> | undefined
+            const requestId = typeof payload?.requestId === 'string' ? payload.requestId : ''
+            const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
+            // An answer ALWAYS goes back, even for a question we cannot serve: the window is holding a
+            // spinner open on this id, and silence is the one reply it cannot recover from.
+            let answer: RouteAnswer = { agentId: '', name: '', confidence: 0, reason: 'empty task', candidates: [] }
+            if (text) {
+              try {
+                answer = await options.onRouteTask(text)
+              } catch (err) {
+                answer = { agentId: '', name: '', confidence: 0, reason: (err as Error).message.slice(0, 120), candidates: [] }
+              }
+            }
+            sink.sendFrame({ type: 'route_result', payload: { requestId, ...answer } })
+            return
+          }
+          if (asked?.type === 'route_send' && options.onRouteSend) {
+            const payload = asked.payload as Record<string, unknown> | undefined
+            const agentId = typeof payload?.agentId === 'string' ? payload.agentId : ''
+            const text = typeof payload?.text === 'string' ? payload.text : ''
+            if (agentId && text) options.onRouteSend(agentId, text)
             return
           }
         }

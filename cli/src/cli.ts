@@ -108,7 +108,7 @@ import {
   deriveTurnSummary,
   syncSummaryPoolSessions,
 } from './lib/summarize.js'
-import { setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter } from './lib/voiceRouter.js'
+import { routeVoiceTask, setVoiceRouterDeviceConnected, setVoiceRouterSessions, shutdownVoiceRouter, type RouterAgent } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { E2eeStore } from './lib/e2ee/store.js'
 import { b64e } from './lib/e2ee/core.js'
@@ -2824,6 +2824,55 @@ async function runForeground(session: AuthSession): Promise<void> {
       if (changed) console.log(`[cable] window tiles: ${next.size ? [...next].map(sid).join(' ') : '(none)'}`)
       // Ordered, not set-wise: two tiles swapping places is the same set and a different ring.
       if (deskChanged) void cableRef?.syncAgents()
+    },
+    // ⌘K in the window: a typed task, and which agent it belongs to.
+    //
+    // THE SAME ROUTER THE DIAL USES, given a second caller. routeVoiceTask has never cared that its input
+    // arrived as speech — the transcript is just text by the time it sees it — so this is not a port. What
+    // is new is the answer coming back to something that can SHOW it: the dial had to act on the pick,
+    // the window can ask.
+    //
+    // LOCAL AGENTS ONLY (owner's call). It is what keeps this fast: the dial's cross-machine route pays an
+    // RPC per remote agent to fetch recaps, and that is most of its latency. The cost is real and chosen —
+    // ⌘K cannot reach an agent on another computer, even while its pane is on screen.
+    onRouteTask: async (text) => {
+      const sessions = registry.advertised()
+      sessions.sort((a, b) => a.registeredAt - b.registeredAt || a.agentId.localeCompare(b.agentId))
+      const candidates: RouterAgent[] = sessions.map((session) => ({
+        id: session.agentId,
+        name: projectDisplayName(session),
+        engine: session.engine,
+        // The same three recaps the dial's router weighs. `recent` reads the mirror this daemon already
+        // keeps, so this costs nothing and cannot be stale in a way the rest of the app is not.
+        recentSummary: mirror.recent(session.sessionId || session.agentId, 3)
+          .map((turn) => turn.recap || turn.text || '')
+          .filter(Boolean)
+          .join(' · '),
+      }))
+      const decision = await routeVoiceTask(text, candidates)
+      const named = (id: string) => candidates.find((agent) => agent.id === id)
+      // The runners-up, for the window to offer when the pick is weak. Scored the same way the fallback
+      // matcher scores — name over recent — so the list the person reads is ordered by the same rule the
+      // router used, not by registry position.
+      const others = candidates
+        .filter((agent) => agent.id !== decision.agentId)
+        .slice(0, 2)
+      return {
+        agentId: decision.agentId,
+        name: named(decision.agentId)?.name ?? '',
+        confidence: decision.confidence,
+        reason: decision.reason,
+        candidates: [decision.agentId ? named(decision.agentId) : null, ...others]
+          .filter((agent): agent is RouterAgent => !!agent)
+          .map((agent) => ({ agentId: agent.id, name: agent.name, recent: (agent.recentSummary ?? '').slice(0, 120) })),
+      }
+    },
+    // Committed. Delivered through the SAME door as every other message — the web's, the dial's, a
+    // hook's — so queueing, retries and the per-engine slash-command adaptation are not re-implemented
+    // for the one caller that types instead of speaking.
+    onRouteSend: (agentId, text) => {
+      console.log(`[route] ⌘K → ${sid(agentId)} · bytes=${Buffer.byteLength(text, 'utf8')}`)
+      backend.onMessage?.(agentId, text)
     },
     machineId: backend.machineId,
     backend,
