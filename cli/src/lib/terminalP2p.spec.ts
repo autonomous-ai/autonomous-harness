@@ -149,11 +149,14 @@ describe('terminal WebRTC data channel', () => {
         sdp: 'not-a-real-sdp',
         stunUrls: [
           'stun:1.example:3478', 'stun:2.example:3478', 'stun:3.example:3478',
-          'stun:4.example:3478', 'stun:5.example:3478', 'turn:6.example:3478', 42,
+          'stun:4.example:3478', 'stun:5.example:3478', 'stun:6.example:3478',
+          'stun:7.example:3478', 'stun:8.example:3478', 'stun:9.example:3478',
+          'turn:10.example:3478', 42,
         ] as unknown as string[],
       })
       expect(selectStunUrls).toHaveBeenCalledWith([
         'stun:1.example:3478', 'stun:2.example:3478', 'stun:3.example:3478', 'stun:4.example:3478',
+        'stun:5.example:3478', 'stun:6.example:3478', 'stun:7.example:3478', 'stun:8.example:3478',
       ])
     } finally {
       await responder.stop()

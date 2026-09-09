@@ -491,7 +491,7 @@ export class TerminalP2pResponderPool {
     await this.closeConnection(connId, 'superseded', false)
     if (this.offerSeq.get(connId) !== seq) return
     const offeredStunUrls = Array.isArray(payload.stunUrls)
-      ? payload.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 4)
+      ? payload.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 8)
       : []
     // The offerer raced these too, and may well have landed on a different server. That is fine: a
     // srflx candidate is each peer's own public address, so the two sides need not agree on who to ask.
