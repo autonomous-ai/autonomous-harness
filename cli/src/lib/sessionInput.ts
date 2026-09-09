@@ -54,13 +54,27 @@ const SUBMIT_MAX_RETRIES = 2
 // prompt is in flight. Bounded so a truly wedged session eventually reverts to the retry/error path.
 const SUBMIT_MAX_OBSERVES = 5
 
+export interface SessionInputDelivery {
+  deliveryId: string
+  sessionId: string
+  state: 'queued' | 'delivered' | 'started' | 'rejected' | 'unknown'
+  reason?: string
+}
+
 interface QueuedInput {
+  deliveryId?: string
   content: string
   bytes: number
   expiresAt: number
 }
 
 interface InputState {
+  deliveryId?: string
+  deliveryFingerprint?: string
+  dispatching?: boolean
+  writing?: boolean
+  cancelled?: boolean
+  observedStart?: string
   turnOpen: boolean
   awaitingFingerprint: string | null
   awaitingContent: string | null
@@ -75,6 +89,7 @@ interface InputState {
 }
 
 export interface SessionInputDeps {
+  onDelivery?: (event: SessionInputDelivery) => void
   getSession: (sessionId: string) => RegisteredSession | undefined
   validateRuntime: (session: RegisteredSession) => Promise<boolean>
   /** Boolean is retained for direct controller tests and legacy embedders. Production returns dispatch evidence. */
@@ -130,18 +145,49 @@ export class SessionInputController {
     this.state(sessionId).turnOpen = open
   }
 
-  submit(sessionId: string, content: string): void {
+  private delivery(sessionId: string, deliveryId: string | undefined, state: SessionInputDelivery['state'], reason?: string): void {
+    if (deliveryId) this.deps.onDelivery?.({ sessionId, deliveryId, state, ...(reason ? { reason } : {}) })
+  }
+
+  private finishDelivery(sessionId: string, state: InputState, outcome: SessionInputDelivery['state'], reason?: string): void {
+    const id = state.deliveryId
+    state.deliveryId = undefined
+    state.deliveryFingerprint = undefined
+    this.delivery(sessionId, id, outcome, reason)
+  }
+
+  /** Revoke queued work only; a paste already in progress cannot be recalled. */
+  cancelDelivery(deliveryId: string): boolean {
+    for (const [sessionId, state] of this.states) {
+      const index = state.queue.findIndex((item) => item.deliveryId === deliveryId)
+      if (index >= 0) {
+        state.queue.splice(index, 1)
+        this.delivery(sessionId, deliveryId, 'rejected', 'cancelled')
+        return true
+      }
+      if (state.deliveryId === deliveryId && !state.writing && !state.awaitingFingerprint && !state.deliveryFingerprint) {
+        state.cancelled = true
+        this.finishDelivery(sessionId, state, 'rejected', 'cancelled')
+        return true
+      }
+    }
+    return false
+  }
+
+  submit(sessionId: string, content: string, deliveryId?: string): void {
     const session = this.controlSession(sessionId)
-    if (!session) { this.deps.onError(sessionId, 'This agent is no longer available.'); return }
+    if (!session) { this.delivery(sessionId, deliveryId, 'rejected', 'agent_gone'); this.deps.onError(sessionId, 'This agent is no longer available.'); return }
     const state = this.state(sessionId)
     this.dropExpired(sessionId, state)
     if (state.controlLocked
+      || (deliveryId && (state.deliveryId || state.dispatching || state.turnOpen || state.awaitingFingerprint || state.settling))
       || (session.engine !== 'claude' && (state.turnOpen || state.awaitingFingerprint || state.settling))) {
       console.log(`[inject] ${sid(sessionId)} queued · engine=${session.engine} · depth=${state.queue.length + 1}`)
-      this.enqueue(sessionId, state, content)
+      this.enqueue(sessionId, state, content, deliveryId)
       return
     }
-    void this.inject(sessionId, session, content)
+    this.delivery(sessionId, deliveryId, 'queued')
+    void this.inject(sessionId, session, content, deliveryId)
   }
 
   /** Reserve this pane for a short native control interaction such as `/model`. */
@@ -178,6 +224,10 @@ export class SessionInputController {
 
   onTurnStarted(sessionId: string, userMessage: string): void {
     const state = this.state(sessionId)
+    if (state.deliveryId && state.writing) state.observedStart = userMessage
+    else if (state.deliveryId && state.deliveryFingerprint) this.finishDelivery(sessionId, state,
+      state.deliveryFingerprint === fingerprint(userMessage) ? 'started' : 'unknown',
+      state.deliveryFingerprint === fingerprint(userMessage) ? undefined : 'prompt_mismatch')
     if (state.settleTimer) clearTimeout(state.settleTimer)
     state.settleTimer = null
     state.settling = false
@@ -223,6 +273,7 @@ export class SessionInputController {
 
   onTurnEnded(sessionId: string): void {
     const state = this.state(sessionId)
+    if (!state.dispatching) this.finishDelivery(sessionId, state, 'unknown', 'turn_ended_without_start')
     state.turnOpen = false
     state.awaitingFingerprint = null
     state.awaitingContent = null
@@ -254,6 +305,7 @@ export class SessionInputController {
       if (!valid) { this.deps.onError(sessionId, 'This agent process is no longer running.'); return }
       await this.deps.sendKey(session.agentId, 'C-c')
       const state = this.state(sessionId)
+      this.finishDelivery(sessionId, state, 'unknown', 'cancelled_after_paste')
       state.turnOpen = false
       state.awaitingFingerprint = null
       state.awaitingContent = null
@@ -264,14 +316,36 @@ export class SessionInputController {
     })
   }
 
+  async cancelConfirmed(sessionId: string): Promise<boolean> {
+    const session = this.controlSession(sessionId)
+    if (!session || !await this.deps.validateRuntime(session)) return false
+    const result = await this.deps.sendKey(session.agentId, 'C-c')
+    const state = this.state(sessionId)
+    this.finishDelivery(sessionId, state, 'unknown', 'cancelled_after_paste')
+    state.turnOpen = false
+    state.awaitingFingerprint = null
+    state.awaitingContent = null
+    state.ambiguousDispatch = false
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = null
+    setTimeout(() => this.drainOne(sessionId, state), 250)
+    return typeof result === 'boolean' ? result : result.dispatch === 'executed'
+  }
+
   forget(sessionId: string): void {
     const state = this.states.get(sessionId)
     if (state?.timer) clearTimeout(state.timer)
     if (state?.settleTimer) clearTimeout(state.settleTimer)
+    if (state) {
+      this.finishDelivery(sessionId, state, state.writing || state.awaitingFingerprint || state.deliveryFingerprint ? 'unknown' : 'rejected', 'agent_gone')
+      for (const item of state.queue) this.delivery(sessionId, item.deliveryId, 'rejected', 'agent_gone')
+      state.cancelled = true
+    }
     this.states.delete(sessionId)
   }
 
-  private async inject(sessionId: string, session: RegisteredSession, content: string): Promise<void> {
+  /** Preserve the established injection path for every caller that opts out of receipts. */
+  private async injectLegacy(sessionId: string, session: RegisteredSession, content: string): Promise<void> {
     const state = this.state(sessionId)
     if (!(await this.deps.validateRuntime(session))) {
       console.warn(`[inject] ${sid(sessionId)} abort · engine=${session.engine} · process not running`)
@@ -314,12 +388,91 @@ export class SessionInputController {
     this.armSubmitCheck(sessionId, session, state)
   }
 
+  private async inject(sessionId: string, session: RegisteredSession, content: string, deliveryId?: string): Promise<void> {
+    const state = this.state(sessionId)
+    if (!deliveryId) {
+      // A local submission keeps its original scheduling. Overlap removes our ability
+      // to attribute a later terminal turn to the lamp; it must not block local input.
+      this.finishDelivery(sessionId, state, 'unknown', 'prompt_mismatch')
+      return this.injectLegacy(sessionId, session, content)
+    }
+    state.deliveryId = deliveryId
+    state.deliveryFingerprint = undefined
+    state.dispatching = true
+    state.cancelled = false
+    try {
+      if (!(await this.deps.validateRuntime(session))) {
+        console.warn(`[inject] ${sid(sessionId)} abort · engine=${session.engine} · process not running`)
+        this.finishDelivery(sessionId, state, 'rejected', 'runtime_gone_pre_paste')
+        this.deps.onError(sessionId, 'This agent process is no longer running.')
+        return
+      }
+      if (state.cancelled || this.states.get(sessionId) !== state) return
+      if (session.engine === 'cursor') {
+        // Cursor leaves the previous prompt sitting in its composer after the turn completes — the text is
+        // still on the "→" line long after the answer and its recap have arrived. sendToTmux() types into
+        // whatever is already there, so the next message is APPENDED to the last one and the pair is
+        // submitted as a single run-on prompt:
+        //   "…đầu tư dài hạn" + "Có nên mua thêm eth không…"
+        // The agent then answers a question nobody asked, and the device shows a recap for it.
+        //
+        // The adapter already NOTICED this — onTurnStarted logs "observed a different terminal prompt while
+        // awaiting submit" when the fingerprint of the started turn does not match what we sent — but it
+        // only warned and carried on. Clear the line first so the composer is ours alone.
+        //
+        // C-u (kill-to-start-of-line) is a no-op on an empty composer, so this costs nothing in the normal
+        // case. It does discard a draft a human was typing in the terminal — but pasting into that draft
+        // would corrupt it into a run-on prompt anyway, which is worse and harder to notice.
+        await this.deps.sendKey(session.agentId, 'C-u')
+      }
+      if (state.cancelled || this.states.get(sessionId) !== state) return
+      state.writing = true
+      const delivery = await this.deps.inject(session.agentId, content)
+      state.writing = false
+      if (state.cancelled || this.states.get(sessionId) !== state) return
+      const accepted = typeof delivery === 'boolean'
+        ? delivery
+        : delivery.state === 'succeeded' || delivery.dispatch === 'possibly_executed'
+      if (!accepted) {
+        console.warn(`[inject] ${sid(sessionId)} paste failed · engine=${session.engine} · target=${session.agentId}`)
+        this.finishDelivery(sessionId, state, 'rejected', 'paste_failed')
+        this.deps.onError(sessionId, 'The message could not be delivered to the agent.')
+        return
+      }
+      console.log(`[inject] ${sid(sessionId)} paste ok · engine=${session.engine} · target=${session.agentId} · len=${content.length}`)
+      state.awaitingFingerprint = fingerprint(content)
+      state.deliveryFingerprint = state.awaitingFingerprint
+      state.awaitingContent = content
+      state.retries = 0
+      state.observes = 0
+      state.ambiguousDispatch = typeof delivery !== 'boolean' && delivery.dispatch === 'possibly_executed'
+      state.dispatching = false
+      this.delivery(sessionId, state.deliveryId, 'delivered')
+      if (state.observedStart !== undefined) {
+        const observed = state.observedStart
+        state.observedStart = undefined
+        this.onTurnStarted(sessionId, observed)
+      }
+      this.deps.onSubmitted?.(sessionId, content)
+      this.armSubmitCheck(sessionId, session, state)
+    } catch {
+      this.finishDelivery(sessionId, state, state.writing || state.awaitingFingerprint ? 'unknown' : 'rejected', state.writing || state.awaitingFingerprint ? 'dispatch_ambiguous' : 'runtime_gone_pre_paste')
+      this.deps.onError(sessionId, 'The message delivery could not be confirmed. Check the agent before trying again.')
+    } finally {
+      state.writing = false
+      state.dispatching = false
+      if (!state.awaitingFingerprint && !state.turnOpen) this.drainOne(sessionId, state)
+    }
+  }
+
   private armSubmitCheck(sessionId: string, session: RegisteredSession, state: InputState): void {
     if (state.timer) clearTimeout(state.timer)
     state.timer = setTimeout(() => {
       state.timer = null
       if (!state.awaitingFingerprint || state.turnOpen) return
-      void this.retrySubmit(sessionId, session, state)
+      const retry = this.retrySubmit(sessionId, session, state)
+      if (state.deliveryId) void retry.catch(() => this.failAmbiguousSubmission(sessionId, state))
+      else void retry
     }, session.engine === 'claude'
       ? CLAUDE_SUBMIT_VERIFY_MS
       : session.engine === 'opencode'
@@ -357,6 +510,10 @@ export class SessionInputController {
         return
       }
       if (capture && cursorSubmissionAccepted(capture, state.awaitingContent ?? '')) {
+        if (state.deliveryId && ++state.observes > SUBMIT_MAX_OBSERVES) {
+          this.failAmbiguousSubmission(sessionId, state)
+          return
+        }
         // The transcript hook can trail the TUI by a moment. Observe again without pressing Enter:
         // another Enter here would duplicate a running/queued follow-up.
         this.armSubmitCheck(sessionId, session, state)
@@ -366,6 +523,7 @@ export class SessionInputController {
         console.warn(`[inject] ${sid(sessionId)} not accepted · engine=cursor · composer clear of draft`)
         state.awaitingFingerprint = null
         state.awaitingContent = null
+        this.finishDelivery(sessionId, state, 'unknown', 'not_submitted')
         this.deps.onError(sessionId, 'The agent did not accept the message. Please try again.')
         return
       }
@@ -391,6 +549,8 @@ export class SessionInputController {
       // acceptance it is, rather than timing out into an error the user can see is false.
       if (capture && session.engine === 'commandcode' && /esc to interrupt/i.test(visibleTerminal(capture))) {
         console.log(`[inject] ${sid(sessionId)} accepted (agent working) · engine=commandcode`)
+        // Keep the optional delivery fingerprint for the real transcript start.
+        // Visible work confirms acceptance; it must not be timed out as a failed submit.
         state.awaitingFingerprint = null
         state.awaitingContent = null
         state.observes = 0
@@ -426,6 +586,7 @@ export class SessionInputController {
       state.awaitingFingerprint = null
       state.awaitingContent = null
       state.ambiguousDispatch = false
+      this.finishDelivery(sessionId, state, 'unknown', 'not_submitted')
       this.deps.onError(sessionId, 'The agent did not accept the message. Please try again.')
       return
     }
@@ -433,12 +594,14 @@ export class SessionInputController {
     console.log(`[inject] ${sid(sessionId)} resubmit Enter · engine=${session.engine} · retry=${state.retries}/${SUBMIT_MAX_RETRIES}`)
     const valid = await this.deps.validateRuntime(session)
     if (!valid) {
+      this.finishDelivery(sessionId, state, 'unknown', 'runtime_gone_post_paste')
       state.awaitingFingerprint = null
       state.awaitingContent = null
       state.ambiguousDispatch = false
       this.deps.onError(sessionId, 'This agent process is no longer running.')
       return
     }
+    if (state.deliveryId && (this.states.get(sessionId) !== state || !state.awaitingFingerprint || state.turnOpen)) return
     // Only the submit key is retried. The prompt body is never pasted twice.
     const delivery = await this.deps.sendKey(session.agentId, 'Enter')
     state.ambiguousDispatch = typeof delivery === 'boolean'
@@ -448,6 +611,7 @@ export class SessionInputController {
   }
 
   private failAmbiguousSubmission(sessionId: string, state: InputState): void {
+    this.finishDelivery(sessionId, state, 'unknown', 'dispatch_ambiguous')
     state.awaitingFingerprint = null
     state.awaitingContent = null
     state.ambiguousDispatch = false
@@ -457,26 +621,30 @@ export class SessionInputController {
   private drainOne(sessionId: string, state: InputState): void {
     this.dropExpired(sessionId, state)
     if (state.controlLocked || state.turnOpen || state.awaitingFingerprint || state.settling) return
+    if (state.queue[0]?.deliveryId && (state.dispatching || state.deliveryId)) return
     const next = state.queue.shift()
     if (!next) return
     const session = this.controlSession(sessionId)
-    if (!session) { this.deps.onError(sessionId, 'This agent is no longer available.'); return }
-    void this.inject(sessionId, session, next.content)
+    if (!session) { this.delivery(sessionId, next.deliveryId, 'rejected', 'agent_gone'); this.deps.onError(sessionId, 'This agent is no longer available.'); return }
+    void this.inject(sessionId, session, next.content, next.deliveryId)
   }
 
-  private enqueue(sessionId: string, state: InputState, content: string): void {
+  private enqueue(sessionId: string, state: InputState, content: string, deliveryId?: string): void {
     const bytes = Buffer.byteLength(content, 'utf8')
     const queuedBytes = state.queue.reduce((sum, item) => sum + item.bytes, 0)
     if (state.queue.length >= MAX_QUEUE_ITEMS || queuedBytes + bytes > MAX_QUEUE_BYTES) {
+      this.delivery(sessionId, deliveryId, 'rejected', 'queue_full')
       this.deps.onError(sessionId, 'This agent already has too many queued messages. Try again after the current operation finishes.')
       return
     }
-    state.queue.push({ content, bytes, expiresAt: Date.now() + ITEM_TTL_MS })
+    state.queue.push({ content, bytes, expiresAt: Date.now() + ITEM_TTL_MS, deliveryId })
+    this.delivery(sessionId, deliveryId, 'queued')
   }
 
   private dropExpired(sessionId: string, state: InputState): void {
     const before = state.queue.length
     const now = Date.now()
+    for (const item of state.queue) if (item.expiresAt <= now) this.delivery(sessionId, item.deliveryId, 'rejected', 'queue_expired')
     state.queue = state.queue.filter((item) => item.expiresAt > now)
     if (state.queue.length < before) this.deps.onError(sessionId, 'A queued message expired before the agent became available.')
   }

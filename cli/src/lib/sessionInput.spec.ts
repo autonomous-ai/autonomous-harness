@@ -467,3 +467,208 @@ describe('SessionInputController', () => {
     controller.forget('s1')
   })
 })
+
+describe('delivery correlation', () => {
+  afterEach(() => vi.useRealTimers())
+
+  function setup(overrides: Partial<ConstructorParameters<typeof SessionInputController>[0]> = {}) {
+    const onDelivery = vi.fn()
+    const inject = vi.fn(async () => true)
+    const controller = new SessionInputController({
+      getSession: () => session(), validateRuntime: async () => true,
+      inject, sendKey: async () => true, onError: vi.fn(), onDelivery, ...overrides,
+    })
+    return { controller, onDelivery, inject }
+  }
+
+  it('correlates a matching observed turn after successful delivery', async () => {
+    const { controller, onDelivery } = setup()
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.waitFor(() => expect(onDelivery).toHaveBeenCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'delivered' }))
+    controller.onTurnStarted('s1', 'hello')
+    expect(onDelivery.mock.calls.map(([event]) => event.state)).toEqual(['queued', 'delivered', 'started'])
+    controller.forget('s1')
+  })
+
+  it('buffers a turn observed before the paste promise resolves', async () => {
+    let release!: (value: boolean) => void
+    const { controller, onDelivery } = setup({ inject: () => new Promise<boolean>((resolve) => { release = resolve }) })
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    controller.onTurnStarted('s1', 'hello')
+    release(true)
+    await vi.waitFor(() => expect(onDelivery.mock.calls.map(([event]) => event.state)).toEqual(['queued', 'delivered', 'started']))
+    controller.forget('s1')
+  })
+
+  it('does not attribute a different human prompt to the delivery', async () => {
+    const { controller, onDelivery } = setup()
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.waitFor(() => expect(onDelivery).toHaveBeenCalledTimes(2))
+    controller.onTurnStarted('s1', 'different')
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'unknown', reason: 'prompt_mismatch' })
+    controller.forget('s1')
+  })
+
+  it('revokes a queued delivery without touching the terminal', () => {
+    const { controller, onDelivery, inject } = setup()
+    controller.setTurnOpen('s1', true)
+    controller.submit('s1', 'hello', 'delivery-1')
+    expect(controller.cancelDelivery('delivery-1')).toBe(true)
+    controller.onTurnEnded('s1')
+    expect(inject).not.toHaveBeenCalled()
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'rejected', reason: 'cancelled' })
+    controller.forget('s1')
+  })
+
+  it('revokes during runtime validation before any paste', async () => {
+    let release!: (value: boolean) => void
+    const { controller, inject } = setup({ validateRuntime: () => new Promise<boolean>((resolve) => { release = resolve }) })
+    controller.submit('s1', 'hello', 'delivery-1')
+    expect(controller.cancelDelivery('delivery-1')).toBe(true)
+    release(true)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(inject).not.toHaveBeenCalled()
+    controller.forget('s1')
+  })
+
+  it('reports queue saturation and expiration without pasting', () => {
+    vi.useFakeTimers()
+    const { controller, onDelivery, inject } = setup()
+    controller.setTurnOpen('s1', true)
+    for (let i = 0; i < 9; i++) controller.submit('s1', 'hello', `delivery-${i}`)
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-8', state: 'rejected', reason: 'queue_full' })
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1)
+    controller.onTurnEnded('s1')
+    expect(onDelivery.mock.calls.filter(([event]) => event.reason === 'queue_expired')).toHaveLength(8)
+    expect(inject).not.toHaveBeenCalled()
+    controller.forget('s1')
+  })
+
+  it.each([
+    ['missing agent', { getSession: () => undefined }, 'agent_gone'],
+    ['missing process', { validateRuntime: async () => false }, 'runtime_gone_pre_paste'],
+    ['failed paste', { inject: async () => false }, 'paste_failed'],
+  ] as const)('rejects %s before successful delivery', async (_label, overrides, reason) => {
+    const { controller, onDelivery } = setup(overrides)
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.waitFor(() => expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'rejected', reason }))
+    controller.forget('s1')
+  })
+
+  it('reports ambiguous paste as unknown and never repastes', async () => {
+    vi.useFakeTimers()
+    const inject = vi.fn(async (): Promise<TerminalActionResult> => ({ state: 'unknown', dispatch: 'possibly_executed', reason: 'timeout' }))
+    const { controller, onDelivery } = setup({ inject })
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.advanceTimersByTimeAsync(1_600)
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'unknown', reason: 'dispatch_ambiguous' })
+    expect(inject).toHaveBeenCalledTimes(1)
+    controller.forget('s1')
+  })
+
+  it('reports retry exhaustion as unknown after the body was pasted', async () => {
+    vi.useFakeTimers()
+    const { controller, onDelivery } = setup()
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.advanceTimersByTimeAsync(4_600)
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'unknown', reason: 'not_submitted' })
+    controller.forget('s1')
+  })
+
+  it('reports process loss after paste as unknown', async () => {
+    vi.useFakeTimers()
+    const validateRuntime = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false)
+    const { controller, onDelivery } = setup({ validateRuntime })
+    controller.submit('s1', 'hello', 'delivery-1')
+    await vi.advanceTimersByTimeAsync(1_600)
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-1', state: 'unknown', reason: 'runtime_gone_post_paste' })
+    controller.forget('s1')
+  })
+})
+
+describe('optional lamp delivery preserves legacy behavior', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('keeps concurrent untracked Claude submits out of the new lamp queue', async () => {
+    const validations: Array<(valid: boolean) => void> = []
+    const inject = vi.fn(async () => true)
+    const controller = new SessionInputController({
+      getSession: () => session('claude'),
+      validateRuntime: () => new Promise<boolean>(resolve => validations.push(resolve)),
+      inject, sendKey: async () => true, onError: vi.fn(),
+    })
+    controller.setTurnOpen('s1', true)
+    controller.submit('s1', 'first local prompt')
+    controller.submit('s1', 'second local prompt')
+    expect(validations).toHaveLength(2)
+    validations.forEach(resolve => resolve(true))
+    await vi.waitFor(() => expect(inject).toHaveBeenCalledTimes(2))
+    controller.forget('s1')
+  })
+
+  it('keeps native control available during untracked runtime validation', async () => {
+    let resolve!: (valid: boolean) => void
+    const controller = new SessionInputController({
+      getSession: () => session('claude'),
+      validateRuntime: () => new Promise<boolean>(done => { resolve = done }),
+      inject: async () => true, sendKey: async () => true, onError: vi.fn(),
+    })
+    controller.submit('s1', 'local prompt')
+    const release = controller.acquireControl('s1')
+    expect(release).not.toBeNull()
+    release?.()
+    resolve(false)
+    await Promise.resolve()
+    controller.forget('s1')
+  })
+
+  it('reports the original legacy cancellation error for a vanished process', async () => {
+    const onError = vi.fn()
+    const sendKey = vi.fn(async () => true)
+    const controller = new SessionInputController({
+      getSession: () => session(), validateRuntime: async () => false,
+      inject: async () => true, sendKey, onError,
+    })
+    controller.cancel('s1')
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('s1', 'This agent process is no longer running.'))
+    expect(sendKey).not.toHaveBeenCalled()
+    controller.forget('s1')
+  })
+
+  it('keeps accepted Command Code delivery until the delayed transcript identifies its start', async () => {
+    vi.useFakeTimers()
+    const onDelivery = vi.fn()
+    const sendKey = vi.fn(async () => true)
+    const controller = new SessionInputController({
+      getSession: () => session('commandcode'), validateRuntime: async () => true,
+      inject: async () => true, sendKey, capture: async () => 'Thinking… esc to interrupt',
+      onError: vi.fn(), onDelivery,
+    })
+    controller.submit('s1', 'long thinking task', 'delivery-commandcode')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(onDelivery.mock.calls.map(([event]) => event.state)).toEqual(['queued', 'delivered'])
+    expect(sendKey).not.toHaveBeenCalled()
+    controller.onTurnStarted('s1', 'long thinking task')
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-commandcode', state: 'started' })
+    controller.forget('s1')
+  })
+
+  it('does not invent rejection when a turn begins during pre-paste validation', async () => {
+    let resolve!: (valid: boolean) => void
+    const onDelivery = vi.fn()
+    const controller = new SessionInputController({
+      getSession: () => session('claude'),
+      validateRuntime: () => new Promise<boolean>(done => { resolve = done }),
+      inject: async () => true, sendKey: async () => true, onError: vi.fn(), onDelivery,
+    })
+    controller.submit('s1', 'lamp followup', 'delivery-followup')
+    controller.onTurnStarted('s1', 'a different local turn')
+    resolve(true)
+    await vi.waitFor(() => expect(onDelivery.mock.calls.map(([event]) => event.state)).toEqual(['queued', 'delivered']))
+    controller.onTurnStarted('s1', 'lamp followup')
+    expect(onDelivery).toHaveBeenLastCalledWith({ sessionId: 's1', deliveryId: 'delivery-followup', state: 'started' })
+    controller.forget('s1')
+  })
+})

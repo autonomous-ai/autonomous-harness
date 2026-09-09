@@ -803,3 +803,34 @@ describe('agent_retarget clearGrid', () => {
     expect(seen).toHaveLength(0)
   })
 })
+
+describe('Autonomous direct isolation from existing relay/browser behavior', () => {
+  it('permits offline PAKE only for the exact live direct pending connection', async () => {
+    const backend = new BackendSocket('direct-offline-test')
+    const send = vi.fn()
+    backend.attachDirectDevice('autonomous-direct:test', send)
+    const pairId = Buffer.alloc(16, 1).toString('base64')
+    backend.e2ee.handleFrame('browser', { type: 'e2e_pair_intent', payload: { pairId, role: 'web', label: 'Browser' } })
+    expect(await backend.pair('K7P4X9')).toEqual({ ok: false, error: 'BACKEND_DOWN' })
+    await backend.receiveDirectDevice('autonomous-direct:test', { type: 'e2e_pair_intent', payload: { pairId, role: 'device', label: 'Autonomous device' } }, true)
+    const paired = backend.pair('K7P4X9')
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'e2e_pake' }))
+    await backend.receiveDirectDevice('autonomous-direct:test', { type: 'e2e_pair_cancel', payload: { pairId } }, true)
+    expect(await paired).toEqual({ ok: false, error: 'CANCELLED' })
+    backend.detachDirectDevice('autonomous-direct:test')
+  })
+  it('never dispatches setup/password/admin/terminal frames from a discovered endpoint', async () => {
+    const backend = new BackendSocket('direct-whitelist-test')
+    backend.attachDirectDevice('autonomous-direct:test', vi.fn())
+    const handle = vi.spyOn(backend.e2ee, 'handleFrame').mockReturnValue(true)
+    for (const type of ['e2e_setup_claim', 'e2e_pw_pair_intent', 'e2e_pw_pake', 'terminal_open', 'machine_revoked', '__clients']) {
+      await backend.receiveDirectDevice('autonomous-direct:test', { type, payload: {} }, true)
+    }
+    expect(handle).not.toHaveBeenCalled()
+    await backend.receiveDirectDevice('autonomous-direct:test', { type: 'e2e_pair_intent', payload: {} }, false)
+    expect(handle).not.toHaveBeenCalled()
+    await backend.receiveDirectDevice('autonomous-direct:test', { type: 'e2e_hello', payload: {} }, false)
+    expect(handle).toHaveBeenCalledOnce()
+    backend.detachDirectDevice('autonomous-direct:test')
+  })
+})

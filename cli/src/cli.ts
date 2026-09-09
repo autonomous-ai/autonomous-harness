@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { fingerprint as e2eeCoreFingerprint, b64d as e2eeCoreDecode } from './lib/e2ee/core.js'
+import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
 /**
  * machine-adapter CLI (the `harness` command) — connect this computer to a "remote" agent.
  *
@@ -89,6 +91,9 @@ import { readTerminalConfigSnapshot, writeTerminalConfigSnapshot } from './lib/t
 import { Watcher, type LineEvent } from './watcher/watcher.js'
 import { chooseHookAgent, startHookServer } from './hookServer.js'
 import { BackendSocket } from './backendSocket.js'
+import { AutonomousDeviceService } from './lib/autonomous-device/service.js'
+import { autonomousDeviceLocalRequest } from './lib/autonomous-device/localApi.js'
+import { runAutonomousDeviceCommand } from './lib/autonomous-device/command.js'
 import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
 import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
@@ -268,6 +273,7 @@ Grid (the fleet of AI engines the \`grid\` CLI serves — needs \`grid\` on PATH
 
 Browser end-to-end encryption:
   harness browser-link         print a reusable 7-day setup link for browsers
+  harness autonomous-device <command>     pair/status/list/revoke an Autonomous device
   harness pair <code>          pair a BROWSER (code shown on the machine page)
   harness pairings             list paired clients
   harness unpair <#|fp>        unpair one browser (by list number or fingerprint)
@@ -1249,6 +1255,8 @@ async function runForeground(session: AuthSession): Promise<void> {
       }
     }
   }
+  let autonomousDeviceDirect: AutonomousDeviceDirect | undefined
+  let autonomousDeviceService: AutonomousDeviceService | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
 
@@ -1282,7 +1290,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   let openPaneAgents = new Set<string>()
   const cableWatchingLocal = (): boolean => cableRef?.isConnected === true
 
-  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal()
+  const deviceIsWatching = (): boolean => backend.hasCommander() || cableWatchingLocal() || backend.autonomousDeviceConnected()
   /** Anyone who can DRAW a question: a device, a cabled dial, or a desktop window on this computer. */
   const someoneCanAnswer = (): boolean => deviceIsWatching() || backend.hasLocalClient()
   const terminalStreams = new TerminalStreamManager({
@@ -1659,6 +1667,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
+    onDelivery: (event) => autonomousDeviceService?.delivery(event),
     validateRuntime: validateTerminal,
     inject: submitTerminalAction,
     sendKey: keyTerminalAction,
@@ -1974,6 +1983,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         )
         console.log(`[turn] ${sid(sessionId)} started · engine=${registry.bySession(sessionId)?.engine ?? 'claude'} · bytes=${Buffer.byteLength(event.payload.userMessage, 'utf8')}`)
         input.onTurnStarted(agentIdFor(sessionId), event.payload.userMessage)
+        autonomousDeviceService?.turnStarted(agentId)
         startHeartbeat(sessionId)
         questionWatcher.start(sessionId)   // Claude opens its dialog INSIDE a turn
         // ...and anything already drawn belongs to the turn BEFORE this one.
@@ -1988,6 +1998,7 @@ async function runForeground(session: AuthSession): Promise<void> {
           `[turn] ${sid(sessionId)} ended${event.payload.aborted ? ' · aborted (interrupted)' : ''}` +
             `${startedAt ? ` · ${Date.now() - startedAt}ms` : ''}`,
         )
+        autonomousDeviceService?.turnEnded(agentId, event.payload.aborted === true)
         input.onTurnEnded(agentIdFor(sessionId))
         // Command Code asks AFTER the turn: `ask_user_question` ends the turn (its Stop hook fires), the
         // dialog goes up, and the answer opens a NEW turn. Stopping the watcher here is what left the
@@ -2398,6 +2409,26 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
+    onAutonomousDeviceRequest: async (method, target, body) => {
+      if (!autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
+      return autonomousDeviceLocalRequest({
+        discover: async () => ({ devices: await autonomousDeviceDirect!.discover() }),
+        pairStart: ({ code, device }) => autonomousDeviceDirect!.pair(device, code),
+        pairStatus: () => {
+          const pending = backend.pendingPair()
+          return pending?.role === 'device' ? { state: pending.active ? 'running' : 'waiting', pairId: pending.pairId, deviceLabel: pending.label, expiresAt: pending.expiresAt } : { state: 'idle' }
+        },
+        list: () => ({ devices: backend.listPairs().filter(p => p.role === 'device').map(p => ({ ...p, id: p.fingerprint })) }),
+        status: () => ({ transport: 'direct', connected: backend.directAutonomousDeviceSessions() > 0, paired: backend.listPairs().filter(p => p.role === 'device').length, sessions: backend.directAutonomousDeviceSessions(), proto: 1 }),
+        revoke: ({ id }) => {
+          if (!backend.listPairs().some(p => p.role === 'device' && p.fingerprint === id)) throw Object.assign(new Error('Device pairing not found'), { code: 'UNKNOWN_DEVICE' })
+          const result = backend.revoke(id)
+          if (!result.ok) throw Object.assign(new Error(result.error), { code: result.error })
+          return { revoked: 1 }
+        },
+        receipt: target => ({ receipt: autonomousDeviceService!.receipt(target.deviceId, target.idempotencyKey) }),
+      }, method, target, body)
+    },
     resolveHookAgent: async ({ engine, runtimeHints, callerPid }) => {
       if (!callerPid) return null
       const resolved: TerminalRuntimeRef[] = []
@@ -3007,9 +3038,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   }, PANE_TITLE_SYNC_MS)
 
   // A device joined mid-turn (count rise or join generation; no adapter heartbeat) → replay live state.
-  backend.onCommanderJoin = () => { mirror.replayAll(); questionWatcher.reset() } // re-announce an open question
+  backend.onCommanderJoin = () => { setSummaryPoolDeviceConnected(deviceIsWatching()); mirror.replayAll(); questionWatcher.reset() } // re-announce an open question
   backend.onCommanderPresenceChanged = (connected) => {
-    setSummaryPoolDeviceConnected(connected)
+    setSummaryPoolDeviceConnected(connected || backend.autonomousDeviceConnected())
     setVoiceRouterDeviceConnected(connected)   // warm the voice-router worker while a device is connected
   }
 
@@ -3017,7 +3048,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   // heartbeat and mark the turn closed here (mirrors the hosted runtime stopping its heartbeat on cancel). We do
   // NOT emit turn_ended: the web clears its own dots on cancel, and a turn_ended would fire a device
   // recap for a killed turn. The next real prompt reopens a fresh turn.
-  backend.onCancel = (id) => {
+  const cancelAgent = (id: string, confirmed = false): Promise<boolean> => {
     const record = registry.resolve(id)
     const sessionId = record?.sessionId ?? id
     const st = turnStates.get(sessionId)
@@ -3035,11 +3066,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     devinReaders.get(sessionId)?.closeTurn()
     commandcodeNormalizers.get(sessionId)?.closeTurn()
     cursorSubagents.forget(sessionId)
-    input.cancel(record?.agentId ?? sessionId)
+    const cancelled = confirmed ? input.cancelConfirmed(record?.agentId ?? sessionId) : (input.cancel(record?.agentId ?? sessionId), Promise.resolve(true))
+    autonomousDeviceService?.turnEnded(record?.agentId ?? sessionId, true)
     stopHeartbeat(sessionId)
     questionWatcher.stop(sessionId)
     mirror.cancel(sessionId) // close the device's "Working…" tile (bare done, no recap) — a cancel emits no turn_ended
+    return cancelled
   }
+  backend.onCancel = id => { void cancelAgent(id) }
 
   /**
    * Web requested a new agent (`agent_create`): spawn a fresh tmux session running the chosen engine in
@@ -3511,7 +3545,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
   }
 
-  backend.onMessage = (id, content) => {
+  const submitAgent = (id: string, content: string, deliveryId?: string): void => {
     const record = registry.resolve(id)
     const sessionId = record?.sessionId ?? id
     const engine = record?.engine ?? 'claude'
@@ -3524,8 +3558,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       console.log(`[msg] ${sid(sessionId)} slash-command adapted for engine=${engine}`)
     }
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
-    input.submit(record?.agentId ?? sessionId, adapted)
+    input.submit(record?.agentId ?? sessionId, adapted, deliveryId)
   }
+  backend.onMessage = (id, content) => submitAgent(id, content)
 
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone
@@ -3581,6 +3616,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
+    autonomousDeviceDirect?.stop()
     await backend.stop() // graceful WS close → releases the Redis machine-owner claim
     await new Promise((r) => setTimeout(r, 1000)) // grace before the same-machine reclaim
 
@@ -3679,6 +3715,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     hookServer.close()
     shutdownSummaryPool()
     shutdownVoiceRouter()
+    autonomousDeviceDirect?.stop()
     await backend.stop()
     try { if (readPid() === process.pid) rmSync(PID_FILE, { force: true }) } catch { /* ignore */ }
     process.exit(0)
@@ -3803,9 +3840,36 @@ async function runForeground(session: AuthSession): Promise<void> {
   const cable = new CableSession(cableHost, join(env.ADAPTER_DATA_DIR, 'dial.log'))
   cableRef = cable
 
+  autonomousDeviceService = new AutonomousDeviceService({
+    machineId: backend.machineId,
+    agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
+      state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
+    submit: submitAgent,
+    cancelDelivery: id => input.cancelDelivery(id),
+    stop: id => cancelAgent(id, true),
+    answer: (agentId, requestId, answers) => questions.answer({ agentId, requestId, answers, allowPermissions: false }),
+    recent: (id, n) => mirror.recent(registry.byAgent(id)?.sessionId ?? id, n),
+    emit: frame => backend.emitAutonomousDeviceEvent(frame),
+  })
+  backend.setAutonomousDeviceService(autonomousDeviceService)
+  autonomousDeviceDirect = new AutonomousDeviceDirect({
+    machineId: backend.machineId, label: hostname(),
+    receive: (connId, frame, pairing) => backend.receiveDirectDevice(connId, frame, pairing),
+    attach: (connId, send) => backend.attachDirectDevice(connId, send),
+    detach: connId => backend.detachDirectDevice(connId),
+    pending: () => backend.pendingPair(), pendingConnection: () => backend.e2ee.pendingConnection(),
+    authenticatedFingerprint: connId => { const pub = backend.e2ee.sessionIdentity(connId); return pub ? e2eeCoreFingerprint(e2eeCoreDecode(pub)) : null },
+    pairedFingerprint: connId => backend.pairedDirectFingerprint(connId),
+    pair: code => backend.pair(code), paired: () => backend.listPairs(),
+  }, env.ADAPTER_DATA_DIR)
+  backend.onDirectDeviceRevoked = fp => autonomousDeviceDirect?.revoked(fp)
+  autonomousDeviceDirect.start()
+
+
   // Every card bound for the WiFi device goes down the cable too, translated once. Teeing beats emitting
   // again at each call site: a new event kind reaches the dial the day it reaches the socket.
   backend.onOutboundCommander = (frame) => {
+    autonomousDeviceService?.commander(frame as Record<string, unknown>)
     // THIS COMPUTER'S cards, by definition — and every one of them belongs to a tile that is on the
     // carousel, because the carousel now spans machines. The old guard dropped them whenever the wheel
     // was pointed elsewhere, which would now silence this machine's own agents.
@@ -4773,6 +4837,9 @@ switch (cmd) {
     else runForeground(session).catch(onError)
     break
   }
+  case 'autonomous-device':
+    runAutonomousDeviceCommand(rest, env.ADAPTER_DATA_DIR, env.PORT).then(code => { process.exitCode = code }).catch(onError)
+    break
   case 'pair':
     pairCommand(args[0]).catch(onError)
     break

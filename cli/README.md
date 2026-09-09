@@ -239,3 +239,26 @@ connected*, the adapter runs a disposable one-shot from the session's own CLI en
 body ≤200`, shows a `Summarizing…` indicator while it runs, persists it per session
 (`${ADAPTER_DATA_DIR}/summaries.json`), and returns it on `project_recent` at device boot. A newer
 turn aborts a stale recap.
+
+## Pair an Autonomous device directly
+
+Harness discovers the OS's existing `_autonomous._tcp` advertisement. Select a discovered device
+and enter the code displayed on it; no IP address or device backend login is needed.
+
+```sh
+harness autonomous-device discover --json
+harness autonomous-device pair --device '<discovery-id>' --code-stdin
+harness autonomous-device status --json
+harness autonomous-device list --json
+harness autonomous-device revoke '<full fingerprint from list>'
+```
+
+Desktop writes the code to stdin and closes stdin. Terminal users may use
+`pair <device-code> --device <discovery-id>`. Mac connects directly to the advertised OS endpoint,
+reusing the original Harness E2eeManager and identity store. Saved associations rediscover/reconnect
+automatically. Revoke closes only the selected device connection. Existing Harness Mac login/start
+requirements remain unchanged; the running daemon's direct device transport works offline from
+its backend. Browser/dial behavior and Buddy are unchanged.
+
+See [the contract](../docs/autonomous-device-integration.md) and
+[Vietnamese guide](../docs/vi/autonomous-device-integration_vi.md).
