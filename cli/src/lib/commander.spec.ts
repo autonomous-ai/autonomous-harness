@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { CommanderMirror, type CommanderFrame } from './commander.js'
 import type { LiveEvent } from './normalize.js'
+import { BODY_MAX_CHARS, RECAP_MAX_CHARS, deriveTurnSummary } from './summarize.js'
 
 let dataDir = ''
 
@@ -396,5 +397,94 @@ describe('recap lookup spans both ids', () => {
     // …and the daemon's provider resolves an agent id to that session before asking.
     const resolve = (id: string) => (id === 'agent-uuid' ? 'engine-session' : id)
     expect(mirror.recent(resolve('agent-uuid'))[0].recap).toBe('Short recap')
+  })
+})
+
+describe('CommanderMirror keeps the complete final answer beside the clipped one', () => {
+  // The answer that exposed this: a five-row event table whose intro line is the only part that survives
+  // deriveTurnSummary. A device reading it aloud stopped dead at "official sites:" and never reached a
+  // single event, because the stored body is flattened to one line and cut at 250 characters.
+  const ANSWER = [
+    'Here are five notable US events coming up in September–October 2026, with dates checked against official sites:',
+    '',
+    '| Event | Dates | Location |',
+    '| --- | --- | --- |',
+    '| US Open finals weekend | Sept. 12–13 | Queens, New York |',
+    '| State Fair of Texas | Sept. 25–Oct. 18 | Dallas, Texas |',
+    '| Austin City Limits Music Festival | Oct. 2–4 and 9–11 | Zilker Park, Austin, Texas |',
+    '| Albuquerque International Balloon Fiesta | Oct. 3–11 | Albuquerque, New Mexico |',
+    '| Great American Beer Festival | Oct. 10–11 | Denver, Colorado |',
+  ].join('\n')
+
+  let dir = ''
+  beforeEach(() => { vi.useFakeTimers(); dir = mkdtempSync(join(tmpdir(), 'adapter-commander-full-')) })
+  afterEach(() => { vi.useRealTimers(); rmSync(dir, { recursive: true, force: true }) })
+
+  async function runTurn(mirror: CommanderMirror, sessionId: string, text: string): Promise<void> {
+    mirror.ingest([{ type: 'turn_started', payload: { userMessage: 'what is on' } }] as LiveEvent[], sessionId)
+    mirror.ingest([{ type: 'text_delta', payload: { content: text } }] as LiveEvent[], sessionId)
+    mirror.ingest([{ type: 'turn_ended', payload: {} }] as LiveEvent[], sessionId)
+    await vi.runOnlyPendingTimersAsync()
+    await vi.runOnlyPendingTimersAsync()
+  }
+
+  function build(dataDir: string): CommanderMirror {
+    return new CommanderMirror({
+      send: () => {},
+      sendWeb: () => {},
+      hasDevice: () => true,
+      // The shipped wiring: a local derivation, no model in the loop (cli.ts sets summarizeIsLocal).
+      summarize: async (text) => deriveTurnSummary(text),
+      summarizeIsLocal: true,
+      dataDir,
+    })
+  }
+
+  it('clips text to a preview while fullText keeps every event', async () => {
+    const mirror = build(dir)
+    await runTurn(mirror, 'session-full', ANSWER)
+
+    const [turn] = mirror.recent('session-full', 1) as Array<{ text: string; recap?: string; fullText?: string }>
+    expect(turn).toBeTruthy()
+
+    // What ships today, unchanged: one line, cut at the documented cap.
+    expect(turn.text.length).toBeLessThanOrEqual(BODY_MAX_CHARS)
+    expect(turn.text).not.toContain('Great American Beer Festival')
+    expect(turn.recap!.length).toBeLessThanOrEqual(RECAP_MAX_CHARS)
+
+    // What the new field adds: the answer as the person would read it on screen.
+    for (const event of ['US Open finals weekend', 'State Fair of Texas', 'Austin City Limits Music Festival',
+      'Albuquerque International Balloon Fiesta', 'Great American Beer Festival']) {
+      expect(turn.fullText).toContain(event)
+    }
+    // Structure survives too — the table is still a table, not one flattened run.
+    expect(turn.fullText).toContain('\n')
+    expect(mirror.lastFullText('session-full')).toBe(turn.fullText)
+  })
+
+  it('pairs each turn with its own answer, and survives a restart', async () => {
+    const mirror = build(dir)
+    await runTurn(mirror, 'session-two', 'First answer about the balloon fiesta.')
+    await runTurn(mirror, 'session-two', ANSWER)
+
+    const reloaded = build(dir)
+    const turns = reloaded.recent('session-two', 3) as Array<{ text: string; fullText?: string }>
+    expect(turns).toHaveLength(2)
+    // Newest first, and each row carries ITS OWN answer — the alignment bug this ordering invites.
+    expect(turns[0].fullText).toContain('Great American Beer Festival')
+    expect(turns[1].fullText).toBe('First answer about the balloon fiesta.')
+  })
+
+  it('truncates an oversized answer on a character boundary, not a byte one', async () => {
+    const mirror = build(dir)
+    // Every character is 3 bytes of UTF-8, so a byte-counted cut lands mid-sequence unless it is guarded.
+    await runTurn(mirror, 'session-big', 'Sự '.repeat(6000))
+
+    const full = mirror.lastFullText('session-big')!
+    expect(Buffer.byteLength(full, 'utf8')).toBeLessThanOrEqual(8192)
+    expect(full.endsWith('…')).toBe(true)
+    expect(full).not.toContain('�')
+    // A round trip through UTF-8 is lossless only if nothing was severed.
+    expect(Buffer.from(full, 'utf8').toString('utf8')).toBe(full)
   })
 })

@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { AutonomousDeviceService, type AutonomousDeviceFrame } from './service.js'
 
-function fixture(now?: () => number) {
+function fixture(now?: () => number, fullAnswer?: string) {
   const submit = vi.fn(), stop = vi.fn(async () => true), answer = vi.fn(async () => true)
   const events: AutonomousDeviceFrame[] = []
   const service = new AutonomousDeviceService({ now, machineId: 'machine', agents: () => [{ agentId: 'agent', name: 'Project', engine: 'claude', state: 'idle' }],
-    submit, stop, answer, cancelDelivery: vi.fn(() => true), recent: () => [], emit: f => events.push(f) })
+    submit, stop, answer, cancelDelivery: vi.fn(() => true), recent: () => [], fullText: () => fullAnswer, emit: f => events.push(f) })
   const send = (fields: Record<string, unknown> = {}) => ({ type: 'turn.send', requestId: randomUUID(), machineId: 'machine', agentId: 'agent', text: 'hello', idempotencyKey: 'intent1', ...fields })
   return { service, submit, stop, answer, events, send }
 }
@@ -107,5 +107,28 @@ describe('Autonomous device receipt result contract and bounded cache', () => {
     for (let i = 0; i < 512; i++) await f.service.request('device', f.send({ idempotencyKey: `key${i}` }))
     expect((await f.service.request('device', f.send({ idempotencyKey: 'overflow' }))).error).toMatchObject({ code: 'BACKPRESSURE' })
     expect(f.submit).toHaveBeenCalledTimes(512)
+  })
+})
+
+describe('Autonomous device turn.summary carries the complete answer', () => {
+  const card = { type: 'commander_event', agentId: 'agent', payload: { kind: 'summary', text: 'clipped preview…', recap: 'Five US events' } }
+
+  it('adds fullText to the summary event without touching the card the dial reads', () => {
+    const f = fixture(undefined, 'Full answer listing all five events.')
+    f.service.commander(card)
+    const summary = f.events.find(e => e.kind === 'turn.summary')!
+    const payload = summary.payload as Record<string, unknown>
+    expect(payload.fullText).toBe('Full answer listing all five events.')
+    // The originals travel unchanged — Desktop and the dial read these two and nothing else.
+    expect(payload.text).toBe('clipped preview…')
+    expect(payload.recap).toBe('Five US events')
+    // The incoming card was NOT widened; only the event this service emits carries the new field.
+    expect(card.payload).not.toHaveProperty('fullText')
+  })
+
+  it('omits the field entirely when no answer was recorded', () => {
+    const f = fixture(undefined, undefined)
+    f.service.commander(card)
+    expect(f.events.find(e => e.kind === 'turn.summary')!.payload).not.toHaveProperty('fullText')
   })
 })

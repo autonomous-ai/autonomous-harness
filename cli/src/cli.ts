@@ -3849,6 +3849,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     stop: id => cancelAgent(id, true),
     answer: (agentId, requestId, answers) => questions.answer({ agentId, requestId, answers, allowPermissions: false }),
     recent: (id, n) => mirror.recent(registry.byAgent(id)?.sessionId ?? id, n),
+    fullText: id => mirror.lastFullText(registry.byAgent(id)?.sessionId ?? id),
     emit: frame => backend.emitAutonomousDeviceEvent(frame),
   })
   backend.setAutonomousDeviceService(autonomousDeviceService)

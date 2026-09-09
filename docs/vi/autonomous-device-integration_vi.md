@@ -41,6 +41,25 @@ crypto, không kết nối backend. Request agents.list/status/recap/turn.send/t
 receipt.get giữ target rõ và receipt/dedupe. Không replay mutation khi mất kết nối; unknown không
 có nghĩa chưa gửi. Cache512/ring500 và schema đầy đủ ở [bản EN](../autonomous-device-integration.md).
 
+`turn.summary` và mỗi phần tử `recap.turns[]` mang ba mức của cùng một câu trả lời; bên tiêu thụ nên
+ưu tiên `turns[].fullText`, rồi `turn.summary.fullText`, rồi `text`:
+
+| Trường | Giới hạn | Là gì |
+|---|---|---|
+| `recap` | 60 ký tự | câu văn xuôi đầu tiên — tiêu đề ô tile |
+| `text` | 250 ký tự | câu trả lời bị làm phẳng một dòng rồi cắt — để liếc |
+| `fullText` | 8192 byte UTF-8 | tin nhắn cuối của agent đúng như hiện trên màn hình, giữ markdown và xuống dòng |
+
+`fullText` là tuỳ chọn, vắng mặt khi chưa ghi được câu trả lời nào, nên phải đọc phòng thủ. Nó chỉ chứa
+phản hồi cuối hướng tới người dùng — không có transcript tool, suy luận ẩn hay output terminal — và
+không tốn thêm lần gọi model: đó chính là văn bản mà bộ tóm tắt cục bộ vốn đã nhận.
+
+Trần 8192 byte là phép tính chứ không phải khẩu vị: socket direct nhận 65536 byte, `recap` có thể trả
+năm lượt một lần, và payload đã seal phình khoảng 37% qua AEAD và base64. Cắt vượt trần là cắt an toàn
+UTF-8, kèm `…` ở cuối. `text` và `recap` giữ nguyên từng byte, và card `commander_event` dùng chung
+không bị nới — encoder của dial USB ném lỗi khi frame vượt 8 KiB, nên trường này chỉ thêm vào event do
+service này phát ra.
+
 Typecheck/focused test đã đạt gồm chỉ chọn discovery, retry socket mới, chờ authenticated identity
 và từ chối reconnect giả mạo. Real mDNS/direct Go OS ↔ CLI đã đạt khi backend chưa từng kết nối: discovery SRV, sai mã/retry,
 PAKE/session, encrypted list/send/dedupe, restart/reconnect và revoke/unpair. Status chỉ đếm direct
