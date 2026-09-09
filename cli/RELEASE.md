@@ -79,11 +79,17 @@ gs://s3-autonomous-upgrade-3/harness/cli/<version>/cli.js
 gs://s3-autonomous-upgrade-3/harness/cli/<version>/notify.mjs
 ```
 
+The manifest is always read straight off the GCS origin (`CDN_ASSET_BASE_URL` in `upload-cli.sh` does
+not apply to it) — it's polled every ~60s by every running daemon, and this product's CDN caps any
+cacheable response at ~31 days regardless of origin headers, so it must never be CDN-fronted. The bundle
+files it points at are the opposite: immutable once published, so their `url` fields point at
+`cdn.autonomous.ai` instead, and are uploaded with a long `Cache-Control` on purpose.
+
 ```json
 {
   "cli": {
     "version": "0.1.72",
-    "url": "https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/cli/0.1.72/cli.js",
+    "url": "https://cdn.autonomous.ai/harness/cli/0.1.72/cli.js",
     "sha256": "<64 hex>",
     "size": 2103552
   }

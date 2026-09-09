@@ -22,6 +22,12 @@ NOTIFY="$ADAPTER_DIR/dist/notify.mjs"
 # --- GCS config (all overridable via env) ---
 GCS_BUCKET="${GCS_BUCKET:-s3-autonomous-upgrade-3}"
 GCS_PUBLIC_BASE_URL="${GCS_PUBLIC_BASE_URL:-https://storage.googleapis.com/${GCS_BUCKET}}"
+# The manifest itself stays on the GCS origin (read below, and in the merge step) — daemons poll it
+# every ~60s and this zone's CDN caps ANY cacheable response at ~31 days regardless of origin headers
+# (verified live), which would silently delay self-update fleet-wide. The bundle files it points at are
+# a different story: immutable once published (never re-upload over an existing version — see
+# RELEASE.md), so CDN caching them is pure upside. Only CLI_URL/NOTIFY_URL below use this.
+CDN_ASSET_BASE_URL="${CDN_ASSET_BASE_URL:-https://cdn.autonomous.ai}"
 METADATA_PATH="${METADATA_PATH:-harness/cli/metadata.json}"
 OTA_KEY="${OTA_KEY:-cli}"   # must match ADAPTER_UPDATE_KEY in src/config/env.ts
 
@@ -94,8 +100,8 @@ head -1 "$CLI" | grep -q '^#!' || { echo "error: dist/cli.js lost its shebang on
 # --- Step 3: upload both artifacts + merge the manifest ---
 CLI_GCS="harness/cli/${VER}/cli.js"
 NOTIFY_GCS="harness/cli/${VER}/notify.mjs"
-CLI_URL="${GCS_PUBLIC_BASE_URL%/}/${CLI_GCS}"
-NOTIFY_URL="${GCS_PUBLIC_BASE_URL%/}/${NOTIFY_GCS}"
+CLI_URL="${CDN_ASSET_BASE_URL%/}/${CLI_GCS}"
+NOTIFY_URL="${CDN_ASSET_BASE_URL%/}/${NOTIFY_GCS}"
 # `shasum` is a Perl script and is absent from minimal Linux images (only perl-base is installed);
 # `sha256sum` is coreutils and is always there. Prefer it so a release can also be cut from Ubuntu.
 sha256_of() {
@@ -107,8 +113,10 @@ CLI_SHA="$(sha256_of "$CLI")";     CLI_SIZE="$(wc -c < "$CLI" | tr -d ' ')"
 NOTIFY_SHA="$(sha256_of "$NOTIFY")"; NOTIFY_SIZE="$(wc -c < "$NOTIFY" | tr -d ' ')"
 
 echo ">> uploading cli.js ($CLI_SIZE bytes) + notify.mjs ($NOTIFY_SIZE bytes)"
-gsutil -h "Cache-Control:no-cache, no-store, must-revalidate" cp "$CLI"    "gs://${GCS_BUCKET}/${CLI_GCS}"
-gsutil -h "Cache-Control:no-cache, no-store, must-revalidate" cp "$NOTIFY" "gs://${GCS_BUCKET}/${NOTIFY_GCS}"
+# Immutable per-version path — see the CDN_ASSET_BASE_URL note above. Long max-age here is what
+# actually lets the CDN cache these instead of hitting GCS on every daemon's install/update.
+gsutil -h "Cache-Control:public, max-age=31536000, immutable" cp "$CLI"    "gs://${GCS_BUCKET}/${CLI_GCS}"
+gsutil -h "Cache-Control:public, max-age=31536000, immutable" cp "$NOTIFY" "gs://${GCS_BUCKET}/${NOTIFY_GCS}"
 
 echo ">> merging manifest: gs://${GCS_BUCKET}/${METADATA_PATH}  (${OTA_KEY})"
 SRC="$(mktemp)"; DST="$(mktemp)"   # removed by cleanup() on EXIT
