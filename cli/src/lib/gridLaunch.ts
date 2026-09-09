@@ -41,7 +41,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import {
-  claudeMcpConfig,
+  mcpServersConfig,
   codexMcpArgs,
   GRID_MCP_AUTH_VAR,
   GRID_MCP_SERVER_NAME,
@@ -472,7 +472,7 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         // below, and setting it otherwise would leave a key in the pane that nothing reads.
         ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
       },
-      args: override.mcpUrl ? ['--mcp-config', claudeMcpConfig(override.mcpUrl, GRID_KEY_VAR)] : [],
+      args: override.mcpUrl ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)] : [],
     }),
   },
 
@@ -650,6 +650,10 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
   // GitHub's documented BYOK path for Copilot CLI (docs.github.com … /use-byok-models). Copilot
   // will not start against a custom provider without being told the model, so that is enforced
   // here rather than left to fail inside the app.
+  //
+  // Web tools ride the same JSON document Claude Code is handed, under Copilot's own flag. The flag
+  // is `--additional-mcp-config` rather than a `--mcp-config`: it AUGMENTS `~/.copilot/mcp-config.json`
+  // for the session, which is the behaviour wanted here and the reason no dotfile is written.
   copilot: {
     requiresModel: true,
     build: (override) => ({
@@ -657,8 +661,13 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         COPILOT_PROVIDER_BASE_URL: relayBaseUrl(override.baseUrl),
         COPILOT_PROVIDER_API_KEY: override.apiKey,
         ...(override.model ? { COPILOT_MODEL: override.model } : {}),
+        // Same rule as claude: the variable exists only to be referenced by the config below, so it
+        // is set only when there is a config to reference it.
+        ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
       },
-      args: [],
+      args: override.mcpUrl
+        ? ['--additional-mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)]
+        : [],
     }),
   },
 }

@@ -12,9 +12,10 @@
  * `GridLaunchOverride.apiKey`: ADR 0041 D-b asks for the per-grid access token and requires no scope
  * of it, `consumer` included, which is exactly what the desktop mints.
  *
- * The same three harnesses `grid mcp config` prints for, and for the same reason — these are the
- * ones whose header handling was measured on the wire rather than read off a vendor page. An engine
- * with no wiring here launches on the grid exactly as it did before, with no web tools.
+ * The harnesses `grid mcp config` prints for, plus the ones since measured the same way — what every
+ * entry here has in common is that its header handling was read off the wire rather than off a vendor
+ * page. An engine with no wiring here launches on the grid exactly as it did before, with no web
+ * tools.
  *
  * ⚠️ **The key still never reaches a file or an argv**, which is `gridLaunch.ts`'s rule and NOT ADR
  * 0041's. That ADR rejects the environment outright, and it is right about the caller it was written
@@ -27,10 +28,18 @@
  *     no file at all and its argv carries the variable's NAME.
  *   * Codex reads `env_http_headers`, settable entirely through `-c`.
  *   * opencode expands `{env:VAR}` in `headers`, in the config file the launch already writes it.
+ *   * Copilot CLI expands `${VAR}` too, in the same JSON-string form, behind
+ *     `--additional-mcp-config`.
  *
  * Measured 2026-09-08 against a header-logging listener on loopback — Claude Code 2.1.263, Codex
- * 0.144.6, opencode 1.18.29, the first two being the versions ADR 0041 itself measured. Each sent
- * `Authorization: Bearer <the variable's value>` on every request, the GET discovery included.
+ * 0.144.6, opencode 1.18.29, the first two being the versions ADR 0041 itself measured — and Copilot
+ * CLI 1.0.83 the same way on 2026-09-09. Each sent `Authorization: Bearer <the variable's value>` on
+ * every request, the GET discovery included.
+ *
+ * ⚠️ The reference syntax is NOT interchangeable, which is why each was measured rather than
+ * assumed. Copilot expands `${VAR}` and sends `${env:VAR}` and `{env:VAR}` through VERBATIM — the
+ * opencode spelling would have put the literal string on the wire and the tools would have failed
+ * authentication with nothing naming why.
  */
 
 /**
@@ -60,18 +69,24 @@ export function mcpAuthorizationHeader(apiKey: string): string {
 }
 
 /**
- * Claude Code's `--mcp-config`, as a JSON string rather than a file.
+ * The `{ mcpServers: … }` document Claude Code and Copilot CLI both read, as a JSON string rather
+ * than a file — `--mcp-config` for the first, `--additional-mcp-config` for the second.
  *
- * `${…}` is Claude Code's own expansion, performed when it reads the config, so this names [keyVar]
- * and never the key itself — and nothing is written to disk. That variable belongs to the launch,
- * which is why it arrives as an argument rather than being imported: this module is about what an
- * agent can reach, not about the key it reaches with.
+ * One function because it is one document, byte for byte: the same keys, and the same `${…}`
+ * expansion performed by each harness when it reads the config. So this names [keyVar] and never the
+ * key itself, and nothing is written to disk. That variable belongs to the launch, which is why it
+ * arrives as an argument rather than being imported: this module is about what an agent can reach,
+ * not about the key it reaches with.
  *
- * Deliberately NOT accompanied by `--strict-mcp-config`, which would drop every MCP server the user
- * configured for themselves. Picking a grid adds web tools; it does not take an agent's own tools
- * away.
+ * Copilot's `tools` filter is deliberately absent. Its CLI documents the default as `"*"`, so
+ * writing one would restate the default for one harness in a document the other does not read.
+ *
+ * Neither flag is accompanied by anything that narrows the config to this server alone — Claude
+ * Code's `--strict-mcp-config` would drop every MCP server the user configured for themselves, and
+ * Copilot's flag is *additional* by name and by behaviour. Picking a grid adds web tools; it does
+ * not take an agent's own tools away.
  */
-export function claudeMcpConfig(mcpUrl: string, keyVar: string): string {
+export function mcpServersConfig(mcpUrl: string, keyVar: string): string {
   return JSON.stringify({
     mcpServers: {
       [GRID_MCP_SERVER_NAME]: {

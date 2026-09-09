@@ -428,6 +428,12 @@ describe('web tools (grid ADR 0041)', () => {
     expect(at, 'claude was not given --mcp-config').toBeGreaterThanOrEqual(0)
     return JSON.parse(args[at + 1] as string)
   }
+  const copilotMcpJson = (override = WITH_MCP) => {
+    const args = launchOf('copilot', override).args
+    const at = args.indexOf('--additional-mcp-config')
+    expect(at, 'copilot was not given --additional-mcp-config').toBeGreaterThanOrEqual(0)
+    return JSON.parse(args[at + 1] as string)
+  }
   const codexArg = (key: string, override = WITH_MCP): string | undefined => {
     const args = launchOf('codex', override).args
     return args.find((arg) => arg.startsWith(`${key}=`))
@@ -455,6 +461,27 @@ describe('web tools (grid ADR 0041)', () => {
     // --strict-mcp-config would drop every server they configured for themselves. A grid adds web
     // tools; it does not take an agent's own tools away.
     expect(launchOf('claude', WITH_MCP).args).not.toContain('--strict-mcp-config')
+  })
+
+  it('hands Copilot the SAME document, under its own flag', () => {
+    // Measured 2026-09-09 against a header-logging listener on loopback, Copilot CLI 1.0.83: it
+    // expands `${VAR}` in a header exactly as Claude Code does, and sends `${env:VAR}` and
+    // `{env:VAR}` through verbatim — so the opencode spelling would have put the literal string on
+    // the wire and failed authentication with nothing naming why.
+    expect(copilotMcpJson().mcpServers['grid-web'])
+      .toEqual({ type: 'http', url: MCP_URL, headers: { Authorization: 'Bearer ${GRID_API_KEY}' } })
+    // One document, not two that merely look alike — this is what makes the shared builder honest.
+    const at = launchOf('copilot', WITH_MCP).args.indexOf('--additional-mcp-config')
+    const claudeAt = launchOf('claude', WITH_MCP).args.indexOf('--mcp-config')
+    expect(launchOf('copilot', WITH_MCP).args[at + 1])
+      .toBe(launchOf('claude', WITH_MCP).args[claudeAt + 1])
+  })
+
+  it("leaves Copilot the user's own MCP servers too", () => {
+    // The flag is `--additional-mcp-config`: it augments ~/.copilot/mcp-config.json for the session
+    // rather than replacing it, which is why no dotfile is written and none of theirs is dropped.
+    expect(launchOf('copilot', WITH_MCP).args.filter((arg) => arg.startsWith('--')))
+      .toEqual(['--additional-mcp-config'])
   })
 
   it("points Codex at it through env_http_headers, which carries the WHOLE header value", () => {
@@ -508,6 +535,7 @@ describe('web tools (grid ADR 0041)', () => {
     // misses on the other. Codex is where this is easy to get wrong: its config keys are dotted TOML
     // paths, which look like they could not carry a `-`. They can.
     expect(Object.keys(claudeMcpJson().mcpServers)).toEqual(['grid-web'])
+    expect(Object.keys(copilotMcpJson().mcpServers)).toEqual(['grid-web'])
     expect(Object.keys(opencodeConfig().mcp)).toEqual(['grid-web'])
     expect(Object.keys(JSON.parse(launchOf('hermes', WITH_MCP).configDir!.files[0]!.content).mcp_servers))
       .toEqual(['grid-web'])
@@ -518,7 +546,7 @@ describe('web tools (grid ADR 0041)', () => {
   })
 
   it('never writes the key to disk or to an argv', () => {
-    for (const engine of ['claude', 'codex', 'opencode', 'hermes'] as const) {
+    for (const engine of ['claude', 'codex', 'copilot', 'opencode', 'hermes'] as const) {
       const launch = launchOf(engine, WITH_MCP)
       for (const arg of launch.args) expect(arg, `${engine} argv`).not.toContain(WIRE.apiKey)
       for (const file of launch.configDir?.files ?? []) {
@@ -535,16 +563,20 @@ describe('web tools (grid ADR 0041)', () => {
     // the argument, `${GRID_API_KEY}` would become the key — in a command line `ps` shows to every
     // user on the machine. `exec "$@"` passes positionals through untouched, which is what keeps
     // the reference a reference; this pins it against a future change to the wrapper.
-    const launch = launchOf('claude', WITH_MCP)
-    const argv = buildEngineLaunchArgv('claude', { extraArgs: launch.args })
-    expect(argv.join(' ')).toContain('Bearer ${GRID_API_KEY}')
-    expect(argv.join(' ')).not.toContain(WIRE.apiKey)
+    for (const engine of ['claude', 'copilot'] as const) {
+      const launch = launchOf(engine, WITH_MCP)
+      const argv = buildEngineLaunchArgv(engine, { extraArgs: launch.args })
+      expect(argv.join(' '), engine).toContain('Bearer ${GRID_API_KEY}')
+      expect(argv.join(' '), engine).not.toContain(WIRE.apiKey)
+    }
   })
 
   it('adds nothing at all when the desktop sends no mcpUrl', () => {
     // An older desktop, and the no-regression promise: the launch is byte-for-byte what it was.
     expect(launchOf('claude', WITH_MODEL).args).toEqual([])
     expect(launchOf('claude', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
+    expect(launchOf('copilot', WITH_MODEL).args).toEqual([])
+    expect(launchOf('copilot', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
     expect(codexArg('mcp_servers.grid-web.url', WITH_MODEL)).toBeUndefined()
     expect(launchOf('codex', WITH_MODEL).env.GRID_MCP_AUTHORIZATION).toBeUndefined()
     expect(opencodeConfig(WITH_MODEL).mcp).toBeUndefined()

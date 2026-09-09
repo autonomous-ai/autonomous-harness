@@ -15,6 +15,16 @@
  *
  * The real boundary is the `agentStop` hook (`stopReason: "end_turn"`, and it names this very file in
  * `transcriptPath`), handled in `cli.ts`. A turn opens here on `user.message`.
+ *
+ * ⚠️ **That hook does not fire when the user presses Esc** — and it is the only close this engine
+ * has, so an interrupted turn stayed open for the rest of the session. Nothing then ended it but the
+ * NEXT prompt (the re-open below), which meant `turnOpen` stayed true, the 5s heartbeat in `cli.ts`
+ * kept firing for a turn nobody was running, and every client watching turn state believed the agent
+ * was still working: the desktop's model picker disables itself mid-turn, so it was disabled from the
+ * first cancel until the next message. What Copilot writes instead is a top-level
+ * `{"type":"abort","data":{"reason":"user_abort"}}` record, handled below — measured 2026-09-09 on
+ * 1.0.83, an `assistant.turn_end` 2ms ahead of it and no `hook.start` of type `agentStop` anywhere
+ * after it.
  */
 
 import type { EngineNormalizer } from '../types.js'
@@ -150,6 +160,23 @@ export function copilotEventToEvents(event: CopilotEvent, state: CopilotTurnStat
     return events
   }
 
+  // Esc. The turn is over, and this record is the only thing that says so — see the header.
+  //
+  // `aborted: true` rather than a plain close: the difference is what the log prints and what a
+  // device shows for a recap, and a turn the user cut short did not produce the answer a completed
+  // one did. Rows opened by it are `interrupted`, not `failed` — nothing went wrong with them, they
+  // were stopped — which also keeps `isError` off cards the user themselves cancelled.
+  //
+  // Replay leaves the state alone for the same reason `user.message` does: a replayed history opens
+  // no turns, so there is none here to close.
+  if (type === 'abort') {
+    if (mode !== 'live' || !state.open) return events
+    closeRows(state, events, 'interrupted')
+    state.open = false
+    events.push({ type: 'turn_ended', payload: { aborted: true } })
+    return events
+  }
+
   if (type === 'assistant.message') {
     // `toolRequests` announces the calls, but `tool.execution_start` carries the same ids a moment
     // later — opening rows from both would double every card.
@@ -264,7 +291,10 @@ export function copilotHistoryTurnOpen(lines: string[]): boolean {
     const event = copilotEvent(line)
     if (!event) return
     if (event.type === 'user.message' || event.type === 'assistant.turn_start') lastOpener = index
-    else if (event.type === 'assistant.turn_end') lastEnd = index
+    // `abort` counts as an end, and it is the case `assistant.turn_end` alone gets wrong: Esc during
+    // a model round-trip leaves the last `assistant.turn_start` unmatched, so a resumed session would
+    // come back believing that turn was still running.
+    else if (event.type === 'assistant.turn_end' || event.type === 'abort') lastEnd = index
     else if (event.type === 'session.shutdown') shutdown = index
   })
   // A shutdown after the last activity ends the conversation whatever came before it.

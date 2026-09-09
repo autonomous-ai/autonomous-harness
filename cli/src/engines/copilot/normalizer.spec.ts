@@ -99,6 +99,73 @@ describe('copilot normalizer, over real recorded sessions', () => {
   })
 })
 
+describe('a turn the user interrupted with Esc', () => {
+  // Copied off a live session (Copilot CLI 1.0.83, 2026-09-09). This is the ONLY record Copilot
+  // writes for a cancel: the `agentStop` hook — this engine's only other turn boundary — never
+  // fires, so before `abort` was read the turn stayed open for the rest of the session. `cli.ts`
+  // heartbeats every 5s while `turnOpen`, so every client watching turn state believed the agent
+  // was still working, and the desktop's model picker (which disables itself mid-turn) stayed
+  // disabled from the first cancel until the next prompt.
+  const prompt = JSON.stringify({ type: 'user.message', data: { content: 'mcp grid web có chưa' }, id: 'u1', parentId: '' })
+  const toolStart = JSON.stringify({ type: 'tool.execution_start', data: { toolCallId: 't1', toolName: 'bash' }, id: 'e1', parentId: '' })
+  const abort = JSON.stringify({ type: 'abort', data: { reason: 'user_abort' }, id: 'a1', parentId: '' })
+
+  const ingestAll = (lines: readonly string[]) => {
+    const normalizer = new CopilotNormalizer()
+    const events: LiveEvent[] = []
+    for (const line of lines) events.push(...normalizer.ingest(line))
+    return { normalizer, events }
+  }
+
+  it('ends the turn, and says it was cut short', () => {
+    const { events } = ingestAll([prompt, abort])
+    const ended = events.filter((e) => e.type === 'turn_ended')
+    expect(ended).toHaveLength(1)
+    // Not a plain close: a turn the user stopped did not produce the answer a finished one did, and
+    // this flag is what the log line and a device recap read.
+    expect(ended[0].payload).toEqual({ aborted: true })
+  })
+
+  it('stops reporting the turn as open, which is what kept the heartbeat alive', () => {
+    const { normalizer } = ingestAll([prompt])
+    expect(normalizer.turnOpen).toBe(true)
+    const after = new CopilotNormalizer()
+    for (const line of [prompt, abort]) after.ingest(line)
+    expect(after.turnOpen).toBe(false)
+  })
+
+  it('closes a running tool as interrupted rather than failed', () => {
+    // Nothing went wrong with it — it was stopped. `isError` is what draws the card red, and a
+    // cancel the user asked for is not an error to show them.
+    const { events } = ingestAll([prompt, toolStart, abort])
+    const end = events.find((e) => e.type === 'tool_end')
+    expect(end?.payload).toMatchObject({ id: 't1', tool: 'Bash', isError: false })
+    expect(end?.payload.output).toContain('interrupted')
+  })
+
+  it('is inert when no turn is open', () => {
+    // A second Esc, or one pressed at an idle prompt. Emitting a turn_ended here would close a turn
+    // that does not exist and leave every client one end ahead of its starts.
+    expect(ingestAll([abort]).events).toEqual([])
+    expect(ingestAll([prompt, abort, abort]).events.filter((e) => e.type === 'turn_ended')).toHaveLength(1)
+  })
+
+  it('emits no lifecycle frame in replay, like every other opener and closer here', () => {
+    const replayed: LiveEvent[] = copilotMessagesToEvents([prompt, abort])
+    expect(replayed.some((e) => e.type === 'turn_started')).toBe(false)
+    expect(replayed.some((e) => e.type === 'turn_ended')).toBe(false)
+  })
+
+  it('does not resume a session that ended in a cancel as still running', () => {
+    // Esc during a model round-trip leaves the last `assistant.turn_start` unmatched, so reading
+    // ends off `assistant.turn_end` alone brings the session back mid-turn — and nothing is coming
+    // to close it, because the process that would have is gone.
+    const roundTrip = JSON.stringify({ type: 'assistant.turn_start', data: { turnId: '0' }, id: 'r1', parentId: '' })
+    expect(copilotHistoryTurnOpen([prompt, roundTrip])).toBe(true)
+    expect(copilotHistoryTurnOpen([prompt, roundTrip, abort])).toBe(false)
+  })
+})
+
 describe('copilot tool names', () => {
   it('maps what was measured and title-cases the rest', () => {
     expect(copilotToolName('bash')).toBe('Bash')
