@@ -250,6 +250,9 @@ Machine:
   harness auth status --json   print {loggedIn,...} for this computer's saved session
   harness start                start the adapter using the saved SSO session
   harness start -f             run the adapter in the FOREGROUND (for a supervisor; logs to stdout)
+  harness start --repair       also re-verify the managed Node runtime and repoint the launcher at it
+                               (normally done once by the installer; use this if a start fails because
+                               the launcher points at a Node that no longer runs)
   harness logout               stop the adapter and clear this computer's SSO session
   harness stop                 stop the background adapter (keeps the SSO session)
   harness reset                stop the adapter and clear local CLI state
@@ -753,7 +756,7 @@ function openInBrowser(url: string): void {
 }
 
 /** Start the adapter from a saved SSO session. Missing credentials never open a browser implicitly. */
-async function startCommand(foreground: boolean): Promise<void> {
+async function startCommand(foreground: boolean, repair: boolean = false): Promise<void> {
   if (!readAuthSession()) {
     console.error('\n  ✗ Not signed in. Run: harness login\n')
     process.exit(1)
@@ -767,7 +770,7 @@ async function startCommand(foreground: boolean): Promise<void> {
     if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
   }
   await resolveComputerMachine()
-  await launch(foreground)
+  await launch(foreground, repair)
 }
 
 /** Download + sha256-verify + canary the manifest's cli.js/notify.mjs, then atomically swap them into
@@ -4103,15 +4106,20 @@ async function waitForReady(sinceOffset: number, timeoutMs = 8000): Promise<Read
 // ── daemon start / stop / status ───────────────────────────────────────────────────────────────
 
 /** Daemonize (or run inline) with the saved SSO session. */
-async function launch(foreground: boolean): Promise<void> {
+async function launch(foreground: boolean, repair: boolean = false): Promise<void> {
   const session = readAuthSession()
   if (!session) throw new Error('Not signed in. Run `harness login`.')
-  // Provision the Node we run on, and repoint the launcher at it, BEFORE anything is spawned. Before
-  // matters twice over: the parent tails the daemon log and gives up after CONNECT_WAIT_MS, so a
-  // first-run ~50MB download inside the child would surface as a bogus start-up timeout; and in the
-  // foreground this is where the user can actually see it happen.
-  const runtimeNode = await ensureManagedRuntime((m) => console.log(m))
-  if (runtimeNode) ensureLauncher(runtimeNode, (m) => console.log(m))
+  // The installer already provisioned the managed Node runtime and pointed the launcher at it, so a
+  // normal start just reads what's there (cheap: no network, no download). `--repair` re-runs that
+  // provisioning explicitly, for the rare machine whose launcher predates the managed runtime.
+  let runtimeNode: string | null = managedNodePath()
+  if (repair) {
+    const repaired = await ensureManagedRuntime((m) => console.log(m))
+    if (repaired) {
+      runtimeNode = repaired
+      ensureLauncher(repaired, (m) => console.log(m))
+    }
+  }
   // Foreground mode (supervisor) OR dev/tsx (can't cleanly spawn a .ts detached) → run inline.
   if (foreground || SCRIPT_PATH.endsWith('.ts')) {
     if (!foreground) console.log('[cli] dev mode — running in the foreground (Ctrl-C to stop)')
@@ -4847,6 +4855,7 @@ const [, , cmd, ...rest] = process.argv
 const flags = rest.filter((a) => a.startsWith('-'))
 const args = rest.filter((a) => !a.startsWith('-'))
 const foreground = flags.includes('--foreground') || flags.includes('-f')
+const repair = flags.includes('--repair')
 
 /** `argv` with the first occurrence of `token` removed, order otherwise untouched — how a subcommand
  *  word is dropped from an argv that is otherwise passed straight to a child. Flags typed BEFORE the
@@ -4876,7 +4885,7 @@ switch (cmd) {
     logout().catch(onError)
     break
   case 'start':
-    startCommand(foreground).catch(onError)
+    startCommand(foreground, repair).catch(onError)
     break
   case 'join':
     console.error('`harness join` has been removed. Run `harness login`, then `harness start`.')
