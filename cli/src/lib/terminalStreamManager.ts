@@ -15,6 +15,13 @@ const SYNC_INTERVAL_MS = 5_000
 const OUTPUT_FLUSH_MS = 8
 const OUTPUT_CHUNK_BYTES = 32 * 1024
 const INPUT_MAX_BYTES = 64 * 1024
+// A paste is delivered whole, in one frame, unlike ordinary typed input — which the client already
+// caps at 8 KiB per binary frame before INPUT_MAX_BYTES ever matters. Reusing INPUT_MAX_BYTES here
+// made a large-but-entirely-normal clipboard paste (a few hundred lines of real code, tens of KB)
+// bounce off a limit sized for keystrokes and fail the WHOLE stream ("TERMINAL FROZEN") over
+// something that never touched tmux. `tmux paste-buffer`'s stdin-loaded buffer has no comparable
+// size constraint — this is a sanity ceiling against a broken/malicious client, not a real limit.
+const PASTE_MAX_BYTES = 4 * 1024 * 1024
 const PAUSE_HIGH_WATERMARK_BYTES = 384 * 1024
 const RESUME_LOW_WATERMARK_BYTES = 128 * 1024
 const RENDER_STALL_TIMEOUT_MS = 10_000
@@ -432,7 +439,7 @@ export class TerminalStreamManager {
       this.sendError(connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId })
       return
     }
-    if (Buffer.byteLength(text, 'utf8') > INPUT_MAX_BYTES) {
+    if (Buffer.byteLength(text, 'utf8') > PASTE_MAX_BYTES) {
       this.sendError(connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId, message: 'paste too large' })
       return
     }

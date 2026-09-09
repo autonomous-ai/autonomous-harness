@@ -199,9 +199,16 @@ describe('TerminalStreamManager', () => {
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
     expect(stream.pastes).toHaveLength(2)
 
-    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'x'.repeat(65 * 1024) })
+    // A real paste of ordinary code (tens/hundreds of KB) must not bounce off a limit sized for one
+    // keystroke chunk — this is the exact regression that froze a real terminal over a normal paste.
+    const ordinaryLargePaste = 'x'.repeat(200 * 1024)
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: ordinaryLargePaste })
+    expect(stream.pastes.at(-1)).toBe(ordinaryLargePaste)
+    expect(stream.pastes).toHaveLength(3)
+
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'x'.repeat(5 * 1024 * 1024) })
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
-    expect(stream.pastes).toHaveLength(2)
+    expect(stream.pastes).toHaveLength(3)
   })
 
   it('does not replay pre-snapshot repaint bytes after the authoritative keyframe', async () => {
