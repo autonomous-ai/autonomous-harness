@@ -16,57 +16,78 @@
  * This is not a new privilege: an engine started in a pane already runs with exactly this environment.
  * All it does is let the recap run where the agent it summarises runs.
  */
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 
 /** Printed before the dump so anything a chatty rc file writes to stdout is skipped, not parsed. */
 const SENTINEL = '__HARNESS_ENV_BEGIN__'
 const CAPTURE_TIMEOUT_MS = 5_000
 
 let cached: NodeJS.ProcessEnv | null = null
+// The in-flight capture, not just its resolved value — two overlapping warm-up calls (there is only
+// ever one production caller today, but this keeps it true regardless) must join the same spawn
+// rather than each starting their own shell.
+let inFlight: Promise<NodeJS.ProcessEnv> | null = null
 
 /** What was captured, or `{}` if nothing has been. NEVER spawns — see warmLoginShellEnvironment. */
 export function loginShellEnvironment(): NodeJS.ProcessEnv {
   return cached ?? {}
 }
 
-/**
- * Perform the capture. Best-effort and once per process; a shell that is missing, slow, or broken
- * yields `{}` and the caller still gets `process.env`, i.e. exactly today's behaviour.
- *
- * This is a SYNCHRONOUS spawn and it is deliberately not called lazily from the one-shot path. It was,
- * and it cost ~1s inside `runDevinOneShot`, which raced that suite's 200ms timeout into a flaky
- * failure — a live turn would have paid the same stall. The daemon warms it during startup instead,
- * where blocking work already happens, and tests never spawn a shell at all.
- */
-export function warmLoginShellEnvironment(): NodeJS.ProcessEnv {
-  if (cached) return cached
-  cached = {}
-  if (process.platform === 'win32') return cached
-  const shell = process.env.SHELL
-  if (!shell || !shell.startsWith('/')) return cached
-
-  let result
-  try {
-    result = spawnSync(shell, ['-lic', `printf %s ${SENTINEL}; env -0`], {
-      timeout: CAPTURE_TIMEOUT_MS,
-      encoding: 'utf8',
-      // An interactive shell with no tty still runs rc files; keep its stdin closed so nothing waits.
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-  } catch { return cached }
-  const stdout = result?.stdout
-  if (result?.error || typeof stdout !== 'string') return cached
+function parse(stdout: string): NodeJS.ProcessEnv {
   const start = stdout.indexOf(SENTINEL)
-  if (start < 0) return cached
-
+  if (start < 0) return {}
   const parsed: NodeJS.ProcessEnv = {}
   for (const entry of stdout.slice(start + SENTINEL.length).split('\0')) {
     const eq = entry.indexOf('=')
     if (eq <= 0) continue
     parsed[entry.slice(0, eq)] = entry.slice(eq + 1)
   }
-  cached = parsed
-  return cached
+  return parsed
+}
+
+async function capture(shell: string): Promise<NodeJS.ProcessEnv> {
+  return await new Promise<NodeJS.ProcessEnv>((resolve) => {
+    let child
+    try {
+      child = spawn(shell, ['-lic', `printf %s ${SENTINEL}; env -0`], {
+        timeout: CAPTURE_TIMEOUT_MS, // spawn (Node ≥15.14) SIGTERMs the child once this elapses
+        // An interactive shell with no tty still runs rc files; keep its stdin closed so nothing waits.
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+    } catch {
+      resolve({})
+      return
+    }
+    const chunks: Buffer[] = []
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
+    child.once('error', () => resolve({}))
+    child.once('close', (code) => resolve(code === 0 ? parse(Buffer.concat(chunks).toString('utf8')) : {}))
+  })
+}
+
+/**
+ * Perform the capture. Best-effort and once per process; a shell that is missing, slow, or broken
+ * yields `{}` and the caller still gets `process.env`, i.e. exactly today's behaviour.
+ *
+ * Async (not `spawnSync`) so the daemon can run this alongside other independent startup work
+ * (e.g. `ensureTmuxOnPath`'s own login-shell probe) instead of paying for both back to back. It is
+ * deliberately not called lazily from the one-shot path. It was, and it cost ~1s inside
+ * `runDevinOneShot`, which raced that suite's 200ms timeout into a flaky failure — a live turn would
+ * have paid the same stall. The daemon warms it during startup instead, where blocking work already
+ * happens, and tests never spawn a shell at all.
+ */
+export function warmLoginShellEnvironment(): Promise<NodeJS.ProcessEnv> {
+  if (inFlight) return inFlight
+  if (cached) return Promise.resolve(cached)
+  inFlight = (async (): Promise<NodeJS.ProcessEnv> => {
+    if (process.platform === 'win32') return (cached = {})
+    const shell = process.env.SHELL
+    if (!shell || !shell.startsWith('/')) return (cached = {})
+    return (cached = await capture(shell))
+  })().finally(() => {
+    inFlight = null
+  })
+  return inFlight
 }
 
 /**
@@ -81,4 +102,7 @@ export function oneShotParentEnv(): NodeJS.ProcessEnv {
 }
 
 /** Test seam. */
-export function resetLoginShellEnvironmentCache(): void { cached = null }
+export function resetLoginShellEnvironmentCache(): void {
+  cached = null
+  inFlight = null
+}

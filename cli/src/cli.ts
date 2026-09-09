@@ -761,15 +761,21 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
     console.error('\n  ✗ Not signed in. Run: harness login\n')
     process.exit(1)
   }
-  // Update-before-connect: pull the newest bundle FIRST so a machine always reconnects on the latest
-  // build. Staging swaps ~/.harness/cli/cli.js, and the daemon start spawns below (`node cli.js __run`)
+  // Update-before-connect: pull the newest bundle so a machine always reconnects on the latest build.
+  // Staging swaps ~/.harness/cli/cli.js, and the daemon start spawns below (`node cli.js __run`)
   // executes those fresh bytes. Skipped in the foreground (THIS process becomes the long-lived daemon
   // and self-updates on its own) and on a dev/repo build; never blocks start if the check fails.
+  // Run alongside resolveComputerMachine() rather than before it — the two touch disjoint resources
+  // (bundle files vs. the auth-session file/a machine-resolve POST), so there is nothing to serialize.
   if (!foreground) {
-    const v = await stageLatestBundle((m) => console.log(m))
+    const [v] = await Promise.all([
+      stageLatestBundle((m) => console.log(m)),
+      resolveComputerMachine(),
+    ])
     if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
+  } else {
+    await resolveComputerMachine()
   }
-  await resolveComputerMachine()
   await launch(foreground, repair)
 }
 
@@ -960,8 +966,13 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Before ANY tmux call: a daemon that came up outside a terminal (the usual shape after a reboot)
   // has a minimal PATH, and every `execFile('tmux', …)` below would ENOENT. Ask the user's own login
   // shell where tmux is and adopt that directory, the same way the engine launch already consults it.
-  if (terminalConfig.backends.includes('tmux')) {
-    const tmuxPath = await ensureTmuxOnPath()
+  // Both of these are independent login-shell spawns with nothing dependent on the other's
+  // result — started together here so their wall-clock cost overlaps instead of adding up.
+  // `loginShellEnvPromise` is awaited later, near the existing `[env]` log line.
+  const tmuxPathPromise = terminalConfig.backends.includes('tmux') ? ensureTmuxOnPath() : null
+  const loginShellEnvPromise = warmLoginShellEnvironment()
+  if (tmuxPathPromise) {
+    const tmuxPath = await tmuxPathPromise
     if (tmuxPath.state === 'adopted') {
       console.log(`[tmux] not on the daemon PATH · adopted ${tmuxPath.from} from the user's login shell`)
     } else if (tmuxPath.state === 'absent') {
@@ -1086,14 +1097,16 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const sqliteWarning = sqlitePreflightMessage()
   if (sqliteWarning) console.warn(sqliteWarning)
-  // Capture the user's shell environment NOW, not on the first recap. It is a synchronous spawn, and
-  // paying it here — where the daemon is already doing blocking startup work — keeps it off the path
-  // of a live turn, where a slow profile (nvm, conda, …) would stall frame handling instead.
-  // See lib/loginShellEnv.ts: this is what lets a recap reach a credential the user exports from their
-  // rc file, which a launchd/systemd-parented daemon never read.
+  // Capture the user's shell environment NOW, not on the first recap — paying it here, where the
+  // daemon is already doing blocking startup work, keeps it off the path of a live turn, where a
+  // slow profile (nvm, conda, …) would stall frame handling instead. Started above, alongside the
+  // tmux PATH probe, so this is usually just picking up an already-finished (or nearly so) capture
+  // rather than paying for it here — the logged "…ms" is residual wait, not the full capture time.
+  // See lib/loginShellEnv.ts: this is what lets a recap reach a credential the user exports from
+  // their rc file, which a launchd/systemd-parented daemon never read.
   {
     const t0 = Date.now()
-    const captured = Object.keys(warmLoginShellEnvironment()).length
+    const captured = Object.keys(await loginShellEnvPromise).length
     console.log(captured
       ? `[env] read ${captured} variables from the login shell in ${Date.now() - t0}ms (engine one-shots only)`
       : '[env] could not read a login shell environment — engine one-shots use the daemon environment only')
