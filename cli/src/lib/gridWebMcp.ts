@@ -30,6 +30,7 @@
  *   * opencode expands `{env:VAR}` in `headers`, in the config file the launch already writes it.
  *   * Copilot CLI expands `${VAR}` too, in the same JSON-string form, behind
  *     `--additional-mcp-config`.
+ *   * Grok expands `${VAR}` in `headers` too, in the config file its private home already needs.
  *
  * Measured 2026-09-08 against a header-logging listener on loopback — Claude Code 2.1.263, Codex
  * 0.144.6, opencode 1.18.29, the first two being the versions ADR 0041 itself measured — and Copilot
@@ -170,4 +171,127 @@ export function hermesManagedConfig(mcpUrl: string, keyVar: string): string {
       },
     },
   }, null, 2)}\n`
+}
+
+/**
+ * Grok's config directory, which is also the only lever it offers for MCP servers.
+ *
+ * Grok reads `[mcp_servers]` from three layers — `$GROK_HOME/config.toml`, then `.grok/config.toml`
+ * walked from the repo root down to the cwd — and offers no per-invocation flag for them at all:
+ * `grok --help` has no `--mcp-config`, and the binary contains no such string. Every other route was
+ * measured against grok 1.0.24 and rejected on evidence rather than on reading:
+ *
+ *  * **Project scope (`.grok/config.toml`) is what the docs steer you to, and it does not start.**
+ *    A repo-local server is gated on folder trust — `grok mcp doctor` answers "folder untrusted
+ *    (repo-local (project-scoped) server not started for an untrusted folder)" and the server never
+ *    runs. An agent the desktop launches has nobody to click through that, which is the same reason
+ *    this file exists at all. It would also write into the USER'S repo, and a project layer
+ *    *replaces* a same-named global server outright rather than merging with it.
+ *  * **`CLAUDE_CONFIG_DIR` does not redirect MCP discovery.** Grok does read `~/.claude.json` for
+ *    servers, so the variable looks like the seam — but it is not consulted for that. Pointed at a
+ *    directory holding a `.claude.json` with this very server, `grok mcp list` reported none, and in
+ *    the binary the string sits among session-import fields (`isSidechain`, `rollout_path`), not
+ *    config paths. `GROK_CONFIG`, `GROK_CONFIG_PATH` and `GROK_MANAGED_CONFIG` were each tried as a
+ *    file and as a directory: none of them moved a server either.
+ *
+ * So it is `GROK_HOME`, which the launch already owns a private directory for — and which comes with
+ * one consequence that has to be paid rather than ignored. See [grokGridHomeLinks].
+ *
+ * Measured 2026-09-09 against the same header-logging listener on loopback as the harnesses above:
+ * with a user-scope server in a private `GROK_HOME`, Grok started it with no trust prompt and sent
+ * `Authorization: Bearer <the variable's value>` on every request.
+ */
+export const GROK_HOME_VAR = 'GROK_HOME'
+
+/** The one file [GROK_HOME_VAR] is written for here. */
+export const GROK_CONFIG_FILE = 'config.toml'
+
+/**
+ * The directories a private [GROK_HOME_VAR] must borrow back from the user's real one.
+ *
+ * `GROK_HOME` moves Grok's whole state directory, and `sessions/` is in it — which for this repo is
+ * not a cosmetic loss. The daemon resolves transcripts under its OWN `env.GROK_HOME` (`cli.ts`,
+ * `findGrokTranscript`), and for grok specifically a missing transcript means the agent is never
+ * registered at all — `cli.ts` returns early on `!transcriptPath` for cursor and grok. A grid-launched
+ * Grok agent under an un-borrowed home would therefore write its session somewhere the harness does
+ * not look, and go invisible: no transcript, no resume, no session repair.
+ *
+ * Symlinking the directory back is what keeps the two halves pointing at one place. Verified by
+ * running Grok headless under such a home: the session landed in the real `~/.grok/sessions/<encoded
+ * cwd>/`, which is exactly where `findGrokTranscript` reads.
+ *
+ * Deliberately a SHORT list rather than "everything but config.toml". Each entry is state this repo
+ * or the user would miss, and a link that turns out to be unnecessary costs nothing, while inventing
+ * links for Grok's caches would be this module guessing at another program's internals — the thing
+ * its refusals exist to avoid. `auth.json` is NOT here on purpose: a grid launch authenticates with
+ * `XAI_API_KEY`, so borrowing the user's xAI credential would hand a grid agent a login it was
+ * deliberately not given.
+ */
+export const GROK_GRID_HOME_LINKS: readonly string[] = ['sessions']
+
+/**
+ * Grok's user-scope config: the grid model, and — when there are any — the grid's web tools.
+ *
+ * TOML rather than JSON because this is the only format Grok reads here. Values are JSON-encoded,
+ * which is valid TOML for a string and gets the escaping right for free.
+ *
+ * ## Why the model block is not optional
+ *
+ * `GROK_MODELS_BASE_URL` + `XAI_API_KEY` looks like the whole contract — Grok's own docs present the
+ * pair that way — but it only redirects WHERE requests go, not WHICH credential is chosen. Grok's
+ * documented resolution order is:
+ *
+ *     api_key → env_key → auth_provider → session token → XAI_API_KEY
+ *
+ * `XAI_API_KEY` is LAST, behind the OIDC session token. A private `GROK_HOME` still ends up with an
+ * `auth.json` (Grok writes one on first run, and the desktop's own login flows put one there), so the
+ * session token outranks the grid key and every request goes out signed as the user's xAI login —
+ * which the relay rejects.
+ *
+ * Measured on a live pane (2026-09-09, grok 1.0.24) that had been moved onto the autonomous.ai grid:
+ *
+ *     auth: first-party API key probe  verdict=Unusable elapsed_ms=351 timeout_ms=400
+ *     auth 401 attribution … consumer=OaiCompatClient  auth_mode=Oidc  remedy=ManualLogin
+ *
+ * — and the pane printed "Authentication required: your session has expired". The probe is Grok
+ * asking `api.x.ai` whether the key is one of ITS keys; a grid JWT is not, so it answers 400 in
+ * ~380ms and Grok files the key as unusable. The failure is therefore also a RACE: on a slower link
+ * the same probe exceeds its own 400ms timeout, comes back `Unknown`, and Grok keeps the key and
+ * works. Two panes launched minutes apart on one machine disagreed for exactly this reason
+ * (402ms → `Unknown`, worked; 351ms → `Unusable`, 401), which is what made this look intermittent.
+ *
+ * Declaring the model with `env_key` moves the grid key from last place to SECOND, above the session
+ * token, so the choice no longer depends on a probe or on whether an `auth.json` happens to exist.
+ * The key is still only referenced — `env_key` names the variable; nothing secret is written here.
+ *
+ * [model] may be the relay's ROUTER id rather than a real model, and that is a supported case rather
+ * than a degraded one: the relay answers `Auto` like any other id, so a user who picked no model gets
+ * a block declaring the router and the grid keeps choosing per request. Verified end to end — Grok
+ * under `[model."Auto"]` answered through the router with `auth_mode=null` and no probe. What must
+ * NOT happen is no block at all: that is the path back to the session token and the 401.
+ *
+ * ⚠️ The MCP server name keeps its HYPHEN, as it does for Codex and for the same reason — Grok
+ * namespaces MCP tools as `<server>__<tool>`, so renaming it here would rename its tools too.
+ *
+ * The MCP key is referenced the same way: Grok interpolates `${VAR}` in `headers` against the process
+ * environment, measured on the wire.
+ */
+export function grokGridConfig(
+  mcpUrl: string | undefined,
+  keyVar: string,
+  model: string,
+  baseUrl: string,
+): string {
+  // The model block first: it is what makes the launch authenticate at all, so a config that carried
+  // only web tools would be a pane with tools it cannot reach.
+  let config = `[model.${JSON.stringify(model)}]\n`
+    + `model = ${JSON.stringify(model)}\n`
+    + `base_url = ${JSON.stringify(baseUrl)}\n`
+    + `env_key = ${JSON.stringify(keyVar)}\n`
+  if (mcpUrl) {
+    config += `\n[mcp_servers.${GRID_MCP_SERVER_NAME}]\n`
+      + `url = ${JSON.stringify(mcpUrl)}\n`
+      + `headers = { Authorization = ${JSON.stringify(`Bearer \${${keyVar}}`)} }\n`
+  }
+  return config
 }

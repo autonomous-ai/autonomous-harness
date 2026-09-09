@@ -3287,9 +3287,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       // user's own dotfiles. The label is unique per creation, so two agents never share one.
       const createConfigDir = gridConfigDirFor(engine, built.launch)
       if (createConfigDir) {
-        const { envVar, files, pointAt } = createConfigDir
+        const { envVar, files, pointAt, links } = createConfigDir
         try {
-          const dir = await writeGridConfigDir(label, files)
+          const dir = await writeGridConfigDir(label, files, links)
           // Pi is handed the directory; OpenCode's OPENCODE_CONFIG wants the file inside it.
           gridLaunch.env[envVar] = pointAt ? join(dir, pointAt) : dir
         } catch (error) {
@@ -3534,9 +3534,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     if (retargetConfigDir) {
       // Keyed on the agent, so moving the same agent between grids rewrites one directory rather
       // than leaving a trail of them.
-      const { envVar, files, pointAt } = retargetConfigDir
+      const { envVar, files, pointAt, links } = retargetConfigDir
       try {
-        const dir = await writeGridConfigDir(session.agentId, files)
+        const dir = await writeGridConfigDir(session.agentId, files, links)
         // Same split as create: a directory for Pi, the file itself for OpenCode.
         gridEnv[envVar] = pointAt ? join(dir, pointAt) : dir
       } catch (error) {

@@ -51,7 +51,13 @@ const MODEL_VAR: Partial<Record<AgentEngine, string>> = {
   copilot: 'COPILOT_MODEL',
 }
 
-/** Engines whose model was written into argv as `-m <model>` rather than an environment variable. */
+/**
+ * Engines whose model was written into argv as `-m <model>` rather than an environment variable.
+ *
+ * Codex omits the flag when no model was picked; grok always carries one, because its grid credential
+ * rides on a declared model block and "let the grid route" is therefore spelled `-m Auto` rather than
+ * by leaving the flag off. [classifyGridAssignment] maps that id back to null.
+ */
 const MODEL_IN_ARGV = new Set<AgentEngine>(['codex', 'grok'])
 
 /**
@@ -101,6 +107,20 @@ export function classifyGridAssignment(
     : MODEL_IN_ARGV.has(engine)
       ? ARGV_MODEL.exec(args)?.[1]
       : undefined
+  // GROK ONLY, and deliberately not a rule for every engine here.
+  //
+  // Grok's launch always passes `-m`, unlike every other argv engine: its grid credential rides on a
+  // declared `[model.<id>]` block, so "let the grid route" is spelled by declaring the ROUTER rather
+  // than by omitting the flag. Reporting that id verbatim would print `Auto` where the app prints its
+  // own Auto row from null, and `assignmentMatches` would compare 'Auto' against null and call every
+  // routed grok agent misplaced, forever — the trap `readOpencodeGridAssignment` documents below.
+  //
+  // Scoped to grok because for anyone else a model literally named `Auto` is a model, and blanking it
+  // would be this function inventing a meaning the launch never gave it. Opencode reaches the same
+  // conclusion in its own reader, for its own reason; codex simply omits the flag.
+  if (engine === 'grok' && model && model.toLowerCase() === GRID_ROUTER_MODEL.toLowerCase()) {
+    return { baseUrl, model: null }
+  }
   return { baseUrl, model: model || null }
 }
 

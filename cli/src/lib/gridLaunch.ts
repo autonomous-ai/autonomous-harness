@@ -45,6 +45,10 @@ import {
   codexMcpArgs,
   GRID_MCP_AUTH_VAR,
   GRID_MCP_SERVER_NAME,
+  GROK_CONFIG_FILE,
+  GROK_GRID_HOME_LINKS,
+  GROK_HOME_VAR,
+  grokGridConfig,
   HERMES_MANAGED_CONFIG_FILE,
   HERMES_MANAGED_DIR_VAR,
   hermesManagedConfig,
@@ -54,6 +58,19 @@ import {
 /** Where Pi keeps the skills the user manages, handed back through our own settings.json. */
 function userPiSkillsDir(): string {
   return join(homedir(), '.pi', 'agent', 'skills')
+}
+
+/**
+ * Grok's real state directory — the one a private [GROK_HOME_VAR] borrows `sessions/` from.
+ *
+ * `homedir()` rather than the daemon's own `env.GROK_HOME`, deliberately and for the reason stated
+ * beside [HERMES_SYSTEM_MANAGED_DIR]: a contract that reads process configuration answers
+ * differently depending on who launched it. The two agree in every deployment that matters — the
+ * daemon's `GROK_HOME` defaults to exactly this — and a machine that has moved it has moved the
+ * transcripts the daemon reads too, which is a question for the caller, not for a pure contract.
+ */
+function userGrokHome(): string {
+  return join(homedir(), '.grok')
 }
 
 /** What the desktop sends, once validated. Mirrors `GridAgentOverride` in the desktop app. */
@@ -287,6 +304,20 @@ function opencodeGridConfig(
   }, null, 2)}\n`
 }
 
+/**
+ * One directory the per-agent config directory borrows from elsewhere, as a symlink.
+ *
+ * For an engine whose variable redirects its WHOLE home rather than just its provider config: the
+ * private directory has to hand back the parts the daemon still reads. Grok is the only such engine
+ * — see `GROK_GRID_HOME_LINKS` in `gridWebMcp.ts`.
+ */
+export interface GridConfigLink {
+  /** Name inside the per-agent directory. Never a path. */
+  name: string
+  /** Absolute path the link points at — the user's real directory. */
+  target: string
+}
+
 /** One file to write into the per-agent config directory a launch is given. */
 export interface GridConfigFile {
   /** File name inside the directory. Never a path — this writes one flat directory. */
@@ -321,6 +352,14 @@ export interface GridEngineLaunch {
      * engine is handed, so it is a field rather than a second writer.
      */
     pointAt?: string
+    /**
+     * Directories the private one borrows back from the engine's real home.
+     *
+     * Only for a variable that redirects a whole home: `GROK_HOME` takes `sessions/` with it, and the
+     * daemon reads transcripts from the real one. Empty for every engine whose variable names only a
+     * provider config, which is the usual case.
+     */
+    links?: GridConfigLink[]
   }
 }
 
@@ -384,6 +423,7 @@ export const GRID_CONFLICTING_ENV_VARS: readonly string[] = [
   GRID_KEY_VAR,
   GRID_MCP_AUTH_VAR,
   HERMES_MANAGED_DIR_VAR,
+  GROK_HOME_VAR,
 ]
 
 /**
@@ -606,16 +646,75 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
 
   // xAI's own Grok CLI (the one this repo discovers under `~/.grok`, whose transcripts carry the
   // `_x.ai/session/update` method). Its docs: "Grok fetches the model list from {base_url}/models",
-  // and "when you set models_base_url, Grok uses API key auth instead of session auth" — which is
-  // exactly the swap being asked for here. The model has no documented variable, so it goes in argv.
+  // and "when you set models_base_url, Grok uses API key auth instead of session auth" — the second
+  // half of which does NOT hold in practice: measured, the variable moves where requests go but not
+  // which credential is picked, and the session token still wins. See `grokGridConfig`. The model has
+  // no documented variable, so it goes in argv AND into the config block that carries the credential.
+  //
+  // Its web tools cost it a private home. Grok reads `[mcp_servers]` from its config file and takes
+  // no flag for them, and the only layer that both starts unattended and is not the user's own file
+  // is `$GROK_HOME/config.toml` — the project layer is gated on a folder-trust prompt nobody is
+  // there to answer, and `CLAUDE_CONFIG_DIR` does not move MCP discovery at all. See `gridWebMcp.ts`,
+  // which measured each of them.
+  //
+  // ⚠️ `GROK_HOME` moves the WHOLE state directory, `sessions/` included — and for grok that is not
+  // cosmetic: `cli.ts` drops an observed grok agent entirely when it can find no transcript, so an
+  // un-borrowed home would launch an agent the harness never registers. The directory is linked back
+  // rather than moved; [GROK_GRID_HOME_LINKS] says which, and why the list stops where it does.
+  //
+  // ⚠️ The private home is NOT optional, and the reason is the credential order rather than the web
+  // tools. `XAI_API_KEY` is the LAST thing Grok reaches for — behind the OIDC session token — so an
+  // agent launched with the documented variable pair alone authenticates as the user's own xAI login
+  // and the relay answers 401. The config block declares the model with `env_key`, which outranks the
+  // session token; `grokGridConfig` carries the measurement. So every grid launch writes a config,
+  // web tools or not, and the user's own `~/.grok` is still never opened.
   grok: {
-    build: (override) => ({
-      env: {
-        GROK_MODELS_BASE_URL: relayBaseUrl(override.baseUrl),
-        XAI_API_KEY: override.apiKey,
-      },
-      args: override.model ? ['-m', override.model] : [],
-    }),
+    // Deliberately NOT `requiresModel`. The credential rides on a declared model block, so a launch
+    // does need SOME model named — but that is this contract's problem to solve, not a question to
+    // put back to the user. No model picked means the grid routes, and the relay serves its router id
+    // like any other model (verified: `{"model":"Auto"}` → 200, answered by DeepSeek-V4-Flash-0731),
+    // so `Auto` is what the block declares. Verified end to end: Grok launched against `[model."Auto"]`
+    // with `env_key` answered a prompt through the router with `auth_mode=null` and no probe.
+    //
+    // Making this `requiresModel` was the first fix here and it was the wrong one: it turned "Auto",
+    // the default the New Agent dialog shows, into a refusal at the moment of clicking Create —
+    // trading a 401 the user could not diagnose for a wall they could not get past. Same trade
+    // OpenCode faced, same answer (see `GRID_ROUTER_MODEL` in its contract above).
+    build: (override) => {
+      // One name, used in three places that must agree: argv, the config block's header, and the
+      // `model` field inside it. A mismatch would declare a credential for a model Grok never asks for.
+      const model = override.model ?? GRID_ROUTER_MODEL
+      return {
+        env: {
+          GROK_MODELS_BASE_URL: relayBaseUrl(override.baseUrl),
+          // Kept even though the config below is what actually wins. It is the documented pair for a
+          // custom endpoint, it is what `gridAssignment.ts` reads back, and on a build whose config
+          // layer we have misjudged it is still the credential Grok would reach for last.
+          XAI_API_KEY: override.apiKey,
+          // Referenced by `env_key` in the config, which is always written — so this always is too.
+          [GRID_KEY_VAR]: override.apiKey,
+        },
+        args: ['-m', model],
+        // ⚠️ ALWAYS a config directory now, web tools or not. It used to be written only when there
+        // were MCP servers to declare, on the reasoning that a launch with nothing to configure should
+        // leave the user's `~/.grok` alone — but the credential order (see `grokGridConfig`) means the
+        // config is what makes the grid key win over the OIDC session token. Without it a grid agent
+        // authenticates as the user's xAI login and the relay answers 401.
+        configDir: {
+          envVar: GROK_HOME_VAR,
+          files: [{
+            name: GROK_CONFIG_FILE,
+            content: grokGridConfig(
+              override.mcpUrl,
+              GRID_KEY_VAR,
+              model,
+              relayBaseUrl(override.baseUrl),
+            ),
+          }],
+          links: GROK_GRID_HOME_LINKS.map((name) => ({ name, target: join(userGrokHome(), name) })),
+        },
+      }
+    },
   },
 
   // Pi reads its providers out of a config DIRECTORY, and `PI_CODING_AGENT_DIR` moves that

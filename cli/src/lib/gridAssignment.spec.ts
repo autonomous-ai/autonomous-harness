@@ -71,6 +71,19 @@ describe('classifyGridAssignment', () => {
     expect(classifyGridAssignment('codex', { GRID_API_KEY: 'gridkey-secret' })).toBeNull()
   })
 
+  it('reads Grok\'s argv model, and reports the router as no model at all', () => {
+    const env = { GROK_MODELS_BASE_URL: RELAY_V1, GRID_API_KEY: 'gridkey-secret' }
+    expect(classifyGridAssignment('grok', env, 'grok -m DeepSeek-V4-Flash-0731'))
+      .toEqual({ baseUrl: RELAY_V1, model: 'DeepSeek-V4-Flash-0731' })
+    // ⚠️ Grok ALWAYS carries `-m`, unlike codex: its grid credential rides on a declared model block,
+    // so "let the grid route" is spelled `-m Auto` rather than by omitting the flag. Reporting that id
+    // verbatim would print `Auto` where the app prints its own Auto row from null, and
+    // `assignmentMatches` would compare 'Auto' against null and call every routed agent misplaced,
+    // forever — the same trap opencode's reader documents.
+    expect(classifyGridAssignment('grok', env, 'grok -m Auto'))
+      .toEqual({ baseUrl: RELAY_V1, model: null })
+  })
+
   it('does not confuse one engine\'s knob for another\'s', () => {
     // A grok agent whose OPENAI_BASE_URL happens to be set by the user's shell is not on a grid.
     expect(classifyGridAssignment('grok', { OPENAI_BASE_URL: RELAY_V1 })).toBeNull()

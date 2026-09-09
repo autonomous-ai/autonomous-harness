@@ -110,6 +110,39 @@ describe('runtime pane parsing', () => {
     ].join('\n'))).toMatchObject({ idle: false })
   })
 
+  it('reads grok past the right-hand edge of its own composer box', () => {
+    // Measured on a live pane (`harness-grok-*`, grok 4.6, 2026-09-09) with NOTHING typed into it.
+    // The shared reader takes everything after `❯` and finds the box's closing `│`: one character,
+    // non-empty, so `draft` was true on an empty composer. Not a transient — that edge is drawn on
+    // every frame, so `idle` was false for the agent's whole life and every model switch came back
+    // AGENT_BUSY. Same family as the hermes and opencode cases above; here the culprit is the box.
+    const W = 60
+    const box = (composer: readonly string[]) => [
+      '  ╭' + '─'.repeat(W) + '╮',
+      ...composer.map((line) => '  │ ' + line.padEnd(W - 2) + '│'),
+      '  ╰' + '─'.repeat(W - 20) + ' Grok 4.6 (xhigh) ─╯',
+      '',
+      // The footer separator is also `│`, and it sits below the box. A body line must carry BOTH
+      // edges, which this — one separator, no edges — never does.
+      '  Shift+Tab:mode  │  Ctrl+x:shortcuts',
+    ].join('\n')
+
+    expect(inspectRuntimePane('grok', box(['❯']))).toMatchObject({ idle: true, draft: false })
+    expect(inspectRuntimePane('grok', box(['❯ fix the parser']))).toMatchObject({ idle: false, draft: true })
+    // Wrapped text counts wherever in the box it sits — the marker is only on the first row.
+    expect(inspectRuntimePane('grok', box(['❯ a very long message', '  that wrapped down'])))
+      .toMatchObject({ idle: false, draft: true })
+    // An earlier box still in scrollback is a message already SENT, not a draft.
+    expect(inspectRuntimePane('grok', [box(['❯ what is an LSP']), 'answer text', box(['❯'])].join('\n')))
+      .toMatchObject({ idle: true, draft: false })
+    // A picker over the pane is not something to respawn under, empty composer or not.
+    expect(inspectRuntimePane('grok', box(['❯']) + '\n  Select Model and Effort'))
+      .toMatchObject({ idle: false, dialog: true })
+    // A layout with no recognisable box is "we cannot tell", which the caller reads as busy. Refusing
+    // a switch costs a retry; respawning a pane we misread would discard whatever was in it.
+    expect(inspectRuntimePane('grok', '  │ ❯ fix the parser')).toMatchObject({ idle: false })
+  })
+
   it('does not read a truecolor foreground as a dim placeholder', () => {
     // `38;2;<r>;<g>;<b>` carries a literal 2 that is a colour-space selector, not the dim attribute.
     // Counting it would make a line the user had TYPED look like an empty composer — the one

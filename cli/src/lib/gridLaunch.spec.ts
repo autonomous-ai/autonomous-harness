@@ -139,10 +139,34 @@ describe('the launch each engine gets', () => {
     expect(launchOf('opencode').env).toEqual({ GRID_API_KEY: WIRE.apiKey })
   })
 
-  it('uses xAI\'s model-list base for Grok, with the model on the command line', () => {
+  it('declares the model for Grok, because the documented variable pair loses to its session token', () => {
+    // `GROK_MODELS_BASE_URL` + `XAI_API_KEY` is the pair Grok documents, and it is not enough:
+    // `XAI_API_KEY` is LAST in Grok's credential order, behind the OIDC session token that a private
+    // GROK_HOME still acquires. Measured on a live pane — `auth_mode=Oidc`, `remedy=ManualLogin`, and
+    // "Authentication required" in the pane — while the relay answered 200 to the same key by curl.
+    // Declaring the model with `env_key` moves the grid key above the session token.
     const launch = launchOf('grok')
-    expect(launch.env).toEqual({ GROK_MODELS_BASE_URL: RELAY_V1, XAI_API_KEY: WIRE.apiKey })
+    expect(launch.env).toEqual({
+      GROK_MODELS_BASE_URL: RELAY_V1,
+      XAI_API_KEY: WIRE.apiKey,
+      GRID_API_KEY: WIRE.apiKey,
+    })
     expect(launch.args).toEqual(['-m', 'GLM-4.7-Flash'])
+    // The config is written whether or not there are web tools: it is the credential that needs it.
+    const config = launch.configDir?.files.find((f) => f.name === 'config.toml')?.content ?? ''
+    expect(config).toContain('[model."GLM-4.7-Flash"]')
+    expect(config).toContain('env_key = "GRID_API_KEY"')
+    expect(config).toContain(`base_url = "${RELAY_V1}"`)
+  })
+
+  it('gives Grok a config even with no web tools to declare', () => {
+    // It used to write one only for MCP servers, on the reasoning that a launch with nothing to
+    // configure should leave the user's ~/.grok alone. That left the credential on the losing side of
+    // Grok's resolution order, so a grid agent authenticated as the user's own xAI login.
+    const launch = launchOf('grok', { ...WITH_MODEL, mcpUrl: undefined })
+    const config = launch.configDir?.files.find((f) => f.name === 'config.toml')?.content ?? ''
+    expect(config).toContain('env_key = "GRID_API_KEY"')
+    expect(config).not.toContain('mcp_servers')
   })
 
   it('uses the documented BYOK trio for Copilot', () => {
@@ -213,13 +237,25 @@ describe('the launch each engine gets', () => {
     expect(launchOf('claude', OVERRIDE).env).not.toHaveProperty('ANTHROPIC_MODEL')
     expect(launchOf('hermes', OVERRIDE).env).not.toHaveProperty('HERMES_INFERENCE_MODEL')
     expect(launchOf('hermes', OVERRIDE).args).toEqual([])
-    expect(launchOf('grok', OVERRIDE).args).toEqual([])
     expect(launchOf('codex', OVERRIDE).args).not.toContain('-m')
   })
 
   it('refuses Copilot without a model rather than letting it fail inside the app', () => {
     const built = buildGridEngineLaunch('copilot', OVERRIDE)
     expect(built).toMatchObject({ ok: false, error: 'GRID_MODEL_REQUIRED' })
+  })
+
+  it('declares the router for Grok when the user picked no model, rather than refusing', () => {
+    // The credential rides on a declared model block, so SOMETHING has to be named — but that is the
+    // contract's problem, not a question to put back to the user. `Auto` is the New Agent dialog's
+    // default, and refusing it would turn the common path into a wall at the moment of clicking
+    // Create. The relay serves the router id like any other model, and Grok launched against
+    // `[model."Auto"]` answered through it with no probe and no 401.
+    const launch = launchOf('grok', OVERRIDE)
+    expect(launch.args).toEqual(['-m', 'Auto'])
+    const config = launch.configDir?.files.find((f) => f.name === 'config.toml')?.content ?? ''
+    expect(config).toContain('[model."Auto"]')
+    expect(config).toContain('env_key = "GRID_API_KEY"')
   })
 })
 

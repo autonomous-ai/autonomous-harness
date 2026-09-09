@@ -145,6 +145,7 @@ export function inspectRuntimePane(engine: RegisteredSession['engine'], capture:
   if (engine === 'pi') return inspectPiPane(capture)
   if (engine === 'opencode') return inspectGutterBoxPane(capture, true)
   if (engine === 'copilot') return inspectGutterBoxPane(capture, false)
+  if (engine === 'grok') return inspectGrokPane(capture)
   const rawLines = capture.split('\n')
   const marks = promptMarker(engine)
   const promptIndex = rawLines.findLastIndex((line) => {
@@ -241,6 +242,54 @@ function inspectGutterBoxPane(capture: string, hasStatusStrip: boolean): PaneIns
  * honest "the footer is on screen" signal. No `g` flag, so `test` carries no `lastIndex` between calls.
  */
 const PI_FOOTER_BUDGET = /\d+(?:\.\d+)?%\s*\/\s*\S+/
+
+/**
+ * Grok draws its composer as a ROUNDED BOX, and the generic reader counts the box's own right edge
+ * as something the user typed.
+ *
+ * Its empty composer is one line — `│ ❯` … padding … `│` — inside `╭─…─╮` above and
+ * `╰─… Grok 4.6 (xhigh) ─╯` below. The shared reader takes everything after `❯`, strips ANSI, trims,
+ * and finds `│`: one character, non-empty, so `draft` was true. Measured on a real pane
+ * (`harness-grok-*`, 2026-09-09) with nothing typed into it: `visible after marker = "│"`, `draft =
+ * true`, `idle = false`. Not a transient — the edge is drawn on every frame, so idle was false for
+ * the agent's whole life and EVERY model switch came back AGENT_BUSY over an empty prompt. Same
+ * family as the hermes and gutter-box bugs above; here the culprit is the box, not the placeholder.
+ *
+ * So the composer is the box's INTERIOR: the run of `│` body lines, read between their first and
+ * last `│` rather than from the marker to end-of-line. Every body line is checked, not just the one
+ * carrying `❯` — a long message wraps down the box and reading one line of it would call a full
+ * composer empty.
+ *
+ * ⚠️ `│` is also Grok's footer separator (`Shift+Tab:mode │ Ctrl+x:shortcuts`), which sits BELOW the
+ * box. It is excluded by requiring a body line to both open and close with `│`, which the footer —
+ * one separator, no edges — never does.
+ */
+function inspectGrokPane(capture: string): PaneInspection {
+  const rawLines = capture.split('\n')
+  const visibleLines = rawLines.map((line) => stripAnsi(line).replace(/ /g, ' '))
+  // The LAST box in the capture. Earlier ones are composers already sent, still in scrollback.
+  const bottom = visibleLines.findLastIndex((line) => /^\s*╰[─╌]*.*╯\s*$/u.test(line))
+  const top = bottom < 0
+    ? -1
+    : visibleLines.slice(0, bottom).findLastIndex((line) => /^\s*╭[─╌]+╮\s*$/u.test(line))
+  // No recognisable box is "we cannot tell", which the caller reads as busy — the safe direction.
+  // Respawning a pane whose layout we do not understand could discard a draft.
+  if (top < 0 || bottom - top < 2) return { idle: false, plan: false, dialog: false, draft: false }
+  const currentUi = visibleLines.slice(top).join('\n')
+  const dialog = DIALOG_UI.test(currentUi)
+  const draft = rawLines.slice(top + 1, bottom).some((line, offset) => {
+    const visible = visibleLines[top + 1 + offset]
+    const first = visible.indexOf('│')
+    const last = visible.lastIndexOf('│')
+    // Both edges, and not the same character: anything else is not a body line of this box.
+    if (first < 0 || last <= first) return false
+    const rawMarker = line.search(/[›❯]/u)
+    if (rawMarker >= 0 && hasPlaceholderSgr(line.slice(rawMarker + 1))) return false
+    // The marker is chrome, not content — it is printed whether or not anything was typed.
+    return visible.slice(first + 1, last).replace(/[›❯]/u, '').trim().length > 0
+  })
+  return { idle: !dialog && !draft, plan: /\bplan mode on\b/i.test(currentUi), dialog, draft }
+}
 
 /**
  * Pi draws no composer marker, so idleness is read from its layout instead: the composer is the band
