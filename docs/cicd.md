@@ -30,6 +30,19 @@ because the artifacts are two JavaScript files whose integrity is the sha256 in 
 ## Cutting a release
 
 ```bash
+make release                       # bump the patch, tag, push — CI does the rest
+make release ARGS="--dry-run"      # print the version it would cut and the notes, do nothing
+make release ARGS="0.2.0"          # release an explicit version
+```
+
+`cli/scripts/release-cli.sh` works out the next version as `max(last git tag, live metadata.json's cli
+key)`, refuses to publish anything that isn't strictly newer than what's live, and refuses an empty
+release message before tagging. See [`cli/RELEASE.md`](../cli/RELEASE.md) for the full rundown,
+including local installs and manual publishing.
+
+The manual fallback, for when `make release` itself can't be used:
+
+```bash
 # What is live right now — the next tag is one above this. Someone may have released by hand.
 curl -fsS https://storage.googleapis.com/s3-autonomous-upgrade-3/harness/cli/metadata.json
 
@@ -114,10 +127,3 @@ whose `node_modules` came from pnpm. `ci.yml` now runs `pnpm install --frozen-lo
 --lockfile-only` before anything else, which resolves in about five seconds, installs nothing and
 fails naming the dependency that drifted. So: if you touch `package.json`, update **both**
 lockfiles.
-
-## Known gap
-
-`cli/README.md` links to `cli/RELEASE.md` twice (publishing, and the local-install path). That file
-does not exist in this repository — it did not survive the split out of the monorepo. Both links are
-dead, and the material is currently spread across the headers of `cli/scripts/upload-cli.sh` and
-`cli/scripts/install-cli.sh`, plus this file.

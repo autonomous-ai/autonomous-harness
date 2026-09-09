@@ -4,11 +4,17 @@
 #   make install-cli ARGS="--no-restart"
 #   make upload-cli  ARGS="0.1.0"
 
-.PHONY: cli-test install-cli upload-cli remote-machine
+.PHONY: cli-test install-cli upload-cli release remote-machine
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
 	cd cli && npx tsc --noEmit && npx vitest run
+
+## release: tag this commit and push the tag — CI bundles the CLI, publishes it to GCS, and cuts the
+## GitHub Release. The version is bumped from max(last git tag, live metadata.json's `cli` key).
+## ARGS="--dry-run" to preview.
+release:
+	bash cli/scripts/release-cli.sh $(ARGS)
 
 ## install-cli: bundle the CLI from THIS working tree and install it into ~/.harness/cli — the local dev
 ## loop, nothing published. Restarts the daemon on the new bytes. Self-update stays ON: the build is
