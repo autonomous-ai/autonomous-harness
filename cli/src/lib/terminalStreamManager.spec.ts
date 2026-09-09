@@ -180,34 +180,40 @@ describe('TerminalStreamManager', () => {
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_SCROLL_INVALID')
   })
 
-  it('routes terminal_paste to pasteRaw as one unit, never through writeRaw', async () => {
+  it('routes a binary paste kind to pasteRaw as one unit, never through writeRaw', async () => {
     await manager.handleFrame('web-1', 'terminal_open', {
       requestId: 'open-paste', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
     })
     const streamId = sent[0].payload.streamId as string
+    const paste = (text: string): TerminalBinaryClear => ({
+      kind: TerminalBinaryKind.paste, streamId, seq: 0, compressed: false,
+      bytes: new TextEncoder().encode(text),
+    })
+
+    // JSON is refused outright — a paste must ride the binary/AEAD channel, same reason terminal_input
+    // does — so a stray legacy JSON paste never silently goes nowhere.
+    await manager.handleFrame('web-1', 'terminal_paste', { streamId })
+    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_BINARY_REQUIRED')
+    expect(stream.pastes).toHaveLength(0)
 
     const longPaste = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n')
-    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: longPaste })
+    await manager.handleBinary('web-1', paste(longPaste))
     expect(stream.pastes).toEqual([longPaste])
     expect(stream.writes).toHaveLength(0)
 
-    // Ctrl+C pasted alongside real content is forwarded like any other byte, same as input().
-    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'a\x03b' })
-    expect(stream.pastes.at(-1)).toBe('a\x03b')
+    // Same reason as input(): the engine in the pane has no job-control fallback for an uncaught
+    // SIGINT, so a stray 0x03 pasted alongside real content must never reach it.
+    await manager.handleBinary('web-1', paste('a\x03b'))
+    expect(stream.pastes.at(-1)).toBe('ab')
 
-    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: '' })
-    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
+    await manager.handleBinary('web-1', paste(''))
     expect(stream.pastes).toHaveLength(2)
 
     // A real paste of ordinary code (tens/hundreds of KB) must not bounce off a limit sized for one
     // keystroke chunk — this is the exact regression that froze a real terminal over a normal paste.
     const ordinaryLargePaste = 'x'.repeat(200 * 1024)
-    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: ordinaryLargePaste })
+    await manager.handleBinary('web-1', paste(ordinaryLargePaste))
     expect(stream.pastes.at(-1)).toBe(ordinaryLargePaste)
-    expect(stream.pastes).toHaveLength(3)
-
-    await manager.handleFrame('web-1', 'terminal_paste', { streamId, text: 'x'.repeat(5 * 1024 * 1024) })
-    expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_INVALID')
     expect(stream.pastes).toHaveLength(3)
   })
 

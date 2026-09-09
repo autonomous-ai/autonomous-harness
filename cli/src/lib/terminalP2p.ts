@@ -38,7 +38,9 @@ export const TERMINAL_P2P_SIGNAL_TYPES = new Set([
 export const TERMINAL_P2P_DOWN_TYPES = new Set([
   'terminal_capabilities', 'terminal_open', 'terminal_alive', 'terminal_ack',
   'terminal_input', 'terminal_resize', 'terminal_resync', 'terminal_close', 'terminal_scroll',
-  'terminal_paste',
+  // Deliberately no 'terminal_paste' here: it travels as a binary TerminalBinaryKind.paste frame,
+  // not JSON, so it needs no entry in this JSON-type forwarding list — the binary channel already
+  // crosses the P2P data channel on its own.
 ])
 
 export const TERMINAL_P2P_UP_TYPES = new Set([

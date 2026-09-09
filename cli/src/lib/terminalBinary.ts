@@ -9,12 +9,24 @@ export const TERMINAL_HOP_HEADER_BYTES = 24
 export const TERMINAL_LOCAL_VERSION = 1
 export const TERMINAL_LOCAL_HEADER_BYTES = 12
 export const TERMINAL_LOCAL_MAX_PAYLOAD_BYTES = 512 * 1024
+// A paste is delivered whole, in one frame — unlike every other kind, which is either a small
+// bounded control message (keyframe/sync) or already chunked upstream to stay well under the
+// keystroke ceiling (input, ≤8 KiB per frame client-side). Reusing that ceiling for paste made an
+// entirely ordinary large clipboard paste (a few hundred KB of real code) bounce off a limit sized
+// for a keystroke. This is a sanity ceiling against a broken/malicious client, not a real limit —
+// see PASTE_MAX_BYTES's own history in terminalStreamManager.ts.
+export const TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES = 6 * 1024 * 1024
+export const TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES = 6 * 1024 * 1024
 
 export const enum TerminalBinaryKind {
   input = 1,
   output = 2,
   keyframe = 3,
   sync = 4,
+  /** A clipboard paste made directly into the terminal, delivered as one atomic unit — see
+   *  `pasteRawIntoTmux` in tmux.ts for why this needs its own kind instead of riding `input`. Upload
+   *  (client→CLI) only; nothing ever sends this back down. */
+  paste = 5,
 }
 
 export interface TerminalBinaryClear {
@@ -67,19 +79,39 @@ function validKind(value: number): value is TerminalBinaryKind {
     || value === TerminalBinaryKind.output
     || value === TerminalBinaryKind.keyframe
     || value === TerminalBinaryKind.sync
+    || value === TerminalBinaryKind.paste
 }
 
 export function terminalBinaryType(kind: TerminalBinaryKind): string {
   if (kind === TerminalBinaryKind.input) return 'terminal_input'
   if (kind === TerminalBinaryKind.output) return 'terminal_output'
   if (kind === TerminalBinaryKind.keyframe) return 'terminal_keyframe'
+  if (kind === TerminalBinaryKind.paste) return 'terminal_paste'
   return 'terminal_sync'
+}
+
+/** The seal/parse/encode/decode size ceiling for [kind] — paste gets a much larger one; see
+ *  TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES. */
+function maxCiphertextBytesFor(kind: TerminalBinaryKind): number {
+  return kind === TerminalBinaryKind.paste
+    ? TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES
+    : TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES
+}
+
+function maxLocalPayloadBytesFor(kind: TerminalBinaryKind): number {
+  return kind === TerminalBinaryKind.paste
+    ? TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES
+    : TERMINAL_LOCAL_MAX_PAYLOAD_BYTES
 }
 
 export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | null {
   const id = uuidBytes(frame.streamId)
   if (!id || !Number.isSafeInteger(frame.seq) || frame.seq < 0) return null
-  if ((frame.kind === TerminalBinaryKind.input || frame.kind === TerminalBinaryKind.sync) && frame.compressed) return null
+  // Compression is for the SERVER's own output/keyframe frames, which the client already knows how
+  // to inflate. Nothing on this side inflates an incoming frame, so a client-compressed kind (input,
+  // sync, and — for now — paste too) would silently hand tmux a compressed blob instead of text.
+  if ((frame.kind === TerminalBinaryKind.input || frame.kind === TerminalBinaryKind.sync
+    || frame.kind === TerminalBinaryKind.paste) && frame.compressed) return null
   if (frame.kind === TerminalBinaryKind.sync && frame.bytes.length !== 0) return null
   const metaBytes = frame.kind === TerminalBinaryKind.keyframe ? 28 : 24
   const out = new Uint8Array(metaBytes + frame.bytes.length)
@@ -98,7 +130,8 @@ export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | nu
 
 export function decodeTerminalPlain(kind: TerminalBinaryKind, flags: number, plaintext: Uint8Array): TerminalBinaryClear | null {
   if ((flags & ~FLAG_ZLIB) !== 0
-    || ((kind === TerminalBinaryKind.input || kind === TerminalBinaryKind.sync) && flags !== 0)) return null
+    || ((kind === TerminalBinaryKind.input || kind === TerminalBinaryKind.sync
+      || kind === TerminalBinaryKind.paste) && flags !== 0)) return null
   const metaBytes = kind === TerminalBinaryKind.keyframe ? 28 : 24
   if (plaintext.length < metaBytes || (kind === TerminalBinaryKind.sync && plaintext.length !== metaBytes)) return null
   const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)
@@ -122,7 +155,7 @@ export function parseTerminalBinaryEnvelope(raw: Uint8Array): TerminalBinaryEnve
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const counter = safeU64(view, 8)
   const length = view.getUint32(16, false)
-  if (counter == null || length < 16 || length > TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES
+  if (counter == null || length < 16 || length > maxCiphertextBytesFor(bytes[5])
     || bytes.length !== TERMINAL_BINARY_HEADER_BYTES + length) return null
   return {
     kind: bytes[5],
@@ -146,7 +179,7 @@ export function sealTerminalBinary(key: Uint8Array, counter: number, frame: Term
   const view = new DataView(header.buffer)
   view.setBigUint64(8, BigInt(counter), false)
   const ciphertext = aeadSeal(key, counter, header.subarray(0, 16), plaintext)
-  if (ciphertext.length > TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES) return null
+  if (ciphertext.length > maxCiphertextBytesFor(frame.kind)) return null
   view.setUint32(16, ciphertext.length, false)
   const out = new Uint8Array(header.length + ciphertext.length)
   out.set(header)
@@ -166,7 +199,7 @@ export function openTerminalBinary(key: Uint8Array, raw: Uint8Array): { counter:
 /** Plain terminal framing for the authenticated loopback desktop transport. */
 export function encodeTerminalLocal(frame: TerminalBinaryClear): Uint8Array | null {
   const payload = encodeTerminalPlain(frame)
-  if (!payload || payload.length > TERMINAL_LOCAL_MAX_PAYLOAD_BYTES) return null
+  if (!payload || payload.length > maxLocalPayloadBytesFor(frame.kind)) return null
   const flags = frame.compressed ? FLAG_ZLIB : 0
   const header = new Uint8Array(TERMINAL_LOCAL_HEADER_BYTES)
   header.set(LOCAL_MAGIC, 0)
@@ -191,7 +224,7 @@ export function decodeTerminalLocal(raw: Uint8Array): TerminalBinaryClear | null
   if (bytes[4] !== TERMINAL_LOCAL_VERSION || !validKind(kind) || bytes[7] !== 0) return null
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const length = view.getUint32(8, false)
-  if (length > TERMINAL_LOCAL_MAX_PAYLOAD_BYTES || bytes.length !== TERMINAL_LOCAL_HEADER_BYTES + length) return null
+  if (length > maxLocalPayloadBytesFor(kind) || bytes.length !== TERMINAL_LOCAL_HEADER_BYTES + length) return null
   return decodeTerminalPlain(kind, flags, bytes.slice(TERMINAL_LOCAL_HEADER_BYTES))
 }
 

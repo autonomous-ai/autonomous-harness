@@ -15,13 +15,6 @@ const SYNC_INTERVAL_MS = 5_000
 const OUTPUT_FLUSH_MS = 8
 const OUTPUT_CHUNK_BYTES = 32 * 1024
 const INPUT_MAX_BYTES = 64 * 1024
-// A paste is delivered whole, in one frame, unlike ordinary typed input — which the client already
-// caps at 8 KiB per binary frame before INPUT_MAX_BYTES ever matters. Reusing INPUT_MAX_BYTES here
-// made a large-but-entirely-normal clipboard paste (a few hundred lines of real code, tens of KB)
-// bounce off a limit sized for keystrokes and fail the WHOLE stream ("TERMINAL FROZEN") over
-// something that never touched tmux. `tmux paste-buffer`'s stdin-loaded buffer has no comparable
-// size constraint — this is a sanity ceiling against a broken/malicious client, not a real limit.
-const PASTE_MAX_BYTES = 4 * 1024 * 1024
 const PAUSE_HIGH_WATERMARK_BYTES = 384 * 1024
 const RESUME_LOW_WATERMARK_BYTES = 128 * 1024
 const RENDER_STALL_TIMEOUT_MS = 10_000
@@ -157,7 +150,10 @@ export class TerminalStreamManager {
         await this.resize(connId, payload)
         return true
       case 'terminal_paste':
-        await this.paste(connId, payload)
+        // Same reason as terminal_input: a paste is a binary frame (TerminalBinaryKind.paste) so it
+        // rides the same AEAD channel every other terminal byte does, which is what makes it safe to
+        // deliver over a relayed (E2EE) connection. Nothing sends this as JSON.
+        this.sendError(connId, 'TERMINAL_BINARY_REQUIRED', { streamId: typeof payload.streamId === 'string' ? payload.streamId : undefined })
         return true
       case 'terminal_scroll':
         await this.scroll(connId, payload)
@@ -174,9 +170,13 @@ export class TerminalStreamManager {
   }
 
   async handleBinary(connId: string, frame: TerminalBinaryClear): Promise<void> {
-    if (frame.kind !== TerminalBinaryKind.input) return
+    if (frame.kind !== TerminalBinaryKind.input && frame.kind !== TerminalBinaryKind.paste) return
     const state = this.streams.get(frame.streamId)
     if (!state || state.connId !== connId || state.closing) return
+    if (frame.kind === TerminalBinaryKind.paste) {
+      await this.paste(state, frame.bytes)
+      return
+    }
     await this.input(state, frame.seq, frame.bytes)
   }
 
@@ -419,27 +419,36 @@ export class TerminalStreamManager {
   }
 
   /**
-   * A clipboard paste made directly into the terminal (not the composer), delivered whole via
-   * `TerminalStreamHandle.pasteRaw` instead of the chunked `writeRaw`/`send-keys -H` keystroke path —
-   * see `pasteRawIntoTmux` for why the two cannot share a pipe. No seq/ordering guard, unlike `input()`:
-   * a paste is one self-contained unit, not part of an ordered keystroke stream.
+   * A clipboard paste made directly into the terminal (not the composer), delivered whole as a
+   * `TerminalBinaryKind.paste` frame via `TerminalStreamHandle.pasteRaw` instead of the chunked
+   * `writeRaw`/`send-keys -H` keystroke path — see `pasteRawIntoTmux` for why the two cannot share a
+   * pipe. Binary, not JSON: this is what lets a paste travel over a relayed (E2EE) connection safely
+   * — it rides the same AEAD-wrapped channel `input`/`output` already do, with no allowlist of its
+   * own to keep in step with the pairwise-crypto "interop keystone" (e2ee/core.ts) three other
+   * codebases also implement.
+   *
+   * No seq/ordering guard, unlike `input()`: a paste is one self-contained unit, not part of an
+   * ordered keystroke stream. Size is already bounded by the wire format itself
+   * (TERMINAL_*_PASTE_MAX_*_BYTES in terminalBinary.ts) — anything over that never decodes into a
+   * frame at all, so there is nothing left to check here.
    */
-  private async paste(connId: string, payload: FramePayload): Promise<void> {
-    const state = this.streamFor(connId, payload)
-    if (!state) return
-    const text = payload.text
-    if (typeof text !== 'string' || text.length === 0) {
-      this.sendError(connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId })
+  private async paste(state: ActiveStream, bytes: Uint8Array): Promise<void> {
+    if (bytes.length === 0) return
+    let text: string
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      this.sendError(state.connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId, message: 'paste was not valid UTF-8' })
       return
     }
-    if (Buffer.byteLength(text, 'utf8') > PASTE_MAX_BYTES) {
-      this.sendError(connId, 'TERMINAL_PASTE_INVALID', { streamId: state.streamId, message: 'paste too large' })
-      return
-    }
+    // Same reason as input(): the engine in the pane has no job-control fallback for an uncaught
+    // SIGINT, so a stray 0x03 pasted alongside real content must never reach it.
+    if (text.includes('\x03')) text = text.replaceAll('\x03', '')
+    if (text.length === 0) return
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
     const result = await state.handle.pasteRaw(text)
     if (result.state !== 'succeeded') {
-      this.sendError(connId, 'TERMINAL_PASTE_FAILED', { streamId: state.streamId, message: result.reason })
+      this.sendError(state.connId, 'TERMINAL_PASTE_FAILED', { streamId: state.streamId, message: result.reason })
       if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
     }
   }

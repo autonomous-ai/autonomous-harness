@@ -7,6 +7,8 @@ import {
   parseTerminalBinaryEnvelope,
   sealTerminalBinary,
   TerminalBinaryKind,
+  TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES,
+  TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES,
 } from './terminalBinary.js'
 
 const key = Uint8Array.from({ length: 32 }, (_, index) => index)
@@ -84,6 +86,45 @@ describe('terminal binary protocol v3', () => {
     })).toBeNull()
   })
 
+  it('round-trips an uncompressed paste at a ceiling far above ordinary input', () => {
+    const bytes = new TextEncoder().encode('x'.repeat(200 * 1024))
+    const sealed = sealTerminalBinary(key, 8, {
+      kind: TerminalBinaryKind.paste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })!
+    expect(sealed).not.toBeNull()
+    expect(openTerminalBinary(key, sealed)?.frame).toEqual({
+      kind: TerminalBinaryKind.paste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })
+
+    // A frame this size is exactly what the old shared ceiling used to reject for every kind —
+    // paste needs it, input/output/keyframe/sync do not, so it must stay kind-specific.
+    const big = new Uint8Array(TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES + 1)
+    expect(sealTerminalBinary(key, 9, { kind: TerminalBinaryKind.paste, streamId, seq: 0, bytes: big, compressed: false })).not.toBeNull()
+    expect(sealTerminalBinary(key, 9, { kind: TerminalBinaryKind.output, streamId, seq: 0, bytes: big, compressed: false })).toBeNull()
+
+    // Paste's own ceiling still holds against something absurd.
+    const tooBig = new Uint8Array(TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES + 1)
+    expect(sealTerminalBinary(key, 9, { kind: TerminalBinaryKind.paste, streamId, seq: 0, bytes: tooBig, compressed: false })).toBeNull()
+  })
+
+  it('rejects a compressed paste — nothing on the receiving end inflates it yet', () => {
+    expect(sealTerminalBinary(key, 10, {
+      kind: TerminalBinaryKind.paste,
+      streamId,
+      seq: 0,
+      bytes: Uint8Array.of(1, 2, 3),
+      compressed: true,
+    })).toBeNull()
+  })
+
   it('rejects tamper, truncation and unsupported flags', () => {
     const sealed = sealTerminalBinary(key, 1, {
       kind: TerminalBinaryKind.output,
@@ -137,5 +178,34 @@ describe('authenticated loopback terminal framing v1', () => {
     expect(decodeTerminalLocal(badReserved)).toBeNull()
     const badMagic = encoded.slice(); badMagic[0] = 0
     expect(decodeTerminalLocal(badMagic)).toBeNull()
+  })
+
+  it('carries a paste well past the ordinary local frame ceiling', () => {
+    // Comfortably over the 512 KiB ceiling every other kind still has — this is the exact size class
+    // that used to make a real paste fail to even reach the daemon over the local loopback socket.
+    const bytes = new TextEncoder().encode('y'.repeat(1 * 1024 * 1024))
+    const encoded = encodeTerminalLocal({
+      kind: TerminalBinaryKind.paste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })
+    expect(encoded).not.toBeNull()
+    expect(decodeTerminalLocal(encoded!)).toEqual({
+      kind: TerminalBinaryKind.paste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })
+
+    expect(encodeTerminalLocal({
+      kind: TerminalBinaryKind.output,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })).toBeNull()
   })
 })

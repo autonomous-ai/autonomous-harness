@@ -3,13 +3,23 @@ import type http from 'node:http'
 import type { Socket } from 'node:net'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
 import type { Frame, LocalClientSink } from './backendSocket.js'
-import { decodeTerminalLocal, TERMINAL_BINARY_VERSION, type TerminalBinaryClear } from './lib/terminalBinary.js'
+import {
+  decodeTerminalLocal,
+  TERMINAL_BINARY_VERSION,
+  TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES,
+  type TerminalBinaryClear,
+} from './lib/terminalBinary.js'
 import { RelayConnectError, type RelaySession, type RemoteRelayPool } from './lib/remoteRelay.js'
 
 export const LOCAL_WS_PATH = '/api/local-ws'
 export const LOCAL_WS_PROTOCOL_VERSION = 1
 
 const MAX_JSON_BYTES = 512 * 1024
+// The `ws` library enforces this on EVERY message on this socket, JSON or binary — so it has to
+// cover the largest binary frame this transport carries, not just JSON control frames. That is a
+// paste (see TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES in terminalBinary.ts), plus a little slack for
+// the local frame header; ordinary JSON frames stay bounded by MAX_JSON_BYTES regardless.
+const MAX_WS_MESSAGE_BYTES = TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES + 4_096
 const HEARTBEAT_MS = 20_000
 
 export interface LocalWsBackend {
@@ -124,7 +134,7 @@ function binaryBytes(raw: RawData): Uint8Array {
 export function attachLocalWsServer(server: http.Server, options: LocalWsServerOptions): LocalWsServer {
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: MAX_JSON_BYTES,
+    maxPayload: MAX_WS_MESSAGE_BYTES,
     // The loopback endpoint deliberately has no credential. Echo a protocol only for generic WS
     // clients that insist on proposing one; it carries no authority and is never inspected.
     handleProtocols: (protocols) => [...protocols][0] ?? false,
