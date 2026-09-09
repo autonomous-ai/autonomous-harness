@@ -35,6 +35,11 @@ Facade loopback có credential: GET discover; POST pair/start `{code,device}`; G
 GET status (transport direct); GET list (id là fingerprint, khác discoveryId); POST revoke `{id}`;
 GET receipt query deviceId canonical publickey và idempotencyKey. Không listen/address/replace/all.
 
+Khi device tự revoke trust cục bộ, nó gửi application request đã xác thực
+`{type:"pair.revoke",requestId}` và đợi `pair.revoke_result` trước khi đóng socket. CLI sẽ xóa đúng
+identity đó cùng metadata reconnect. Socket chỉ đóng mà không có request này vẫn là `offline`, không
+được hiểu là revoke, để lỗi mạng thoáng qua không unpair device.
+
 Wire dùng nguyên e2e_* gốc role device, CI b:device. App outer autonomous_device_request/result/event
 vẫn pairwise encrypted với empty dbSessionId AAD; helper relay.ts chỉ là adapter ứng dụng dùng chung
 crypto, không kết nối backend. Request agents.list/status/recap/turn.send/turn.stop/question.answer/
