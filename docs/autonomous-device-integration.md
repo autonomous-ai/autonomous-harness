@@ -71,6 +71,11 @@ All routes remain on the credential-checked loopback hook server. There is no ne
 Discovery id and trusted fingerprint are distinct identifiers. A user chooses a discovery record
 for pairing; revoke targets the exact existing trusted fingerprint. Original `harness pair` and
 browser/dial UI behavior are unchanged. Direct pairing is initiated by the named facade above.
+When the device revokes its own local trust, it sends the authenticated application request
+`{type:"pair.revoke",requestId}` and waits for `pair.revoke_result` before closing its socket.
+The CLI then removes that exact device identity and its reconnect metadata. A socket close without
+this request remains `offline`, rather than being treated as a revoke, so transient LAN failures do
+not unpair the device.
 
 ## Existing encrypted wire, unchanged
 

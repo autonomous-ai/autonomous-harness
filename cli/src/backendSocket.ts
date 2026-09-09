@@ -429,7 +429,14 @@ export class BackendSocket {
   }
   private autonomousDeviceRelay?: AutonomousDeviceRelay
   setAutonomousDeviceService(service: AutonomousDeviceService): void {
-    this.autonomousDeviceRelay = new AutonomousDeviceRelay(this.e2ee, (connId, frame) => this.sendTo(connId, frame), service, this.machineId, () => this.onCommanderJoin?.())
+    this.autonomousDeviceRelay = new AutonomousDeviceRelay(
+      this.e2ee,
+      (connId, frame) => this.sendTo(connId, frame),
+      service,
+      this.machineId,
+      () => this.onCommanderJoin?.(),
+      identity => this.e2ee.revoke(fingerprint(b64d(identity))),
+    )
   }
   directAutonomousDeviceSessions(): number { return this.autonomousDeviceRelay?.count(id => this.directDeviceSinks.has(id)) ?? 0 }
   autonomousDeviceConnected(): boolean { return this.autonomousDeviceRelay?.connected() ?? false }

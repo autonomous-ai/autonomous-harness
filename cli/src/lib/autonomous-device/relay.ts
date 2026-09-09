@@ -8,7 +8,8 @@ export class AutonomousDeviceRelay {
   private readonly clients = new Map<string, { identity: string; tokens: number; at: number; active: number }>()
   constructor(private readonly crypto: Pick<E2eeManager, 'sessionIdentity' | 'sessionRole' | 'unwrapDown' | 'wrapTarget'>,
     private readonly send: (connId: string, frame: Frame) => void,
-    private readonly service: AutonomousDeviceService, private readonly machineId: string, private readonly onReady?: () => void) {}
+    private readonly service: AutonomousDeviceService, private readonly machineId: string, private readonly onReady?: () => void,
+    private readonly onRemoteRevoke?: (identity: string) => void) {}
   count(include: (connId: string) => boolean = () => true): number { return [...this.clients].filter(([id, client]) => include(id) && this.crypto.sessionIdentity(id) === client.identity && this.crypto.sessionRole(id) === 'device').length }
   connected(): boolean { return this.count() > 0 }
   private sendTo(connId: string, identity: string, type: string, payload: Frame): void {
@@ -36,6 +37,18 @@ export class AutonomousDeviceRelay {
     }
     const client = this.clients.get(connId)
     if (!client || client.identity !== identity) { reply({ type: `${req.type}_result`, requestId: req.requestId, error: { code: 'HELLO_REQUIRED', message: 'Send application hello first' } }); return }
+    // A device deleting its local trust must say so while the authenticated channel still exists.
+    // A socket close alone is deliberately only an offline signal: treating it as revocation would
+    // unpair users whenever their LAN briefly drops.
+    if (req.type === 'pair.revoke') {
+      if (typeof req.requestId !== 'string' || Object.keys(req).some(key => key !== 'type' && key !== 'requestId')) {
+        reply({ type: 'pair.revoke_result', requestId: req.requestId, error: { code: 'INVALID_REQUEST', message: 'Invalid device revoke request' } })
+        return
+      }
+      reply({ type: 'pair.revoke_result', requestId: req.requestId, revoked: true })
+      this.onRemoteRevoke?.(identity)
+      return
+    }
     const now = Date.now(); client.tokens = Math.min(20, client.tokens + Math.max(0, now - client.at) / 1000); client.at = now
     const error = client.tokens < 1 ? 'RATE_LIMITED' : client.active >= 4 ? 'BACKPRESSURE' : null
     if (error) { reply({ type: `${req.type}_result`, requestId: req.requestId, error: { code: error, message: error } }); return }
