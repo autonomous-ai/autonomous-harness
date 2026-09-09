@@ -226,6 +226,13 @@ function inspectOpencodePane(capture: string): PaneInspection {
 }
 
 /**
+ * The context readout Pi's footer always carries — `0.0%/500k`, `1.5%/200k`. Present whether or not the
+ * model advertises a thinking ladder, and drawn by the normal view alone, which is what makes it the
+ * honest "the footer is on screen" signal. No `g` flag, so `test` carries no `lastIndex` between calls.
+ */
+const PI_FOOTER_BUDGET = /\d+(?:\.\d+)?%\s*\/\s*\S+/
+
+/**
  * Pi draws no composer marker, so idleness is read from its layout instead: the composer is the band
  * between the last two `───` rules, and the footer (`minimax/minimax-m3 • high`) is only rendered by the
  * normal view. A non-empty band is a draft the user is still typing — injecting there would splice a
@@ -233,10 +240,24 @@ function inspectOpencodePane(capture: string): PaneInspection {
  */
 function inspectPiPane(capture: string): PaneInspection {
   const lines = stripAnsi(capture).split('\n').map((line) => line.replace(/\s+$/, ''))
-  // Reuse the reader rather than restating its regex: the footer has two shapes (`• high` and, once off,
-  // `• thinking off`), and a second copy of the pattern missed the second one — leaving the pane forever
-  // "not idle" and every switch refused as BUSY.
-  const footer = parsePiFooterProfile(lines.join('\n')) !== null
+  const text = lines.join('\n')
+  // Whether the footer is DRAWN, which is not the same question as whether its profile can be READ —
+  // and conflating the two is what has broken this check twice.
+  //
+  // `parsePiFooterProfile` is strict on purpose: it must return a model AND an effort or nothing, so a
+  // half-drawn redraw is never mistaken for a profile change. Idleness needs far less — only that the
+  // normal view is on screen rather than a picker — and borrowing the strict reader for it meant every
+  // footer shape it could not fully parse read as "still busy".
+  //
+  // The shape it could not parse: a model with no thinking ladder draws no `• <level>` at all, so the
+  // line ends at the model name. EVERY grid model is that shape, because the provider block written in
+  // `gridLaunch.ts` declares `reasoning: false` — which left every Pi agent on a grid permanently
+  // AGENT_BUSY, refusing model switches over an idle pane (measured, pi 0.82, footer
+  // `↑5.4k ↓292 1.5%/200k (auto)   Auto`).
+  //
+  // So: the profile still counts when it parses, and the token-budget readout — `0.0%/500k`,
+  // `1.5%/200k`, present in both shapes and drawn by no picker — carries the rest.
+  const footer = parsePiFooterProfile(text) !== null || PI_FOOTER_BUDGET.test(text)
   const rules: number[] = []
   lines.forEach((line, index) => { if (/^\s*─{8,}\s*$/.test(line)) rules.push(index) })
   const dialog = /Thinking Level|Select reasoning depth|Type to search|Enter to select|Only showing models from/i

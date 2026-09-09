@@ -119,6 +119,27 @@ describe('runtime pane parsing', () => {
       '→ medium      Moderate reasoning (~8k tokens)',
       '  Enter to select · Esc to go back',
     ].join('\n'))).toMatchObject({ idle: false, dialog: true })
+
+    // A model with no thinking ladder draws no `• <level>`, so the footer ends at the model name.
+    // EVERY grid model is that shape (`gridLaunch.ts` declares `reasoning: false`), and reading
+    // idleness through the strict profile parser left every Pi agent on a grid permanently
+    // AGENT_BUSY. Captured live from pi 0.82 on grid-3378218621364f16.
+    const piGridIdle = [
+      '───────────────────────────────────────────',
+      '',
+      '───────────────────────────────────────────',
+      '~/KloveY/sandbox (main)',
+      '↑5.4k ↓292 1.5%/200k (auto)                                       Auto',
+    ].join('\n')
+    expect(inspectRuntimePane('pi', piGridIdle))
+      .toMatchObject({ idle: true, draft: false, dialog: false })
+    // The band still decides what a draft is — the looser footer check must not make Pi look idle
+    // while somebody is mid-sentence.
+    expect(inspectRuntimePane('pi', piGridIdle.replace('\n\n', '\n/model something\n')))
+      .toMatchObject({ idle: false, draft: true })
+    // And a picker over that same footer is still a dialog, not idleness.
+    expect(inspectRuntimePane('pi', `Type to search\n${piGridIdle}`))
+      .toMatchObject({ idle: false, dialog: true })
   })
 
   it('ignores picker and Plan mode text left above the latest prompt', () => {
