@@ -2876,7 +2876,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // the screen, and predictable beat clever here (owner's call).
     onRouteTask: async (text) => {
       const host = cableHostRef
-      if (!host) return { agentId: '', machineId: '', name: '', confidence: 0, reason: 'no agent list yet', candidates: [] }
+      if (!host) return { agentId: '', machineId: '', name: '', confidence: 0, reason: 'no agent list yet', candidates: [], weighed: 0, machines: 0, via: '' }
       // Whatever the daemon knows right now. This also kicks a refresh of the remote machines, so a list
       // that is short because a machine has not been asked yet fills in for the NEXT question rather than
       // holding this one open.
@@ -2915,13 +2915,31 @@ async function runForeground(session: AuthSession): Promise<void> {
       // the default; overshooting a deadline they DO have would turn a late answer into no answer.
       const decision = await routeVoiceTask(text, candidates, undefined, ROUTE_CLASSIFY_APP_MS)
       const named = (id: string) => candidates.find((agent) => agent.id === id)
-      const others = candidates.filter((agent) => agent.id !== decision.agentId).slice(0, 2)
+      // The runners-up in the ROUTER's order when it gave one, and the list's own order when it did not.
+      // A picker that has to ask "which agent" is showing a ranking either way; this decides whose.
+      const ranking = (decision.scores ?? []).filter((score) => score.agentId !== decision.agentId)
+      const others = ranking.length
+        ? ranking.map((score) => named(score.agentId)).filter((agent): agent is RouterAgent => !!agent).slice(0, 2)
+        : candidates.filter((agent) => agent.id !== decision.agentId).slice(0, 2)
+      const fitOf = (id: string) => id === decision.agentId
+        ? decision.confidence
+        : ranking.find((score) => score.agentId === id)?.confidence ?? 0
       return {
         agentId: decision.agentId,
         machineId: all.find((entry) => entry.id === decision.agentId)?.machineId ?? '',
         name: named(decision.agentId)?.name ?? '',
         confidence: decision.confidence,
         reason: decision.reason,
+        // How many agents were actually WEIGHED, and across how many computers. The window says this
+        // while it waits, because the question a person has during those seconds is not "how long" —
+        // it is "did it even look at the agent I mean". The cap above can hide agents, and until now
+        // the only place that was said was this process's log.
+        weighed: ranked.length,
+        machines: new Set(ranked.map((agent) => agent.machine).filter(Boolean)).size,
+        // 'model' or 'heuristic', coarsened from the router's own label. The two arrive at the same low
+        // confidence BY DESIGN — an unsure model and a router that could not run must both stop and ask
+        // — and that is exactly why the window has to be able to tell them apart when it explains itself.
+        via: (decision.via ?? '').startsWith('heuristic') ? 'heuristic' : 'model',
         candidates: [decision.agentId ? named(decision.agentId) : null, ...others]
           .filter((agent): agent is RouterAgent => !!agent)
           .map((agent) => {
@@ -2934,7 +2952,11 @@ async function runForeground(session: AuthSession): Promise<void> {
               // the pane on the machine the agent actually lives on.
               machineId: listed?.machineId ?? '',
               machine: agent.machine ?? '',
+              engine: agent.engine ?? '',
               recent: (agent.recentSummary ?? '').slice(0, 120),
+              // Drawn as a bar in the picker, never dispatched on. 0 = the router said nothing about
+              // this one, which the window renders as no bar rather than as a zero-length one.
+              confidence: fitOf(agent.id),
             }
           }),
       }
