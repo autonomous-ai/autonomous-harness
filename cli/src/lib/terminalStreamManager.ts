@@ -344,6 +344,15 @@ export class TerminalStreamManager {
     return state?.connId === connId && !state.closing ? state : null
   }
 
+  /** Existence/ownership check for connId+streamId — used by BackendSocket to validate a p2p-arrived
+   *  terminal_resync (a live-migration promotion signal, not an actual resync request) actually names a
+   *  live stream owned by this connection before trusting it, instead of leaking a routing entry for a
+   *  stale/bogus streamId (e.g. the pane closed in the same instant the migration barrier was in flight). */
+  hasStream(connId: string, streamId: string): boolean {
+    const state = this.streams.get(streamId)
+    return !!state && state.connId === connId && !state.closing
+  }
+
   private alive(connId: string, payload: FramePayload): void {
     const state = this.streamFor(connId, payload)
     if (!state) return

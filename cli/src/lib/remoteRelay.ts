@@ -40,6 +40,19 @@ const LINGER_MS = 30_000
 // redial. `ws.terminate()` on a missed pong forces the existing `close` handler to run cleanup.
 const HEARTBEAT_MS = 20_000
 
+// A p2p attempt that never reaches 'direct', or one that did and then got demoted mid-session, both
+// leave the stream(s) on the ws relay with nothing to bring them back — see scheduleP2pRetry(). One
+// policy for both cases: retry every 60s, capped at 3 retries (4 attempts total) since the last
+// success, reset on the next 'direct'. p2pRetryLifetimeTotal is the belt-and-braces cap across the
+// entry's whole life, so a connection that flaps direct/demoted forever every few minutes cannot
+// retry forever just because each success resets the short-term counter.
+const P2P_RETRY_DELAY_MS = 60_000
+const P2P_RETRY_MAX = 3
+const P2P_RETRY_LIFETIME_CAP = 10
+// How long a stream may sit in p2pMigrating before the sweep (piggybacked on heartbeatTimer) gives up
+// on it and lets the ordinary demote-on-mismatch rule apply again.
+const P2P_MIGRATION_TTL_MS = 30_000
+
 export class RelayConnectError extends Error {
   constructor(message: string, readonly closeCode?: number) {
     super(message)
@@ -66,6 +79,17 @@ interface Entry {
   p2pPolicy: TerminalP2pPolicy | null
   p2pPendingOpens: Set<string>
   p2pStreams: Set<string>
+  /** Every streamId currently open on this entry, regardless of transport — the superset p2pStreams
+   *  is drawn from, and what promoteOpenStreams() walks to find migration candidates. */
+  streams: Set<string>
+  /** streamId -> when its migration to p2p started, so a stuck one can be swept off the heartbeat. */
+  p2pMigrating: Map<string, number>
+  /** Retries since the last 'direct' (or since entry creation, if never direct). Reset to 0 on 'direct'. */
+  p2pRetryCount: number
+  /** Retries across this entry's whole life — never reset. The safeguard against a flapping connection
+   *  retrying forever purely because each success resets p2pRetryCount. */
+  p2pRetryLifetimeTotal: number
+  p2pRetryTimer: ReturnType<typeof setTimeout> | null
 }
 
 export interface RelaySession {
@@ -123,6 +147,7 @@ export class RemoteRelayPool {
     this.entries.delete(machineId)
     if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
     if (entry.lingerTimer) clearTimeout(entry.lingerTimer)
+    if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
     // The caller is invalidating so it can immediately acquire() a fresh entry on the SAME local
     // connection (it just got a forceReconnect select) — null this out first so the generic
     // `ws.on('close', ...)` cleanup below doesn't turn around and close that same local socket via a
@@ -202,6 +227,11 @@ export class RemoteRelayPool {
       p2pPolicy: null,
       p2pPendingOpens: new Set(),
       p2pStreams: new Set(),
+      streams: new Set(),
+      p2pMigrating: new Map(),
+      p2pRetryCount: 0,
+      p2pRetryLifetimeTotal: 0,
+      p2pRetryTimer: null,
     }
     // Two phases before this connection is usable: (1) machine_select ack, (2) this daemon's own
     // e2e_hello/e2e_welcome as the "client" role — see lib/e2ee/relayClient.ts. Only once BOTH are done
@@ -295,7 +325,17 @@ export class RemoteRelayPool {
         if (isBinary) {
           const clear = crypto.decryptTerminal(binaryBytes(raw))
           if (!clear) return // undecryptable/stale — drop, never forward ciphertext or garbage to the app
-          if (entry.p2pStreams.has(clear.streamId)) this.demoteP2p(entry, 'relay_binary_received')
+          if (clear.kind === TerminalBinaryKind.keyframe && entry.p2pMigrating.has(clear.streamId)
+            && !entry.p2pStreams.has(clear.streamId)) {
+            // Phase 1 of a live migration completing: the responder's reply to our WS-side terminal_resync
+            // proves it has drained/snapshotted this stream as of now, so it is safe to trigger phase 2.
+            this.commitMigration(machineId, entry, clear.streamId)
+          } else if (entry.p2pStreams.has(clear.streamId) && !entry.p2pMigrating.has(clear.streamId)) {
+            // Suppressed while p2pMigrating holds this streamId: during phase 2 the responder may still
+            // legitimately emit relay-routed output for it until ITS OWN flip lands, and that must not be
+            // read as p2p having broken.
+            this.demoteP2p(machineId, entry, 'relay_binary_received')
+          }
           const local = encodeTerminalLocal(clear)
           if (local) entry.sink?.sendBinary(local)
           return
@@ -341,6 +381,7 @@ export class RemoteRelayPool {
     // Handshake done — from here on, a close is the entry's real end-of-life, not a handshake failure.
     ws.on('close', (code, reasonBuf) => {
       if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
+      if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
       void entry.p2p?.stop('relay_closed', false)
       entry.p2p = null
       this.entries.delete(machineId)
@@ -351,6 +392,14 @@ export class RemoteRelayPool {
       if (!entry.alive) { ws.terminate(); return }
       entry.alive = false
       try { ws.ping() } catch { ws.terminate() }
+      // Piggybacked sweep for a migration that never completed (pane closed mid-flight, responder never
+      // answered, etc.) — no dedicated timer needed, this tick is frequent enough (20s) against the 30s TTL.
+      if (entry.p2pMigrating.size > 0) {
+        const cutoff = Date.now() - P2P_MIGRATION_TTL_MS
+        for (const [streamId, startedAt] of entry.p2pMigrating) {
+          if (startedAt < cutoff) entry.p2pMigrating.delete(streamId)
+        }
+      }
     }, HEARTBEAT_MS)
     entry.heartbeatTimer.unref?.()
     this.entries.set(machineId, entry)
@@ -368,12 +417,23 @@ export class RemoteRelayPool {
           else this.reportP2pResult(entry, 'relay', undefined, 'open_wait_elapsed')
         }
         const wrapped = entry.crypto.wrapOutgoing(frame)
+        const closingStreamId = frame.type === 'terminal_close' && typeof payload.streamId === 'string'
+          ? payload.streamId
+          : null
         if (useP2p && entry.p2p?.send(JSON.stringify(wrapped))) {
-          if (frame.type === 'terminal_close' && typeof payload.streamId === 'string') entry.p2pStreams.delete(payload.streamId)
+          if (closingStreamId) {
+            entry.p2pStreams.delete(closingStreamId)
+            entry.streams.delete(closingStreamId)
+            entry.p2pMigrating.delete(closingStreamId)
+          }
           return
         }
         try { entry.ws.send(JSON.stringify(wrapped)) } catch { /* closed — onClosed will fire */ }
-        if (useP2p) this.demoteP2p(entry, 'send_failed')
+        if (useP2p) this.demoteP2p(machineId, entry, 'send_failed')
+        if (closingStreamId) {
+          entry.streams.delete(closingStreamId)
+          entry.p2pMigrating.delete(closingStreamId)
+        }
       },
       sendBinary: async (clear) => {
         const sealed = entry.crypto.encryptTerminal(clear)
@@ -381,13 +441,14 @@ export class RemoteRelayPool {
         if (entry.p2pStreams.has(clear.streamId) && entry.p2p?.send(Buffer.from(sealed))) return
         const p2pFailed = entry.p2pStreams.has(clear.streamId)
         try { entry.ws.send(sealed, { binary: true }) } catch { /* closed — onClosed will fire */ }
-        if (p2pFailed) this.demoteP2p(entry, 'send_failed')
+        if (p2pFailed) this.demoteP2p(machineId, entry, 'send_failed')
       },
       detach: () => {
         entry.sink = null
         entry.onClosed = null
         entry.lingerTimer = setTimeout(() => {
           if (!entry.sink) {
+            if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
             void entry.p2p?.stop('idle', false)
             entry.p2p = null
             try { entry.ws.close(1000, 'idle') } catch { /* ignore */ }
@@ -420,18 +481,25 @@ export class RemoteRelayPool {
       onState: (state, setupMs, reason) => {
         if (state === 'direct') {
           wasDirect = true
+          entry.p2pRetryCount = 0 // a fresh success re-arms the full retry budget for the NEXT demote, if any
           // 'relayed' distinguishes a Cloudflare TURN path from a truly direct one. Both are "p2p" as far
           // as the terminal is concerned, but only one of them is billed per GB.
           const relayed = p2p.transport === 'relay'
           console.log(`[p2p] connected · machine=${sid(machineId)} via=${relayed ? 'turn' : 'direct'} setup=${Math.round(setupMs)}ms`)
           this.reportP2pResult(entry, 'direct', setupMs, relayed ? 'relayed' : undefined)
+          this.promoteOpenStreams(machineId, entry)
         } else if (state === 'failed' && !wasDirect) {
           console.log(`[p2p] gave up · machine=${sid(machineId)} reason=${reason ?? 'unknown'} after=${Math.round(setupMs)}ms`
             + ` · ${p2p.negotiationDetail} — terminals stay on the ws relay`)
           this.reportP2pResult(entry, reason === 'negotiation_timeout' ? 'timeout' : 'failed', setupMs, reason)
+          // Without this the entry is stuck: entry.p2p still points at this now-finished instance, and
+          // startP2p()'s own guard (`if (!policy || entry.p2p) return`) would block every future attempt
+          // forever — previously the only way out was a full entry teardown (network drop).
+          entry.p2p = null
+          this.scheduleP2pRetry(machineId, entry)
         }
       },
-      onUnavailable: (reason) => this.demoteP2p(entry, reason),
+      onUnavailable: (reason) => this.demoteP2p(machineId, entry, reason),
     })
     entry.p2p = p2p
     p2p.start()
@@ -443,6 +511,10 @@ export class RemoteRelayPool {
       if (!clear) return
       if (clear.kind !== TerminalBinaryKind.output && clear.kind !== TerminalBinaryKind.keyframe
         && clear.kind !== TerminalBinaryKind.sync) return
+      // Phase 2 of a live migration confirmed: the responder has committed its own flip and this
+      // stream's bytes are now genuinely arriving over p2p — safe to re-arm the ordinary
+      // demote-on-mismatch rule for it (see the guard in the ws binary handler above).
+      entry.p2pMigrating.delete(clear.streamId)
       const local = encodeTerminalLocal(clear)
       if (local) entry.sink?.sendBinary(local)
       return
@@ -479,7 +551,11 @@ export class RemoteRelayPool {
     const payload = framePayload(frame)
     const streamId = typeof payload.streamId === 'string' ? payload.streamId : ''
     const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
+    // Any p2p-delivered frame for a stream still being migrated is itself proof the responder has
+    // committed its flip — re-arm the ordinary demote-on-mismatch rule below for it.
+    if (transport === 'p2p' && streamId) entry.p2pMigrating.delete(streamId)
     if (frame.type === 'terminal_ready' && requestId && streamId) {
+      entry.streams.add(streamId) // the full "open, any transport" registry promoteOpenStreams() walks
       if (entry.p2pPendingOpens.delete(requestId) && transport === 'p2p') entry.p2pStreams.add(streamId)
       // Tell the local app (Desktop) which transport this stream just came up on — derived from
       // entry.p2pStreams' own post-update membership (the routing source of truth just above), not a
@@ -490,28 +566,94 @@ export class RemoteRelayPool {
       entry.p2pPendingOpens.delete(requestId)
     } else if (frame.type === 'terminal_closed' && streamId) {
       entry.p2pStreams.delete(streamId)
+      entry.streams.delete(streamId)
+      entry.p2pMigrating.delete(streamId)
     }
     // A non-terminal_ready frame for a stream still marked p2p but physically delivered over relay: a
     // quieter, single-stream demotion than demoteP2p() (which also tears down the whole p2p connection)
-    // — still worth telling the local app about, since its badge would otherwise go stale.
-    if (transport === 'relay' && streamId && entry.p2pStreams.delete(streamId)) {
+    // — still worth telling the local app about, since its badge would otherwise go stale. Suppressed
+    // while p2pMigrating holds this streamId — see the ws binary handler's matching guard.
+    if (transport === 'relay' && streamId && !entry.p2pMigrating.has(streamId) && entry.p2pStreams.delete(streamId)) {
       entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: 'relay' } })
     }
   }
 
-  private demoteP2p(entry: Entry, reason: string): void {
+  private demoteP2p(machineId: string, entry: Entry, reason: string): void {
     const p2p = entry.p2p
     entry.p2p = null
     const streamIds = [...entry.p2pStreams]
     entry.p2pStreams.clear()
     entry.p2pPendingOpens.clear()
     for (const streamId of streamIds) {
+      entry.p2pMigrating.delete(streamId)
       const resync = entry.crypto.wrapOutgoing({ type: 'terminal_resync', payload: { streamId } })
       try { entry.ws.send(JSON.stringify(resync)) } catch { /* relay close handles cleanup */ }
       entry.sink?.sendFrame({ type: 'terminal_link_mode', payload: { streamId, mode: 'relay' } })
     }
     if (streamIds.length > 0) this.reportP2pResult(entry, 'dropped', undefined, reason)
     void p2p?.stop(reason)
+    this.scheduleP2pRetry(machineId, entry)
+  }
+
+  /**
+   * One retry policy for both ways an entry ends up needing p2p back: never reached 'direct' at all,
+   * or reached it once and then got demoted. Either way `entry.p2p` is null here (the failed/demoted
+   * instance already cleared it) so `startP2p`'s own guard will accept the retry once the timer fires.
+   *
+   * p2pRetryCount is reset to 0 on every 'direct' (see startP2p's onState), so a demote long after a
+   * clean run gets the full budget again — p2pRetryLifetimeTotal, which never resets, is what stops a
+   * connection that flaps direct/demoted forever from retrying forever.
+   */
+  private scheduleP2pRetry(machineId: string, entry: Entry): void {
+    if (entry.p2pRetryTimer) return
+    if (entry.p2pRetryLifetimeTotal >= P2P_RETRY_LIFETIME_CAP) return
+    if (entry.p2pRetryCount >= P2P_RETRY_MAX) return
+    entry.p2pRetryCount++
+    entry.p2pRetryLifetimeTotal++
+    entry.p2pRetryTimer = setTimeout(() => {
+      entry.p2pRetryTimer = null
+      if (this.entries.get(machineId) !== entry) return // entry was torn down/replaced meanwhile
+      entry.p2p = null
+      this.startP2p(machineId, entry)
+    }, P2P_RETRY_DELAY_MS)
+    entry.p2pRetryTimer.unref?.()
+  }
+
+  /**
+   * Migrate every stream already open on this entry (any transport) onto p2p, once it reaches
+   * 'direct' — whether that is the very first success or a later retry succeeding. Two phases, both
+   * reusing the existing terminal_resync frame rather than inventing a new signal:
+   *
+   *   1. Here: send terminal_resync over whichever transport the stream is CURRENTLY on (relay, since
+   *      it is not yet in p2pStreams) — a drain barrier. The responder answers with a fresh keyframe
+   *      over that same relay path once it has processed everything before this point.
+   *   2. commitMigration(): once that keyframe arrives back over relay, THAT is the proof the drain
+   *      landed, and only then do we flip this side to p2p and send a second terminal_resync — this
+   *      time over p2p — which is what makes the responder flip its own routing table too.
+   *
+   * Never both transports live for the same direction at once: input keeps going over relay until
+   * commitMigration flips p2pStreams, and output only starts riding p2p once the responder's own flip
+   * (triggered by that second resync) lands.
+   */
+  private promoteOpenStreams(machineId: string, entry: Entry): void {
+    for (const streamId of entry.streams) {
+      if (entry.p2pStreams.has(streamId) || entry.p2pMigrating.has(streamId)) continue
+      entry.p2pMigrating.set(streamId, Date.now())
+      void this.sessionFor(machineId, entry).send({ type: 'terminal_resync', payload: { streamId } })
+    }
+  }
+
+  /** Phase 2 of promoteOpenStreams() — see its doc comment. Sends directly on entry.p2p rather than
+   *  through sessionFor().send(): a failure here should only abandon THIS stream's migration, not tear
+   *  down the whole p2p connection the way sessionFor's own failure handling would. */
+  private commitMigration(machineId: string, entry: Entry, streamId: string): void {
+    if (!entry.p2p?.isReady) { entry.p2pMigrating.delete(streamId); return }
+    const wrapped = entry.crypto.wrapOutgoing({ type: 'terminal_resync', payload: { streamId } })
+    if (!entry.p2p.send(JSON.stringify(wrapped))) { entry.p2pMigrating.delete(streamId); return }
+    entry.p2pStreams.add(streamId)
+    // p2pMigrating is deliberately NOT cleared yet — that happens only once a p2p-delivered frame for
+    // this stream actually arrives (handleP2pData / noteTerminalResponse), which is the real proof the
+    // responder committed its own flip. Until then the demote-on-mismatch rule stays suppressed for it.
   }
 
   private reportP2pResult(entry: Entry, outcome: string, setupMs?: number, reason?: string): void {

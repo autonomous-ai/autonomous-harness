@@ -820,6 +820,18 @@ export class BackendSocket {
       return
     }
     const streamId = typeof payload.streamId === 'string' ? payload.streamId : ''
+    // Live-migration promotion: the client's remoteRelay.ts sends a SECOND terminal_resync over p2p
+    // (after the first one, over relay, already drained/snapshotted the stream) once its own p2p
+    // channel is ready — arriving here is our signal to start routing this stream's OUTPUT over p2p
+    // too, mirroring what the client just did on its side. hasStream() guards against promoting a
+    // streamId whose pane was closed in the same instant the migration was in flight.
+    if (type === 'terminal_resync' && transport === 'p2p' && streamId
+      && this.terminalStreams?.hasStream(connId, streamId)) {
+      let streams = this.p2pStreams.get(connId)
+      if (!streams) { streams = new Set(); this.p2pStreams.set(connId, streams) }
+      streams.add(streamId)
+      return
+    }
     if (transport === 'relay' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
   }
 
