@@ -32,6 +32,17 @@ export interface RouteDecision {
   confidence: number
   reason: string
   needNewAgent: boolean
+  /** How this was decided, as logDecision labels it: an engine name, 'openrouter', or something
+   *  starting with 'heuristic'. Carried on the decision — not just printed — because a caller that SHOWS
+   *  the answer has to say which it is. A model that was unsure and a router that could not run land on
+   *  the same low confidence by design, and without this they are indistinguishable on screen. */
+  via?: string
+  /** The runners-up and how well each fits, most confident first, never including the winner.
+   *
+   *  Only ever DISPLAYED. Nothing dispatches on these: the winner is [agentId] and the number that
+   *  gates auto-dispatch is [confidence]. They exist so a window that has to ask "which agent" can show
+   *  whether it is a near-tie or a clear leader instead of three names in a row. */
+  scores?: Array<{ agentId: string; confidence: number }>
 }
 
 const ROUTE_SCRATCH = join(env.ADAPTER_DATA_DIR, 'voice-route-scratch')
@@ -129,20 +140,34 @@ function routeTokens(s: string): string[] {
 // returns a concrete in-machine agent with a low, capped confidence — the voice still dispatches, never errors.
 export function pickAgentHeuristic(transcript: string, agents: RouterAgent[]): RouteDecision {
   const words = new Set(routeTokens(transcript))
-  let best = agents[0]
-  let bestScore = -1
-  for (const a of agents) {
-    const nameHits = routeTokens(a.name).filter((t) => words.has(t)).length
-    const recentHits = routeTokens(a.recentSummary ?? '').filter((t) => words.has(t)).length
-    const score = nameHits * 3 + recentHits
-    if (score > bestScore) { bestScore = score; best = a }
-  }
-  const matched = bestScore > 0
+  const ranked = agents
+    .map((agent) => {
+      const nameHits = routeTokens(agent.name).filter((t) => words.has(t)).length
+      const recentHits = routeTokens(agent.recentSummary ?? '').filter((t) => words.has(t)).length
+      return { agent, score: nameHits * 3 + recentHits }
+    })
+    // STABLE on a tie, and that matters more than it looks: with no match at all every score is 0, and
+    // the winner has to stay "the first agent" — the same answer this function has always given — rather
+    // than whatever a sort happened to bubble up.
+    .sort((a, b) => b.score - a.score)
+  const best = ranked[0]
+  const matched = (best?.score ?? 0) > 0
+  const winner = matched ? 0.4 : 0.2
   return {
-    agentId: best?.id ?? agents[0]?.id ?? '',
-    confidence: matched ? 0.4 : 0.2,
+    agentId: best?.agent.id ?? agents[0]?.id ?? '',
+    // UNCHANGED, and deliberately so: the dial and the backend gate auto-dispatch on this number, and
+    // the cap at 0.4 is what keeps a router that could not run from ever dispatching on its own.
+    confidence: winner,
     reason: matched ? 'heuristic name/recent match' : 'closest agent (router unavailable)',
     needNewAgent: false,
+    // Scaled UNDER the winner rather than invented: a name matcher can say "this one beat the others",
+    // and that is all these say. They are for a picker to draw a bar with, never for a threshold.
+    scores: ranked.slice(1, 4).map((entry) => ({
+      agentId: entry.agent.id,
+      confidence: best && best.score > 0
+        ? Math.max(0.05, Math.min(winner - 0.05, (entry.score / best.score) * winner))
+        : 0.1,
+    })),
   }
 }
 
@@ -155,6 +180,7 @@ function taskPreview(text: string): string {
 /** Name the winner. Without this the log said an engine ran and never which agent it picked, so a wrong
  *  route looked identical to a right one. `via` separates a real classification from a fallback. */
 function logDecision(via: string, agents: RouterAgent[], decision: RouteDecision): RouteDecision {
+  decision = { ...decision, via }
   const chosen = agents.find((agent) => agent.id === decision.agentId)
   console.log(
     `[voice-route] → picked "${chosen?.name ?? '(unknown)'}" id=${decision.agentId || '(none)'}` +
@@ -181,8 +207,12 @@ export function buildRouterPrompt(transcript: string, agents: RouterAgent[]): st
     `- 0.85+ when the name and/or recent activity clearly match\n` +
     `- ~0.6 when it's a reasonable but not certain match\n` +
     `- ~0.3 when nothing fits well but this is the closest agent.\n\n` +
+    `Also rank the next best fits in "alternates" (up to 2, most fitting first, never repeating your ` +
+    `pick). They are shown to the user when your confidence is low, so they can choose; they are never ` +
+    `dispatched to on their own. Omit the field when there is no other agent.\n\n` +
     `Respond with ONLY a single JSON object, no prose, no markdown fence:\n` +
-    `{"agentId":"<one id from the list>","confidence":<0..1>,"reason":"<max 12 words>"}`
+    `{"agentId":"<one id from the list>","confidence":<0..1>,"reason":"<max 12 words>",` +
+    `"alternates":[{"agentId":"<id>","confidence":<0..1>}]}`
   )
 }
 
@@ -210,10 +240,28 @@ export function parseRouteOutput(raw: string, agents: RouterAgent[]): RouteDecis
   if (!Number.isFinite(confidence)) confidence = 0
   confidence = Math.max(0, Math.min(1, confidence))
   const reason = typeof obj.reason === 'string' ? obj.reason.slice(0, 120) : ''
+  // Alternates are optional and unvalidated on the way in: an id that is not on the list, a repeat of the
+  // winner, or a confidence that is not a number is DROPPED rather than corrected. A picker drawing a bar
+  // for an agent the machine does not have is worse than a picker drawing no bar.
+  const seen = new Set<string>()
+  const scores: Array<{ agentId: string; confidence: number }> = []
+  if (Array.isArray(obj.alternates)) {
+    for (const raw of obj.alternates) {
+      if (!raw || typeof raw !== 'object') continue
+      const entry = raw as Record<string, unknown>
+      const id = typeof entry.agentId === 'string' ? entry.agentId : ''
+      if (!id || !ids.has(id) || id === agentId || seen.has(id)) continue
+      const value = typeof entry.confidence === 'number' ? entry.confidence : Number(entry.confidence)
+      if (!Number.isFinite(value)) continue
+      seen.add(id)
+      scores.push({ agentId: id, confidence: Math.max(0, Math.min(1, value)) })
+      if (scores.length === 3) break
+    }
+  }
   // An empty or unknown id ⇒ fall back to the closest (first) agent with capped confidence; a valid
   // in-machine pick wins as-is. Either way we return a real agent and needNewAgent:false.
-  if (!agentId || !ids.has(agentId)) return { agentId: fallbackId, confidence: Math.min(confidence, 0.3), reason: reason || 'closest agent', needNewAgent: false }
-  return { agentId, confidence, reason, needNewAgent: false }
+  if (!agentId || !ids.has(agentId)) return { agentId: fallbackId, confidence: Math.min(confidence, 0.3), reason: reason || 'closest agent', needNewAgent: false, scores }
+  return { agentId, confidence, reason, needNewAgent: false, scores }
 }
 
 // Route a transcript to an agent. Skips the LLM for the trivial cases (0 / 1 agent).

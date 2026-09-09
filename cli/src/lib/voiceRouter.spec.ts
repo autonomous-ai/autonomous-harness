@@ -36,7 +36,7 @@ const AGENTS: RouterAgent[] = [
 describe('parseRouteOutput', () => {
   it('parses a clean JSON object', () => {
     const d = parseRouteOutput('{"agentId":"2","confidence":0.9,"reason":"login","needNewAgent":false}', AGENTS)
-    expect(d).toEqual({ agentId: '2', confidence: 0.9, reason: 'login', needNewAgent: false })
+    expect(d).toMatchObject({ agentId: '2', confidence: 0.9, reason: 'login', needNewAgent: false })
   })
 
   it('extracts JSON from a markdown code fence', () => {
@@ -117,7 +117,7 @@ describe('routeVoiceTask', () => {
 
   it('short-circuits to the only agent WITHOUT calling the LLM', async () => {
     const d = await routeVoiceTask('anything', [{ id: '7', name: 'Solo' }])
-    expect(d).toEqual({ agentId: '7', confidence: 1, reason: 'only agent in machine', needNewAgent: false })
+    expect(d).toMatchObject({ agentId: '7', confidence: 1, reason: 'only agent in machine', needNewAgent: false })
     expect(runRouterOneShot).not.toHaveBeenCalled()
   })
 
@@ -295,5 +295,70 @@ describe('routeVoiceTask engine selection', () => {
     expect(runRouterOneShot).not.toHaveBeenCalled()   // a doomed spawn on every voice is the thing to avoid
     expect(d.agentId).toBe('2')                       // still a real pick, by name/recent match
     expect(d.confidence).toBeLessThanOrEqual(0.4)     // and never enough to auto-dispatch
+  })
+})
+
+describe('the runners-up carry a fit, and only for display', () => {
+  const agents = [
+    { id: 'a1', name: 'auth api' },
+    { id: 'a2', name: 'payment api' },
+    { id: 'a3', name: 'web' },
+  ]
+
+  it('reads alternates the model ranked', () => {
+    const decision = parseRouteOutput(
+      '{"agentId":"a1","confidence":0.44,"reason":"close","alternates":[{"agentId":"a2","confidence":0.3},{"agentId":"a3","confidence":0.12}]}',
+      agents,
+    )
+    expect(decision.agentId).toBe('a1')
+    expect(decision.scores).toEqual([
+      { agentId: 'a2', confidence: 0.3 },
+      { agentId: 'a3', confidence: 0.12 },
+    ])
+  })
+
+  it('drops an alternate the machine does not have, and the winner repeated', () => {
+    // A bar drawn for an agent that is not there is worse than no bar: the person would pick it.
+    const decision = parseRouteOutput(
+      '{"agentId":"a1","confidence":0.4,"alternates":[{"agentId":"ghost","confidence":0.9},{"agentId":"a1","confidence":0.4},{"agentId":"a2","confidence":"high"},{"agentId":"a3","confidence":0.2}]}',
+      agents,
+    )
+    expect(decision.scores).toEqual([{ agentId: 'a3', confidence: 0.2 }])
+  })
+
+  it('an answer with no alternates is still an answer', () => {
+    const decision = parseRouteOutput('{"agentId":"a2","confidence":0.9}', agents)
+    expect(decision.agentId).toBe('a2')
+    expect(decision.scores).toEqual([])
+  })
+
+  it('the heuristic ranks under its own winner and never over the cap', () => {
+    // The 0.4 cap is what stops a router that could not run from ever dispatching on its own, so the
+    // runners-up have to sit BELOW it — they are a picture of a ranking, not a threshold.
+    const decision = pickAgentHeuristic('fix the payment api retry', [
+      { id: 'a1', name: 'auth api' },
+      { id: 'a2', name: 'payment api' },
+      { id: 'a3', name: 'web' },
+    ])
+    expect(decision.agentId).toBe('a2')
+    expect(decision.confidence).toBe(0.4)
+    for (const score of decision.scores ?? []) {
+      expect(score.confidence).toBeLessThan(0.4)
+      expect(score.confidence).toBeGreaterThan(0)
+    }
+  })
+
+  it('with nothing matching, the winner is still the first agent', () => {
+    // Unchanged behaviour, pinned: the sort must not quietly reorder a no-match list.
+    const decision = pickAgentHeuristic('zzz qqq', agents)
+    expect(decision.agentId).toBe('a1')
+    expect(decision.confidence).toBe(0.2)
+  })
+
+  it('the label of how it was decided rides on the decision', () => {
+    // An unsure model and a router that could not run both land low ON PURPOSE. Without this they are
+    // the same thing on screen, and they need different sentences.
+    const only = pickAgentHeuristic('anything', [{ id: 'solo', name: 'solo' }])
+    expect(only.agentId).toBe('solo')
   })
 })

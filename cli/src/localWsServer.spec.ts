@@ -182,7 +182,8 @@ describe('local CLI WebSocket', () => {
         asked.push(text)
         return {
           agentId: 'a1', machineId: 'm-local', name: 'auth-api', confidence: 0.86, reason: 'name matches',
-          candidates: [{ agentId: 'a1', machineId: 'm-local', name: 'auth-api', machine: 'this computer', recent: 'token rotation' }],
+          weighed: 4, machines: 2, via: 'model',
+          candidates: [{ agentId: 'a1', machineId: 'm-local', name: 'auth-api', machine: 'this computer', engine: 'claude', recent: 'token rotation', confidence: 0.86 }],
         }
       },
     })

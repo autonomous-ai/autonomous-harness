@@ -70,6 +70,13 @@ export interface RouteCandidate {
   machine: string
   /** What it was last doing — the line under the name when the window has to ask. */
   recent: string
+  /** Which CLI it runs on — 'claude', 'codex', … The window draws the same engine mark its rail does, so
+   *  a row in the picker and the same agent in the rail are recognisably one thing. */
+  engine: string
+  /** How well the router thought this one fits, 0..1. DISPLAY ONLY — the pick is [RouteAnswer.agentId]
+   *  and the number that gates it is [RouteAnswer.confidence]. 0 means the router said nothing about
+   *  this candidate, which the window draws as no bar rather than as an empty one. */
+  confidence: number
 }
 
 export interface RouteAnswer {
@@ -80,6 +87,15 @@ export interface RouteAnswer {
   reason: string
   /** The best few, most confident first. Only read when the window decides to ask. */
   candidates: RouteCandidate[]
+  /** How many agents were weighed, and across how many computers — what the window shows while it waits.
+   *  The candidate list is capped, so this is the only place that says whether the right agent was even
+   *  in the running. */
+  weighed: number
+  machines: number
+  /** 'model' when a classifier answered, 'heuristic' when name matching stood in for it. Both land on a
+   *  low confidence by design; this is what lets the window say WHICH happened instead of showing the
+   *  same sentence for a router that was unsure and one that never ran. */
+  via: string
 }
 
 export interface LocalWsServer {
@@ -276,12 +292,12 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
             // An answer ALWAYS goes back, even for a question we cannot serve: the window is holding a
             // spinner open on this id, and silence is the one reply it cannot recover from.
-            let answer: RouteAnswer = { agentId: '', machineId: '', name: '', confidence: 0, reason: 'empty task', candidates: [] }
+            let answer: RouteAnswer = { agentId: '', machineId: '', name: '', confidence: 0, reason: 'empty task', candidates: [], weighed: 0, machines: 0, via: '' }
             if (text) {
               try {
                 answer = await options.onRouteTask(text)
               } catch (err) {
-                answer = { agentId: '', machineId: '', name: '', confidence: 0, reason: (err as Error).message.slice(0, 120), candidates: [] }
+                answer = { agentId: '', machineId: '', name: '', confidence: 0, reason: (err as Error).message.slice(0, 120), candidates: [], weighed: 0, machines: 0, via: '' }
               }
             }
             sink.sendFrame({ type: 'route_result', payload: { requestId, ...answer } })
