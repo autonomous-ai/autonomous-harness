@@ -21,6 +21,7 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
   const rows = listOf(over.rows ?? [{}])
   let frameCb: ((f: DeviceFrame) => void) | null = null
   const sent: DeviceFrame[] = []
+  const resets: string[] = []
   const link = {
     selectedMachine: 'm1',
     onFrame: (cb: (f: DeviceFrame) => void) => { frameCb = cb; return () => {} },
@@ -30,6 +31,7 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
     release: vi.fn(),
     send: (f: DeviceFrame) => { sent.push(f) },
     rpc: over.rpc ?? (async () => ({})),
+    resetSession: vi.fn((machineId: string) => { resets.push(machineId); return true }),
   }
   const fleet = new DeviceFleet({
     list: {
@@ -40,10 +42,54 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
     hasPeerLink: (id: string) => (over.linked ?? ['m1']).includes(id),
     log: () => {},
   })
-  return { fleet, link, sent, say: (f: DeviceFrame) => frameCb?.(f) }
+  return { fleet, link, sent, resets, say: (f: DeviceFrame) => frameCb?.(f) }
 }
 
 describe('DeviceFleet', () => {
+  it('throws away the E2EE session after two missed round trips, and keeps the last verdict', async () => {
+    // THE FAILURE THIS EXISTS FOR IS SILENT AND PERMANENT. A session outlives the machine that agreed to
+    // it: establish() returns instantly for anything in the map, so once the far end stops answering,
+    // every later call is encrypted, sent, and waits out its timeout — forever. Measured on the desk as
+    // eight minutes of `agents_list timed out` twenty seconds apart, healed only by a daemon restart that
+    // happened for an unrelated reason.
+    let calls = 0
+    const { fleet, resets } = make({
+      rpc: async () => { calls++; throw new Error('timed out') },
+    })
+
+    await expect(fleet.listAgents('m1')).rejects.toThrow('timed out')
+    // One miss is a dropped request, not a dead machine. Nothing is torn down for it.
+    expect(resets).toEqual([])
+    expect(fleet.reachable('m1')).toMatchObject({ ok: false })
+
+    await expect(fleet.listAgents('m1')).rejects.toThrow('timed out')
+    expect(resets).toEqual(['m1'])
+    expect(calls).toBe(2)
+  })
+
+  it('a round trip that comes back clears the count, so misses have to be consecutive', async () => {
+    let fail = true
+    const { fleet, resets } = make({
+      rpc: async () => { if (fail) throw new Error('timed out'); return {} },
+    })
+    await expect(fleet.listAgents('m1')).rejects.toThrow()
+    fail = false
+    await fleet.listAgents('m1')
+    expect(fleet.reachable('m1')).toMatchObject({ ok: true })
+    fail = true
+    await expect(fleet.listAgents('m1')).rejects.toThrow()
+    // Two failures, but a success between them: a flaky link is not a gone machine.
+    expect(resets).toEqual([])
+  })
+
+  it('says nothing about a machine nobody has asked', async () => {
+    // Callers refuse to deliver on a NEGATIVE verdict. Answering "unreachable" for a machine that has
+    // simply never been called would turn every cold start into a refusal.
+    const { fleet } = make()
+    expect(fleet.reachable('m1')).toBeNull()
+  })
+
+
   it('hides this computer from the fleet list — the host adds it back with real facts', async () => {
     const { fleet } = make({ rows: [{ machineId: 'mine', local: true }, { machineId: 'other' }], linked: ['other'] })
     const { machines } = await fleet.list()

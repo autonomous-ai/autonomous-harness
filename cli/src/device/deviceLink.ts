@@ -189,6 +189,25 @@ export class DeviceLink {
     if (this.ws?.readyState === WebSocket.OPEN) this.send({ type: 'machine_deselect' })
   }
 
+  /**
+   * Throw away a machine's E2EE session so the next call handshakes a new one.
+   *
+   * A SESSION OUTLIVES THE MACHINE THAT AGREED TO IT. `establish()` returns instantly for any session in
+   * this map, and nothing in the map notices that the far end stopped answering — so once a machine goes
+   * away mid-session, every request to it is encrypted, sent, and waits out its timeout, forever. Measured
+   * on the desk: eight minutes of `agents_list timed out` every twenty seconds, with no attempt to rebuild
+   * anything, until an unrelated daemon restart cleared the map and the very first call afterwards worked.
+   *
+   * Deliberately NOT `failCrypto`: that rejects an in-flight handshake, and a handshake in flight is the
+   * repair already happening. Returns whether there was anything to drop, so the caller can say so.
+   */
+  resetSession(machineId: string): boolean {
+    if (!machineId || this.handshakes.has(machineId)) return false
+    if (!this.sessions.has(machineId)) return false
+    this.sessions.delete(machineId)
+    return true
+  }
+
   release(): void {
     this.wanted = ''
     this.held = false

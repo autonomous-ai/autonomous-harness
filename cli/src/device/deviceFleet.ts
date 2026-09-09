@@ -14,6 +14,9 @@ import type { DeviceFrame, DeviceLink } from './deviceLink.js'
  *  not pay a full dial each way. Mirrors RemoteRelayPool's own linger for the same reason. */
 const LINGER_MS = 60_000
 
+/** Consecutive failed round trips before a machine's E2EE session is thrown away — see `rpc()`. */
+const RESET_AFTER_FAILURES = 2
+
 /** Split `runtime-v1:<sid>:<engine>:<model>@<effort>` into the two words the dial's chips show. */
 function chipsFromProfile(profile: unknown): { model?: string; effort?: string } {
   if (typeof profile !== 'string' || !profile.startsWith('runtime-v1:')) return {}
@@ -46,6 +49,21 @@ export class DeviceFleet implements MachineFleet {
   private lingerTimer: NodeJS.Timeout | null = null
   private readonly recapCache = new Map<string, RecentTurn[]>()
   private readonly listeners = new Set<(e: FleetEvent) => void>()
+  /**
+   * How the last round trip to each machine went.
+   *
+   * THE ONLY HONEST PROOF WE HAVE. A machine can look fine from every other angle and still swallow
+   * everything sent to it: the backend's list still calls it online, and the E2EE session still reports
+   * `ready` because it was established while the machine was alive — `establish()` returns instantly for
+   * a session that handshook an hour ago and has been deaf since. What actually knows is a request that
+   * came back, or did not.
+   *
+   * It costs no traffic of its own: the refresh loop already asks these machines for their agents every
+   * few minutes, so the answer is a by-product of work that was happening anyway.
+   */
+  private readonly health = new Map<string, { ok: boolean; at: number }>()
+  /** Consecutive failed round trips per machine — the counter behind RESET_AFTER_FAILURES. */
+  private readonly misses = new Map<string, number>()
 
   constructor(private readonly opts: DeviceFleetOpts) {
     this.opts.link.onFrame((frame) => this.onFrame(frame))
@@ -136,9 +154,54 @@ export class DeviceFleet implements MachineFleet {
   // Dropping the tag would not fail loudly — it would quietly ask the wrong computer.
 
   async listAgents(machineId: string): Promise<CableAgent[]> {
-    const res = await this.opts.link.rpc('agents_list', {}, machineId)
+    const res = await this.rpc(machineId, 'agents_list', {})
     const raw = Array.isArray(res.agents) ? res.agents : []
     return raw.map(toCableAgent).filter((a) => a.id)
+  }
+
+  /**
+   * One round trip, and one record of how it went.
+   *
+   * Every RPC goes through here so `reachable()` reads a fact rather than a guess. It rethrows
+   * untouched — this is a witness, not a handler.
+   */
+  private async rpc(machineId: string, type: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const res = await this.opts.link.rpc(type, payload, machineId)
+      this.health.set(machineId, { ok: true, at: Date.now() })
+      this.misses.delete(machineId)
+      return res
+    } catch (err) {
+      this.health.set(machineId, { ok: false, at: Date.now() })
+      const missed = (this.misses.get(machineId) ?? 0) + 1
+      this.misses.set(machineId, missed)
+      // TWO IN A ROW AND THE SESSION GOES. A live machine drops the odd request; a machine that has gone
+      // away answers nothing, and the E2EE session it agreed to keeps every later call believing there is
+      // somebody at the other end — establish() returns instantly for a session in the map, so nothing
+      // ever rebuilds it. Measured: eight minutes of timeouts, twenty seconds apart, healed only by a
+      // daemon restart that happened for another reason.
+      //
+      // The counter is the pacing: two more failures cost two more timeouts, so a machine that is simply
+      // gone is retried on the order of half a minute rather than in a loop.
+      if (missed >= RESET_AFTER_FAILURES) {
+        this.misses.set(machineId, 0)
+        if (this.opts.link.resetSession(machineId)) {
+          this.opts.log(`device: ${machineId.slice(0, 8)} missed ${missed} in a row — dropped its E2EE session, next call rebuilds it`)
+        }
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Whether the last thing we asked this machine came back.
+   *
+   * `null` for a machine nobody has asked yet — which is NOT the same as unreachable, and callers must
+   * not treat it as one: refusing to deliver to a machine we have simply never spoken to would turn a
+   * cold start into a failure.
+   */
+  reachable(machineId: string): { ok: boolean; at: number } | null {
+    return this.health.get(machineId) ?? null
   }
 
   sendTurn(machineId: string, agentId: string, text: string): void {
@@ -159,14 +222,14 @@ export class DeviceFleet implements MachineFleet {
     if (!model) return
     // The far end owns what the profile means; this only reassembles the opaque string it round-trips.
     const selectedModel = `runtime-v1:${agentId}:claude:${model}@${effort || 'auto'}`
-    void this.opts.link.rpc('agent_update', { agentId, selectedModel }, machineId)
+    void this.rpc(machineId, 'agent_update', { agentId, selectedModel })
       .catch((err) => this.opts.log(`device: agent_update failed (${(err as Error).message})`))
   }
 
   async listModels(machineId: string, agentId: string): Promise<string[]> {
 
     // `compact` is what keeps the catalog inside the dial's picker; the backend trims to ≤24 entries.
-    const res = await this.opts.link.rpc('models_list', { agentId, compact: true }, machineId)
+    const res = await this.rpc(machineId, 'models_list', { agentId, compact: true })
 
     const raw = Array.isArray(res.models) ? res.models : []
     return raw.map((m) => (typeof m === 'string' ? m : String((m as Record<string, unknown>)?.id ?? ''))).filter(Boolean)
@@ -177,7 +240,7 @@ export class DeviceFleet implements MachineFleet {
     const cached = this.recapCache.get(key)
     if (cached) return cached
     try {
-      const res = await this.opts.link.rpc('agent_recent', { agentId, n: 3 }, machineId)
+      const res = await this.rpc(machineId, 'agent_recent', { agentId, n: 3 })
 
       const events = Array.isArray(res.events) ? res.events : []
       const turns = events.map((e) => {
