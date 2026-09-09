@@ -143,7 +143,8 @@ function promptMarker(engine: RegisteredSession['engine']): RegExp {
 
 export function inspectRuntimePane(engine: RegisteredSession['engine'], capture: string): PaneInspection {
   if (engine === 'pi') return inspectPiPane(capture)
-  if (engine === 'opencode') return inspectOpencodePane(capture)
+  if (engine === 'opencode') return inspectGutterBoxPane(capture, true)
+  if (engine === 'copilot') return inspectGutterBoxPane(capture, false)
   const rawLines = capture.split('\n')
   const marks = promptMarker(engine)
   const promptIndex = rawLines.findLastIndex((line) => {
@@ -176,29 +177,38 @@ export function inspectRuntimePane(engine: RegisteredSession['engine'], capture:
  */
 const DIALOG_UI = /Select Model(?: and Effort)?|Select Reasoning Level|Advanced Reasoning|Available models|Models matching|Edit Parameters|Type to filter.*Tab to edit|Esc to go back|Press enter to confirm|Do you want to proceed|Allow this action|permission required|Starting MCP servers?/i
 
-/** The rule OpenCode closes its composer box with: `╹▀▀▀▀…`. */
-const OPENCODE_BOX_RULE = /[─▀▁▔]{8,}/u
+/** The rule a gutter-box composer is closed with: `╹▀▀▀▀…`. */
+const GUTTER_BOX_RULE = /[─▀▁▔]{8,}/u
 
 /**
- * OpenCode's composer is a BOX, and its `┃` gutter does not stop at the text.
+ * A composer drawn as a BOX with a `┃` gutter — OpenCode's and Copilot's, which are the same shape.
  *
- * The last gutter line is the box's own STATUS strip — `Build · <model> · <account>`, sitting
- * directly on the rule that closes the box. The generic reader takes the last line carrying the
- * marker, which is that strip, and reads what the BOX says about itself as something the user typed.
- * So every opencode pane was permanently "holding a draft": never idle, and every retarget and model
- * switch refused as AGENT_BUSY over an empty composer. Same symptom hermes had, opposite cause —
- * there the placeholder was not recognised, here the wrong line was read.
+ * The generic reader cannot read either one. OpenCode's `┃` does not stop at the text: the last
+ * gutter line is the box's own STATUS strip — `Build · <model> · <account>`, sitting directly on
+ * the rule that closes the box — so taking the last line carrying the marker reads what the BOX says
+ * about itself as something the user typed. Copilot fails one step earlier: its composer carries no
+ * `›`/`❯` at all, while every message the user has ALREADY SENT is echoed into the transcript as
+ * `❯ <text>` in full brightness, so the generic reader walks back to the last of those and reads a
+ * sent message as a draft. Either way the pane was permanently "holding a draft": never idle, and
+ * every retarget and model switch refused as AGENT_BUSY over an empty composer. Third variant of the
+ * failure hermes had — there the placeholder was not recognised, here the wrong line is read.
  *
- * The composer is therefore the gutter MINUS that strip, and the strip is identified by WHERE it is
- * — the gutter line the closing rule sits under — rather than by what it says, which is three
- * variable fields that change with the model, the mode and the account. When no rule follows, no
- * strip is assumed and every gutter line counts as composer: a layout we do not recognise must not
- * silently swallow a line the user typed in.
+ * [hasStatusStrip] is the one thing that differs between the two, and it is OpenCode's alone. The
+ * strip is identified by WHERE it is — the gutter line the closing rule sits under — rather than by
+ * what it says, which is three variable fields that change with the model, the mode and the account.
+ * When no rule follows, no strip is assumed and every gutter line counts as composer: a layout we do
+ * not recognise must not silently swallow a line the user typed in. Copilot's box has no strip, so
+ * its single gutter line IS the composer and dropping it would read a real draft as an empty prompt
+ * — the one direction this must never be wrong in.
  *
  * Every gutter line is checked, not just the last: a long message wraps down the box, and reading
  * one line of it would call a full composer empty.
+ *
+ * A dialog needs no special case in either engine: both REPLACE the composer with the picker or the
+ * permission prompt, so no gutter is on screen at all and the pane reads not-idle from the empty run
+ * below rather than from [DIALOG_UI].
  */
-function inspectOpencodePane(capture: string): PaneInspection {
+function inspectGutterBoxPane(capture: string, hasStatusStrip: boolean): PaneInspection {
   const rawLines = capture.split('\n')
   const marks = /┃/u
   // The LAST contiguous run of gutter lines. Earlier runs are previous composers still in scrollback
@@ -210,8 +220,8 @@ function inspectOpencodePane(capture: string): PaneInspection {
   }
   if (gutter.length === 0) return { idle: false, plan: false, dialog: false, draft: false }
   const last = gutter[gutter.length - 1]
-  const closed = last + 1 < rawLines.length && OPENCODE_BOX_RULE.test(stripAnsi(rawLines[last + 1]))
-  const composer = closed ? gutter.slice(0, -1) : gutter
+  const closed = last + 1 < rawLines.length && GUTTER_BOX_RULE.test(stripAnsi(rawLines[last + 1]))
+  const composer = hasStatusStrip && closed ? gutter.slice(0, -1) : gutter
   const currentUi = stripAnsi(rawLines.slice(gutter[0]).join('\n')).replace(/\u00a0/g, ' ')
   const dialog = DIALOG_UI.test(currentUi)
   const draft = composer.some((index) => {

@@ -78,6 +78,38 @@ describe('runtime pane parsing', () => {
     )).toMatchObject({ idle: true, draft: false })
   })
 
+  it('reads copilot, whose composer carries no marker while its sent messages do', () => {
+    // Copied off a live pane. Copilot echoes every message the user has ALREADY SENT into the
+    // transcript as `❯ <text>` in full brightness, and draws its composer as a `┃` box that carries
+    // no marker at all — so the generic reader walked back to the last echo and read `hi`, a message
+    // sent minutes ago, as a draft. Copilot was never idle for the life of the agent, and every
+    // model switch came back AGENT_BUSY over an empty prompt.
+    const pane = (composer: string) => [
+      ' ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '  \u001b[38;2;240;246;252m❯ hi\u001b[39m',
+      ' ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ● Hi! What would you like to work on?',
+      ' \u001b[38;2;145;152;161m~/Downloads/20260907\u001b[39m',
+      '\u001b[38;2;129;139;152m╻\u001b[38;2;20;27;34m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      `\u001b[38;2;129;139;152m┃\u001b[39m\u001b[48;2;20;27;34m${composer}`,
+      '\u001b[38;2;129;139;152m\u001b[49m╹\u001b[38;2;20;27;34m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      '\u001b[39m ← open sidebar · / commands · ? help · tab next tab',
+    ].join('\n')
+
+    expect(inspectRuntimePane('copilot', pane(''))).toMatchObject({ idle: true, draft: false })
+    // Copilot's box has no status strip, so its single gutter line IS the composer. Dropping it the
+    // way opencode's last row is dropped would read a real draft as an empty prompt and respawn the
+    // pane out from under it.
+    expect(inspectRuntimePane('copilot', pane(' fix the parser'))).toMatchObject({ idle: false, draft: true })
+    // A picker or a permission prompt REPLACES the box, so there is no gutter on screen and the pane
+    // reads not-idle without [DIALOG_UI] having to name copilot's dialogs.
+    expect(inspectRuntimePane('copilot', [
+      '│ Do you want to allow this access?',
+      '│ ❯ 1. Yes',
+      '│   2. No, and tell Copilot what to do differently (Esc to stop)',
+    ].join('\n'))).toMatchObject({ idle: false })
+  })
+
   it('does not read a truecolor foreground as a dim placeholder', () => {
     // `38;2;<r>;<g>;<b>` carries a literal 2 that is a colour-space selector, not the dim attribute.
     // Counting it would make a line the user had TYPED look like an empty composer — the one
