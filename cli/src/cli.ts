@@ -95,6 +95,7 @@ import { AutonomousDeviceService } from './lib/autonomous-device/service.js'
 import { autonomousDeviceLocalRequest } from './lib/autonomous-device/localApi.js'
 import { runAutonomousDeviceCommand } from './lib/autonomous-device/command.js'
 import { attachLocalWsServer, LOCAL_WS_PATH, LOCAL_WS_PROTOCOL_VERSION } from './localWsServer.js'
+import { createWindowRouter } from './cable/windowRoute.js'
 import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
 import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
@@ -2818,6 +2819,22 @@ async function runForeground(session: AuthSession): Promise<void> {
     relayIdentityStore.getIdentity(),
     new MachinePeerStore(),
   )
+  // Spoken tasks go to the WINDOW to be routed, not to the copy of the router in this process.
+  //
+  // Built here because both ends need it: the local socket hands it the window's replies, and the cable
+  // host (built much further down) asks through it. See cable/windowRoute.ts for the two-phase wait and
+  // why "no window" and "a person is still choosing" must not be the same answer.
+  const windowRouter = createWindowRouter({
+    hasWindow: () => backend.hasLocalClient(),
+    send: (voiceId, text, cmd) => {
+      // sendLocal, never send: this asks the window in front of the dial to open a palette. Fanning it
+      // out to the web audience would pop one open on a computer nobody is sitting at.
+      backend.sendLocal({ type: 'voice_route_request', payload: { voiceId, text, ...(cmd ? { cmd } : {}) } })
+      console.log(`[route] voice → the window · ${Buffer.byteLength(text, 'utf8')} bytes${cmd ? ` · /${cmd}` : ''}`)
+    },
+    log: (line) => console.log(`[cable] ${line}`),
+  })
+
   const localWsServer = attachLocalWsServer(hookServer, {
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
@@ -2905,22 +2922,45 @@ async function runForeground(session: AuthSession): Promise<void> {
         // list of ten into a 12-second timeout while eight had answered in nine — the agents cost little,
         // their recent work cost a lot. Sixty characters still separates "webhook retry fix" from
         // "round 3 standings", which is all the router is being asked to tell apart.
+        // THE QUESTION FIRST, and the recap only when there is no question on record.
+        //
+        // A recap describes what the AGENT REPLIED. Measured on this desk: "which year did the second
+        // world war end" recapped to "1945." — correct, and carrying not one word the next question
+        // about the same conversation could match. The router was being handed answers and asked to
+        // recognise topics. The ask is the topic, costs the same sixty characters, and needs no extra
+        // room in a prompt that already times out often enough to matter.
         recentSummary: (await host.recentSummaries(agent.id))
-          .map((turn) => (turn.recap || turn.text || '').replace(/\s+/g, ' ').trim().slice(0, ROUTE_RECAP_CHARS))
+          .map((turn) => (turn.ask || turn.recap || turn.text || '').replace(/\s+/g, ' ').trim().slice(0, ROUTE_RECAP_CHARS))
           .filter(Boolean)
           .join(' · '),
       })))
       // 20s, not the shared 12s: this path answers a person watching a spinner in their own window, and
       // it is under nobody else's deadline — the app's rpc waits longer still. The dial and the web keep
       // the default; overshooting a deadline they DO have would turn a late answer into no answer.
-      const decision = await routeVoiceTask(text, candidates, undefined, ROUTE_CLASSIFY_APP_MS)
+      // …and WHO THIS PERSON WAS JUST TALKING TO. Nothing else in the prompt can supply it: a follow-up
+      // question names no agent and often shares no words with the first one, and the recap of the turn
+      // it follows may not even exist yet — the answer is still being written while the next question
+      // is being asked.
+      const decision = await routeVoiceTask(text, candidates, undefined, ROUTE_CLASSIFY_APP_MS, host.lastRouted?.())
       const named = (id: string) => candidates.find((agent) => agent.id === id)
       // The runners-up in the ROUTER's order when it gave one, and the list's own order when it did not.
       // A picker that has to ask "which agent" is showing a ranking either way; this decides whose.
       const ranking = (decision.scores ?? []).filter((score) => score.agentId !== decision.agentId)
-      const others = ranking.length
-        ? ranking.map((score) => named(score.agentId)).filter((agent): agent is RouterAgent => !!agent).slice(0, 2)
-        : candidates.filter((agent) => agent.id !== decision.agentId).slice(0, 2)
+      // EVERY AGENT THAT WAS WEIGHED, not the best two.
+      //
+      // The picker used to offer three rows — the pick and two runners-up — on the theory that a person
+      // who has to be asked wants the shortlist. They do not: when the router is unsure the right agent
+      // is often the one it ranked fourth, and a shortlist that cannot show it turns a question into a
+      // dead end, with no way out but Esc and typing the task again somewhere else.
+      //
+      // Ranked first where the router said something, then everything else it looked at in rail order,
+      // so the list stays the one the person is reading on screen. Nothing is dropped: the cap that
+      // matters is ROUTE_MAX_CANDIDATES above, and `weighed` already says what it did.
+      const rankedOthers = ranking
+        .map((score) => named(score.agentId))
+        .filter((agent): agent is RouterAgent => !!agent)
+      const listed = new Set([decision.agentId, ...rankedOthers.map((agent) => agent.id)])
+      const others = [...rankedOthers, ...candidates.filter((agent) => !listed.has(agent.id))]
       const fitOf = (id: string) => id === decision.agentId
         ? decision.confidence
         : ranking.find((score) => score.agentId === id)?.confidence ?? 0
@@ -2975,6 +3015,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         + (sent.ok ? '' : ` · REFUSED: ${sent.reason}${sent.machine ? ` (${sent.machine})` : ''}`))
       return sent
     },
+    onVoiceRouteReply: (voiceId, reply) => windowRouter.reply(voiceId, reply),
     machineId: backend.machineId,
     backend,
     relayPool,
@@ -3982,6 +4023,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     focused: (machineId, agentId, edge) =>
       backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId, ...(edge ? { edge } : {}) } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
+    // Words spoken on the overview belong to whichever agent the window's palette picks.
+    routeInWindow: (text, cmd) => windowRouter.ask(text, cmd),
     log: (line) => console.log(`[cable] ${line}`),
   }, fleet)
   cableHostRef = cableHost

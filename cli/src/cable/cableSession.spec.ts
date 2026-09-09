@@ -618,6 +618,98 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('lets the window route a spoken task, and does NOT send it a second time', async () => {
+    // The window DELIVERS what its palette picks. Sending here as well is one sentence arriving twice.
+    const route = vi.fn()
+    const routeInWindow = vi.fn(async () => ({ t: 'sent' as const, agentId: 'a2' }))
+    const host = makeHost({ route, routeInWindow })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+    port.sent.length = 0
+
+    port.say({ t: 'voice.begin', lang: 'en' })
+    port.pcm(Buffer.alloc(3200, 7))
+    port.say({ t: 'voice.end' })
+    await vi.waitFor(() => expect(port.types()).toContain('voice.transcript'))
+
+    expect(routeInWindow).toHaveBeenCalledWith('fix the login screen', undefined)
+    expect(host.sendTurn).not.toHaveBeenCalled()
+    expect(route).not.toHaveBeenCalled()
+    // The dial is still told where the words went, so it lands on that tile and drops the overlay.
+    expect(port.sent.at(-1)).toMatchObject({ t: 'voice.transcript', agentId: 'a2', agentName: 'Device firmware voice' })
+    await session.stop()
+  })
+
+  it('carries the command word to the window, so /goal stays a goal', async () => {
+    const routeInWindow = vi.fn(async () => ({ t: 'sent' as const, agentId: 'a1' }))
+    const host = makeHost({ routeInWindow })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    port.say({ t: 'voice.begin', lang: 'en', cmd: 'goal' })
+    port.pcm(Buffer.alloc(3200, 7))
+    port.say({ t: 'voice.end' })
+    await vi.waitFor(() => expect(routeInWindow).toHaveBeenCalled())
+
+    expect(routeInWindow).toHaveBeenCalledWith('fix the login screen', 'goal')
+    await session.stop()
+  })
+
+  it('sends nothing when a person closes the palette, and says so', async () => {
+    const route = vi.fn()
+    const host = makeHost({ route, routeInWindow: async () => ({ t: 'cancelled' as const }) })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+    port.sent.length = 0
+
+    port.say({ t: 'voice.begin', lang: 'en' })
+    port.pcm(Buffer.alloc(3200, 7))
+    port.say({ t: 'voice.end' })
+    await vi.waitFor(() => expect(port.types()).toContain('voice.error'))
+
+    // Cancelling must not fall through to routing here — that would deliver what the person just refused.
+    expect(host.sendTurn).not.toHaveBeenCalled()
+    expect(route).not.toHaveBeenCalled()
+    await session.stop()
+  })
+
+  it('will not race a pick that is still coming when the window goes quiet', async () => {
+    const route = vi.fn()
+    const host = makeHost({ route, routeInWindow: async () => ({ t: 'abandoned' as const }) })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+    port.sent.length = 0
+
+    port.say({ t: 'voice.begin', lang: 'en' })
+    port.pcm(Buffer.alloc(3200, 7))
+    port.say({ t: 'voice.end' })
+    await vi.waitFor(() => expect(port.types()).toContain('voice.error'))
+
+    expect(host.sendTurn).not.toHaveBeenCalled()
+    expect(route).not.toHaveBeenCalled()
+    await session.stop()
+  })
+
+  it('routes here when no window is listening', async () => {
+    const host = makeHost({ routeInWindow: async () => ({ t: 'unavailable' as const }) })
+    const { session, port } = await connect(host)
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await settle()
+
+    port.say({ t: 'voice.begin', lang: 'en' })
+    port.pcm(Buffer.alloc(3200, 7))
+    port.say({ t: 'voice.end' })
+    await vi.waitFor(() => expect(host.sendTurn).toHaveBeenCalled())
+
+    // The dial keeps working with the window shut — this is the whole reason the old router stays.
+    expect(host.sendTurn).toHaveBeenCalledWith('a1', 'fix the login screen')
+    await session.stop()
+  })
+
   it('sends a voice turn straight to the agent the dial named', async () => {
     const route = vi.fn()
     const host = makeHost({ route })

@@ -14,16 +14,19 @@ import { join } from 'node:path'
 import { AuthSessionManager, readAuthSession } from '../lib/authSession.js'
 import { registry, projectDisplayName, type RegisteredSession } from '../lib/registry.js'
 import { fetchRelease, loadImage, shouldOffer } from './fwPush.js'
-import { routeVoiceTask, type RouterAgent } from '../lib/voiceRouter.js'
+import { routeVoiceTask, type RouterAgent, type RouterContinuity } from '../lib/voiceRouter.js'
 import { env } from '../config/env.js'
 
 import type { CableAgent, CableHost, CableMachine, CableMachineSource, RouteDecision } from './cableSession.js'
+import type { WindowRoute } from './windowRoute.js'
 import { FleetError, type FleetMachine, type MachineFleet } from './machineFleet.js'
 
 /** One completed turn's recap, as the mirror keeps them. */
 export interface RecentTurn {
   recap?: string
   text?: string
+  /** What the USER asked on that turn. The topic lives here; the recap holds the answer. */
+  ask?: string
 }
 
 export interface CableHostWiring {
@@ -49,6 +52,8 @@ export interface CableHostWiring {
   opened?: (machineId: string, agentId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
   scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
+  /** Offer a spoken task to the desktop window's palette. Omitted when there is no window plumbing. */
+  routeInWindow?: (text: string, cmd?: string) => Promise<WindowRoute>
   log: (line: string) => void
 }
 
@@ -92,6 +97,10 @@ function chipsFromProfile(profile: string | null | undefined): { model?: string;
 }
 
 export class DaemonCableHost implements CableHost {
+  /** The last turn this daemon delivered, for [lastRouted]. In memory only: a conversation that spans a
+   *  daemon restart is not one the five-minute window would have carried anyway. */
+  private lastTurn?: { agentId: string; at: number }
+
   /**
    * The machine whose agents are on the dial right now. Defaults to — and falls back to — the local one:
    * it is the only machine that is certainly reachable, so it is the honest thing to land on.
@@ -526,10 +535,30 @@ export class DaemonCableHost implements CableHost {
         return { ok: false, machine, reason: 'the last request to it did not come back' }
       }
       this.fleet!.sendTurn(machineId, agentId, text)
+      this.spokeTo(agentId)
       return { ok: true }
     }
     this.wiring.sendTurn(agentId, text)
+    this.spokeTo(agentId)
     return { ok: true }
+  }
+
+  /**
+   * Remember who this person is talking to.
+   *
+   * Recorded HERE because every path that actually delivers a turn passes through sendTurn — the
+   * window's palette, the dial naming a tile, and the router's own fallback — so there is one fact and
+   * one place it is written. Recorded only on a delivery that was accepted: a turn refused because its
+   * machine went deaf is not a conversation anybody is in the middle of.
+   */
+  private spokeTo(agentId: string): void {
+    if (agentId) this.lastTurn = { agentId, at: Date.now() }
+  }
+
+  /** Who the last delivered turn went to, and how long ago — the router's continuity signal. */
+  lastRouted(): RouterContinuity | undefined {
+    if (!this.lastTurn) return undefined
+    return { agentId: this.lastTurn.agentId, agoMs: Date.now() - this.lastTurn.at }
   }
 
   stopTurn(agentId: string): void {
@@ -587,11 +616,13 @@ export class DaemonCableHost implements CableHost {
   }
 
   /** The last few turns, newest first, in the shape the dial's tile draws: a headline and a body. */
-  async recentSummaries(agentId: string): Promise<Array<{ recap: string; text: string }>> {
+  async recentSummaries(agentId: string): Promise<Array<{ recap: string; text: string; ask: string }>> {
     const raw = this.isLocalAgent(agentId)
       ? this.wiring.recent(agentId, 3)
       : await this.fleet!.recentSummaries(this.machineOf(agentId), agentId)
-    return raw.map((r) => ({ recap: r?.recap ?? '', text: r?.text ?? '' })).filter((s) => s.recap || s.text)
+    return raw
+      .map((r) => ({ recap: r?.recap ?? '', text: r?.text ?? '', ask: r?.ask ?? '' }))
+      .filter((s) => s.recap || s.text || s.ask)
   }
 
   async listModels(agentId: string): Promise<string[]> {
@@ -624,6 +655,24 @@ export class DaemonCableHost implements CableHost {
    * machine is ALREADY running when the score cannot separate the top two. No key, no relay, no network —
    * which is the whole reason voice on the cable does not inherit the hosted path's failure modes.
    */
+  /**
+   * Give the window first refusal on a spoken task.
+   *
+   * A pass-through by design: everything interesting — whether a window is even attached, the two-phase
+   * wait, the deadlines — belongs to the router in windowRoute.ts, which is testable without a socket.
+   * This exists so the session can ask through the same host it asks everything else through.
+   */
+  async routeInWindow(text: string, cmd?: string): Promise<WindowRoute> {
+    if (!this.wiring.routeInWindow) return { t: 'unavailable' }
+    try {
+      return await this.wiring.routeInWindow(text, cmd)
+    } catch (err) {
+      // Never let a broken window path swallow a sentence a person spoke: fall back to routing here.
+      this.wiring.log(`cable: the window route failed (${(err as Error).message}) — routing here`)
+      return { t: 'unavailable' }
+    }
+  }
+
   async route(transcript: string, agents: CableAgent[]): Promise<RouteDecision> {
     // Each agent's recaps come from ITS OWN machine — recentSummaries routes by agentId. Scored against
     // the wrong machine's history, a spoken turn is routed by what some other computer's agents were last
@@ -636,12 +685,16 @@ export class DaemonCableHost implements CableHost {
       engine: a.engine,
       machine: a.machine,
 
+      // THE QUESTION, not the answer. A recap summarises what the agent replied — "1945." is a correct
+      // recap and a useless routing signal, and the next question about the same conversation matches
+      // nothing in it. The ask carries the topic, so it wins when there is one; the recap stands in for
+      // turns recorded before this was stored, and for agents on other machines.
       recentSummary: (await this.recentSummaries(a.id))
-        .map((r) => r.recap || r.text || '')
+        .map((r) => r.ask || r.recap || r.text || '')
         .filter(Boolean)
         .join(' · '),
     })))
-    const decision = await routeVoiceTask(transcript, candidates)
+    const decision = await routeVoiceTask(transcript, candidates, undefined, undefined, this.lastRouted())
     return { agentId: decision.agentId, confidence: decision.confidence, reason: decision.reason }
   }
 

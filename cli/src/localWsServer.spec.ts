@@ -171,6 +171,43 @@ describe('local CLI WebSocket', () => {
     ws.close()
   })
 
+  it('carries the window\'s answer about a spoken task, and keeps it off the wire', async () => {
+    const backend = new FakeBackend()
+    const replies: Array<{ voiceId: string; reply: unknown }> = []
+    server = http.createServer((_req, res) => { res.statusCode = 404; res.end() })
+    local = attachLocalWsServer(server, {
+      machineId,
+      backend,
+      onVoiceRouteReply: (voiceId, reply) => replies.push({ voiceId, reply }),
+    })
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/local-ws`
+
+    const ws = new WebSocket(url)
+    await onceOpen(ws)
+    const connected = onceMessage(ws)
+    ws.send(JSON.stringify({ type: 'machine_select', payload: { machineId, localProtocolVersion: 1 } }))
+    await connected
+
+    ws.send(JSON.stringify({ type: 'voice_route_reply', payload: { voiceId: 'v1', state: 'taken' } }))
+    ws.send(JSON.stringify({ type: 'voice_route_reply', payload: { voiceId: 'v1', state: 'sent', agentId: 'a7' } }))
+    ws.send(JSON.stringify({ type: 'voice_route_reply', payload: { voiceId: 'v2', state: 'cancelled' } }))
+    // Neither of these is an answer: one names no request, the other a state this side cannot read.
+    // Guessing at either would settle a spoken turn on something nobody said.
+    ws.send(JSON.stringify({ type: 'voice_route_reply', payload: { state: 'sent', agentId: 'a9' } }))
+    ws.send(JSON.stringify({ type: 'voice_route_reply', payload: { voiceId: 'v3', state: 'maybe' } }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(replies).toEqual([
+      { voiceId: 'v1', reply: { t: 'taken' } },
+      { voiceId: 'v1', reply: { t: 'sent', agentId: 'a7' } },
+      { voiceId: 'v2', reply: { t: 'cancelled' } },
+    ])
+    // It describes a hand at this desk. The machine has no use for it.
+    expect(backend.frames).toEqual([])
+    ws.close()
+  })
+
   it('answers a routed task on the id it was asked with, and sends nothing', async () => {
     const backend = new FakeBackend()
     const asked: string[] = []

@@ -22,6 +22,8 @@ const MAX_JSON_BYTES = 512 * 1024
 const MAX_WS_MESSAGE_BYTES = TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES + 4_096
 const HEARTBEAT_MS = 20_000
 
+import type { WindowVoiceReply } from './cable/windowRoute.js'
+
 export interface LocalWsBackend {
   registerLocalClient: (connId: string, sink: LocalClientSink) => boolean
   unregisterLocalClient: (connId: string) => Promise<void>
@@ -57,6 +59,15 @@ export interface LocalWsServerOptions {
    * on a confident route, that is a spoken instruction that vanishes with no mark anywhere.
    */
   onRouteSend?: (agentId: string, text: string) => { ok: true } | { ok: false; machine: string; reason: string }
+  /**
+   * The window answering a `voice_route_request` — words spoken into the dial that IT was asked to route.
+   *
+   * One-way and uncorrelated by `requestId`, unlike ⌘B above, because the question travelled the other
+   * way: the daemon asked, so the daemon holds the pending id (`voiceId`) and the window is simply
+   * reporting. `taken` first, then `sent` or `cancelled` — see cable/windowRoute.ts for why the ack is a
+   * separate frame rather than a flag on the answer.
+   */
+  onVoiceRouteReply?: (voiceId: string, reply: WindowVoiceReply) => void
 }
 
 /** One candidate, as the window draws it in the picker. */
@@ -284,7 +295,7 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
         //
         // Consumed here like app_focus: it describes a hand at this desk, not anything the machine could
         // act on.
-        if (!isBinary && (options.onRouteTask || options.onRouteSend)) {
+        if (!isBinary && (options.onRouteTask || options.onRouteSend || options.onVoiceRouteReply)) {
           const asked = jsonFrame(raw)
           if (asked?.type === 'route_task' && options.onRouteTask) {
             const payload = asked.payload as Record<string, unknown> | undefined
@@ -301,6 +312,20 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
               }
             }
             sink.sendFrame({ type: 'route_result', payload: { requestId, ...answer } })
+            return
+          }
+          if (asked?.type === 'voice_route_reply' && options.onVoiceRouteReply) {
+            const payload = asked.payload as Record<string, unknown> | undefined
+            const voiceId = typeof payload?.voiceId === 'string' ? payload.voiceId : ''
+            const state = typeof payload?.state === 'string' ? payload.state : ''
+            const agentId = typeof payload?.agentId === 'string' ? payload.agentId : ''
+            // Unknown states are dropped rather than guessed at: an answer this side cannot read must
+            // not settle a spoken turn as though it had been understood.
+            if (voiceId) {
+              if (state === 'taken') options.onVoiceRouteReply(voiceId, { t: 'taken' })
+              else if (state === 'sent') options.onVoiceRouteReply(voiceId, { t: 'sent', agentId })
+              else if (state === 'cancelled') options.onVoiceRouteReply(voiceId, { t: 'cancelled' })
+            }
             return
           }
           if (asked?.type === 'route_send' && options.onRouteSend) {

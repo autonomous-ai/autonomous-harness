@@ -153,6 +153,9 @@ export interface CableMachine {
 /** Why the list is as short as it is. The dial renders this, instead of drawing an empty wheel. */
 export type CableMachineSource = 'backend' | 'local' | 'signed-out'
 
+export type { WindowRoute } from './windowRoute.js'
+import type { WindowRoute } from './windowRoute.js'
+
 export interface RouteDecision {
   agentId: string
   confidence: number
@@ -213,6 +216,16 @@ export interface CableHost {
   transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string>
   /** Which agent the words belong to. Scored locally first; only a genuine tie should cost a network call. */
   route(transcript: string, agents: CableAgent[]): Promise<RouteDecision>
+  /**
+   * Offer the words to the desktop window FIRST, and let its palette decide.
+   *
+   * The window's ⌘B router is the one that gets looked after — fifteen candidates in rail order, recaps
+   * cut to sixty characters, a twenty-second budget, and a picker when it is not sure. [route] is the
+   * same idea a version behind, so this is asked first and that is the fallback rather than the default.
+   *
+   * Optional: a host with no window to ask simply omits it, and voice behaves exactly as it always has.
+   */
+  routeInWindow?(text: string, cmd?: string): Promise<WindowRoute>
   /** The runtime model/effort catalog for one agent, as opaque profile ids the dial groups and shows. */
   listModels(agentId: string): Promise<string[]>
   /** One agent's last turn summaries, newest first — what a reattached dial needs to redraw its tiles. */
@@ -882,6 +895,42 @@ export class CableSession {
     let agentName = ''
     const agents = await this.host.listAgents()
     if (!agentId) {
+      // NOBODY NAMED, SO THE WINDOW DECIDES. It opens its palette with these words already in the field
+      // and runs the route a typed task would have run — the same fifteen candidates, the same trimmed
+      // recaps, the same threshold, and the same picker when the answer is not good enough to act on.
+      //
+      // The window DELIVERS what it picks, so there is nothing left to send here: a `sent` outcome is
+      // already on its way to an agent, and calling sendTurn on it would deliver the sentence twice.
+      const inWindow = this.host.routeInWindow
+        ? await this.host.routeInWindow(transcript, turn.cmd)
+        : ({ t: 'unavailable' } as const)
+      if (inWindow.t === 'sent') {
+        this.host.log(`cable: the window routed the spoken task → ${inWindow.agentId.slice(0, 8)}`)
+        await this.send({
+          t: 'voice.transcript',
+          routeId: '',
+          text: transcript,
+          agentId: inWindow.agentId,
+          // Only a name the DIAL's own list knows: it draws this, and an agent the window reached on a
+          // machine the carousel has not been told about yet has no tile here to put a name on. The ring
+          // that follows the window's focus brings both along a moment later.
+          agentName: agents.find((a) => a.id === inWindow.agentId)?.name ?? '',
+          needsConfirm: false,
+        })
+        return
+      }
+      if (inWindow.t === 'cancelled') {
+        // A person closed the palette. Nothing was sent and nothing should be — but the dial is still
+        // showing the sending overlay, so it has to be told, or it sits there until its own watchdog.
+        await this.send({ t: 'voice.error', message: 'Cancelled in the window' })
+        return
+      }
+      if (inWindow.t === 'abandoned') {
+        // It took the words and went quiet. Routing here now would race a pick that may still be coming,
+        // and two turns from one sentence is worse than none — so say where the words went instead.
+        await this.send({ t: 'voice.error', message: 'Still waiting on the window' })
+        return
+      }
       try {
         const decision = await this.host.route(transcript, agents)
         agentId = decision.agentId

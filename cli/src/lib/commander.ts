@@ -209,6 +209,10 @@ const RECENT_TURNS = 3
  */
 const FULL_TEXT_MAX_BYTES = 8192
 
+/** How much of the user's own words is kept per turn. Long enough for the topic, short enough that three
+ *  of them per agent still fit a router prompt that already carries fifteen agents. */
+const ASK_MAX_CHARS = 200
+
 /**
  * Truncate to a byte budget without splitting a character.
  *
@@ -247,15 +251,30 @@ export class CommanderMirror {
    * aloud in another room.
    */
   private fullTexts = new Map<string, string[]>()
+  /**
+   * What the USER ASKED on each of those turns, newest first and index-aligned with `history`.
+   *
+   * A fourth file, for the same reason as the third: the others keep their shape and a rollback simply
+   * never looks here.
+   *
+   * It exists because a recap answers the wrong question for routing. Recaps summarise what the AGENT
+   * REPLIED — a turn that asked "which year did the second world war end" is recapped, correctly and
+   * uselessly, as "1945." Ask the same agent about the FIRST world war a minute later and nothing in
+   * that recap connects the two, so the router cannot see a conversation it is plainly in the middle
+   * of. The question carries the topic; the answer usually does not.
+   */
+  private asks = new Map<string, string[]>()
   private file: string
   private historyFile: string
   private fullTextFile: string
+  private askFile: string
   private saveTimer: NodeJS.Timeout | null = null
 
   constructor(private opts: CommanderMirrorOpts) {
     this.file = join(opts.dataDir, 'summaries.json')
     this.historyFile = join(opts.dataDir, 'summaries-history.json')
     this.fullTextFile = join(opts.dataDir, 'summaries-fulltext.json')
+    this.askFile = join(opts.dataDir, 'summaries-asks.json')
     this.load()
   }
 
@@ -594,6 +613,9 @@ export class CommanderMirror {
           // Recorded in the SAME branch as the summary, so the two arrays cannot drift out of step —
           // a turn that produced no summary produces no row in either.
           this.rememberFullText(sessionId, text)
+          // Recorded in the SAME branch as the summary and the full text, so all three arrays stay
+          // index-aligned: a turn either contributes a row to each or to none.
+          this.rememberAsk(sessionId, userMessage)
           this.saveSoon()
           const { recap, body } = splitSummary(summary)
           this.trace(sessionId, `${sid} done in ${ms}ms · recap="${recap}" · bodyLen=${body.length}`)
@@ -666,7 +688,7 @@ export class CommanderMirror {
    * Falls back to the single latest summary when the history is empty, so the recaps already on disk from
    * before this existed are usable on the first run rather than after three more turns.
    */
-  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string; fullText?: string }> {
+  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string; fullText?: string; ask?: string }> {
     const want = Math.max(1, n)
     const stored = this.history.get(sessionId) ?? []
     const latest = this.summaries.get(sessionId)
@@ -674,22 +696,29 @@ export class CommanderMirror {
     const usingHistory = stored.length > 0
     const all = usingHistory ? stored : latest ? [latest] : []
     const fulls = this.fullTexts.get(sessionId) ?? []
+    const asks = this.asks.get(sessionId) ?? []
     return all
       .slice(0, want)
       // PAIRED BEFORE FILTERING, not after. The filter below drops empty summaries, and dropping them
       // from one array while reading the other by position is how a turn ends up carrying the previous
       // turn's answer — wrong in the one way nobody would think to check.
-      .map((summary, at) => ({ summary, full: fulls[usingHistory ? at : 0] }))
+      .map((summary, at) => ({ summary, full: fulls[usingHistory ? at : 0], ask: asks[usingHistory ? at : 0] }))
       .filter(({ summary }) => summary && summary.trim())
-      .map(({ summary, full }) => {
+      .map(({ summary, full, ask }) => {
         const { recap, body } = splitSummary(summary)
-        return { kind: 'summary', text: body || recap, recap, ...(full ? { fullText: full } : {}) }
+        return { kind: 'summary', text: body || recap, recap, ...(full ? { fullText: full } : {}), ...(ask ? { ask } : {}) }
       })
   }
 
   /** The newest turn's complete final answer, for a consumer that reads rather than glances. */
   lastFullText(sessionId: string): string | undefined {
     return this.fullTexts.get(sessionId)?.[0]
+  }
+
+  /** The user's own words for a turn, clipped — the topic signal the recap cannot carry. */
+  private rememberAsk(sessionId: string, ask: string): void {
+    const kept = [(ask || '').replace(/\s+/g, ' ').trim().slice(0, ASK_MAX_CHARS), ...(this.asks.get(sessionId) ?? [])].slice(0, RECENT_TURNS)
+    this.asks.set(sessionId, kept)
   }
 
   /** Keep the last few turns for this session, newest first. */
@@ -779,6 +808,12 @@ export class CommanderMirror {
         if (Array.isArray(v)) this.fullTexts.set(k, v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_TURNS).map(t => clipBytes(t, FULL_TEXT_MAX_BYTES)))
       }
     } catch { /* no full answers yet — recap simply omits the field */ }
+    try {
+      const obj = JSON.parse(readFileSync(this.askFile, 'utf-8')) as Record<string, unknown>
+      for (const [k, v] of Object.entries(obj)) {
+        if (Array.isArray(v)) this.asks.set(k, v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_TURNS).map((t) => t.slice(0, ASK_MAX_CHARS)))
+      }
+    } catch { /* no questions stored yet — the router falls back to recaps alone */ }
   }
 
   private saveSoon(): void {
@@ -792,6 +827,7 @@ export class CommanderMirror {
       writeFileSync(this.file, JSON.stringify(Object.fromEntries(this.summaries), null, 2))
       writeFileSync(this.historyFile, JSON.stringify(Object.fromEntries(this.history), null, 2))
       writeFileSync(this.fullTextFile, JSON.stringify(Object.fromEntries(this.fullTexts), null, 2))
+      writeFileSync(this.askFile, JSON.stringify(Object.fromEntries(this.asks), null, 2))
     } catch (err) {
       console.error('[commander] save summaries failed:', err)
     }

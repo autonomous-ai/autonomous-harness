@@ -19,6 +19,34 @@ describe('CommanderMirror recap events', () => {
     rmSync(dataDir, { recursive: true, force: true })
   })
 
+  it('keeps what the user ASKED, not only what the agent answered', async () => {
+    // The router reads these to decide where a spoken follow-up belongs, and a recap answers the wrong
+    // question for that: measured on this desk, "Chiến tranh thế giới thứ hai kết thúc vào năm nào?"
+    // recapped to "1945." — a correct summary of the reply carrying not one word of the subject. Ask
+    // about the FIRST world war a minute later and nothing connects the two.
+    const mirror = new CommanderMirror({
+      send: () => {},
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async () => '1945.',
+      dataDir,
+    })
+
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'Chiến tranh thế giới thứ hai kết thúc vào năm nào?' } },
+      { type: 'text_delta', payload: { content: 'The war ended in 1945.' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-ask')
+
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+
+    const turn = mirror.recent('session-ask', 3)[0]
+    expect(turn.ask).toBe('Chiến tranh thế giới thứ hai kết thúc vào năm nào?')
+    // The recap is still exactly what it was — this adds a field, it does not change one.
+    expect(turn.recap).toBe('1945.')
+  })
+
   it('fans a TodoWrite out to the device as a todo list, whatever engine produced it', () => {
     // The device renders the checklist from `todos:[{c,s}]` folded onto a processing frame — nothing else
     // carries it. Every engine reaches this through the SAME shape (`input.todos[{content,status}]`), which

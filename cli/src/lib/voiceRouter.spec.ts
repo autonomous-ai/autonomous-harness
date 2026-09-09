@@ -24,7 +24,7 @@ vi.mock('./openrouter.js', () => ({
 }))
 
 // Import AFTER the mock is registered.
-const { buildRouterPrompt, parseRouteOutput, routeVoiceTask, pickAgentHeuristic, chooseRouterEngine, routerModelFor } = await import('./voiceRouter.js')
+const { buildRouterPrompt, parseRouteOutput, routeVoiceTask, pickAgentHeuristic, chooseRouterEngine, routerModelFor, ROUTE_SCORED_ROWS, CONTINUITY_WINDOW_MS } = await import('./voiceRouter.js')
 type RouterAgent = import('./voiceRouter.js').RouterAgent
 
 const AGENTS: RouterAgent[] = [
@@ -89,6 +89,131 @@ describe('parseRouteOutput', () => {
   it('caps an overlong reason', () => {
     const d = parseRouteOutput(`{"agentId":"1","confidence":0.5,"reason":"${'x'.repeat(500)}","needNewAgent":false}`, AGENTS)
     expect(d.reason.length).toBeLessThanOrEqual(120)
+  })
+})
+
+describe('the second world war, then the first', () => {
+  // The exact sequence from the desk, 2026-09-09: WW2 was routed to the history agent, and 19 seconds
+  // later "…thứ nhất…" was routed to an agent about the World Cup with 0.4 confidence. Three separate
+  // defects lined up, and each one is pinned below.
+  const HISTORY = '562d0376'
+  const WORLDCUP = '58998f92'
+  const WW1 = 'Chiến tranh thế giới thứ nhất kết thúc vào năm nào?'
+
+  /** As the agents looked at that moment: names are previous questions, recaps are bare answers. */
+  const DESK: RouterAgent[] = [
+    { id: WORLDCUP, name: 'Worldcup dc to chuc may lan roi', recentSummary: 'World Cup được tổ chức mấy lần rồi', engine: 'claude' },
+    { id: HISTORY, name: 'Thomas Edison vs Nikola Tesla', recentSummary: 'Chiến tranh thế giới thứ hai kết thúc vào năm nào?', engine: 'claude' },
+    { id: 'dbae0db4', name: 'Ai sang tác bài thơ Bình ngô đại cáo', recentSummary: 'ai sáng tác bài thơ đó', engine: 'claude' },
+  ]
+
+  it('follows the conversation when the recap is only the answer', () => {
+    // What the router used to see for the history agent was the RECAP of that turn — the model answered
+    // "1945.", so that is what the recap said, and it shares nothing with the next question.
+    const answersOnly = DESK.map((agent) =>
+      agent.id === HISTORY ? { ...agent, recentSummary: '1945.' } : agent)
+    expect(pickAgentHeuristic(WW1, answersOnly).agentId).not.toBe(HISTORY)   // the bug, preserved
+
+    // With the QUESTION on record instead, the same matcher lands on the history agent.
+    expect(pickAgentHeuristic(WW1, DESK).agentId).toBe(HISTORY)
+  })
+
+  it('does not let function words decide it', () => {
+    // "thế giới" and "năm" appear in both the question and the World Cup agent's history. They are the
+    // most common words in the sentence and they carried the whole ranking.
+    const stripped = DESK.map((agent) =>
+      agent.id === HISTORY ? { ...agent, recentSummary: '1945.' } : agent)
+    const decision = pickAgentHeuristic(WW1, stripped)
+    // Nothing genuinely matches now, so it must not claim a match — 0.2 is "closest agent", not a hit.
+    expect(decision.confidence).toBe(0.2)
+    expect(decision.reason).toContain('closest agent')
+  })
+
+  it('carries a follow-up back to the agent just spoken to, even with nothing else to go on', () => {
+    // A follow-up that shares no content words at all with anything on the desk.
+    const bare = 'còn cái thứ nhất thì sao'
+    expect(pickAgentHeuristic(bare, DESK, { agentId: HISTORY, agoMs: 19_000 }).agentId).toBe(HISTORY)
+    // …and lets go once the conversation has plainly ended.
+    const stale = pickAgentHeuristic(bare, DESK, { agentId: HISTORY, agoMs: 45 * 60_000 })
+    expect(stale.agentId).not.toBe(HISTORY)
+  })
+
+  it('does not let continuity beat an agent the words actually name', () => {
+    const named = pickAgentHeuristic('worldcup tổ chức mấy lần', DESK, { agentId: HISTORY, agoMs: 5_000 })
+    expect(named.agentId).toBe(WORLDCUP)
+  })
+
+  it('tells the model what it was just talking to, and stops when the window closes', () => {
+    const fresh = buildRouterPrompt(WW1, DESK, { agentId: HISTORY, agoMs: 19_000 })
+    expect(fresh).toContain(`id=${HISTORY} 19s ago`)
+    const stale = buildRouterPrompt(WW1, DESK, { agentId: HISTORY, agoMs: CONTINUITY_WINDOW_MS + 1 })
+    expect(stale).not.toContain('Continuity:')
+  })
+
+  it('stops teaching the model that agent names are job titles', () => {
+    // Every agent on this desk is named after the first thing it was asked. The old prompt insisted
+    // names were roles like "Frontend"/"Auth", which describes nobody here.
+    const prompt = buildRouterPrompt(WW1, DESK)
+    expect(prompt).toContain('it is not always a role')
+    expect(prompt).toContain('recently asked')
+  })
+})
+
+describe('a bar on every row', () => {
+  // The picker offers every agent that was weighed. A row with no number on it reads as one the router
+  // rejected, so "we only scored the top three" is a bug you can see from across the room.
+  const SIX: RouterAgent[] = [
+    { id: '1', name: 'Frontend', recentSummary: 'dark mode', engine: 'claude' },
+    { id: '2', name: 'Auth', recentSummary: 'JWT refresh', engine: 'claude' },
+    { id: '3', name: 'DevOps', engine: 'claude' },
+    { id: '4', name: 'Billing', engine: 'claude' },
+    { id: '5', name: 'Search', engine: 'claude' },
+    { id: '6', name: 'Mobile', engine: 'claude' },
+  ]
+
+  it('scores five rows in all — the pick and four — however many the model sends', () => {
+    const alternates = ['2', '3', '4', '5', '6'].map((id, i) => `{"agentId":"${id}","confidence":${0.5 - i * 0.05}}`)
+    const decision = parseRouteOutput(
+      `{"agentId":"1","confidence":0.6,"reason":"x","alternates":[${alternates.join(',')}]}`,
+      SIX,
+    )
+    // Four alternates beside the pick. The sixth agent still appears in the picker — it simply carries
+    // no bar, which says "not ranked", not "rejected".
+    expect(decision.scores?.map((score) => score.agentId)).toEqual(['2', '3', '4', '5'])
+  })
+
+  it('still drops what it should — unknown ids, repeats of the pick, and junk numbers', () => {
+    const decision = parseRouteOutput(
+      '{"agentId":"1","confidence":0.6,"reason":"x","alternates":['
+      + '{"agentId":"2","confidence":0.5},'
+      + '{"agentId":"99","confidence":0.4},'   // not on this machine
+      + '{"agentId":"1","confidence":0.9},'    // the pick again
+      + '{"agentId":"2","confidence":0.3},'    // a repeat
+      + '{"agentId":"3","confidence":"nope"}'  // not a number
+      + ']}',
+      SIX,
+    )
+    expect(decision.scores).toEqual([{ agentId: '2', confidence: 0.5 }])
+  })
+
+  it('draws the same number of bars when the name matcher stands in', () => {
+    const decision = pickAgentHeuristic('sua dark mode', SIX)
+    // The picker must not change shape depending on which half of the router answered — and every score
+    // stays under the winner, which is what the cap at 0.4 protects: these draw a bar, they never cross
+    // a dispatch threshold.
+    expect(decision.scores).toHaveLength(ROUTE_SCORED_ROWS - 1)
+    for (const score of decision.scores ?? []) {
+      expect(score.confidence).toBeGreaterThan(0)
+      expect(score.confidence).toBeLessThan(decision.confidence)
+    }
+  })
+
+  it('asks the model for exactly as many as the picker will draw', () => {
+    const prompt = buildRouterPrompt('fix the login screen', SIX)
+    expect(prompt).toContain(`up to ${ROUTE_SCORED_ROWS - 1}`)
+    // The three caps drifted apart once — the prompt asked for two while the name matcher scored three —
+    // and the only symptom was bars missing from a list nobody thought to count.
+    expect(prompt).not.toContain('up to 2')
   })
 })
 
@@ -230,12 +355,29 @@ describe('routeVoiceTask through an OpenRouter gateway', () => {
     expect(runRouterOneShot).toHaveBeenCalledOnce()
   })
 
-  it('leaves a machine with no gateway agent entirely alone', async () => {
+  it('takes the direct call on ANY machine that has a key, not just a gateway one', async () => {
+    // Widened deliberately. The engine path spawns a whole agent runtime to answer a twenty-word
+    // classification — about 15s here against a 20s ceiling, and a third of them never come back. A
+    // machine holding a key should not pay that just because none of its agents runs on the gateway.
+    resolveOpenRouterKey.mockResolvedValue('sk-or-v1-test')
+    openRouterComplete.mockResolvedValue('{"agentId":"2","confidence":0.9,"reason":"auth"}')
+
+    const d = await routeVoiceTask('login broken', AGENTS)
+
+    expect(d.agentId).toBe('2')
+    expect(openRouterComplete).toHaveBeenCalledOnce()
+    expect(runRouterOneShot).not.toHaveBeenCalled()
+  })
+
+  it('still spawns the engine when there is no key to call with', async () => {
+    // The common case, and the one that must not change: no credential, so nothing to call directly.
+    resolveOpenRouterKey.mockResolvedValue(null)
     routerImpl = async () => ({ text: '{"agentId":"2","confidence":0.9,"reason":"auth"}', sessionId: null })
 
-    await routeVoiceTask('login broken', AGENTS)
+    const d = await routeVoiceTask('login broken', AGENTS)
 
-    expect(resolveOpenRouterKey).not.toHaveBeenCalled()
+    expect(d.agentId).toBe('2')
+    expect(openRouterComplete).not.toHaveBeenCalled()
     expect(runRouterOneShot).toHaveBeenCalledOnce()
   })
 })
