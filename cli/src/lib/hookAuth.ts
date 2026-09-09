@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { secureStateDirectory } from './secureState.js'
+import { fsyncStateDirectory, hasPrivateMode, secureStateDirectory } from './secureState.js'
 
 const FILE_NAME = 'hook-credential'
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
@@ -29,7 +29,7 @@ export function readHookCredential(dataDir: string): string | null {
     const uid = typeof process.getuid === 'function' ? process.getuid() : null
     if (!stat.isFile() || stat.size > 128) return null
     if (uid !== null && stat.uid !== uid) return null
-    if ((stat.mode & 0o777) !== 0o600) return null
+    if (!hasPrivateMode(stat.mode, 0o600)) return null
     const value = readFileSync(fd, 'utf8').trim()
     return TOKEN_RE.test(value) ? value : null
   } catch {
@@ -64,8 +64,7 @@ export function loadOrCreateHookCredential(dataDir: string): string {
   } finally {
     closeSync(fd)
   }
-  const directoryFd = openSync(dataDir, 'r')
-  try { fsyncSync(directoryFd) } finally { closeSync(directoryFd) }
+  fsyncStateDirectory(dataDir)
   return value
 }
 

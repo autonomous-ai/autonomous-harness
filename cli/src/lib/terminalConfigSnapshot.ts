@@ -3,7 +3,7 @@ import { closeSync, constants, fchmodSync, fsyncSync, openSync, renameSync, rmSy
 import { isAbsolute, join } from 'node:path'
 import type { TerminalConfig } from '../config/terminalConfig.js'
 import type { HerdrEndpoint } from './herdrApiClient.js'
-import { hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
+import { fsyncStateDirectory, hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
 import type { TerminalBackendName } from './terminalTypes.js'
 
 const SNAPSHOT_FILE = 'terminal-config.json'
@@ -64,8 +64,7 @@ export function writeTerminalConfigSnapshot(
     }
     renameSync(temporary, file)
     renamed = true
-    const directoryFd = openSync(dataDir, 'r')
-    try { fsyncSync(directoryFd) } finally { closeSync(directoryFd) }
+    fsyncStateDirectory(dataDir)
   } finally {
     if (!renamed) rmSync(temporary, { force: true })
   }

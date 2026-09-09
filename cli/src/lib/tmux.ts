@@ -174,8 +174,11 @@ function readProcField(pid: number, field: 'cmdline' | 'comm'): string | null {
 
 /** The process table, or null when `ps` itself failed — "we could not look" is not "nothing is there". */
 export async function processRows(): Promise<ProcessRow[] | null> {
+  // See the note in tmuxAgentDiscovery.ts: no `ps` worth calling here, and calling it flashes a
+  // console window on the desktop.
+  if (process.platform === 'win32') return null
   const rows = await new Promise<ProcessRow[] | null>((resolve) => {
-    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000 }, (err, stdout) => {
+    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000, windowsHide: true }, (err, stdout) => {
       if (err) { resolve(null); return }
       const rows: ProcessRow[] = []
       for (const line of stdout.split('\n')) {
@@ -192,7 +195,7 @@ function execText(command: string, args: string[], timeout: number): Promise<str
   return new Promise((resolve) => {
     // `lsof -p pid1,pid2` exits 1 when even one process disappears or is inaccessible, while still
     // returning complete records for the surviving PIDs. Keep that usable partial snapshot.
-    execFile(command, args, { timeout }, (err, stdout) => resolve(err && !stdout ? null : stdout))
+    execFile(command, args, { timeout, windowsHide: true }, (err, stdout) => resolve(err && !stdout ? null : stdout))
   })
 }
 

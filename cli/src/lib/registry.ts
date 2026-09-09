@@ -40,7 +40,7 @@ import type { GridAssignment } from './gridAssignment.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
-import { hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
+import { fsyncStateDirectory, hasPrivateMode, hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
 import { mergeTerminalRuntimes, processIdentityKey, terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { HookTerminalHint, ProcessIdentity, TerminalRuntimeRef } from './terminalTypes.js'
 
@@ -188,8 +188,9 @@ function processStartMarker(pid: number): string | null {
     if (fields[19]) return `linux:${fields[19]}`
   } catch { /* non-Linux or exited process; use ps below */ }
   try {
+    if (process.platform === 'win32') return null
     const started = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf8', timeout: 1_000,
+      encoding: 'utf8', timeout: 1_000, windowsHide: true,
     }).trim()
     return started ? `ps:${started}` : null
   } catch { return null }
@@ -239,10 +240,10 @@ function withRegistryFileLock<T>(apply: () => T): T {
       try {
         const stat = lstatSync(LOCK_DIR)
         if (!stat.isDirectory() || stat.isSymbolicLink() || (uid !== null && stat.uid !== uid)
-          || (stat.mode & 0o777) !== 0o700) throw new Error('registry lock has unsafe owner, mode, or type')
+          || !hasPrivateMode(stat.mode, 0o700)) throw new Error('registry lock has unsafe owner, mode, or type')
         const ownerStat = lstatSync(join(LOCK_DIR, 'owner.json'))
         if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || (uid !== null && ownerStat.uid !== uid)
-          || (ownerStat.mode & 0o777) !== 0o600) throw new Error('registry lock owner has unsafe owner, mode, or type')
+          || !hasPrivateMode(ownerStat.mode, 0o600)) throw new Error('registry lock owner has unsafe owner, mode, or type')
         const owner = JSON.parse(readFileSync(join(LOCK_DIR, 'owner.json'), 'utf8')) as {
           pid?: unknown; startMarker?: unknown; token?: unknown
         }
@@ -298,8 +299,7 @@ function atomicWriteJson(file: string, value: unknown, exclusive = false): void 
     } finally { closeSync(fd) }
     renameSync(temporary, file)
     renamed = true
-    const directoryFd = openSync(dirname(file), 'r')
-    try { fsyncSync(directoryFd) } finally { closeSync(directoryFd) }
+    fsyncStateDirectory(dirname(file))
   } finally {
     if (!renamed) rmSync(temporary, { force: true })
   }

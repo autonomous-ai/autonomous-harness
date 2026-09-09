@@ -3,6 +3,7 @@ import {
   constants,
   fchmodSync,
   fstatSync,
+  fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -10,6 +11,29 @@ import {
 
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600
+
+// Windows has no POSIX mode bits. Node synthesises st_mode from the read-only attribute alone, so
+// every path under %USERPROFILE% reads back 0o666/0o777 and fchmod cannot express 0o700 either --
+// the private-mode checks below would reject every path and "fixing" one is impossible. What keeps
+// ~/.harness private there is the ACL inherited from the user profile, not a mode word.
+export function onWindows(): boolean {
+  return process.platform === 'win32'
+}
+
+// True when `mode` is as private as `expected`, or when the host cannot express modes at all.
+export function hasPrivateMode(mode: number, expected: number): boolean {
+  if (onWindows()) return true
+  return (mode & 0o777) === expected
+}
+
+// Durability barrier for a rename into `directory`. Windows has no directory-handle fsync: the
+// openSync succeeds and fsyncSync then fails EPERM (errno -4048), so the whole atomic-write idiom
+// dies. NTFS orders the rename itself, so skipping the barrier there costs only the crash guarantee.
+export function fsyncStateDirectory(directory: string): void {
+  if (onWindows()) return
+  const fd = openSync(directory, 'r')
+  try { fsyncSync(fd) } finally { closeSync(fd) }
+}
 
 function ownerUid(): number | null {
   return typeof process.getuid === 'function' ? process.getuid() : null
@@ -31,6 +55,7 @@ export function secureStateDirectory(directory: string, create = true): void {
     if (!stat.isDirectory() || (uid !== null && stat.uid !== uid)) {
       throw new Error('state directory has unsafe owner or type')
     }
+    if (onWindows()) return
     const mode = stat.mode & 0o777
     // Refuse — deliberately do NOT chmod and carry on. If another account could write here, it could
     // already have planted the registry, the token or the hook credential, and tightening afterwards
@@ -61,6 +86,7 @@ function inspectPrivateStateFile(fd: number, maxBytes: number): void {
     throw new Error('state file has unsafe owner or type')
   }
   if (stat.size > maxBytes) throw new Error('state file exceeds its size limit')
+  if (onWindows()) return
   const mode = stat.mode & 0o777
   // Same reasoning as secureStateDirectory: a file another account could have rewritten is not made
   // trustworthy by tightening it now. Every writer under ADAPTER_DATA_DIR already passes mode 0o600.

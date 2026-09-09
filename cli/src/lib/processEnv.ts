@@ -50,8 +50,9 @@ function read(pid: number): Promise<Record<string, string> | null> {
   if (process.platform === 'linux') {
     return readFile(`/proc/${pid}/environ`, 'utf8').then(parseEnviron).catch(() => null)
   }
+  if (process.platform === 'win32') return Promise.resolve(null)
   return new Promise((resolve) => {
-    execFile('ps', ['eww', '-p', String(pid), '-o', 'command='], { timeout: 2_000, maxBuffer: 4 << 20 }, (err, stdout) => {
+    execFile('ps', ['eww', '-p', String(pid), '-o', 'command='], { timeout: 2_000, maxBuffer: 4 << 20, windowsHide: true }, (err, stdout) => {
       if (err && !stdout) { resolve(null); return }
       const env = parsePsEnviron(stdout)
       // NO variables at all is macOS refusing to show them, not a process that has none.

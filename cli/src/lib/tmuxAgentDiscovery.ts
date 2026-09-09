@@ -70,9 +70,14 @@ export interface TmuxAgentDiscoveryDeps {
 
 const MISS_LIMIT = 2
 
+// Every probe below shells out to the POSIX `ps`. On Windows that is not merely useless (the
+// `-axo`/`eww` flags are BSD/GNU-only and the caller already treats a failure as "process table
+// unavailable") -- it is VISIBLE: the daemon runs without a console, so each spawn makes Windows
+// allocate one, and on Windows 11 the default console host is Windows Terminal. A window opened and
+// closed on the user's desktop every 5 seconds. `windowsHide` covers the spawns that remain.
 function execText(command: string, args: string[], timeout: number): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout }, (err, stdout) => {
+    execFile(command, args, { timeout, windowsHide: true }, (err, stdout) => {
       if (err) { resolve({ ok: false, error: err.message }); return }
       resolve({ ok: true, stdout })
     })
@@ -218,6 +223,9 @@ export async function probeTmuxAgents(
   daemonPid = process.pid,
   hints: ReadonlyMap<string, AgentEngine> = new Map(),
 ): Promise<TmuxAgentProbe> {
+  if (process.platform === 'win32') {
+    return { ok: false, error: 'process table unavailable on Windows' }
+  }
   const [tmux, ps] = await Promise.all([
     listTmuxPanes(),
     execText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3_000),
