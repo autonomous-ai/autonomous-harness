@@ -53,6 +53,22 @@ const P2P_RETRY_LIFETIME_CAP = 10
 // on it and lets the ordinary demote-on-mismatch rule apply again.
 const P2P_MIGRATION_TTL_MS = 30_000
 
+// A connection that reached 'direct' only via a Cloudflare TURN relay pair still costs per GB — worth
+// trying, periodically, for a truly direct pair instead. Unlike p2pRetry* above this NEVER touches the
+// live connection until a replacement has already proven itself: see scheduleUpgradeAttempt() and
+// promoteToDirect(). Capped at 3 tries and never reset (no success to reset it FOR — reaching direct
+// ends the attempts for good, and 3 relay results in a row is treated as "this path is what it is").
+const P2P_UPGRADE_MAX_ATTEMPTS = 3
+const P2P_UPGRADE_RETRY_DELAY_MS = 60_000
+// Shorter than TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS's 25s: the network has already proven itself capable
+// of a full negotiation (that's how the current TURN connection exists at all), so this trial doesn't
+// need the first-contact worst-case budget.
+const P2P_UPGRADE_ATTEMPT_TIMEOUT_MS = 15_000
+// Both phases of the cutover (drain confirmation, then promote ack) wait on one round trip over an
+// already-live channel — 5s is generous for that, not for a cold negotiation.
+const P2P_UPGRADE_DRAIN_TIMEOUT_MS = 5_000
+const P2P_PROMOTE_ACK_TIMEOUT_MS = 5_000
+
 export class RelayConnectError extends Error {
   constructor(message: string, readonly closeCode?: number) {
     super(message)
@@ -90,6 +106,26 @@ interface Entry {
    *  retrying forever purely because each success resets p2pRetryCount. */
   p2pRetryLifetimeTotal: number
   p2pRetryTimer: ReturnType<typeof setTimeout> | null
+  /** TURN-to-direct upgrade trials — see scheduleUpgradeAttempt()/attemptUpgrade()/promoteToDirect().
+   *  Entirely separate bookkeeping from p2pMigrating/p2pRetry*: this never touches entry.p2p (the live,
+   *  working connection) until a replacement has already proven itself direct AND drained. */
+  upgradeAttempts: number
+  upgradeTimer: ReturnType<typeof setTimeout> | null
+  upgradeShadow: TerminalP2pInitiator | null
+  /** streamId -> when its drain-barrier resync went out, RIGHT before a cutover — distinct from
+   *  p2pMigrating (that one is for WS->p2p; this is for p2p(turn)->p2p(direct), and the confirmation for
+   *  each arrives over a different transport, so sharing one map would let the two migrations cross-talk. */
+  upgradeDraining: Map<string, number>
+  /** Resolves whichever of the two sequential waits (drain-complete, then promote-ack) is currently
+   *  outstanding — the two never overlap, so one field is enough. */
+  upgradeWaitResolve: (() => void) | null
+  /** Set only when a promote_ack never arrived: the old connection was intentionally left open rather
+   *  than guessed closed (see promoteToDirect()) — cleaned up wherever the entry itself is torn down. */
+  upgradeOrphan: TerminalP2pInitiator | null
+  /** True once this entry has either cut over to a true direct pair, or spent all 3 attempts without
+   *  one — either way, stop trying. Never reset (unlike p2pRetryCount): there is no "next demote" to
+   *  re-arm a budget for here, since staying on direct or giving up are both permanent for this entry. */
+  upgradeDone: boolean
 }
 
 export interface RelaySession {
@@ -148,6 +184,9 @@ export class RemoteRelayPool {
     if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
     if (entry.lingerTimer) clearTimeout(entry.lingerTimer)
     if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
+    if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
+    void entry.upgradeShadow?.stop('invalidated', false)
+    void entry.upgradeOrphan?.stop('invalidated', false)
     // The caller is invalidating so it can immediately acquire() a fresh entry on the SAME local
     // connection (it just got a forceReconnect select) — null this out first so the generic
     // `ws.on('close', ...)` cleanup below doesn't turn around and close that same local socket via a
@@ -232,6 +271,13 @@ export class RemoteRelayPool {
       p2pRetryCount: 0,
       p2pRetryLifetimeTotal: 0,
       p2pRetryTimer: null,
+      upgradeAttempts: 0,
+      upgradeTimer: null,
+      upgradeShadow: null,
+      upgradeDraining: new Map(),
+      upgradeWaitResolve: null,
+      upgradeOrphan: null,
+      upgradeDone: false,
     }
     // Two phases before this connection is usable: (1) machine_select ack, (2) this daemon's own
     // e2e_hello/e2e_welcome as the "client" role — see lib/e2ee/relayClient.ts. Only once BOTH are done
@@ -357,7 +403,24 @@ export class RemoteRelayPool {
         if (!plain) return
         const type = typeof plain.type === 'string' ? plain.type : ''
         if (TERMINAL_P2P_SIGNAL_TYPES.has(type)) {
-          void entry.p2p?.handleSignal(type, plain.payload)
+          // p2p_promote/p2p_promote_ack belong to the upgrade orchestration below, not to
+          // TerminalP2pInitiator's own protocol — it would just silently no-op on them.
+          if (type === 'p2p_promote_ack') {
+            const ackPayload = plain.payload as { sessionId?: unknown } | undefined
+            if (typeof ackPayload?.sessionId === 'string' && ackPayload.sessionId === entry.p2p?.sessionId) {
+              entry.upgradeWaitResolve?.()
+            }
+            return
+          }
+          // A shadow trial negotiates its OWN session alongside entry.p2p (the live primary) — route by
+          // sessionId so its answer/candidates/abort reach it instead of being checked against (and
+          // silently dropped by) the primary's handleSignal, which only matches its own sessionId.
+          const signalSessionId = (plain.payload as { sessionId?: unknown } | undefined)?.sessionId
+          if (entry.upgradeShadow && typeof signalSessionId === 'string' && signalSessionId === entry.upgradeShadow.sessionId) {
+            void entry.upgradeShadow.handleSignal(type, plain.payload)
+          } else {
+            void entry.p2p?.handleSignal(type, plain.payload)
+          }
           return
         }
         // Forward the real frame FIRST: for `terminal_ready`, the Desktop app's TerminalSession learns
@@ -382,6 +445,9 @@ export class RemoteRelayPool {
     ws.on('close', (code, reasonBuf) => {
       if (entry.heartbeatTimer) clearInterval(entry.heartbeatTimer)
       if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
+      if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
+      void entry.upgradeShadow?.stop('relay_closed', false)
+      void entry.upgradeOrphan?.stop('relay_closed', false)
       void entry.p2p?.stop('relay_closed', false)
       entry.p2p = null
       this.entries.delete(machineId)
@@ -449,6 +515,9 @@ export class RemoteRelayPool {
         entry.lingerTimer = setTimeout(() => {
           if (!entry.sink) {
             if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
+            if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
+            void entry.upgradeShadow?.stop('idle', false)
+            void entry.upgradeOrphan?.stop('idle', false)
             void entry.p2p?.stop('idle', false)
             entry.p2p = null
             try { entry.ws.close(1000, 'idle') } catch { /* ignore */ }
@@ -488,6 +557,7 @@ export class RemoteRelayPool {
           console.log(`[p2p] connected · machine=${sid(machineId)} via=${relayed ? 'turn' : 'direct'} setup=${Math.round(setupMs)}ms`)
           this.reportP2pResult(entry, 'direct', setupMs, relayed ? 'relayed' : undefined)
           this.promoteOpenStreams(machineId, entry)
+          if (relayed && !entry.upgradeDone) this.scheduleUpgradeAttempt(machineId, entry)
         } else if (state === 'failed' && !wasDirect) {
           console.log(`[p2p] gave up · machine=${sid(machineId)} reason=${reason ?? 'unknown'} after=${Math.round(setupMs)}ms`
             + ` · ${p2p.negotiationDetail} — terminals stay on the ws relay`)
@@ -515,6 +585,12 @@ export class RemoteRelayPool {
       // stream's bytes are now genuinely arriving over p2p — safe to re-arm the ordinary
       // demote-on-mismatch rule for it (see the guard in the ws binary handler above).
       entry.p2pMigrating.delete(clear.streamId)
+      // Drain-barrier confirmation for a TURN-to-direct upgrade in flight (promoteToDirect() phase 1):
+      // this keyframe is the OLD (still-primary) connection's answer to the resync it sent to itself
+      // over p2p, proving everything before that point has been accounted for.
+      if (entry.upgradeDraining.delete(clear.streamId) && entry.upgradeDraining.size === 0) {
+        entry.upgradeWaitResolve?.()
+      }
       const local = encodeTerminalLocal(clear)
       if (local) entry.sink?.sendBinary(local)
       return
@@ -579,6 +655,12 @@ export class RemoteRelayPool {
   }
 
   private demoteP2p(machineId: string, entry: Entry, reason: string): void {
+    // The primary just died (or is dying) — an upgrade trial in flight for it no longer means anything,
+    // and scheduleP2pRetry() below is about to take over recovery via the normal path anyway.
+    if (entry.upgradeTimer) { clearTimeout(entry.upgradeTimer); entry.upgradeTimer = null }
+    if (entry.upgradeShadow) { void entry.upgradeShadow.stop('primary_demoted', true); entry.upgradeShadow = null }
+    entry.upgradeDraining.clear()
+    entry.upgradeWaitResolve = null
     const p2p = entry.p2p
     entry.p2p = null
     const streamIds = [...entry.p2pStreams]
@@ -654,6 +736,172 @@ export class RemoteRelayPool {
     // p2pMigrating is deliberately NOT cleared yet — that happens only once a p2p-delivered frame for
     // this stream actually arrives (handleP2pData / noteTerminalResponse), which is the real proof the
     // responder committed its own flip. Until then the demote-on-mismatch rule stays suppressed for it.
+  }
+
+  /**
+   * Kicks off a periodic attempt to replace a TURN-relayed p2p connection with a true direct one.
+   * Never touches entry.p2p until attemptUpgrade()'s shadow has already proven itself — see the Entry
+   * interface's doc on upgradeShadow/upgradeDraining.
+   */
+  private scheduleUpgradeAttempt(machineId: string, entry: Entry): void {
+    if (entry.upgradeTimer || entry.upgradeShadow || entry.upgradeDone) return
+    if (entry.upgradeAttempts >= P2P_UPGRADE_MAX_ATTEMPTS) { entry.upgradeDone = true; return }
+    entry.upgradeTimer = setTimeout(() => {
+      entry.upgradeTimer = null
+      if (this.entries.get(machineId) !== entry) return // entry was torn down/replaced meanwhile
+      this.attemptUpgrade(machineId, entry)
+    }, P2P_UPGRADE_RETRY_DELAY_MS)
+    entry.upgradeTimer.unref?.()
+  }
+
+  /** One trial: negotiate a brand-new (shadow) p2p connection from scratch, entirely independent of the
+   *  live primary, and see whether IT lands on a direct pair. The primary keeps serving traffic exactly
+   *  as before for the whole trial — nothing here is wired into entry.p2pStreams/sessionFor() routing
+   *  until promoteToDirect() has already proven success, so nothing here can disrupt it. */
+  private attemptUpgrade(machineId: string, entry: Entry): void {
+    if (entry.upgradeDone || !entry.p2p?.isReady || entry.p2p.transport !== 'relay' || !entry.p2pPolicy) return
+    entry.upgradeAttempts++
+    const policy = entry.p2pPolicy
+    const shadow: TerminalP2pInitiator = new TerminalP2pInitiator({
+      policy,
+      upgrade: true,
+      sendSignal: (type, payload) => {
+        const wrapped = entry.crypto.wrapOutgoing({ type, payload })
+        try { entry.ws.send(JSON.stringify(wrapped)) } catch { /* relay close handles cleanup */ }
+      },
+      // Identical to the primary's own wiring — correct both before promotion (nothing routes real data
+      // here yet, so this never actually fires) and after (once promoted, this IS the primary).
+      onData: (data) => this.handleP2pData(entry, data),
+      onStep: (step, elapsedMs) => {
+        console.log(`[p2p-upgrade] step · machine=${sid(machineId)} attempt=${entry.upgradeAttempts} ${step} +${Math.round(elapsedMs)}ms`)
+      },
+      onState: (state, setupMs, reason) => {
+        console.log(`[p2p-upgrade] ${state} · machine=${sid(machineId)} attempt=${entry.upgradeAttempts}`
+          + ` +${Math.round(setupMs)}ms${reason ? ` reason=${reason}` : ''}`)
+      },
+      onUnavailable: (reason) => {
+        if (entry.p2p === shadow) {
+          // Already promoted and now failing for real — an ordinary primary failure from here on.
+          this.demoteP2p(machineId, entry, reason)
+        } else if (entry.upgradeShadow === shadow) {
+          // Died as a trial, before cutover — the primary was never touched. Just abandon this attempt.
+          entry.upgradeShadow = null
+          entry.upgradeDraining.clear()
+          entry.upgradeWaitResolve = null
+          this.finishUpgradeAttempt(machineId, entry)
+        }
+      },
+    })
+    entry.upgradeShadow = shadow
+    shadow.start()
+    void this.runUpgradeAttempt(machineId, entry, shadow)
+  }
+
+  private async runUpgradeAttempt(machineId: string, entry: Entry, shadow: TerminalP2pInitiator): Promise<void> {
+    const ok = await shadow.waitUntilReady(P2P_UPGRADE_ATTEMPT_TIMEOUT_MS)
+    if (entry.upgradeShadow !== shadow || this.entries.get(machineId) !== entry) return // superseded/torn down meanwhile
+    if (!ok || shadow.transport === 'relay') {
+      entry.upgradeShadow = null
+      void shadow.stop('upgrade_no_gain', true)
+      this.finishUpgradeAttempt(machineId, entry)
+      return
+    }
+    await this.promoteToDirect(machineId, entry, shadow)
+  }
+
+  private finishUpgradeAttempt(machineId: string, entry: Entry): void {
+    if (entry.upgradeAttempts >= P2P_UPGRADE_MAX_ATTEMPTS) {
+      entry.upgradeDone = true
+      console.log(`[p2p-upgrade] giving up · machine=${sid(machineId)} staying on turn after ${entry.upgradeAttempts} attempts`)
+      return
+    }
+    this.scheduleUpgradeAttempt(machineId, entry)
+  }
+
+  /**
+   * Cuts entry.p2p over to `shadow`, which has already proven itself a true direct pair. Every bail-out
+   * before the actual swap (the `entry.p2p = shadow` line) leaves the primary completely untouched —
+   * that line is the one moment this can no longer be undone, and everything before it is written to
+   * make that moment as late and as certain as possible.
+   */
+  private async promoteToDirect(machineId: string, entry: Entry, shadow: TerminalP2pInitiator): Promise<void> {
+    const old = entry.p2p
+    if (!old || entry.upgradeShadow !== shadow || this.entries.get(machineId) !== entry) {
+      void shadow.stop('upgrade_stale', true)
+      if (entry.upgradeShadow === shadow) entry.upgradeShadow = null
+      this.finishUpgradeAttempt(machineId, entry)
+      return
+    }
+    const streamIds = [...entry.p2pStreams]
+    if (streamIds.length > 0) {
+      // Phase 1 — drain barrier over the OLD (still-primary, still fully live) connection.
+      const drained = await this.waitForUpgradeMilestone(entry, () => {
+        for (const streamId of streamIds) entry.upgradeDraining.set(streamId, Date.now())
+        for (const streamId of streamIds) {
+          void this.sessionFor(machineId, entry).send({ type: 'terminal_resync', payload: { streamId } })
+        }
+      }, P2P_UPGRADE_DRAIN_TIMEOUT_MS)
+      if (entry.upgradeShadow !== shadow || this.entries.get(machineId) !== entry) {
+        // Torn down/superseded while draining — old was never touched either way, just clean up.
+        entry.upgradeDraining.clear()
+        void shadow.stop('upgrade_stale', true)
+        return
+      }
+      if (!drained) {
+        // Timed out — OLD IS STILL COMPLETELY UNTOUCHED. Abandon just this attempt.
+        entry.upgradeDraining.clear()
+        entry.upgradeShadow = null
+        void shadow.stop('upgrade_drain_timeout', true)
+        this.finishUpgradeAttempt(machineId, entry)
+        return
+      }
+    }
+    // Phase 2 — the actual cutover. entry.p2pStreams is untouched: every streamId in it was already
+    // p2p and stays p2p, only the object behind entry.p2p changes.
+    entry.p2p = shadow
+    entry.upgradeShadow = null
+    const acked = await this.waitForUpgradeMilestone(entry, () => {
+      for (const streamId of streamIds) {
+        void this.sessionFor(machineId, entry).send({ type: 'terminal_resync', payload: { streamId } })
+      }
+      const wrapped = entry.crypto.wrapOutgoing({
+        type: 'p2p_promote',
+        payload: { sessionId: shadow.sessionId, protocolVersion: TERMINAL_P2P_PROTOCOL_VERSION },
+      })
+      try { entry.ws.send(JSON.stringify(wrapped)) } catch { /* relay close handles cleanup */ }
+    }, P2P_PROMOTE_ACK_TIMEOUT_MS)
+    entry.upgradeDone = true // either way, this entry is done trying — see the field's own doc comment
+    if (acked) {
+      void old.stop('upgraded', false)
+      console.log(`[p2p-upgrade] promoted · machine=${sid(machineId)} attempt=${entry.upgradeAttempts}`)
+    } else {
+      // Ack never arrived — keep OLD alive rather than guess it is safe to close; entry.upgradeOrphan is
+      // closed wherever the entry itself is torn down (invalidate/ws-close/idle-linger).
+      entry.upgradeOrphan = old
+      console.log(`[p2p-upgrade] promote ack timeout · machine=${sid(machineId)} — keeping the old connection`
+        + ' open until this entry is torn down')
+    }
+  }
+
+  /** One shared waiter shape for promoteToDirect()'s two sequential phases (drain-complete, then
+   *  promote-ack) — they never overlap, so entry.upgradeWaitResolve is reused rather than doubled.
+   *  `start` runs AFTER the timeout/resolver are armed, so a same-tick resolve inside it can never race
+   *  past a listener that is not wired up yet. */
+  private waitForUpgradeMilestone(entry: Entry, start: () => void, timeoutMs: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const done = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        entry.upgradeWaitResolve = null
+        resolve(ok)
+      }
+      const timer = setTimeout(() => done(false), timeoutMs)
+      timer.unref?.()
+      entry.upgradeWaitResolve = () => done(true)
+      start()
+    })
   }
 
   private reportP2pResult(entry: Entry, outcome: string, setupMs?: number, reason?: string): void {

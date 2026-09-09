@@ -23,6 +23,13 @@ function fakeEntry(overrides: Partial<Record<string, unknown>> = {}) {
     p2pRetryCount: 0,
     p2pRetryLifetimeTotal: 0,
     p2pRetryTimer: null,
+    upgradeAttempts: 0,
+    upgradeTimer: null,
+    upgradeShadow: null,
+    upgradeDraining: new Map<string, number>(),
+    upgradeWaitResolve: null as (() => void) | null,
+    upgradeOrphan: null,
+    upgradeDone: false,
     ...overrides,
   }
 }
@@ -282,5 +289,164 @@ describe('RemoteRelayPool live-migration of already-open streams onto p2p', () =
     // Without the p2pMigrating guard this would have deleted s1 from p2pStreams and reported 'relay'.
     expect(entry.p2pStreams.has('s1')).toBe(true)
     expect(entry.sink.sendFrame).not.toHaveBeenCalled()
+  })
+})
+
+/** Minimal fake of the TerminalP2pInitiator surface promoteToDirect()/scheduleUpgradeAttempt() touch —
+ *  a real one requires a live WebRTC negotiation, exactly why startP2p() itself has no dedicated test at
+ *  this level either; this mirrors that existing limit rather than trying to route around it. */
+function fakeP2p(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    sessionId: 'shadow-session',
+    isReady: true,
+    transport: 'direct',
+    send: vi.fn(() => true),
+    stop: vi.fn(async () => {}),
+    ...overrides,
+  }
+}
+
+describe('RemoteRelayPool TURN-to-direct upgrade', () => {
+  const pool = new RemoteRelayPool(
+    { accessToken: async () => 'unused' } as never,
+    'ws://unused',
+    { pub: new Uint8Array(), priv: new Uint8Array() } as never,
+    { pin: () => {}, get: () => null } as never,
+  ) as unknown as {
+    scheduleUpgradeAttempt: (machineId: string, entry: ReturnType<typeof fakeEntry>) => void
+    finishUpgradeAttempt: (machineId: string, entry: ReturnType<typeof fakeEntry>) => void
+    promoteToDirect: (machineId: string, entry: ReturnType<typeof fakeEntry>, shadow: ReturnType<typeof fakeP2p>) => Promise<void>
+    demoteP2p: (machineId: string, entry: ReturnType<typeof fakeEntry>, reason: string) => void
+    // promoteToDirect() re-checks `this.entries.get(machineId) === entry` after every await (the same
+    // liveness guard scheduleP2pRetry's timer callback uses) — these tests register the fake entry here
+    // directly rather than going through a real dial(), the same shortcut fakeEntry() already takes.
+    entries: Map<string, ReturnType<typeof fakeEntry>>
+  }
+
+  it('schedules up to 3 upgrade attempts, then gives up for good', () => {
+    vi.useFakeTimers()
+    const UPGRADE_MAX = 3 // mirrors the unexported P2P_UPGRADE_MAX_ATTEMPTS constant
+    try {
+      const entry = fakeEntry()
+      for (let i = 1; i <= UPGRADE_MAX; i++) {
+        pool.scheduleUpgradeAttempt('machine-1', entry)
+        expect(entry.upgradeTimer, `attempt #${i} should have been scheduled`).not.toBeNull()
+        vi.advanceTimersByTime(60_000)
+        entry.upgradeTimer = null // the real callback nulls this before calling attemptUpgrade
+        // attemptUpgrade() itself needs a real TerminalP2pInitiator to run — simulate what it does on a
+        // failed trial (finishUpgradeAttempt is what decides whether to reschedule or give up).
+        entry.upgradeAttempts = i
+        pool.finishUpgradeAttempt('machine-1', entry)
+      }
+      expect(entry.upgradeDone).toBe(true)
+      pool.scheduleUpgradeAttempt('machine-1', entry) // refused — done for good
+      expect(entry.upgradeTimer).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not schedule once upgradeDone, even with attempts left', () => {
+    const entry = fakeEntry({ upgradeDone: true, upgradeAttempts: 1 })
+    pool.scheduleUpgradeAttempt('machine-1', entry)
+    expect(entry.upgradeTimer).toBeNull()
+  })
+
+  it('cuts over immediately when there are no open streams to drain', async () => {
+    const old = fakeP2p({ sessionId: 'old-session' })
+    const shadow = fakeP2p({ sessionId: 'shadow-session' })
+    const entry = fakeEntry({ p2p: old, upgradeShadow: shadow })
+    pool.entries.set('machine-1', entry)
+
+    const promoted = pool.promoteToDirect('machine-1', entry, shadow)
+    // No streams means no drain wait — only the promote-ack wait is outstanding.
+    expect(entry.upgradeWaitResolve).not.toBeNull()
+    expect(entry.p2p).toBe(shadow) // cutover already happened, ack notwithstanding
+    entry.upgradeWaitResolve!()
+    await promoted
+
+    expect(old.stop).toHaveBeenCalledWith('upgraded', false)
+    expect(entry.upgradeDone).toBe(true)
+    expect(entry.upgradeOrphan).toBeNull()
+  })
+
+  it('drains open streams over the OLD connection before cutting over', async () => {
+    const old = fakeP2p({ sessionId: 'old-session' })
+    const shadow = fakeP2p({ sessionId: 'shadow-session' })
+    const entry = fakeEntry({ p2p: old, upgradeShadow: shadow, p2pStreams: new Set(['s1']) })
+    pool.entries.set('machine-1', entry)
+
+    const promoted = pool.promoteToDirect('machine-1', entry, shadow)
+    // Drain resync went out over the OLD connection — cutover has NOT happened yet.
+    expect(old.send).toHaveBeenCalledWith(JSON.stringify({ type: 'terminal_resync', payload: { streamId: 's1' } }))
+    expect(entry.p2p).toBe(old)
+    expect(entry.upgradeDraining.has('s1')).toBe(true)
+
+    entry.upgradeWaitResolve!() // simulate the drain-confirmation keyframe arriving
+    await Promise.resolve() // let promoteToDirect's await settle onto phase 2
+    await Promise.resolve()
+
+    expect(entry.p2p).toBe(shadow) // NOW cut over
+    // Phase 2's resync for 's1' rides sessionFor() again — which now routes through entry.p2p (=shadow),
+    // since p2pStreams still names 's1' and was never touched by the cutover.
+    expect(shadow.send).toHaveBeenCalledWith(JSON.stringify({ type: 'terminal_resync', payload: { streamId: 's1' } }))
+    entry.upgradeWaitResolve!() // simulate the promote ack
+    await promoted
+
+    expect(old.stop).toHaveBeenCalledWith('upgraded', false)
+  })
+
+  it('a drain timeout leaves the old connection completely untouched', async () => {
+    vi.useFakeTimers()
+    try {
+      const old = fakeP2p({ sessionId: 'old-session' })
+      const shadow = fakeP2p({ sessionId: 'shadow-session' })
+      const entry = fakeEntry({ p2p: old, upgradeShadow: shadow, p2pStreams: new Set(['s1']) })
+      pool.entries.set('machine-1', entry)
+
+      const promoted = pool.promoteToDirect('machine-1', entry, shadow)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await promoted
+
+      expect(entry.p2p).toBe(old) // never cut over
+      expect(old.stop).not.toHaveBeenCalled()
+      expect(shadow.stop).toHaveBeenCalledWith('upgrade_drain_timeout', true)
+      expect(entry.upgradeShadow).toBeNull()
+      expect(entry.upgradeDraining.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a promote-ack timeout keeps the old connection alive as an orphan rather than guessing it is safe to close', async () => {
+    vi.useFakeTimers()
+    try {
+      const old = fakeP2p({ sessionId: 'old-session' })
+      const shadow = fakeP2p({ sessionId: 'shadow-session' })
+      const entry = fakeEntry({ p2p: old, upgradeShadow: shadow })
+      pool.entries.set('machine-1', entry)
+
+      const promoted = pool.promoteToDirect('machine-1', entry, shadow)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await promoted
+
+      expect(entry.p2p).toBe(shadow) // already cut over — no reason to roll back a proven-direct pair
+      expect(old.stop).not.toHaveBeenCalled() // NOT guessed closed
+      expect(entry.upgradeOrphan).toBe(old) // left for entry-teardown cleanup instead
+      expect(entry.upgradeDone).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('demoteP2p cancels an in-flight upgrade trial without touching the primary retry policy', () => {
+    const shadow = fakeP2p({ sessionId: 'shadow-session' })
+    const entry = fakeEntry({ upgradeShadow: shadow, upgradeTimer: setTimeout(() => {}, 60_000) })
+
+    pool.demoteP2p('machine-1', entry, 'send_failed')
+
+    expect(shadow.stop).toHaveBeenCalledWith('primary_demoted', true)
+    expect(entry.upgradeShadow).toBeNull()
+    expect(entry.upgradeTimer).toBeNull()
   })
 })
