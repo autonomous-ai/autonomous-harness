@@ -8,7 +8,7 @@
 // read, the router is the one the backend already calls for remote machines, and the turn events arrive
 // as the very `commander_event` cards the WiFi device receives — teed at the socket rather than emitted
 // again here, so the two device surfaces cannot drift.
-import { deskRing, type DeskEdge } from './deskRing.js'
+import { deskRing } from './deskRing.js'
 import { join } from 'node:path'
 
 import { AuthSessionManager, readAuthSession } from '../lib/authSession.js'
@@ -47,7 +47,7 @@ export interface CableHostWiring {
   /** The runtime catalog, from the same provider the web and the WiFi device read. */
   listModels?: (agentId: string) => Promise<Array<{ id: string }>>
   /** The dial moved to another agent — the desktop window should show that agent on its own machine. */
-  focused?: (machineId: string, agentId: string, edge?: DeskEdge) => void
+  focused?: (machineId: string, agentId: string) => void
   /** A notification was tapped: the window gives that agent a tile of its own. */
   opened?: (machineId: string, agentId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
@@ -291,8 +291,6 @@ export class DaemonCableHost implements CableHost {
    */
   private desk: string[] = []
 
-  /** Which edge of the desk an off-desk agent belongs to. Rebuilt with the ring. */
-  private deskEdge = new Map<string, DeskEdge>()
 
   /**
    * Every agent this daemon has listed since it started, by id.
@@ -324,7 +322,6 @@ export class DaemonCableHost implements CableHost {
     const out = await this.listAgentsFlat()
 
     const ring = deskRing(out.map((a) => a.id), this.desk)
-    this.deskEdge = ring.edgeOf
     // Walked agents first, then the ones the dial knows but does not walk to —
     // the session sends the count of the first group, so the order is the split.
     const listed = [...ring.order, ...ring.offRing]
@@ -588,13 +585,11 @@ export class DaemonCableHost implements CableHost {
       this.wiring.log(`cable: ignored focus for unknown agent ${agentId}`)
       return
     }
-    // Which tile the window should put this agent in, for one it has no tile
-    // for: the edge of the desk the agent belongs to. The dial never says which
-    // way the thumb went — it does not have to, because an agent's side of the
-    // ring already answers it.
-    const edge = this.deskEdge.get(agentId)
-    this.wiring.log(`cable: focus ${machineId}/${agentId}${edge ? ` (off-desk, ${edge})` : ''}`)
-    this.wiring.focused?.(machineId, agentId, edge)
+    // No edge to name any more: the carousel only walks agents the window already has a tile for, so a
+    // focus arriving from the dial is always about a tile that exists. Which tile to REPLACE was the
+    // only question the old arcs answered, and there is nothing left to replace.
+    this.wiring.log(`cable: focus ${machineId}/${agentId}`)
+    this.wiring.focused?.(machineId, agentId)
   }
 
   scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void {

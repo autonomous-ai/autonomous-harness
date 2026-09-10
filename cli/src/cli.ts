@@ -4014,14 +4014,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Both of these are LOCAL-ONLY on purpose (backend.sendLocal, not backend.send): they describe a hand
     // at this desk, not a change in what the machine is doing, and the cloud web audience may be sitting
     // at another computer entirely.
-    // `edge` is present only for an agent the window has NO tile for, and says
-    // which end of the desk it belongs to — so the window replaces the first
-    // tile or the last one rather than guessing, and the dial never has to
-    // report which way the thumb moved.
     // A notification tap, which asks for a tile of its OWN — see CableHost.openAgent.
     opened: (machineId, agentId) => backend.sendLocal({ type: 'dial_open', payload: { machineId, agentId } }),
-    focused: (machineId, agentId, edge) =>
-      backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId, ...(edge ? { edge } : {}) } }),
+    // No `edge`. It used to ride along for an agent the window had no tile for, naming which end of the
+    // desk to replace; the carousel now only walks tiles that exist, so every focus is about one of them.
+    focused: (machineId, agentId) =>
+      backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
     // Words spoken on the overview belong to whichever agent the window's palette picks.
     routeInWindow: (text, cmd) => windowRouter.ask(text, cmd),

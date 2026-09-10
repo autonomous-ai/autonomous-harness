@@ -366,14 +366,13 @@ describe('DaemonCableHost.listAgents across machines', () => {
 
     host.focus('r1')
 
-    // No edge: the window has reported no tiles, so there is no desk to be off
-    // the end of and nothing for it to replace.
-    expect(focused).toHaveBeenCalledWith('other', 'r1', undefined)
+    expect(focused).toHaveBeenCalledWith('other', 'r1')
   })
 
-  it('tells the window which end of the desk an off-desk agent belongs to', async () => {
-    // The dial never reports which way the thumb went. It does not have to: an
-    // agent's side of the ring is the answer, and the ring is built here.
+  it('reports a focus with no edge, on or off the desk', async () => {
+    // `edge` is gone with the arcs. It answered "which tile does this replace" for an agent the window
+    // had none for, which the carousel could reach by walking past the end of the desk; it walks only
+    // the desk now, so every focus it can raise is about a tile that already exists.
     AGENTS.length = 0
     for (const agentId of ['a1', 'a2', 'a3']) {
       AGENTS.push({ agentId, registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
@@ -385,14 +384,30 @@ describe('DaemonCableHost.listAgents across machines', () => {
     host.setDesk(['a2'])
     await host.listAgents()
 
-    host.focus('a3')
-    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a3', 'tail')
-    host.focus('a1')
-    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a1', 'head')
-    // On the desk already: the window focuses that tile rather than replacing
-    // one, so there is no edge to name.
     host.focus('a2')
-    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a2', undefined)
+    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a2')
+    // Even for one the carousel does not walk — the switcher can still name it, and the window opening
+    // it is what puts it on the desk.
+    host.focus('a3')
+    expect(focused).toHaveBeenLastCalledWith(expect.any(String), 'a3')
+  })
+
+  it('walks the desk and nothing else', async () => {
+    AGENTS.length = 0
+    for (const agentId of ['a1', 'a2', 'a3', 'a4']) {
+      AGENTS.push({ agentId, registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    }
+    const host = new DaemonCableHost(wiring())
+    await settled(host)
+
+    host.setDesk(['a3', 'a1'])
+    const listed = await host.listAgents()
+
+    // Tile order first — that is what the dial walks — then everything else, marked so the session can
+    // count the split. The old ring wrapped the desk in two arcs of off-desk agents; a thumb can no
+    // longer step onto one at all.
+    expect(listed.map((a) => a.id)).toEqual(['a3', 'a1', 'a2', 'a4'])
+    expect(listed.filter((a) => !a.offRing).map((a) => a.id)).toEqual(['a3', 'a1'])
   })
 
   it('pushes the agents in ring order, tiles first', async () => {
