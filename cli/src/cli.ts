@@ -50,6 +50,7 @@ import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './l
 import type { AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell } from './lib/engineLaunch.js'
+import { resolveCodexHome } from './lib/codexHome.js'
 import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridEngineLaunch } from './lib/gridLaunch.js'
 import { HERMES_SYSTEM_MANAGED_DIR } from './lib/gridWebMcp.js'
 import { writeGridConfigDir } from './lib/gridConfigDir.js'
@@ -2280,6 +2281,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       // agy cannot be found by directory — its repair reads the presence lock the process holds open.
       //
       const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, {
+        codexHome: observed.codexHome ?? agent.codexHome,
         bornOnly: true,
         pid: observed.processIdentity.pid,
       })
@@ -2331,6 +2333,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         processIdentity: observed.processIdentity,
         gateway: observed.gateway,
         grid: observed.grid,
+        codexHome: observed.codexHome,
       })
       if (!opened) return
       if (opened.evicted) {
@@ -2360,12 +2363,13 @@ async function runForeground(session: AuthSession): Promise<void> {
       // could not look, which never counts as a move — see `probeGridAssignment`'s three answers.
       const gridMoved = observed.grid !== undefined
         && !sameGridAssignment(current.grid ?? null, observed.grid)
+      const profileChanged = observed.codexHome !== undefined && current.codexHome !== observed.codexHome
       const wasLaunching = current.launch?.state !== undefined && current.launch.state !== 'ready'
       registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
-      registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
+      registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid, observed.codexHome)
       if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
       await bindObservedAgent(observed)
-      if (wasDormant || wasLaunching) {
+      if (wasDormant || wasLaunching || profileChanged) {
         const active = registry.byAgent(current.agentId)
         if (!active) return
         if (active.sessionId && !await attachSession(active)) {
@@ -3295,12 +3299,15 @@ async function runForeground(session: AuthSession): Promise<void> {
     return undefined
   }
 
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
     } catch {
       return { ok: false, error: 'CWD_NOT_FOUND' }
+    }
+    if (codexHome !== undefined && !installCodexHooks(hookPort, codexHome)) {
+      return { ok: false, error: 'CODEX_PROFILE_SETUP_FAILED', detail: 'Could not prepare this Codex profile’s Harness hooks. Check its hooks.json and folder permissions.' }
     }
     // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
     // retaining the engine and a collision-resistant creation suffix for diagnostics. Computed
@@ -3354,7 +3361,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
-    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv, cwd }
+    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv, cwd, codexHome }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -3374,6 +3381,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       argv,
       env: gridLaunch?.env,
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
+      codexHome,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result
@@ -3449,6 +3457,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     launch: { env?: Record<string, string>; extraArgs?: readonly string[] } = {},
   ): RestartAgentDeps => ({
     holdOpen: async () => {
+      if (session.codexHome !== undefined && !resolveCodexHome(session.codexHome)) {
+        return { ok: false, reason: 'This agent’s Codex profile folder is unavailable. Restore it before restarting.' }
+      }
       const result = await tmuxBackend!.holdOpen(runtime)
       return result.state === 'succeeded'
         ? { ok: true }
@@ -3488,6 +3499,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     buildArgv: (opts) => buildEngineLaunchArgv(session.engine, {
       ...opts,
       ...(session.cwd ? { cwd: session.cwd } : {}),
+      codexHome: session.codexHome,
       ...(launch.extraArgs?.length ? { extraArgs: launch.extraArgs } : {}),
       // A pane swap onto a grid has to clear the same vendor credentials a fresh create does, for the
       // same reason and against the same failure: an engine re-exec'd with the grid's variables still

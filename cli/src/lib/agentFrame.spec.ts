@@ -17,6 +17,14 @@ function session(grid: RegisteredSession['grid']): RegisteredSession {
 const assignment = { baseUrl: 'https://grid.autonomous.ai/grid-abc/relay', model: 'DeepSeek-V4-Flash-0731' }
 
 describe('agentFrame', () => {
+  it('keeps a Codex profile on both list and sync frames without adding it to legacy or other engines', async () => {
+    const selected = { ...session(null), engine: 'codex' as const, codexHome: '/accounts/two' }
+    const options = { selectedModel: null, terminalAvailable: true }
+    expect(await agentFrame(selected, options)).toHaveProperty('codexHome', '/accounts/two')
+    expect(await agentFrame(session(null), options)).not.toHaveProperty('codexHome')
+    expect(await agentFrame({ ...selected, engine: 'claude' }, options)).not.toHaveProperty('codexHome')
+  })
+
   // The regression this file exists for: `agent_synced` was built by a SECOND, hand-maintained copy
   // of this shape that never grew a `grid` field. The desktop rebuilds its Agent from every push, so
   // each sync reset an agent's grid to null and the "N agents are on an older target" banner came

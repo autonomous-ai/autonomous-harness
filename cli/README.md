@@ -141,6 +141,18 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
   and a reason specific to it — some talk only to their own service, some need a provider block
   written into a dotfile this daemon will not edit — rather than quietly started on its own login.
   Needs tmux ≥ 3.2; an older one is refused as `TMUX_TOO_OLD_FOR_GRID`. See `src/lib/gridLaunch.ts`.
+- **Codex accounts can use separate state folders.** `engines_probe` advertises
+  `supportsCodexHome: true` for Codex. `agent_create` accepts an optional absolute
+  `codexHome` directory for a Codex launch without a Grid override. It resolves to
+  an existing, writable directory owned by the current user; an invalid explicit
+  choice fails instead of falling back to the daemon's account. This is the
+  `CODEX_HOME` behind a shortcut such as `codex2`, not a shell alias to execute or
+  a named Codex configuration preset. The launch sets it after shell startup;
+  the daemon's environment and credential files are unchanged. Harness merges
+  its hooks into that folder's `hooks.json` and leaves malformed files untouched.
+  Codex may require reviewing those hooks with `/hooks` on first use.
+  Process discovery, transcript binding/repair, model cache lookup and restarts
+  retain the agent's home. Agent frames include the path as `codexHome` when known.
 - **A running agent can be moved to a grid** (`agent_retarget`): `respawn-pane -k -e` re-execs the
   pane's engine with the new launch and `--resume`, keeping the pane, its id and its scrollback, and
   the new process is adopted onto the same agent record. A pane mid-turn is refused (`AGENT_BUSY`)

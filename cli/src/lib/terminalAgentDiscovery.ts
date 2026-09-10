@@ -6,6 +6,7 @@ import {
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
+import { probeCodexHome } from './codexHome.js'
 import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
 import type { TerminalBackend } from './terminalBackend.js'
 import {
@@ -29,6 +30,7 @@ export { processRows } from './tmux.js'
 
 export interface DiscoveredTerminalAgent {
   engine: AgentEngine
+  codexHome?: string
   cwd: string
   processIdentity: ProcessIdentity
   args: string
@@ -245,6 +247,7 @@ export async function probeTerminalAgents(
     agent.gateway = runtime.kind
     // Same process, same cached read — the grid costs no extra `ps`.
     agent.grid = await probeGridAssignment(agent.processIdentity, agent.engine, agent.args)
+    if (agent.engine === 'codex') agent.codexHome = await probeCodexHome(agent.processIdentity)
   }))
   return { processTableAvailable: true, targets, ...discovered }
 }

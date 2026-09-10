@@ -1205,7 +1205,7 @@ export class RuntimeProfileManager {
     const output: RuntimeModelOption[] = []
     const seen = new Set<string>()
     let cache: CodexCache = {}
-    try { cache = JSON.parse(await readFile(join(env.CODEX_HOME, 'models_cache.json'), 'utf8')) as CodexCache } catch { /* current state fallback below */ }
+    try { cache = JSON.parse(await readFile(join(session.codexHome ?? env.CODEX_HOME, 'models_cache.json'), 'utf8')) as CodexCache } catch { /* current state fallback below */ }
     for (const item of Array.isArray(cache.models) ? cache.models : []) {
       const model = text(item.slug)
       if (!model || item.visibility === 'hide') continue

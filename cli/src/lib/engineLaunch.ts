@@ -32,6 +32,8 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
 
 export interface LaunchCommandOptions {
   bypassPermission?: boolean
+  /** State and account for this Codex process only; never changes the daemon's environment. */
+  codexHome?: string
   /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
   resumeSessionId?: string
   /**
@@ -182,13 +184,20 @@ export function buildEngineLaunchArgv(
   runtimeNode: string = managedNodePath(),
 ): string[] {
   const command = buildEngineCommandArgv(engine, opts)
+  if (opts.codexHome !== undefined && engine !== 'codex') {
+    throw new Error('A Codex profile can only be used with Codex')
+  }
   const interactive = interactiveEngineShell(shell)
-  if (!interactive) return command
+  if (!interactive) return opts.codexHome === undefined
+    ? command
+    : ['env', `CODEX_HOME=${opts.codexHome}`, ...command]
   // The clear comes FIRST, before the install as well as before the engine. An installer is a child
   // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
+  // Apply AFTER shell startup, which may itself export a different CODEX_HOME.
   const prelude = clearEnvPrelude(opts.clearEnv)
+    + (opts.codexHome === undefined ? '' : `export CODEX_HOME=${shellSingleQuote(opts.codexHome)}\n`)
   // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.

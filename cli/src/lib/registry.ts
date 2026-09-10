@@ -35,6 +35,7 @@ import { join, basename, dirname, relative } from 'path'
 import { hostname, uptime } from 'os'
 import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
+import { isCodexHome } from './codexHome.js'
 import { ENGINES, type AgentEngine } from '../engines/types.js'
 import type { GridAssignment } from './gridAssignment.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
@@ -99,6 +100,8 @@ export interface RegisteredSession {
    * exactly like `gateway`, never declared. See `gridAssignment.ts`. Carries no credential.
    */
   grid?: GridAssignment | null
+  /** Account and state directory observed on this process or selected for its pending launch. */
+  codexHome?: string
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -478,7 +481,7 @@ function isWithin(root: string, file: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`/`) && !rel.startsWith(`\\`))
 }
 
-export function validTranscriptPath(engine: AgentEngine, filePath: string): boolean {
+export function validTranscriptPath(engine: AgentEngine, filePath: string, codexHome?: string): boolean {
   try {
     const actual = realpathSync(filePath)
     const root = realpathSync(
@@ -489,7 +492,7 @@ export function validTranscriptPath(engine: AgentEngine, filePath: string): bool
         : engine === 'muse'
         ? join(env.MUSE_HOME, 'sessions')
         : engine === 'codex'
-        ? join(env.CODEX_HOME, 'sessions')
+        ? join(codexHome ?? env.CODEX_HOME, 'sessions')
         : engine === 'grok'
         ? join(env.GROK_HOME, 'sessions')
         : engine === 'agy'
@@ -674,6 +677,11 @@ class Registry {
       let changed = false
       for (const raw of Array.isArray(arr) ? arr : []) {
         const engine = normalizedAgentEngine(raw?.engine)
+        if (engine === 'codex' && raw.codexHome !== undefined && !isCodexHome(raw.codexHome)) {
+          changed = true
+          continue
+        }
+        const codexHome = engine === 'codex' ? raw.codexHome as string | undefined : undefined
         const runtimes = normalizedRuntimes(raw?.runtimes, raw?.tmuxPane)
         const pane = tmuxProjection(runtimes)
         let transcriptPath =
@@ -687,9 +695,9 @@ class Registry {
           const meta = readCodexRolloutMeta(transcriptPath)
           if (meta?.isSubagent) {
             const repaired = meta.parentThreadId === rawSessionId
-              ? resolveCodexRollout(rawSessionId, join(env.CODEX_HOME, 'sessions'))
+              ? resolveCodexRollout(rawSessionId, join(codexHome ?? env.CODEX_HOME, 'sessions'))
               : null
-            if (!repaired || !validTranscriptPath('codex', repaired) || readCodexRolloutMeta(repaired)?.isSubagent) {
+            if (!repaired || !validTranscriptPath('codex', repaired, codexHome) || readCodexRolloutMeta(repaired)?.isSubagent) {
               changed = true
               bound = false
               transcriptPath = null
@@ -710,7 +718,7 @@ class Registry {
         }
         if (
           (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
-          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath))
+          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath, codexHome))
         ) {
           bound = false
           transcriptPath = null
@@ -733,6 +741,7 @@ class Registry {
           boundAt: bound ? (typeof raw.boundAt === 'number' ? raw.boundAt : (raw.registeredAt ?? now)) : null,
           engine,
           transcriptPath,
+          ...(codexHome !== undefined ? { codexHome } : {}),
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
           sessionId: bound ? rawSessionId : '',
           projectDir: !repairedCodexTranscript && typeof raw.projectDir === 'string' && raw.projectDir
@@ -819,6 +828,7 @@ class Registry {
     processIdentity: ProcessIdentity
     gateway?: 'ori' | null
     grid?: GridAssignment | null
+    codexHome?: string
   }):
     {
       entry: RegisteredSession
@@ -869,6 +879,7 @@ class Registry {
       // the last good one said rather than silently downgrading a gateway agent to a vendor one.
       if (input.gateway !== undefined) existing.gateway = input.gateway
       if (input.grid !== undefined) existing.grid = input.grid
+      if (engine === 'codex' && isCodexHome(input.codexHome)) existing.codexHome = input.codexHome
       existing.updatedAt = Date.now()
       this.index(existing)
       this.terminalAvailableAgents.add(existing.agentId)
@@ -907,6 +918,7 @@ class Registry {
       engine,
       gateway: input.gateway ?? null,
       grid: input.grid ?? null,
+      ...(engine === 'codex' && isCodexHome(input.codexHome) ? { codexHome: input.codexHome } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -936,6 +948,7 @@ class Registry {
     primaryRuntimeKey?: string
     cwd?: string | null
     grid?: GridAssignment | null
+    codexHome?: string
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
     const runtimes = normalizedRuntimes(input.runtimes)
@@ -953,6 +966,7 @@ class Registry {
       engine: input.engine,
       gateway: null,
       grid: input.grid ?? null,
+      ...(input.engine === 'codex' && isCodexHome(input.codexHome) ? { codexHome: input.codexHome } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -1030,7 +1044,7 @@ class Registry {
       // Copilot's session id is a uuid and names the directory its event stream lives in.
       || (engine === 'copilot' && !GROK_SESSION_RE.test(sessionId))
       || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && engine !== 'grok' && engine !== 'agy' && engine !== 'copilot' && !transcriptPath)
-      || (transcriptPath && !validTranscriptPath(engine, transcriptPath))
+      || (transcriptPath && !validTranscriptPath(engine, transcriptPath, processAgent?.codexHome))
     ) return null
     if (engine === 'codex' && transcriptPath && readCodexRolloutMeta(transcriptPath)?.isSubagent) return null
 
@@ -1087,6 +1101,7 @@ class Registry {
       sessionId,
       boundAt: isNew ? now : existing?.boundAt ?? now,
       engine,
+      ...(existing?.codexHome !== undefined ? { codexHome: existing.codexHome } : {}),
       transcriptPath: effectiveTranscriptPath,
       projectDir: engine === 'grok' || engine === 'agy' || engine === 'copilot'
         ? basename(input.cwd ?? existing?.cwd ?? '') || sessionId
@@ -1234,6 +1249,7 @@ class Registry {
     processIdentity: ProcessIdentity,
     gateway?: 'ori' | null,
     grid?: GridAssignment | null,
+    codexHome?: string,
   ): boolean {
     const session = this.resolve(sessionId)
     if (!session || !validProcessIdentity(processIdentity)) return false
@@ -1245,6 +1261,7 @@ class Registry {
     // The grid is read from the same environment and follows the same rule. It matters most right
     // after a retarget: the respawned pane is a new pid, and this is where its new grid lands.
     if (grid !== undefined) session.grid = grid
+    if (session.engine === 'codex' && isCodexHome(codexHome)) session.codexHome = codexHome
     session.updatedAt = Date.now()
     this.index(session)
     this.save()
