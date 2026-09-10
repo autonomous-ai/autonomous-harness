@@ -59,6 +59,7 @@ import { terminateDeletedAgent, checkPidRuntime } from './lib/deleteAgentFallbac
 import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
 import { findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
+import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { basename } from 'node:path'
 import {
   bypassPermissionActive,
@@ -3356,39 +3357,26 @@ async function runForeground(session: AuthSession): Promise<void> {
     const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv, cwd }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
-    const spawned = await tmuxBackend.create({
-      // The login shell starts somewhere stable; its argv enters the requested workspace after rc files.
-      cwd: homedir(),
-      label,
-      command: argv,
-      ...(gridLaunch ? { env: gridLaunch.env } : {}),
-    })
-    if (spawned.state !== 'succeeded') {
-      console.warn(`[agent] create ${engine} failed · tmux could not open a pane · ${spawned.reason ?? ''}`)
-      // `tmuxBackend` exists whenever the CONFIG lists tmux — it is never a probe of the binary. So a
-      // daemon that cannot resolve `tmux` at all (a login context whose PATH lacks Homebrew's bin,
-      // the usual shape after a reboot) reported the same SPAWN_FAILED as a tmux that answered and
-      // refused. They need different fixes, so they get different codes.
-      const missing = spawned.reason === 'tmux is unavailable'
-      return {
-        ok: false,
-        error: missing ? 'TMUX_UNAVAILABLE' : 'SPAWN_FAILED',
-        detail: spawned.reason,
-      }
-    }
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
     // loopback and relayed Desktop clients can attach while the login shell/installer is still busy.
-    const pending = registry.openPendingAgent({
+    // `tmuxBackend` exists whenever the CONFIG lists tmux — it is never a probe of the binary, so a
+    // daemon that cannot resolve `tmux` at all (a login context whose PATH lacks Homebrew's bin, the
+    // usual shape after a reboot) is reported as `TMUX_UNAVAILABLE` too, distinctly from a tmux that
+    // answered and refused (`SPAWN_FAILED`) — see createAgentPane.ts. Registration itself is retried
+    // there: a stale registry entry from a previous tmux-server generation occasionally collides with
+    // a freshly-minted pane id, and that collision clears on its own on the very next pane.
+    const result = await createAndRegisterPane({
+      tmuxBackend,
+      registry,
       engine,
-      runtimes: [spawned.runtime],
-      primaryRuntimeKey: terminalRouteKey(spawned.runtime),
       cwd,
+      sessionLabel: label,
+      argv,
+      env: gridLaunch?.env,
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
     })
-    if (!pending) {
-      await tmuxBackend.kill(spawned.runtime)
-      return { ok: false, error: 'REGISTRATION_FAILED', detail: 'tmux pane could not be registered' }
-    }
+    if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
+    const { spawned, pending } = result
     announceSession(pending)
 
     const watchCreatedPane = async (): Promise<void> => {
