@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ENGINES } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
-import { TerminalStreamManager, terminalEngineCapabilities } from './terminalStreamManager.js'
+import { TerminalStreamManager, terminalEngineCapabilities, UPLOAD_CHUNK_BYTES } from './terminalStreamManager.js'
 import { TERMINAL_ACTION_SUCCEEDED, type TerminalStreamHandle, type TerminalStreamSink } from './terminalTypes.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
-import { encodePasteFilePayload, TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
 import { writeImageToOsClipboard, type OsClipboardImageResult } from './osClipboard.js'
 import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 
@@ -224,58 +224,148 @@ describe('TerminalStreamManager', () => {
     expect(stream.pastes).toHaveLength(3)
   })
 
-  describe('image paste', () => {
+  describe('chunked image/file upload', () => {
     const pngBytes = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
-    const imagePaste = (streamId: string): TerminalBinaryClear => ({
-      kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, compressed: false, bytes: pngBytes,
-    })
+    const fileContent = Uint8Array.of(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34)
 
-    it('advertises imagePaste in terminal_capabilities', async () => {
+    async function openStream(requestId = 'open'): Promise<string> {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId, protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      return sent.findLast((f) => f.type === 'terminal_ready')!.payload.streamId as string
+    }
+
+    function begin(streamId: string, fields: Record<string, unknown>): Promise<boolean> {
+      return manager.handleFrame('web-1', 'terminal_chunked_upload_begin', { streamId, ...fields })
+    }
+
+    function chunk(streamId: string, kind: TerminalBinaryKind.imagePaste | TerminalBinaryKind.pasteFile, seq: number, bytes: Uint8Array): Promise<void> {
+      return manager.handleBinary('web-1', { kind, streamId, seq, compressed: false, bytes })
+    }
+
+    function lastResult(): { connId: string; type: string; payload: Record<string, unknown> } {
+      return sent.at(-1)!
+    }
+
+    it('advertises imagePaste and pasteFile in terminal_capabilities', async () => {
       await manager.handleFrame('web-1', 'terminal_capabilities', { requestId: 'r1' })
-      expect((sent.at(-1)?.payload.features as Record<string, unknown>).imagePaste).toBe(true)
+      const features = sent.at(-1)?.payload.features as Record<string, unknown>
+      expect(features.imagePaste).toBe(true)
+      expect(features.pasteFile).toBe(true)
     })
 
-    it('rejects a legacy JSON terminal_paste_image the same way as terminal_paste', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-img', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
+    it('rejects legacy JSON terminal_paste_image/terminal_paste_file the same way as terminal_paste', async () => {
+      const streamId = await openStream()
       await manager.handleFrame('web-1', 'terminal_paste_image', { streamId })
-      expect(sent.at(-1)?.payload.code).toBe('TERMINAL_BINARY_REQUIRED')
+      expect(lastResult().payload.code).toBe('TERMINAL_BINARY_REQUIRED')
+      await manager.handleFrame('web-1', 'terminal_paste_file', { streamId })
+      expect(lastResult().payload.code).toBe('TERMINAL_BINARY_REQUIRED')
     })
 
-    it('on a successful clipboard write, replays a literal Ctrl+V and reports outcome "clipboard"', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-img', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
+    it('accepts a begin, reports progress per chunk, and finishes an image via the clipboard', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
+      expect(lastResult()).toMatchObject({ type: 'terminal_chunked_upload_begin_result', payload: { streamId, accepted: true } })
 
-      await manager.handleBinary('web-1', imagePaste(streamId))
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes)
+
+      const progress = sent.filter((f) => f.type === 'terminal_chunked_upload_progress')
+      expect(progress).toHaveLength(1)
+      expect(progress[0].payload).toMatchObject({ streamId, bytesWritten: pngBytes.length, totalBytes: pngBytes.length })
 
       expect(vi.mocked(writeImageToOsClipboard)).toHaveBeenCalledWith('/fake/paste-images/fake.png', pngBytes)
       expect(stream.writes).toHaveLength(1)
       expect(Buffer.from(stream.writes[0])).toEqual(Buffer.from([0x16])) // literal Ctrl+V
-      expect(stream.pastes).toHaveLength(0) // never goes through the text-paste path
-      const result = sent.at(-1)!
-      expect(result.type).toBe('terminal_paste_image_result')
+      const result = sent.findLast((f) => f.type === 'terminal_paste_image_result')!
       expect(result.payload).toMatchObject({ streamId, outcome: 'clipboard' })
+    })
+
+    // Real chunk boundaries, not arbitrary test-only slicing: every chunk but the last is exactly
+    // UPLOAD_CHUNK_BYTES, matching how a real client actually splits an upload — the daemon's own
+    // per-chunk validation rejects a seq beyond `ceil(totalBytes / UPLOAD_CHUNK_BYTES)`.
+    const CHUNK = UPLOAD_CHUNK_BYTES
+
+    it('assembles multiple chunks in order across several progress events', async () => {
+      const streamId = await openStream()
+      const big = new Uint8Array(CHUNK * 2 + 100).fill(0xab)
+      await begin(streamId, { uploadKind: 'image', totalBytes: big.length })
+
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, big.subarray(0, CHUNK))
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 1, big.subarray(CHUNK, CHUNK * 2))
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 2, big.subarray(CHUNK * 2, big.length))
+
+      const progress = sent.filter((f) => f.type === 'terminal_chunked_upload_progress')
+      expect(progress.map((f) => f.payload.bytesWritten)).toEqual([CHUNK, CHUNK * 2, big.length])
+      expect(vi.mocked(writeImageToOsClipboard)).toHaveBeenCalledWith('/fake/paste-images/fake.png', big)
+    })
+
+    it('tolerates chunks arriving out of order', async () => {
+      const streamId = await openStream()
+      const big = new Uint8Array(CHUNK * 2 + 50).fill(0xcd)
+      await begin(streamId, { uploadKind: 'image', totalBytes: big.length })
+
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 1, big.subarray(CHUNK, CHUNK * 2))
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, big.subarray(0, CHUNK))
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 2, big.subarray(CHUNK * 2, big.length))
+
+      expect(vi.mocked(writeImageToOsClipboard)).toHaveBeenCalledWith('/fake/paste-images/fake.png', big)
+    })
+
+    it('ignores a re-sent chunk (same seq) rather than double-counting its bytes', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length * 2 })
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes)
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes) // duplicate
+
+      const progress = sent.filter((f) => f.type === 'terminal_chunked_upload_progress')
+      expect(progress.every((f) => f.payload.bytesWritten === pngBytes.length)).toBe(true)
+      expect(vi.mocked(writeImageToOsClipboard)).not.toHaveBeenCalled() // still short of totalBytes
+    })
+
+    it('finishes a file upload by writing it under its original name and pasting the path — never the clipboard', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'file', filename: 'report.pdf', totalBytes: fileContent.length })
+      await chunk(streamId, TerminalBinaryKind.pasteFile, 0, fileContent)
+
+      expect(vi.mocked(writePasteDropFile)).toHaveBeenCalledWith('report.pdf', fileContent)
+      expect(vi.mocked(writeImageToOsClipboard)).not.toHaveBeenCalled()
+      expect(stream.writes).toHaveLength(0) // no Ctrl+V replay for a file
+      expect(stream.pastes).toEqual(['/fake/paste-drops/id-report.pdf'])
+      const result = sent.findLast((f) => f.type === 'terminal_paste_file_result')!
+      expect(result.payload).toMatchObject({ streamId, path: '/fake/paste-drops/id-report.pdf' })
+    })
+
+    it('rejects a begin with no filename for a file upload', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'file', totalBytes: fileContent.length })
+      expect(lastResult().payload).toMatchObject({ streamId, accepted: false })
+    })
+
+    it('rejects a begin over the per-kind size ceiling before any chunk is sent', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'image', totalBytes: 4 * 1024 * 1024 + 1 })
+      expect(lastResult().payload).toMatchObject({ streamId, accepted: false })
+      expect(sent.some((f) => f.type === 'terminal_chunked_upload_progress')).toBe(false)
+    })
+
+    it('rejects a second begin while one upload is already in progress on the same pane', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
+      await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
+      expect(lastResult().payload).toMatchObject({ streamId, accepted: false })
     })
 
     it('falls back to pasting the file path as text when no native clipboard is reachable', async () => {
       vi.mocked(writeImageToOsClipboard).mockResolvedValue(
         { state: 'unavailable', reason: 'no X11 or Wayland display on this machine' } satisfies OsClipboardImageResult,
       )
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-img2', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-
-      await manager.handleBinary('web-1', imagePaste(streamId))
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes)
 
       expect(stream.writes).toHaveLength(0) // no Ctrl+V — nothing was put on a clipboard
       expect(stream.pastes).toEqual(['/fake/paste-images/fake.png'])
-      const result = sent.at(-1)!
-      expect(result.type).toBe('terminal_paste_image_result')
+      const result = sent.findLast((f) => f.type === 'terminal_paste_image_result')!
       expect(result.payload).toMatchObject({
         streamId, outcome: 'fallback_path', reason: 'no X11 or Wayland display on this machine',
       })
@@ -285,103 +375,50 @@ describe('TerminalStreamManager', () => {
       vi.mocked(writeImageToOsClipboard).mockResolvedValue(
         { state: 'failed', reason: 'xclip exited with code 1' } satisfies OsClipboardImageResult,
       )
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-img3', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-
-      await manager.handleBinary('web-1', imagePaste(streamId))
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes)
 
       expect(stream.writes).toHaveLength(0)
       expect(stream.pastes).toHaveLength(0)
-      expect(sent.at(-1)?.payload).toMatchObject({
+      expect(sent.findLast((f) => f.type === 'terminal_error')?.payload).toMatchObject({
         code: 'TERMINAL_PASTE_IMAGE_FAILED', streamId, message: 'xclip exited with code 1',
       })
     })
 
-    it('ignores an empty image paste', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-img4', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-      await manager.handleBinary('web-1', { kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, compressed: false, bytes: new Uint8Array() })
-      expect(vi.mocked(writePasteImageFile)).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('file paste (dropped non-image file)', () => {
-    const fileContent = Uint8Array.of(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34)
-    const pasteFile = (streamId: string, filename = 'report.pdf'): TerminalBinaryClear => ({
-      kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, compressed: false,
-      bytes: encodePasteFilePayload(filename, fileContent)!,
-    })
-
-    it('advertises pasteFile in terminal_capabilities', async () => {
-      await manager.handleFrame('web-1', 'terminal_capabilities', { requestId: 'r1' })
-      expect((sent.at(-1)?.payload.features as Record<string, unknown>).pasteFile).toBe(true)
-    })
-
-    it('rejects a legacy JSON terminal_paste_file the same way as terminal_paste/terminal_paste_image', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-file', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-      await manager.handleFrame('web-1', 'terminal_paste_file', { streamId })
-      expect(sent.at(-1)?.payload.code).toBe('TERMINAL_BINARY_REQUIRED')
-    })
-
-    it('writes the file under its original name and pastes the resulting path as text — never the clipboard', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-file', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-
-      await manager.handleBinary('web-1', pasteFile(streamId))
-
-      expect(vi.mocked(writePasteDropFile)).toHaveBeenCalledWith('report.pdf', fileContent)
-      expect(vi.mocked(writeImageToOsClipboard)).not.toHaveBeenCalled() // no clipboard attempt at all
-      expect(stream.writes).toHaveLength(0) // no Ctrl+V replay either
-      expect(stream.pastes).toEqual(['/fake/paste-drops/id-report.pdf'])
-      const result = sent.at(-1)!
-      expect(result.type).toBe('terminal_paste_file_result')
-      expect(result.payload).toMatchObject({ streamId, path: '/fake/paste-drops/id-report.pdf' })
-    })
-
-    it('rejects a malformed payload (bad filename-length header) without touching disk', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-file2', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-
-      await manager.handleBinary('web-1', {
-        kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, compressed: false,
-        bytes: Uint8Array.of(0xff, 0xff, 1, 2), // claims a 65535-byte filename, supplies 2 bytes
-      })
-
-      expect(vi.mocked(writePasteDropFile)).not.toHaveBeenCalled()
-      expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_FILE_INVALID')
-    })
-
-    it('reports a genuine write failure as an error', async () => {
+    it('reports a genuine file write failure as an error', async () => {
       vi.mocked(writePasteDropFile).mockRejectedValue(new Error('disk full'))
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-file3', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-
-      await manager.handleBinary('web-1', pasteFile(streamId))
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'file', filename: 'report.pdf', totalBytes: fileContent.length })
+      await chunk(streamId, TerminalBinaryKind.pasteFile, 0, fileContent)
 
       expect(stream.pastes).toHaveLength(0)
-      expect(sent.at(-1)?.payload).toMatchObject({ code: 'TERMINAL_PASTE_FILE_FAILED', streamId, message: 'disk full' })
+      expect(sent.findLast((f) => f.type === 'terminal_error')?.payload).toMatchObject({
+        code: 'TERMINAL_PASTE_FILE_FAILED', streamId, message: 'disk full',
+      })
     })
 
-    it('ignores an empty file paste', async () => {
-      await manager.handleFrame('web-1', 'terminal_open', {
-        requestId: 'open-file4', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
-      })
-      const streamId = sent[0].payload.streamId as string
-      await manager.handleBinary('web-1', { kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, compressed: false, bytes: new Uint8Array() })
+    it('ignores a chunk with no matching begin', async () => {
+      const streamId = await openStream()
+      await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes)
+      expect(vi.mocked(writeImageToOsClipboard)).not.toHaveBeenCalled()
+      expect(sent.some((f) => f.type === 'terminal_chunked_upload_progress')).toBe(false)
+    })
+
+    it('cancel discards the in-flight upload without writing or pasting anything', async () => {
+      const streamId = await openStream()
+      await begin(streamId, { uploadKind: 'file', filename: 'report.pdf', totalBytes: fileContent.length * 2 })
+      await chunk(streamId, TerminalBinaryKind.pasteFile, 0, fileContent)
+      await manager.handleFrame('web-1', 'terminal_chunked_upload_cancel', { streamId })
+      // A late-arriving second chunk after cancel must not resurrect the upload.
+      await chunk(streamId, TerminalBinaryKind.pasteFile, 1, fileContent)
+
       expect(vi.mocked(writePasteDropFile)).not.toHaveBeenCalled()
+      expect(stream.pastes).toHaveLength(0)
+
+      // And a fresh begin afterwards works normally — cancel actually cleared the slot.
+      await begin(streamId, { uploadKind: 'file', filename: 'retry.pdf', totalBytes: fileContent.length })
+      expect(lastResult().payload).toMatchObject({ streamId, accepted: true })
     })
   })
 

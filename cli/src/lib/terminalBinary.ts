@@ -261,34 +261,6 @@ export function decodeTerminalLocal(raw: Uint8Array): TerminalBinaryClear | null
   return decodeTerminalPlain(kind, flags, bytes.slice(TERMINAL_LOCAL_HEADER_BYTES))
 }
 
-/** `pasteFile`'s payload (the frame's opaque `bytes`) is itself a tiny sub-format: a 2-byte
- *  big-endian filename length, the UTF-8 filename, then the file's own content — one small header
- *  inside the existing opaque `bytes` field, so the outer frame format needs no changes for this. */
-export function encodePasteFilePayload(filename: string, content: Uint8Array): Uint8Array | null {
-  const nameBytes = utf8(filename)
-  if (nameBytes.length === 0 || nameBytes.length > 0xffff) return null
-  const out = new Uint8Array(2 + nameBytes.length + content.length)
-  const view = new DataView(out.buffer)
-  view.setUint16(0, nameBytes.length, false)
-  out.set(nameBytes, 2)
-  out.set(content, 2 + nameBytes.length)
-  return out
-}
-
-export function decodePasteFilePayload(payload: Uint8Array): { filename: string; content: Uint8Array } | null {
-  if (payload.length < 2) return null
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
-  const nameLength = view.getUint16(0, false)
-  if (nameLength === 0 || payload.length < 2 + nameLength) return null
-  let filename: string
-  try {
-    filename = new TextDecoder('utf-8', { fatal: true }).decode(payload.subarray(2, 2 + nameLength))
-  } catch {
-    return null
-  }
-  return { filename, content: payload.subarray(2 + nameLength) }
-}
-
 export const enum TerminalHopDirection {
   down = 1,
   up = 2,

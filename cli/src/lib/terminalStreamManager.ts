@@ -8,13 +8,38 @@ import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { TerminalStreamHandle, TerminalStreamSize } from './terminalTypes.js'
-import { decodePasteFilePayload, TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+import {
+  TerminalBinaryKind,
+  TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES,
+  TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES,
+  type TerminalBinaryClear,
+} from './terminalBinary.js'
 
 /** Ctrl+V as a literal byte (ASCII SUB, 0x16) — the same nudge a real Ctrl+V keystroke sends down
  *  the ordinary keystroke pipe. Written after the OS clipboard write below succeeds, so the engine
  *  attached to the pane reads its OWN OS clipboard exactly as it already does for a locally-driven
  *  session — see `pasteImage()`. */
 const CTRL_V_BYTE = Uint8Array.of(0x16)
+
+/** Per-chunk size for a chunked image/file upload — comfortably under the 512 KiB per-binary-message
+ *  ceiling shared by the backend relay and the P2P data channel (with AEAD/framing overhead room to
+ *  spare), and large enough that a 4 MB image is ~16 chunks / a 10 MB file ~40. Deliberately NOT a
+ *  credit/window scheme like the firmware pusher's (cli/src/cable/fwPush.ts) — that exists because
+ *  USB Serial/JTAG has no real backpressure; a WebSocket already backpressures at the socket layer,
+ *  so the client just sends chunks back-to-back. Mirrors the Dart client's own chunk size — keep
+ *  the two in step. */
+export const UPLOAD_CHUNK_BYTES = 256 * 1024
+
+interface PendingUpload {
+  kind: TerminalBinaryKind.imagePaste | TerminalBinaryKind.pasteFile
+  /** Only meaningful (and required) for a `pasteFile` upload. */
+  filename?: string
+  totalBytes: number
+  expectedChunks: number
+  /** Indexed by chunk seq; sparse until every chunk has arrived. */
+  chunks: (Buffer | undefined)[]
+  bytesReceived: number
+}
 
 type FramePayload = Record<string, unknown>
 
@@ -69,6 +94,7 @@ interface ActiveStream {
   peakBufferedBytes: number
   pausedAt: number | null
   pausedMs: number
+  pendingUpload: PendingUpload | null
 }
 
 export interface TerminalStreamManagerDeps {
@@ -167,6 +193,12 @@ export class TerminalStreamManager {
         // sends this as JSON.
         this.sendError(connId, 'TERMINAL_BINARY_REQUIRED', { streamId: typeof payload.streamId === 'string' ? payload.streamId : undefined })
         return true
+      case 'terminal_chunked_upload_begin':
+        this.beginChunkedUpload(connId, payload)
+        return true
+      case 'terminal_chunked_upload_cancel':
+        this.cancelChunkedUpload(connId, payload)
+        return true
       case 'terminal_scroll':
         await this.scroll(connId, payload)
         return true
@@ -186,12 +218,8 @@ export class TerminalStreamManager {
       && frame.kind !== TerminalBinaryKind.imagePaste && frame.kind !== TerminalBinaryKind.pasteFile) return
     const state = this.streams.get(frame.streamId)
     if (!state || state.connId !== connId || state.closing) return
-    if (frame.kind === TerminalBinaryKind.imagePaste) {
-      await this.pasteImage(state, frame.bytes)
-      return
-    }
-    if (frame.kind === TerminalBinaryKind.pasteFile) {
-      await this.pasteFile(state, frame.bytes)
+    if (frame.kind === TerminalBinaryKind.imagePaste || frame.kind === TerminalBinaryKind.pasteFile) {
+      await this.receiveUploadChunk(state, frame.kind, frame.seq, frame.bytes)
       return
     }
     if (frame.kind === TerminalBinaryKind.paste) {
@@ -363,6 +391,7 @@ export class TerminalStreamManager {
         peakBufferedBytes: 0,
         pausedAt: null,
         pausedMs: 0,
+        pendingUpload: null,
       }
       this.streams.set(streamId, state)
       if (!this.deps.sendTarget(connId, 'terminal_ready', {
@@ -479,11 +508,12 @@ export class TerminalStreamManager {
   }
 
   /**
-   * A clipboard IMAGE paste (raw PNG bytes) — writes the bytes into THIS machine's own OS
-   * clipboard (see osClipboard.ts), then replays a literal Ctrl+V so whichever engine is attached
-   * to the pane reads that clipboard exactly as it already does for a locally-driven session.
-   * Nothing here is engine-specific: this only bridges the clipboard and the keystroke, the same
-   * way `paste()` only bridges a clipboard string into the pty.
+   * A clipboard IMAGE paste (raw PNG bytes, already fully assembled from a chunked upload — see
+   * `receiveUploadChunk`) — writes the bytes into THIS machine's own OS clipboard (see
+   * osClipboard.ts), then replays a literal Ctrl+V so whichever engine is attached to the pane
+   * reads that clipboard exactly as it already does for a locally-driven session. Nothing here is
+   * engine-specific: this only bridges the clipboard and the keystroke, the same way `paste()`
+   * only bridges a clipboard string into the pty.
    *
    * When no native clipboard is reachable right now (the clipboard tool isn't installed, or this
    * is a genuinely headless Linux box with no X11/Wayland session at all), this does not fail —
@@ -542,24 +572,19 @@ export class TerminalStreamManager {
   }
 
   /**
-   * A dropped (non-image) FILE — writes it to disk on THIS machine (under its original name, see
+   * A dropped (non-image) FILE (bytes already fully assembled from a chunked upload — see
+   * `receiveUploadChunk`) — writes it to disk on THIS machine (under its original name, see
    * `writePasteDropFile`) and pastes that path as plain text, the same `pasteRaw` call `paste()`
    * uses. Unlike `pasteImage()`, there is no OS-clipboard attempt and no Ctrl+V replay: the goal
    * here is only "the pane gets a valid path", not "the engine auto-attaches this" — a client only
    * sends this at all for a genuinely REMOTE pane (a local one pastes its own already-valid path
    * without ever reaching the wire), so there is no local/remote branch to make here either.
    */
-  private async pasteFile(state: ActiveStream, payload: Uint8Array): Promise<void> {
-    if (payload.length === 0) return
-    const decoded = decodePasteFilePayload(payload)
-    if (!decoded) {
-      this.sendError(state.connId, 'TERMINAL_PASTE_FILE_INVALID', { streamId: state.streamId, message: 'malformed file paste payload' })
-      return
-    }
+  private async pasteFile(state: ActiveStream, filename: string, bytes: Uint8Array): Promise<void> {
     state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
     let path: string
     try {
-      path = await writePasteDropFile(decoded.filename, decoded.content)
+      path = await writePasteDropFile(filename, bytes)
     } catch (error) {
       this.sendError(state.connId, 'TERMINAL_PASTE_FILE_FAILED', {
         streamId: state.streamId,
@@ -574,6 +599,114 @@ export class TerminalStreamManager {
       return
     }
     this.deps.sendTarget(state.connId, 'terminal_paste_file_result', { streamId: state.streamId, path })
+  }
+
+  /**
+   * Announces a new chunked image/file upload for this stream — see UPLOAD_CHUNK_BYTES's doc for
+   * why this is chunked at all (a per-binary-message ceiling shared by the backend relay and the
+   * P2P data channel) rather than the single atomic frame `imagePaste`/`pasteFile` used to be.
+   * Validated and either accepted or rejected up front, before any chunk is sent, so a client on a
+   * slow link finds out immediately rather than after transferring several MB for nothing.
+   */
+  private beginChunkedUpload(connId: string, payload: FramePayload): void {
+    const state = this.streamFor(connId, payload)
+    if (!state) return
+    const streamId = state.streamId
+    const reject = (reason: string): void => {
+      this.deps.sendTarget(connId, 'terminal_chunked_upload_begin_result', { streamId, accepted: false, reason })
+    }
+    const uploadKind = payload.uploadKind === 'image' ? TerminalBinaryKind.imagePaste
+      : payload.uploadKind === 'file' ? TerminalBinaryKind.pasteFile
+      : null
+    const totalBytes = Number(payload.totalBytes)
+    const filename = typeof payload.filename === 'string' ? payload.filename : undefined
+    if (!uploadKind || !Number.isSafeInteger(totalBytes) || totalBytes <= 0
+      || (uploadKind === TerminalBinaryKind.pasteFile && !filename)) {
+      reject('malformed upload request')
+      return
+    }
+    if (state.pendingUpload) {
+      reject('an upload is already in progress on this pane')
+      return
+    }
+    const ceiling = uploadKind === TerminalBinaryKind.imagePaste
+      ? TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES
+      : TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES
+    if (totalBytes > ceiling) {
+      reject(`exceeds the ${Math.floor(ceiling / (1024 * 1024))} MB limit`)
+      return
+    }
+    state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    state.pendingUpload = {
+      kind: uploadKind,
+      filename,
+      totalBytes,
+      expectedChunks: Math.ceil(totalBytes / UPLOAD_CHUNK_BYTES),
+      chunks: [],
+      bytesReceived: 0,
+    }
+    this.deps.sendTarget(connId, 'terminal_chunked_upload_begin_result', { streamId, accepted: true })
+  }
+
+  /** The user's own Cancel — stop and discard whatever has arrived so far. Nothing has been
+   *  written to disk yet at this point (chunks are only assembled and handed off once every one
+   *  has arrived), so there is no partial file to clean up — just drop the in-memory buffer. */
+  private cancelChunkedUpload(connId: string, payload: FramePayload): void {
+    const state = this.streamFor(connId, payload)
+    if (!state) return
+    state.pendingUpload = null
+  }
+
+  /**
+   * One chunk of an in-flight upload announced by `beginChunkedUpload`. `seq` is the chunk index
+   * (not an ordered keystroke sequence the way `input()`'s is) — stored by index rather than
+   * assumed in-order, since nothing guarantees frame ordering survives a relay hop-by-hop, though
+   * in practice it should. A stray chunk with no matching (or a kind-mismatched) `pendingUpload` is
+   * ignored rather than errored: it most likely means a cancel or a previous upload's tail-end
+   * arrived late.
+   *
+   * Progress is acked once per chunk, after it is durably held here — matching the firmware
+   * pusher's philosophy (`fwPush.ts`'s `fw.progress`) of reporting confirmed receipt, not merely
+   * "sent", which is what makes the client's percentage honest on a slow link. Once every expected
+   * byte has arrived, this hands the assembled bytes to the SAME finishing logic `pasteImage`/
+   * `pasteFile` already had before this feature existed — only how the bytes arrived changed.
+   */
+  private async receiveUploadChunk(
+    state: ActiveStream,
+    kind: TerminalBinaryKind.imagePaste | TerminalBinaryKind.pasteFile,
+    seq: number,
+    bytes: Uint8Array,
+  ): Promise<void> {
+    const pending = state.pendingUpload
+    if (!pending || pending.kind !== kind) return
+    if (!Number.isSafeInteger(seq) || seq < 0 || seq >= pending.expectedChunks
+      || bytes.length === 0 || bytes.length > UPLOAD_CHUNK_BYTES) {
+      this.sendError(state.connId, 'TERMINAL_CHUNKED_UPLOAD_INVALID', { streamId: state.streamId, message: 'malformed upload chunk' })
+      state.pendingUpload = null
+      return
+    }
+    state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    if (pending.chunks[seq] === undefined) {
+      pending.chunks[seq] = Buffer.from(bytes)
+      pending.bytesReceived += bytes.length
+    }
+    this.deps.sendTarget(state.connId, 'terminal_chunked_upload_progress', {
+      streamId: state.streamId,
+      bytesWritten: pending.bytesReceived,
+      totalBytes: pending.totalBytes,
+    })
+    if (pending.bytesReceived < pending.totalBytes) return
+    state.pendingUpload = null
+    // A plain Uint8Array, not a Buffer — pasteImage/pasteFile hand this to code (osClipboard,
+    // pasteDropFiles) written against the same Uint8Array shape the old atomic frame's `bytes`
+    // always was, and callers/tests comparing against a Uint8Array must not have to know this
+    // path happens to assemble through Buffer internally.
+    const assembled = new Uint8Array(Buffer.concat(pending.chunks.filter((chunk): chunk is Buffer => chunk !== undefined)))
+    if (kind === TerminalBinaryKind.imagePaste) {
+      await this.pasteImage(state, assembled)
+    } else {
+      await this.pasteFile(state, pending.filename!, assembled)
+    }
   }
 
   /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,

@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   deriveTerminalBinaryKey,
-  decodePasteFilePayload,
   decodeTerminalLocal,
-  encodePasteFilePayload,
   encodeTerminalLocal,
   openTerminalBinary,
   parseTerminalBinaryEnvelope,
@@ -166,23 +164,22 @@ describe('terminal binary protocol v3', () => {
     })).toBeNull()
   })
 
-  it('round-trips a pasteFile payload (filename + content) at its own ceiling', () => {
-    const payload = encodePasteFilePayload('report.pdf', Uint8Array.of(0x25, 0x50, 0x44, 0x46))!
-    expect(payload).not.toBeNull()
+  it('round-trips a pasteFile chunk (raw bytes, seq is the chunk index) at its own ceiling', () => {
+    const chunk = Uint8Array.of(0x25, 0x50, 0x44, 0x46)
 
     const sealed = sealTerminalBinary(key, 30, {
       kind: TerminalBinaryKind.pasteFile,
       streamId,
-      seq: 0,
-      bytes: payload,
+      seq: 3,
+      bytes: chunk,
       compressed: false,
     })!
     expect(sealed).not.toBeNull()
     expect(openTerminalBinary(key, sealed)?.frame).toEqual({
       kind: TerminalBinaryKind.pasteFile,
       streamId,
-      seq: 0,
-      bytes: payload,
+      seq: 3,
+      bytes: chunk,
       compressed: false,
     })
 
@@ -316,20 +313,23 @@ describe('authenticated loopback terminal framing v1', () => {
     })).toBeNull()
   })
 
-  it('carries a pasteFile well past the ordinary local frame ceiling, independent of paste/imagePaste', () => {
+  it('carries a pasteFile chunk well past the ordinary local frame ceiling, independent of paste/imagePaste', () => {
+    // A single chunk is capped at UPLOAD_CHUNK_BYTES (256 KiB) in practice, but the WIRE ceiling
+    // itself is still the whole-upload one — this proves the kind-specific ceiling still applies
+    // at the framing layer regardless of how the CLI's application logic chunks it.
     const content = new Uint8Array(2 * 1024 * 1024).fill(0xcd)
-    const payload = encodePasteFilePayload('archive.zip', content)!
     const encoded = encodeTerminalLocal({
       kind: TerminalBinaryKind.pasteFile,
       streamId,
-      seq: 0,
-      bytes: payload,
+      seq: 2,
+      bytes: content,
       compressed: false,
     })
     expect(encoded).not.toBeNull()
     const decoded = decodeTerminalLocal(encoded!)
     expect(decoded?.kind).toBe(TerminalBinaryKind.pasteFile)
-    expect(decodePasteFilePayload(decoded!.bytes)).toEqual({ filename: 'archive.zip', content })
+    expect(decoded?.seq).toBe(2)
+    expect(decoded?.bytes).toEqual(content)
 
     const tooBig = new Uint8Array(TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES + 1)
     expect(encodeTerminalLocal({
@@ -339,27 +339,5 @@ describe('authenticated loopback terminal framing v1', () => {
       bytes: tooBig,
       compressed: false,
     })).toBeNull()
-  })
-})
-
-describe('pasteFile payload sub-format', () => {
-  it('round-trips filename + content', () => {
-    const content = Uint8Array.of(1, 2, 3, 4, 5)
-    const payload = encodePasteFilePayload('xin chào.txt', content)!
-    expect(payload).not.toBeNull()
-    expect(decodePasteFilePayload(payload)).toEqual({ filename: 'xin chào.txt', content })
-  })
-
-  it('rejects an empty filename', () => {
-    expect(encodePasteFilePayload('', Uint8Array.of(1))).toBeNull()
-  })
-
-  it('rejects malformed/truncated payloads', () => {
-    expect(decodePasteFilePayload(new Uint8Array(0))).toBeNull()
-    expect(decodePasteFilePayload(Uint8Array.of(0, 0))).toBeNull() // zero-length filename
-    // Claims a 10-byte filename but supplies none.
-    const truncated = new Uint8Array(2)
-    new DataView(truncated.buffer).setUint16(0, 10, false)
-    expect(decodePasteFilePayload(truncated)).toBeNull()
   })
 })
