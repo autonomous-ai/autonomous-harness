@@ -7,9 +7,25 @@ import {
   TERMINAL_P2P_UP_TYPES,
   TerminalP2pInitiator,
   TerminalP2pResponderPool,
+  waitForBufferedAmountLow,
   type TerminalP2pSignal,
 } from './terminalP2p.js'
 import type { StunSelector } from './stunSelect.js'
+
+/** Structurally shaped like the slice of werift's `RTCDataChannel` this function actually reads —
+ *  no real WebRTC negotiation needed, same reasoning as `isRelayedPair`'s plain-string fixtures. */
+function fakeChannel(initial: {
+  readyState?: 'open' | 'closed' | 'connecting' | 'closing'
+  bufferedAmount?: number
+  asPromise?: () => Promise<unknown[]>
+}) {
+  return {
+    readyState: initial.readyState ?? 'open',
+    bufferedAmount: initial.bufferedAmount ?? 0,
+    bufferedAmountLow: { asPromise: initial.asPromise ?? (() => new Promise<unknown[]>(() => {})) },
+  }
+}
+type FakeChannel = ReturnType<typeof fakeChannel>
 
 describe('terminal WebRTC data channel', () => {
   it('negotiates locally and carries ordered text and binary frames in both directions', async () => {
@@ -248,6 +264,43 @@ describe('terminal WebRTC data channel', () => {
 
   it('does not mistake a host address that merely contains the word', () => {
     expect(isRelayedPair('candidate:1 1 udp 1 10.0.0.1 1 typ host raddr relay.example')).toBe(false)
+  })
+
+  // Regression: a burst of sends (a chunked upload's chunks, fired back-to-back) can cross
+  // TERMINAL_P2P_MAX_BUFFERED_BYTES well before the real network drains the backlog — this is the
+  // wait this puts to use instead of every send() in that window being mistaken for a dead channel.
+  describe('waitForBufferedAmountLow', () => {
+    const wait = (channel: FakeChannel, timeoutMs = 1_000) =>
+      waitForBufferedAmountLow(channel as unknown as Parameters<typeof waitForBufferedAmountLow>[0], timeoutMs)
+
+    it('resolves immediately when the buffer is already under the ceiling', async () => {
+      const channel = fakeChannel({ bufferedAmount: 0 })
+      await expect(wait(channel)).resolves.toBe(true)
+    })
+
+    it('fails fast with no wait when the channel is not open', async () => {
+      const asPromise = vi.fn(() => new Promise<unknown[]>(() => {}))
+      const channel = fakeChannel({ readyState: 'closed', bufferedAmount: 5_000_000, asPromise })
+      await expect(wait(channel)).resolves.toBe(false)
+      expect(asPromise).not.toHaveBeenCalled() // a dead channel is never worth waiting on
+    })
+
+    it('waits for the drain event, then re-checks the buffer before resolving true', async () => {
+      const channel = fakeChannel({ bufferedAmount: 5_000_000, asPromise: () => Promise.resolve([]) })
+      const result = wait(channel)
+      channel.bufferedAmount = 0 // the buffer clears right as the event fires
+      await expect(result).resolves.toBe(true)
+    })
+
+    it('resolves false if the buffer is still over the ceiling once the event fires', async () => {
+      const channel = fakeChannel({ bufferedAmount: 5_000_000, asPromise: () => Promise.resolve([]) })
+      await expect(wait(channel)).resolves.toBe(false) // bufferedAmount never actually dropped
+    })
+
+    it('resolves false when the wait itself times out', async () => {
+      const channel = fakeChannel({ bufferedAmount: 5_000_000, asPromise: () => Promise.reject(new Error('timeout')) })
+      await expect(wait(channel)).resolves.toBe(false)
+    })
   })
 
   // Regression: a JSON type these two allowlists don't know about is silently dropped the instant a

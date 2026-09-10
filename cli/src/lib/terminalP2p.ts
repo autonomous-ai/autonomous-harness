@@ -189,6 +189,27 @@ function channelCanSend(channel: RTCDataChannel | null): channel is RTCDataChann
     && channel.bufferedAmount < TERMINAL_P2P_MAX_BUFFERED_BYTES
 }
 
+/**
+ * Waits for `channel`'s send buffer to drop back under the ceiling, using the
+ * `bufferedAmountLowThreshold`/`bufferedAmountLow` plumbing this file already configures
+ * (`wireChannel`/`wireResponderEntry` below) but never previously consulted — a burst of sends (a
+ * chunked upload's chunks, fired back-to-back) can cross `TERMINAL_P2P_MAX_BUFFERED_BYTES` well
+ * before the real network has drained the backlog, and without this wait every `send()` call in that
+ * window was mistaken for the channel being dead outright. Resolves `false` on a genuine channel
+ * closure or if the buffer hasn't cleared within `timeoutMs` — either way, the caller's existing
+ * fall-back-to-relay-and-demote behavior is exactly what should happen next.
+ */
+export async function waitForBufferedAmountLow(channel: RTCDataChannel, timeoutMs: number): Promise<boolean> {
+  if (channel.readyState !== 'open') return false
+  if (channel.bufferedAmount < TERMINAL_P2P_MAX_BUFFERED_BYTES) return true
+  try {
+    await channel.bufferedAmountLow.asPromise(timeoutMs)
+  } catch {
+    return false // timed out, or the channel errored while we waited
+  }
+  return channel.readyState === 'open' && channel.bufferedAmount < TERMINAL_P2P_MAX_BUFFERED_BYTES
+}
+
 /** Source side: owns the offerer for one pooled remote-machine relay connection. */
 export class TerminalP2pInitiator {
   readonly sessionId = randomUUID()
@@ -341,6 +362,23 @@ export class TerminalP2pInitiator {
       queueMicrotask(() => this.fail('send_failed'))
       return false
     }
+  }
+
+  /**
+   * Same contract as `send()`, but a failure caused purely by backpressure (the channel is still
+   * `open`, just over `TERMINAL_P2P_MAX_BUFFERED_BYTES` right now) gets ONE bounded chance to drain
+   * before being reported as failure — see `waitForBufferedAmountLow`'s own comment for why this
+   * exists. A `send()` failure for any other reason (channel not open/ready, or `channel.send()`
+   * itself threw, which schedules `fail()`) is NOT retried: re-reading `channel.readyState` fresh
+   * rather than trusting `this.isReady` is what tells the two apart, since a queued `fail()` from a
+   * hard send error hasn't necessarily flipped `this.ready` by the time this runs.
+   */
+  async sendWithBackpressureRetry(data: TerminalP2pData, drainTimeoutMs = 5_000): Promise<boolean> {
+    if (this.send(data)) return true
+    const channel = this.channel
+    if (!channel || channel.readyState !== 'open') return false
+    if (!(await waitForBufferedAmountLow(channel, drainTimeoutMs))) return false
+    return this.send(data)
   }
 
   waitUntilReady(timeoutMs: number): Promise<boolean> {

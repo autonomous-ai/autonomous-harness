@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RemoteRelayPool } from './remoteRelay.js'
 
 /** Minimal fake of the private `Entry` shape `noteTerminalResponse`/`demoteP2p` operate on — exercised
@@ -8,7 +8,7 @@ import { RemoteRelayPool } from './remoteRelay.js'
 function fakeEntry(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     ws: { send: vi.fn() },
-    crypto: { wrapOutgoing: (frame: unknown) => frame },
+    crypto: { wrapOutgoing: (frame: unknown) => frame, encryptTerminal: () => new Uint8Array([1, 2, 3]) },
     sink: { sendFrame: vi.fn(() => true), sendBinary: vi.fn(() => true) },
     onClosed: null,
     lingerTimer: null,
@@ -301,6 +301,7 @@ function fakeP2p(overrides: Partial<Record<string, unknown>> = {}) {
     isReady: true,
     transport: 'direct',
     send: vi.fn(() => true),
+    sendWithBackpressureRetry: vi.fn(async () => true),
     stop: vi.fn(async () => {}),
     ...overrides,
   }
@@ -448,5 +449,63 @@ describe('RemoteRelayPool TURN-to-direct upgrade', () => {
     expect(shadow.stop).toHaveBeenCalledWith('primary_demoted', true)
     expect(entry.upgradeShadow).toBeNull()
     expect(entry.upgradeTimer).toBeNull()
+  })
+})
+
+// Regression: a burst of large frames (a chunked upload's chunks, fired back-to-back) used to cross
+// TERMINAL_P2P_MAX_BUFFERED_BYTES well before the real network drained the backlog, and a single
+// resulting `send()` failure was misread as the whole p2p connection being dead — tearing it down for
+// every stream, not just the one that hit backpressure. sendBinary must go through
+// sendWithBackpressureRetry (which gives the channel one bounded chance to drain) rather than calling
+// `send` directly, and must only fall back to relay + demote once that retry itself fails.
+describe('RemoteRelayPool sendBinary backpressure handling', () => {
+  const pool = new RemoteRelayPool(
+    { accessToken: async () => 'unused' } as never,
+    'ws://unused',
+    { pub: new Uint8Array(), priv: new Uint8Array() } as never,
+    { pin: () => {}, get: () => null } as never,
+  ) as unknown as {
+    sessionFor: (machineId: string, entry: ReturnType<typeof fakeEntry>) => { sendBinary: (clear: { streamId: string }) => Promise<void> }
+    demoteP2p: (machineId: string, entry: ReturnType<typeof fakeEntry>, reason: string) => void
+  }
+
+  // demoteP2p's own real behavior (resync-per-stream over ws, scheduleP2pRetry's real setTimeout) is
+  // covered by the dedicated describe blocks above/below — stubbed out here to a no-op so these tests
+  // observe only sendBinary's own routing decision, not demoteP2p's side effects or timers leaking
+  // between tests.
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('sends over p2p via sendWithBackpressureRetry, not send, and never touches ws or demotes on success', async () => {
+    const p2p = fakeP2p()
+    const entry = fakeEntry({ p2p, p2pStreams: new Set(['stream-1']) })
+    vi.spyOn(pool, 'demoteP2p').mockImplementation(() => {})
+    await pool.sessionFor('machine-1', entry).sendBinary({ streamId: 'stream-1' })
+
+    expect(p2p.sendWithBackpressureRetry).toHaveBeenCalledTimes(1)
+    expect(p2p.send).not.toHaveBeenCalled()
+    expect(entry.ws.send).not.toHaveBeenCalled()
+    expect(pool.demoteP2p).not.toHaveBeenCalled()
+  })
+
+  it('falls back to ws and demotes only once sendWithBackpressureRetry itself fails', async () => {
+    const p2p = fakeP2p({ sendWithBackpressureRetry: vi.fn(async () => false) })
+    const entry = fakeEntry({ p2p, p2pStreams: new Set(['stream-1']) })
+    const demoteP2p = vi.spyOn(pool, 'demoteP2p').mockImplementation(() => {})
+    await pool.sessionFor('machine-1', entry).sendBinary({ streamId: 'stream-1' })
+
+    expect(p2p.sendWithBackpressureRetry).toHaveBeenCalledTimes(1)
+    expect(entry.ws.send).toHaveBeenCalledTimes(1) // the chunk still gets there, just over ws
+    expect(demoteP2p).toHaveBeenCalledWith('machine-1', entry, 'send_failed')
+  })
+
+  it('goes straight to ws with no demotion for a stream that was never on p2p', async () => {
+    const p2p = fakeP2p()
+    const entry = fakeEntry({ p2p, p2pStreams: new Set() }) // this stream never made it onto p2pStreams
+    const demoteP2p = vi.spyOn(pool, 'demoteP2p').mockImplementation(() => {})
+    await pool.sessionFor('machine-1', entry).sendBinary({ streamId: 'stream-1' })
+
+    expect(p2p.sendWithBackpressureRetry).not.toHaveBeenCalled()
+    expect(entry.ws.send).toHaveBeenCalledTimes(1)
+    expect(demoteP2p).not.toHaveBeenCalled()
   })
 })

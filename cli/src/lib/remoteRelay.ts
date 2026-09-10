@@ -504,8 +504,21 @@ export class RemoteRelayPool {
       sendBinary: async (clear) => {
         const sealed = entry.crypto.encryptTerminal(clear)
         if (!sealed) return
-        if (entry.p2pStreams.has(clear.streamId) && entry.p2p?.send(Buffer.from(sealed))) return
-        const p2pFailed = entry.p2pStreams.has(clear.streamId)
+        const wantsP2p = entry.p2pStreams.has(clear.streamId)
+        // A burst of large frames (a chunked upload's chunks, fired back-to-back) can push the data
+        // channel's send buffer over TERMINAL_P2P_MAX_BUFFERED_BYTES well before the real network has
+        // drained it — sendWithBackpressureRetry gives that ONE bounded chance to clear before this
+        // falls through to relay-and-demote, instead of misreading a busy channel as a dead one. A
+        // plain successful send resolves in microseconds, so timing the call is enough to tell "it had
+        // to wait" apart from the ordinary case without threading a reporting hook through the p2p class.
+        const startedAt = Date.now()
+        const p2pSent = wantsP2p && await entry.p2p?.sendWithBackpressureRetry(Buffer.from(sealed))
+        const waited = Date.now() - startedAt >= 50
+        if (waited) {
+          console.log(`[p2p] backpressure · machine=${sid(machineId)} drained=${p2pSent ? 'yes' : 'no'} after=${Date.now() - startedAt}ms`)
+        }
+        if (p2pSent) return
+        const p2pFailed = wantsP2p
         try { entry.ws.send(sealed, { binary: true }) } catch { /* closed — onClosed will fire */ }
         if (p2pFailed) this.demoteP2p(machineId, entry, 'send_failed')
       },
