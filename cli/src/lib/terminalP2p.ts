@@ -40,12 +40,22 @@ export const TERMINAL_P2P_DOWN_TYPES = new Set([
   'terminal_input', 'terminal_resize', 'terminal_resync', 'terminal_close', 'terminal_scroll',
   // Deliberately no 'terminal_paste' here: it travels as a binary TerminalBinaryKind.paste frame,
   // not JSON, so it needs no entry in this JSON-type forwarding list — the binary channel already
-  // crosses the P2P data channel on its own.
+  // crosses the P2P data channel on its own. 'terminal_chunked_upload_begin'/'_cancel' ARE JSON
+  // (only the chunk payloads themselves are binary), so they need an entry here same as any other
+  // down-direction control frame — missing this left `handleP2pData` (backendSocket.ts) silently
+  // dropping every begin/cancel for a pane already on a direct p2p connection: no reply, no log,
+  // indistinguishable from the wire itself being stuck.
+  'terminal_chunked_upload_begin', 'terminal_chunked_upload_cancel',
 ])
 
 export const TERMINAL_P2P_UP_TYPES = new Set([
   'terminal_capabilities_result', 'terminal_ready', 'terminal_keyframe',
   'terminal_output', 'terminal_closed', 'terminal_error',
+  // The chunked-upload result/progress JSON replies — same reasoning as the down-direction set
+  // above: dropped here (remoteRelay.ts's p2p-data handler) would strand the client's progress UI
+  // even after the daemon itself did everything right.
+  'terminal_chunked_upload_begin_result', 'terminal_chunked_upload_progress',
+  'terminal_paste_image_result', 'terminal_paste_file_result',
 ])
 
 export type TerminalP2pState = 'connecting' | 'direct' | 'failed' | 'closed'

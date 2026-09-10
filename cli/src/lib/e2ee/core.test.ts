@@ -140,6 +140,16 @@ describe('e2ee core — codes + fingerprint + classification', () => {
     expect(C.isEncryptedDownType('terminal_input')).toBe(true)
   })
 
+  it('gates the chunked-upload begin/cancel frames, same as every other terminal_* down type', () => {
+    // Regression: these were missing from ENCRYPTED_DOWN_TYPES, so relayClient.ts's wrapOutgoing()
+    // silently sent them in the clear across a machine-to-machine relay connection instead of failing
+    // loudly — and the backend's own isEncryptedTerminalFrame() check then rejected the unencrypted
+    // frame outright as TERMINAL_FRAME_REJECTED, freezing the whole terminal pane over what looked
+    // like a completely unrelated image/file-drop action.
+    expect(C.isEncryptedDownType('terminal_chunked_upload_begin')).toBe(true)
+    expect(C.isEncryptedDownType('terminal_chunked_upload_cancel')).toBe(true)
+  })
+
   it('gates question_response, which the device encrypts', () => {
     // Regression. The firmware wraps this frame because an AskUserQuestion answer is user content, but the
     // type was missing from ENCRYPTED_DOWN_TYPES, so dispatchDown never unwrapped it. The failure was
@@ -187,6 +197,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('99737b4f286931f4b7cc9956ab069012d818b109458992a6a331ca44811dfc38')
+    expect(actual).toBe('6e910a4da4e4e96550f119302bf64eaa22b7b01b76d54d520730561a6ce630af')
   })
 })

@@ -348,6 +348,20 @@ describe('TerminalStreamManager', () => {
       expect(sent.some((f) => f.type === 'terminal_chunked_upload_progress')).toBe(false)
     })
 
+    // Regression: previously a `begin` naming a streamId this connection has no live ActiveStream for
+    // (e.g. after a reconnect/resync raced the client) was silently dropped — no reply at all — which
+    // left the client's begin-accepted promise hanging until its own client-side timeout, indistinguishable
+    // from a genuine hang. It must always answer, echoing the streamId the client named.
+    it('replies accepted:false, echoing the streamId, when no live stream matches the begin', async () => {
+      await manager.handleFrame('web-1', 'terminal_chunked_upload_begin', {
+        streamId: 'stream-does-not-exist', uploadKind: 'image', totalBytes: pngBytes.length,
+      })
+      expect(lastResult()).toMatchObject({
+        type: 'terminal_chunked_upload_begin_result',
+        payload: { streamId: 'stream-does-not-exist', accepted: false },
+      })
+    })
+
     it('rejects a second begin while one upload is already in progress on the same pane', async () => {
       const streamId = await openStream()
       await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
@@ -371,7 +385,11 @@ describe('TerminalStreamManager', () => {
       })
     })
 
-    it('reports a genuine clipboard-write failure as an error, not a silent no-op', async () => {
+    // A clipboard tool that's ON PATH but can't actually reach a display (a stale $DISPLAY with no
+    // X server behind it — exactly what a headless Docker rig hits) lands in 'failed', not
+    // 'unavailable', even though the outcome is identical: no OS clipboard to write to. This used to
+    // freeze the whole session; it must degrade to the same file-path fallback 'unavailable' gets.
+    it('falls back to pasting the file path when the clipboard tool is present but unreachable', async () => {
       vi.mocked(writeImageToOsClipboard).mockResolvedValue(
         { state: 'failed', reason: 'xclip exited with code 1' } satisfies OsClipboardImageResult,
       )
@@ -379,10 +397,12 @@ describe('TerminalStreamManager', () => {
       await begin(streamId, { uploadKind: 'image', totalBytes: pngBytes.length })
       await chunk(streamId, TerminalBinaryKind.imagePaste, 0, pngBytes)
 
-      expect(stream.writes).toHaveLength(0)
-      expect(stream.pastes).toHaveLength(0)
-      expect(sent.findLast((f) => f.type === 'terminal_error')?.payload).toMatchObject({
-        code: 'TERMINAL_PASTE_IMAGE_FAILED', streamId, message: 'xclip exited with code 1',
+      expect(stream.writes).toHaveLength(0) // no Ctrl+V — nothing was put on a clipboard
+      expect(stream.pastes).toEqual(['/fake/paste-images/fake.png'])
+      expect(sent.some((f) => f.type === 'terminal_error')).toBe(false)
+      const result = sent.findLast((f) => f.type === 'terminal_paste_image_result')!
+      expect(result.payload).toMatchObject({
+        streamId, outcome: 'fallback_path', reason: 'xclip exited with code 1',
       })
     })
 

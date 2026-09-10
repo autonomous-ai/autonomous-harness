@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   isRelayedPair,
   readTurn,
+  TERMINAL_P2P_DOWN_TYPES,
   TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS,
+  TERMINAL_P2P_UP_TYPES,
   TerminalP2pInitiator,
   TerminalP2pResponderPool,
   type TerminalP2pSignal,
@@ -246,5 +248,18 @@ describe('terminal WebRTC data channel', () => {
 
   it('does not mistake a host address that merely contains the word', () => {
     expect(isRelayedPair('candidate:1 1 udp 1 10.0.0.1 1 typ host raddr relay.example')).toBe(false)
+  })
+
+  // Regression: a JSON type these two allowlists don't know about is silently dropped the instant a
+  // pane's connection is on a direct p2p data channel (backendSocket.ts's `handleP2pData` / remoteRelay.ts's
+  // p2p-data handler) — no error, no log, indistinguishable from the wire itself hanging. That's exactly
+  // what happened to the chunked-upload types when they were added to the JSON protocol but not here.
+  it('carries the chunked-upload begin/cancel down and its results/progress up', () => {
+    expect(TERMINAL_P2P_DOWN_TYPES.has('terminal_chunked_upload_begin')).toBe(true)
+    expect(TERMINAL_P2P_DOWN_TYPES.has('terminal_chunked_upload_cancel')).toBe(true)
+    expect(TERMINAL_P2P_UP_TYPES.has('terminal_chunked_upload_begin_result')).toBe(true)
+    expect(TERMINAL_P2P_UP_TYPES.has('terminal_chunked_upload_progress')).toBe(true)
+    expect(TERMINAL_P2P_UP_TYPES.has('terminal_paste_image_result')).toBe(true)
+    expect(TERMINAL_P2P_UP_TYPES.has('terminal_paste_file_result')).toBe(true)
   })
 })

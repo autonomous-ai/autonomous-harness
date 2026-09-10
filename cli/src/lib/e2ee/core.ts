@@ -370,6 +370,12 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   // never see agent ids, terminal bytes, dimensions, sequence numbers, or capability metadata.
   'terminal_capabilities', 'terminal_open', 'terminal_alive', 'terminal_ack', 'terminal_input',
   'terminal_resize', 'terminal_resync', 'terminal_close', 'terminal_scroll',
+  // Chunked image/file upload control frames — same "remote terminal control is always pairwise
+  // E2EE" rule as every other terminal_* type above. Missing from here for the same reason
+  // 'question_response' once was (see its comment): wrapOutgoing() silently sends the frame in the
+  // clear instead of failing loudly, and the relay's isEncryptedTerminalFrame() check then rejects
+  // it outright as TERMINAL_FRAME_REJECTED — indistinguishable from a real protocol violation.
+  'terminal_chunked_upload_begin', 'terminal_chunked_upload_cancel',
   // WebRTC signaling reveals both peers' network candidates. Keep it inside the already-authenticated
   // pairwise session; the backend needs only the outer type + connId to route it.
   'p2p_offer', 'p2p_answer', 'p2p_ice_candidate', 'p2p_abort',

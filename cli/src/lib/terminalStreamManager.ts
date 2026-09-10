@@ -551,13 +551,13 @@ export class TerminalStreamManager {
       })
       return
     }
-    if (clipboard.state === 'failed') {
-      this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: clipboard.reason })
-      void unlink(path).catch(() => { /* best effort */ })
-      return
-    }
-    // 'unavailable' — no native clipboard right now. Fall back to the file's path as ordinary text,
-    // and keep the file: it has to keep resolving after this call returns.
+    // 'failed' and 'unavailable' get the same treatment: whether the clipboard tool is missing
+    // entirely or was found but couldn't actually reach a display (the exact case a Docker test rig
+    // with a stale $DISPLAY and no X server hits — xclip is on PATH, so this lands in 'failed', not
+    // 'unavailable', even though the outcome — no OS clipboard to write to — is identical), the user
+    // still needs the image. Hard-failing here used to freeze the whole session over what is, from
+    // the engine's perspective, just a degraded paste. Fall back to the file's path as ordinary
+    // text, and keep the file: it has to keep resolving after this call returns.
     const result = await state.handle.pasteRaw(path)
     if (result.state !== 'succeeded') {
       this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: result.reason })
@@ -609,10 +609,25 @@ export class TerminalStreamManager {
    * slow link finds out immediately rather than after transferring several MB for nothing.
    */
   private beginChunkedUpload(connId: string, payload: FramePayload): void {
+    // Unlike resize/scroll/ack (silently no-op on a bad lookup is harmless — the next real event
+    // self-corrects), a paste that vanishes here leaves the client's progress overlay waiting on a
+    // reply that will never come, with nothing to explain why: it looks exactly like a hang. Reply
+    // even when this connection doesn't currently own a live stream for the streamId it named,
+    // echoing that streamId back (not a `state`'s, which we don't have) so the client can still
+    // match it against what it's waiting on.
+    const claimedStreamId = typeof payload.streamId === 'string' ? payload.streamId : undefined
     const state = this.streamFor(connId, payload)
-    if (!state) return
+    if (!state) {
+      this.deps.sendTarget(connId, 'terminal_chunked_upload_begin_result', {
+        streamId: claimedStreamId,
+        accepted: false,
+        reason: 'no live terminal stream for this pane (reopen it and try again)',
+      })
+      return
+    }
     const streamId = state.streamId
     const reject = (reason: string): void => {
+      this.diagnostic(state, 'chunked_upload_rejected', { reason })
       this.deps.sendTarget(connId, 'terminal_chunked_upload_begin_result', { streamId, accepted: false, reason })
     }
     const uploadKind = payload.uploadKind === 'image' ? TerminalBinaryKind.imagePaste
@@ -645,6 +660,7 @@ export class TerminalStreamManager {
       chunks: [],
       bytesReceived: 0,
     }
+    this.diagnostic(state, 'chunked_upload_begin', { uploadKind: payload.uploadKind, totalBytes, filename })
     this.deps.sendTarget(connId, 'terminal_chunked_upload_begin_result', { streamId, accepted: true })
   }
 
@@ -654,6 +670,7 @@ export class TerminalStreamManager {
   private cancelChunkedUpload(connId: string, payload: FramePayload): void {
     const state = this.streamFor(connId, payload)
     if (!state) return
+    if (state.pendingUpload) this.diagnostic(state, 'chunked_upload_cancelled', {})
     state.pendingUpload = null
   }
 
@@ -678,9 +695,14 @@ export class TerminalStreamManager {
     bytes: Uint8Array,
   ): Promise<void> {
     const pending = state.pendingUpload
-    if (!pending || pending.kind !== kind) return
+    if (!pending) {
+      this.diagnostic(state, 'chunked_upload_stray_chunk', { seq, kind })
+      return
+    }
+    if (pending.kind !== kind) return
     if (!Number.isSafeInteger(seq) || seq < 0 || seq >= pending.expectedChunks
       || bytes.length === 0 || bytes.length > UPLOAD_CHUNK_BYTES) {
+      this.diagnostic(state, 'chunked_upload_invalid_chunk', { seq, byteLength: bytes.length, expectedChunks: pending.expectedChunks })
       this.sendError(state.connId, 'TERMINAL_CHUNKED_UPLOAD_INVALID', { streamId: state.streamId, message: 'malformed upload chunk' })
       state.pendingUpload = null
       return
@@ -697,6 +719,7 @@ export class TerminalStreamManager {
     })
     if (pending.bytesReceived < pending.totalBytes) return
     state.pendingUpload = null
+    this.diagnostic(state, 'chunked_upload_assembled', { totalBytes: pending.totalBytes })
     // A plain Uint8Array, not a Buffer — pasteImage/pasteFile hand this to code (osClipboard,
     // pasteDropFiles) written against the same Uint8Array shape the old atomic frame's `bytes`
     // always was, and callers/tests comparing against a Uint8Array must not have to know this
