@@ -26,6 +26,15 @@ describe('buildEngineLaunchArgv', () => {
     ])
   })
 
+  it('enters the workspace only after interactive startup has completed', () => {
+    const argv = buildEngineLaunchArgv('claude', { cwd: '/work/project' }, '/bin/zsh')
+    expect(argv).toEqual([
+      '/bin/zsh', '-lic',
+      'if ! cd -- "$1"; then printf \'%s\\n\' \'harness: the selected working directory is unavailable.\' >&2; exit 1; fi\nshift\nexec "$@"',
+      'harness-engine', '/work/project', engineBin('claude'),
+    ])
+  })
+
   it('falls back to direct execution when no absolute shell is available', () => {
     expect(buildEngineLaunchArgv('claude', {}, '')).toEqual([engineBin('claude')])
     expect(buildEngineLaunchArgv('claude', {}, 'zsh')).toEqual([engineBin('claude')])

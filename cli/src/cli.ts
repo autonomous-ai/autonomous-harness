@@ -3353,11 +3353,12 @@ async function runForeground(session: AuthSession): Promise<void> {
     // only `invalid x-api-key`. Nothing is cleared when no grid is in play: an agent on its own login
     // is supposed to use exactly these variables.
     const clearEnv = gridLaunch ? gridConflictingEnvToClear(gridLaunch) : undefined
-    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv }
+    const launchOptions = { bypassPermission, extraArgs: gridLaunch?.args, installIfMissing, clearEnv, cwd }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     const spawned = await tmuxBackend.create({
-      cwd,
+      // The login shell starts somewhere stable; its argv enters the requested workspace after rc files.
+      cwd: homedir(),
       label,
       command: argv,
       ...(gridLaunch ? { env: gridLaunch.env } : {}),
@@ -3474,7 +3475,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     respawn: async (argv) => {
       const result = await tmuxBackend!.respawn(runtime, {
         command: argv,
-        ...(session.cwd ? { cwd: session.cwd } : {}),
+        cwd: homedir(),
         ...(launch.env ? { env: launch.env } : {}),
       })
       return result.state === 'succeeded'
@@ -3498,6 +3499,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     },
     buildArgv: (opts) => buildEngineLaunchArgv(session.engine, {
       ...opts,
+      ...(session.cwd ? { cwd: session.cwd } : {}),
       ...(launch.extraArgs?.length ? { extraArgs: launch.extraArgs } : {}),
       // A pane swap onto a grid has to clear the same vendor credentials a fresh create does, for the
       // same reason and against the same failure: an engine re-exec'd with the grid's variables still

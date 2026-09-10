@@ -86,6 +86,23 @@ describe('ensureTmuxOnPath', () => {
     expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
   })
 
+  it('finds tmux after startup chatter from the login shell', async () => {
+    const binDir = fakeTmux()
+    const shell = join(scratch('tmux-onpath-chatty-shell-'), 'zsh')
+    writeFileSync(shell, `#!/bin/sh
+shift
+printf '%s\\n' 'Now using node v25.7.0'
+PATH="${binDir}" exec /bin/sh -c "$@"
+`)
+    chmodSync(shell, 0o700)
+    const env: NodeJS.ProcessEnv = { PATH: '/nonexistent-for-this-test' }
+
+    const outcome = await ensureTmuxOnPath(env, shell)
+
+    expect(outcome).toMatchObject({ state: 'adopted', path: join(binDir, 'tmux') })
+    expect(env.PATH?.split(delimiter)[0]).toBe(binDir)
+  })
+
   it('leaves an already-working PATH untouched', async () => {
     const binDir = fakeTmux()
     const env: NodeJS.ProcessEnv = { PATH: binDir }

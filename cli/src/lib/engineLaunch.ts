@@ -72,6 +72,8 @@ export interface LaunchCommandOptions {
    * machine keeps everything it had.
    */
   clearEnv?: readonly string[]
+  /** Workspace entered after interactive-shell startup, not before it. */
+  cwd?: string
 }
 
 /**
@@ -187,12 +189,18 @@ export function buildEngineLaunchArgv(
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
   const prelude = clearEnvPrelude(opts.clearEnv)
+  // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
+  // directory and enter the selected workspace only after those files have loaded: an IDE can replace
+  // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
+  const cwdPrelude = opts.cwd
+    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; exit 1; fi\nshift\n`
+    : ''
   const body = opts.installIfMissing
     ? installIfMissingThenExecScript(opts.installIfMissing, runtimeNode)
     : opts.installFirst
       ? installThenExecScript(opts.installFirst)
       : 'exec "$@"'
-  return [interactive.path, ...interactive.args, prelude + body, 'harness-engine', ...command]
+  return [interactive.path, ...interactive.args, prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
 }
 
 /**

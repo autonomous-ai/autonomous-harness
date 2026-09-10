@@ -66,8 +66,12 @@ function probe(shellPath: string, args: readonly string[], command: string): Pro
       [...args, RESOLVE_SCRIPT, 'harness-tmux-probe', command],
       { timeout: 5_000 },
       (error, stdout) => {
-        const first = String(stdout ?? '').trim().split('\n')[0]?.trim() ?? ''
-        resolve(!error && isAbsolute(first) ? first : null)
+        // Login rc files are allowed to be chatty. In particular, nvm commonly prints a
+        // "Now using node …" banner before `command -v` writes the actual path. Looking only at
+        // stdout's first line then made a perfectly installed Homebrew tmux appear absent whenever
+        // Harness was started by the desktop app's minimal PATH.
+        const found = String(stdout ?? '').split('\n').map((line) => line.trim()).find(isAbsolute)
+        resolve(!error && found ? found : null)
       },
     )
   })
