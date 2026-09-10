@@ -77,6 +77,31 @@ describe('registry remote display names', () => {
     delete process.env.CURSOR_HOME
   })
 
+  it('binds, persists and restores each Codex agent only within its own profile', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const homes = [join(dataDir, 'account-one'), join(dataDir, 'account-two')]
+    const files = homes.map((home, index) => {
+      mkdirSync(join(home, 'sessions'), { recursive: true })
+      const file = join(home, 'sessions', `rollout-session-${index}.jsonl`)
+      writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: `session-${index}`, cwd: '/work' } }) + '\n')
+      return file
+    })
+    for (let index = 0; index < homes.length; index++) {
+      const opened = registry.openProcessAgent({
+        engine: 'codex', codexHome: homes[index], cwd: '/work', tmuxPane: `%${index + 1}`,
+        processIdentity: processIdentity(index + 201),
+      })
+      expect(opened?.entry.codexHome).toBe(homes[index])
+      expect(registry.register({ engine: 'codex', sessionId: `wrong-${index}`, transcriptPath: files[1 - index], tmuxPane: `%${index + 1}` })).toBeNull()
+      expect(registry.register({ engine: 'codex', sessionId: `session-${index}`, transcriptPath: files[index], tmuxPane: `%${index + 1}` })?.entry.codexHome).toBe(homes[index])
+    }
+    registry.load()
+    expect(registry.bySession('session-0')?.codexHome).toBe(homes[0])
+    expect(registry.bySession('session-1')?.codexHome).toBe(homes[1])
+    expect(registry.bySession('session-1')?.transcriptPath).toBe(files[1])
+  })
+
   it('persists renamed display names independently from session removal', async () => {
     const transcriptPath = join(dataDir, 'session-1.jsonl')
     writeFileSync(transcriptPath, '{}\n')

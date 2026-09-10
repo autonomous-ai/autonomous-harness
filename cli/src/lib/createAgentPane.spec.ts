@@ -98,6 +98,25 @@ describe('createAndRegisterPane', () => {
     expect(tmuxBackend.kill).toHaveBeenCalledTimes(3)
   })
 
+  it('retains the selected Codex home when registration retries a stale pane', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    registry.openPendingAgent({ engine: 'claude', runtimes: [{ backend: 'tmux', paneId: '%1' }], cwd: '/tmp/other' })
+    const tmuxBackend = fakeTmux([succeeded('%1'), succeeded('%2')])
+    const codexHome = join(dataDir, 'work-account')
+    const result = await createAndRegisterPane({
+      tmuxBackend, registry, engine: 'codex', cwd: '/tmp/demo', codexHome,
+      sessionLabel: 'harness-codex-1', argv: ['codex'],
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.spawned.runtime.paneId).toBe('%2')
+    expect(registry.byAgent(result.pending.agentId)?.codexHome).toBe(codexHome)
+    registry.load()
+    expect(registry.byAgent(result.pending.agentId)?.codexHome).toBe(codexHome)
+  })
+
   it('does not retry a tmux spawn failure', async () => {
     const { registry } = await loadRegistryModule()
     registry.load()

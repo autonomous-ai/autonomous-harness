@@ -42,6 +42,7 @@ export type AgentFrame = {
   engine: RegisteredSession['engine']
   selectedModel: string | null
   grid: GridAssignment | null
+  codexHome?: string
 }
 
 /** What the caller knows and this module deliberately does not look up for itself. */
@@ -82,5 +83,6 @@ export async function agentFrame(
     // a real answer ("on no grid") and must be sent as one — omitting the key would make every push
     // indistinguishable from a daemon too old to know about grids.
     grid: s.grid ?? null,
+    ...(s.engine === 'codex' && s.codexHome !== undefined ? { codexHome: s.codexHome } : {}),
   }
 }

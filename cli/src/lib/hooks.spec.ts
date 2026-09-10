@@ -71,6 +71,27 @@ describe('Codex hook installation', () => {
     expect(existsSync(`${file}.${process.pid}.tmp`)).toBe(false)
   })
 
+  it('links a second home without changing the first home or copying its credentials', async () => {
+    const selected = join(codexHome, 'account two')
+    mkdirSync(selected)
+    const original = join(codexHome, 'hooks.json')
+    writeFileSync(original, 'unchanged primary hooks')
+    const { installCodexHooks } = await loadHooks()
+    expect(installCodexHooks(19473, selected)).toBe(true)
+    const linked = JSON.parse(readFileSync(join(selected, 'hooks.json'), 'utf8'))
+    expect(linked.hooks.SessionStart[0].hooks[0].command).toContain(`--codex-home '${selected}'`)
+    expect(readFileSync(original, 'utf8')).toBe('unchanged primary hooks')
+    expect(existsSync(join(selected, 'auth.json'))).toBe(false)
+  })
+
+  it.each(['null', '[]', '42', '{"hooks": []}', '{"hooks": null}'])('refuses malformed profile hooks without rewriting %s', async (contents) => {
+    const file = join(codexHome, 'hooks.json')
+    writeFileSync(file, contents)
+    const { installCodexHooks } = await loadHooks()
+    expect(installCodexHooks(19473, codexHome)).toBe(false)
+    expect(readFileSync(file, 'utf8')).toBe(contents)
+  })
+
   it('merges Cursor lower-camel hooks and preserves foreign entries idempotently', async () => {
     const file = join(cursorHome, 'hooks.json')
     writeFileSync(file, JSON.stringify({
@@ -499,4 +520,3 @@ describe('Hermes hook allowlist', () => {
     expect(new Set(ours.map((a) => a.event)).size).toBe(ours.length)
   })
 })
-

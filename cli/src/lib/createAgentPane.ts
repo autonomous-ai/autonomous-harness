@@ -27,10 +27,12 @@ export interface CreateAgentPaneDeps {
     runtimes: TmuxRuntimeRef[]
     primaryRuntimeKey?: string
     cwd?: string | null
+    codexHome?: string
     grid?: { baseUrl: string; model: string | null } | null
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
+  codexHome?: string
   /** Base tmux session name (`-s`). Retries append `-r<attempt>` — see module doc. */
   sessionLabel: string
   argv: string[]
@@ -66,6 +68,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       runtimes: [spawned.runtime],
       primaryRuntimeKey: terminalRouteKey(spawned.runtime),
       cwd: deps.cwd,
+      codexHome: deps.codexHome,
       grid: deps.grid,
     })
     if (pending) return { ok: true, spawned, pending }

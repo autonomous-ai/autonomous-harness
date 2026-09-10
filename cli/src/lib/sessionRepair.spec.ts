@@ -41,6 +41,23 @@ const STARTED_AT = Date.parse('2026-08-03T09:00:00Z')
 const CWD = '/Users/demo/work/project'
 
 describe('session repair', () => {
+  it('repairs two Codex sessions in the same working folder only from their selected homes', async () => {
+    const homes = [tempRoot(), tempRoot()]
+    for (let index = 0; index < homes.length; index++) {
+      const sessions = join(homes[index], 'sessions')
+      mkdirSync(sessions)
+      const file = join(sessions, `rollout-${index}.jsonl`)
+      writeFileSync(file, JSON.stringify({ type: 'session_meta', payload: { id: `account-${index}`, cwd: CWD } }) + '\n')
+      utimesSync(file, new Date(STARTED_AT + 5_000), new Date(STARTED_AT + 5_000))
+    }
+    const { findLiveSession } = await load(tempRoot())
+    for (let index = 0; index < homes.length; index++) {
+      await expect(findLiveSession('codex', CWD, STARTED_AT, { codexHome: homes[index], bornOnly: true }))
+        .resolves.toMatchObject({ sessionId: `account-${index}` })
+    }
+    await expect(findLiveSession('codex', CWD, STARTED_AT, { codexHome: tempRoot() })).resolves.toBeNull()
+  })
+
   it('finds the session the running engine started in this directory', async () => {
     const root = tempRoot()
     writeTranscript(root, 'proj', 'sess-live', CWD, STARTED_AT + 5_000)

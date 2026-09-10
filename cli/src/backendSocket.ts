@@ -27,6 +27,7 @@ import { listDir } from './lib/fsBrowse.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
+import { resolveCodexHome } from './lib/codexHome.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
@@ -313,6 +314,7 @@ export class BackendSocket {
     engine: AgentEngine
     cwd: string
     bypassPermission: boolean
+    codexHome?: string
     /** A grid to point this agent at instead of the engine's own login; null when none was chosen. */
     grid: GridLaunchOverride | null
   }) =>
@@ -1421,6 +1423,7 @@ export class BackendSocket {
                 installed: entry.installed,
                 command: entry.command,
                 installable: entry.installable,
+                ...(entry.engine === 'codex' ? { supportsCodexHome: true } : {}),
                 installCommand: entry.installable ? engineInstallRecipe(entry.engine).command : null,
               })),
             }))
@@ -1520,11 +1523,25 @@ export class BackendSocket {
           // that quietly ran on the engine's own login would look like it worked.
           const grid = parseGridLaunchOverride(payload.grid)
           if (grid.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: grid.reason }); return }
+          let codexHome: string | undefined
+          if (payload.codexHome !== undefined) {
+            if (engine !== 'codex' || grid.state === 'ok') {
+              reply(type, requestId, { error: 'INVALID_CODEX_PROFILE', detail: 'Choose a Codex profile only when using Codex on its own account.' })
+              return
+            }
+            const resolved = resolveCodexHome(payload.codexHome)
+            if (!resolved) {
+              reply(type, requestId, { error: 'INVALID_CODEX_PROFILE', detail: 'The Codex profile folder is missing or is not writable by this machine’s user.' })
+              return
+            }
+            codexHome = resolved
+          }
           const result = await this.onCreateAgent({
             engine,
             cwd,
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
+            ...(codexHome !== undefined ? { codexHome } : {}),
           })
           // `detail` carries the underlying cause (tmux's own message) so the person who clicked
           // Create can read it, rather than having to open a log on the machine that failed.

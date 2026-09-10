@@ -31,6 +31,18 @@ function session(engine: RegisteredSession['engine']): RegisteredSession {
 }
 
 describe('RuntimeProfileManager', () => {
+  it('reads the model catalog from each Codex agent’s selected account home', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'codex-model-profiles-'))
+    cleanup.push(directory)
+    const manager = new RuntimeProfileManager()
+    for (const name of ['account-one', 'account-two']) {
+      const codexHome = join(directory, name)
+      await mkdir(codexHome)
+      await writeFile(join(codexHome, 'models_cache.json'), JSON.stringify({ models: [{ slug: name, display_name: name }] }))
+      const models = await manager.modelsForSession({ ...session('codex'), codexHome })
+      expect(models.map((model) => parseRuntimeProfile(model.id)?.model)).toEqual([name])
+    }
+  })
   it('limits Codex Max and Ultra to GPT-5.6 models', () => {
     expect(codexEffortAllowed('gpt-5.6-sol', 'max')).toBe(true)
     expect(codexEffortAllowed('gpt-5.6-terra', 'ultra')).toBe(true)
