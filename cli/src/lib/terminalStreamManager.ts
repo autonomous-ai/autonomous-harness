@@ -4,11 +4,11 @@ import { deflateSync } from 'node:zlib'
 import { ENGINES } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import { writeImageToOsClipboard } from './osClipboard.js'
-import { writePasteImageFile } from './pasteImageFiles.js'
+import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { TerminalStreamHandle, TerminalStreamSize } from './terminalTypes.js'
-import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+import { decodePasteFilePayload, TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
 
 /** Ctrl+V as a literal byte (ASCII SUB, 0x16) — the same nudge a real Ctrl+V keystroke sends down
  *  the ordinary keystroke pipe. Written after the OS clipboard write below succeeds, so the engine
@@ -160,9 +160,11 @@ export class TerminalStreamManager {
         return true
       case 'terminal_paste':
       case 'terminal_paste_image':
+      case 'terminal_paste_file':
         // Same reason as terminal_input: a paste is a binary frame (TerminalBinaryKind.paste /
-        // .imagePaste) so it rides the same AEAD channel every other terminal byte does, which is
-        // what makes it safe to deliver over a relayed (E2EE) connection. Nothing sends this as JSON.
+        // .imagePaste / .pasteFile) so it rides the same AEAD channel every other terminal byte
+        // does, which is what makes it safe to deliver over a relayed (E2EE) connection. Nothing
+        // sends this as JSON.
         this.sendError(connId, 'TERMINAL_BINARY_REQUIRED', { streamId: typeof payload.streamId === 'string' ? payload.streamId : undefined })
         return true
       case 'terminal_scroll':
@@ -181,11 +183,15 @@ export class TerminalStreamManager {
 
   async handleBinary(connId: string, frame: TerminalBinaryClear): Promise<void> {
     if (frame.kind !== TerminalBinaryKind.input && frame.kind !== TerminalBinaryKind.paste
-      && frame.kind !== TerminalBinaryKind.imagePaste) return
+      && frame.kind !== TerminalBinaryKind.imagePaste && frame.kind !== TerminalBinaryKind.pasteFile) return
     const state = this.streams.get(frame.streamId)
     if (!state || state.connId !== connId || state.closing) return
     if (frame.kind === TerminalBinaryKind.imagePaste) {
       await this.pasteImage(state, frame.bytes)
+      return
+    }
+    if (frame.kind === TerminalBinaryKind.pasteFile) {
+      await this.pasteFile(state, frame.bytes)
       return
     }
     if (frame.kind === TerminalBinaryKind.paste) {
@@ -216,6 +222,10 @@ export class TerminalStreamManager {
         // Ctrl+V and hoping the engine's own clipboard read finds something local — see
         // `pasteImage()` for the frame this unlocks.
         imagePaste: true,
+        // A client old enough to predate `TerminalBinaryKind.pasteFile` has no way to hand a
+        // dropped non-image file to a REMOTE pane at all (a local pane needs no capability — it
+        // pastes the file's own path directly, never touching the wire) — see `pasteFile()`.
+        pasteFile: true,
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
     })
@@ -529,6 +539,41 @@ export class TerminalStreamManager {
       outcome: 'fallback_path',
       reason: clipboard.reason,
     })
+  }
+
+  /**
+   * A dropped (non-image) FILE — writes it to disk on THIS machine (under its original name, see
+   * `writePasteDropFile`) and pastes that path as plain text, the same `pasteRaw` call `paste()`
+   * uses. Unlike `pasteImage()`, there is no OS-clipboard attempt and no Ctrl+V replay: the goal
+   * here is only "the pane gets a valid path", not "the engine auto-attaches this" — a client only
+   * sends this at all for a genuinely REMOTE pane (a local one pastes its own already-valid path
+   * without ever reaching the wire), so there is no local/remote branch to make here either.
+   */
+  private async pasteFile(state: ActiveStream, payload: Uint8Array): Promise<void> {
+    if (payload.length === 0) return
+    const decoded = decodePasteFilePayload(payload)
+    if (!decoded) {
+      this.sendError(state.connId, 'TERMINAL_PASTE_FILE_INVALID', { streamId: state.streamId, message: 'malformed file paste payload' })
+      return
+    }
+    state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    let path: string
+    try {
+      path = await writePasteDropFile(decoded.filename, decoded.content)
+    } catch (error) {
+      this.sendError(state.connId, 'TERMINAL_PASTE_FILE_FAILED', {
+        streamId: state.streamId,
+        message: error instanceof Error ? error.message : 'could not save the dropped file',
+      })
+      return
+    }
+    const result = await state.handle.pasteRaw(path)
+    if (result.state !== 'succeeded') {
+      this.sendError(state.connId, 'TERMINAL_PASTE_FILE_FAILED', { streamId: state.streamId, message: result.reason })
+      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+      return
+    }
+    this.deps.sendTarget(state.connId, 'terminal_paste_file_result', { streamId: state.streamId, path })
   }
 
   /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,

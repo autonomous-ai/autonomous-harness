@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   deriveTerminalBinaryKey,
+  decodePasteFilePayload,
   decodeTerminalLocal,
+  encodePasteFilePayload,
   encodeTerminalLocal,
   openTerminalBinary,
   parseTerminalBinaryEnvelope,
@@ -9,8 +11,10 @@ import {
   TerminalBinaryKind,
   TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES,
   TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES,
+  TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES,
   TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES,
   TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES,
+  TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES,
 } from './terminalBinary.js'
 
 const key = Uint8Array.from({ length: 32 }, (_, index) => index)
@@ -162,6 +166,41 @@ describe('terminal binary protocol v3', () => {
     })).toBeNull()
   })
 
+  it('round-trips a pasteFile payload (filename + content) at its own ceiling', () => {
+    const payload = encodePasteFilePayload('report.pdf', Uint8Array.of(0x25, 0x50, 0x44, 0x46))!
+    expect(payload).not.toBeNull()
+
+    const sealed = sealTerminalBinary(key, 30, {
+      kind: TerminalBinaryKind.pasteFile,
+      streamId,
+      seq: 0,
+      bytes: payload,
+      compressed: false,
+    })!
+    expect(sealed).not.toBeNull()
+    expect(openTerminalBinary(key, sealed)?.frame).toEqual({
+      kind: TerminalBinaryKind.pasteFile,
+      streamId,
+      seq: 0,
+      bytes: payload,
+      compressed: false,
+    })
+
+    // Its own ceiling, independent of paste/imagePaste.
+    const tooBig = new Uint8Array(TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES + 1)
+    expect(sealTerminalBinary(key, 31, { kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, bytes: tooBig, compressed: false })).toBeNull()
+  })
+
+  it('rejects a compressed pasteFile, same reason as paste/imagePaste', () => {
+    expect(sealTerminalBinary(key, 32, {
+      kind: TerminalBinaryKind.pasteFile,
+      streamId,
+      seq: 0,
+      bytes: Uint8Array.of(1, 2, 3),
+      compressed: true,
+    })).toBeNull()
+  })
+
   it('rejects tamper, truncation and unsupported flags', () => {
     const sealed = sealTerminalBinary(key, 1, {
       kind: TerminalBinaryKind.output,
@@ -275,5 +314,52 @@ describe('authenticated loopback terminal framing v1', () => {
       bytes: tooBig,
       compressed: false,
     })).toBeNull()
+  })
+
+  it('carries a pasteFile well past the ordinary local frame ceiling, independent of paste/imagePaste', () => {
+    const content = new Uint8Array(2 * 1024 * 1024).fill(0xcd)
+    const payload = encodePasteFilePayload('archive.zip', content)!
+    const encoded = encodeTerminalLocal({
+      kind: TerminalBinaryKind.pasteFile,
+      streamId,
+      seq: 0,
+      bytes: payload,
+      compressed: false,
+    })
+    expect(encoded).not.toBeNull()
+    const decoded = decodeTerminalLocal(encoded!)
+    expect(decoded?.kind).toBe(TerminalBinaryKind.pasteFile)
+    expect(decodePasteFilePayload(decoded!.bytes)).toEqual({ filename: 'archive.zip', content })
+
+    const tooBig = new Uint8Array(TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES + 1)
+    expect(encodeTerminalLocal({
+      kind: TerminalBinaryKind.pasteFile,
+      streamId,
+      seq: 0,
+      bytes: tooBig,
+      compressed: false,
+    })).toBeNull()
+  })
+})
+
+describe('pasteFile payload sub-format', () => {
+  it('round-trips filename + content', () => {
+    const content = Uint8Array.of(1, 2, 3, 4, 5)
+    const payload = encodePasteFilePayload('xin chào.txt', content)!
+    expect(payload).not.toBeNull()
+    expect(decodePasteFilePayload(payload)).toEqual({ filename: 'xin chào.txt', content })
+  })
+
+  it('rejects an empty filename', () => {
+    expect(encodePasteFilePayload('', Uint8Array.of(1))).toBeNull()
+  })
+
+  it('rejects malformed/truncated payloads', () => {
+    expect(decodePasteFilePayload(new Uint8Array(0))).toBeNull()
+    expect(decodePasteFilePayload(Uint8Array.of(0, 0))).toBeNull() // zero-length filename
+    // Claims a 10-byte filename but supplies none.
+    const truncated = new Uint8Array(2)
+    new DataView(truncated.buffer).setUint16(0, 10, false)
+    expect(decodePasteFilePayload(truncated)).toBeNull()
   })
 })

@@ -4,12 +4,12 @@ import type { RegisteredSession } from './registry.js'
 import { TerminalStreamManager, terminalEngineCapabilities } from './terminalStreamManager.js'
 import { TERMINAL_ACTION_SUCCEEDED, type TerminalStreamHandle, type TerminalStreamSink } from './terminalTypes.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
-import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+import { encodePasteFilePayload, TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
 import { writeImageToOsClipboard, type OsClipboardImageResult } from './osClipboard.js'
-import { writePasteImageFile } from './pasteImageFiles.js'
+import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 
 vi.mock('./osClipboard.js', () => ({ writeImageToOsClipboard: vi.fn() }))
-vi.mock('./pasteImageFiles.js', () => ({ writePasteImageFile: vi.fn() }))
+vi.mock('./pasteDropFiles.js', () => ({ writePasteImageFile: vi.fn(), writePasteDropFile: vi.fn() }))
 
 class FakeStream implements TerminalStreamHandle {
   readonly runtime = { backend: 'tmux' as const, paneId: '%1' }
@@ -84,6 +84,7 @@ describe('TerminalStreamManager', () => {
       now: () => Date.now(),
     })
     vi.mocked(writePasteImageFile).mockReset().mockResolvedValue('/fake/paste-images/fake.png')
+    vi.mocked(writePasteDropFile).mockReset().mockImplementation(async (filename: string) => `/fake/paste-drops/id-${filename}`)
     vi.mocked(writeImageToOsClipboard).mockReset().mockResolvedValue({ state: 'written' })
   })
 
@@ -305,6 +306,82 @@ describe('TerminalStreamManager', () => {
       const streamId = sent[0].payload.streamId as string
       await manager.handleBinary('web-1', { kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, compressed: false, bytes: new Uint8Array() })
       expect(vi.mocked(writePasteImageFile)).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('file paste (dropped non-image file)', () => {
+    const fileContent = Uint8Array.of(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34)
+    const pasteFile = (streamId: string, filename = 'report.pdf'): TerminalBinaryClear => ({
+      kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, compressed: false,
+      bytes: encodePasteFilePayload(filename, fileContent)!,
+    })
+
+    it('advertises pasteFile in terminal_capabilities', async () => {
+      await manager.handleFrame('web-1', 'terminal_capabilities', { requestId: 'r1' })
+      expect((sent.at(-1)?.payload.features as Record<string, unknown>).pasteFile).toBe(true)
+    })
+
+    it('rejects a legacy JSON terminal_paste_file the same way as terminal_paste/terminal_paste_image', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-file', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+      await manager.handleFrame('web-1', 'terminal_paste_file', { streamId })
+      expect(sent.at(-1)?.payload.code).toBe('TERMINAL_BINARY_REQUIRED')
+    })
+
+    it('writes the file under its original name and pastes the resulting path as text — never the clipboard', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-file', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+
+      await manager.handleBinary('web-1', pasteFile(streamId))
+
+      expect(vi.mocked(writePasteDropFile)).toHaveBeenCalledWith('report.pdf', fileContent)
+      expect(vi.mocked(writeImageToOsClipboard)).not.toHaveBeenCalled() // no clipboard attempt at all
+      expect(stream.writes).toHaveLength(0) // no Ctrl+V replay either
+      expect(stream.pastes).toEqual(['/fake/paste-drops/id-report.pdf'])
+      const result = sent.at(-1)!
+      expect(result.type).toBe('terminal_paste_file_result')
+      expect(result.payload).toMatchObject({ streamId, path: '/fake/paste-drops/id-report.pdf' })
+    })
+
+    it('rejects a malformed payload (bad filename-length header) without touching disk', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-file2', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+
+      await manager.handleBinary('web-1', {
+        kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, compressed: false,
+        bytes: Uint8Array.of(0xff, 0xff, 1, 2), // claims a 65535-byte filename, supplies 2 bytes
+      })
+
+      expect(vi.mocked(writePasteDropFile)).not.toHaveBeenCalled()
+      expect(sent.at(-1)?.payload.code).toBe('TERMINAL_PASTE_FILE_INVALID')
+    })
+
+    it('reports a genuine write failure as an error', async () => {
+      vi.mocked(writePasteDropFile).mockRejectedValue(new Error('disk full'))
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-file3', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+
+      await manager.handleBinary('web-1', pasteFile(streamId))
+
+      expect(stream.pastes).toHaveLength(0)
+      expect(sent.at(-1)?.payload).toMatchObject({ code: 'TERMINAL_PASTE_FILE_FAILED', streamId, message: 'disk full' })
+    })
+
+    it('ignores an empty file paste', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-file4', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+      await manager.handleBinary('web-1', { kind: TerminalBinaryKind.pasteFile, streamId, seq: 0, compressed: false, bytes: new Uint8Array() })
+      expect(vi.mocked(writePasteDropFile)).not.toHaveBeenCalled()
     })
   })
 

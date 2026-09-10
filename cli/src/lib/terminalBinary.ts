@@ -23,6 +23,12 @@ export const TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES = 6 * 1024 * 1024
 // terminalLocalImagePasteMaxPayloadBytes — keep the two in step.
 export const TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024
 export const TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
+// A dropped (non-image) file, delivered whole so its path can be pasted on the far side — see
+// terminalStreamManager.ts's pasteFile(). Ordinary files run larger than a screenshot, hence its
+// own, more generous ceiling; this is a modest atomic-frame limit, not a general file-transfer
+// feature. Mirrors terminal_binary.dart's terminalLocalPasteFileMaxPayloadBytes — keep in step.
+export const TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES = 10 * 1024 * 1024
+export const TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
 
 export const enum TerminalBinaryKind {
   input = 1,
@@ -38,6 +44,12 @@ export const enum TerminalBinaryKind {
    *  See `terminalStreamManager.ts`'s `pasteImage()`. Upload (client→CLI) only; nothing ever sends
    *  this back down. */
   imagePaste = 6,
+  /** A dropped (non-image) FILE — carries the original filename plus its bytes (see
+   *  `pasteFile()`'s payload layout), so the daemon can write it to disk on its own machine and
+   *  paste that path as text. Never touches the OS clipboard and never replays a keystroke, unlike
+   *  `imagePaste` — the goal here is only "the pane gets a valid path". Upload (client→CLI) only;
+   *  nothing ever sends this back down. */
+  pasteFile = 7,
 }
 
 export interface TerminalBinaryClear {
@@ -92,6 +104,7 @@ function validKind(value: number): value is TerminalBinaryKind {
     || value === TerminalBinaryKind.sync
     || value === TerminalBinaryKind.paste
     || value === TerminalBinaryKind.imagePaste
+    || value === TerminalBinaryKind.pasteFile
 }
 
 export function terminalBinaryType(kind: TerminalBinaryKind): string {
@@ -100,21 +113,24 @@ export function terminalBinaryType(kind: TerminalBinaryKind): string {
   if (kind === TerminalBinaryKind.keyframe) return 'terminal_keyframe'
   if (kind === TerminalBinaryKind.paste) return 'terminal_paste'
   if (kind === TerminalBinaryKind.imagePaste) return 'terminal_paste_image'
+  if (kind === TerminalBinaryKind.pasteFile) return 'terminal_paste_file'
   return 'terminal_sync'
 }
 
-/** The seal/parse/encode/decode size ceiling for [kind] — paste and imagePaste get a much larger
- *  one each; see TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES /
- *  TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES. */
+/** The seal/parse/encode/decode size ceiling for [kind] — paste, imagePaste and pasteFile each get
+ *  a much larger one; see TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES /
+ *  TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES / TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES. */
 function maxCiphertextBytesFor(kind: TerminalBinaryKind): number {
   if (kind === TerminalBinaryKind.paste) return TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES
   if (kind === TerminalBinaryKind.imagePaste) return TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES
+  if (kind === TerminalBinaryKind.pasteFile) return TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES
   return TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES
 }
 
 function maxLocalPayloadBytesFor(kind: TerminalBinaryKind): number {
   if (kind === TerminalBinaryKind.paste) return TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES
   if (kind === TerminalBinaryKind.imagePaste) return TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES
+  if (kind === TerminalBinaryKind.pasteFile) return TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES
   return TERMINAL_LOCAL_MAX_PAYLOAD_BYTES
 }
 
@@ -125,7 +141,8 @@ export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | nu
   // to inflate. Nothing on this side inflates an incoming frame, so a client-compressed kind (input,
   // sync, and — for now — paste too) would silently hand tmux a compressed blob instead of text.
   if ((frame.kind === TerminalBinaryKind.input || frame.kind === TerminalBinaryKind.sync
-    || frame.kind === TerminalBinaryKind.paste || frame.kind === TerminalBinaryKind.imagePaste)
+    || frame.kind === TerminalBinaryKind.paste || frame.kind === TerminalBinaryKind.imagePaste
+    || frame.kind === TerminalBinaryKind.pasteFile)
     && frame.compressed) return null
   if (frame.kind === TerminalBinaryKind.sync && frame.bytes.length !== 0) return null
   const metaBytes = frame.kind === TerminalBinaryKind.keyframe ? 28 : 24
@@ -146,7 +163,8 @@ export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | nu
 export function decodeTerminalPlain(kind: TerminalBinaryKind, flags: number, plaintext: Uint8Array): TerminalBinaryClear | null {
   if ((flags & ~FLAG_ZLIB) !== 0
     || ((kind === TerminalBinaryKind.input || kind === TerminalBinaryKind.sync
-      || kind === TerminalBinaryKind.paste || kind === TerminalBinaryKind.imagePaste) && flags !== 0)) return null
+      || kind === TerminalBinaryKind.paste || kind === TerminalBinaryKind.imagePaste
+      || kind === TerminalBinaryKind.pasteFile) && flags !== 0)) return null
   const metaBytes = kind === TerminalBinaryKind.keyframe ? 28 : 24
   if (plaintext.length < metaBytes || (kind === TerminalBinaryKind.sync && plaintext.length !== metaBytes)) return null
   const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)
@@ -241,6 +259,34 @@ export function decodeTerminalLocal(raw: Uint8Array): TerminalBinaryClear | null
   const length = view.getUint32(8, false)
   if (length > maxLocalPayloadBytesFor(kind) || bytes.length !== TERMINAL_LOCAL_HEADER_BYTES + length) return null
   return decodeTerminalPlain(kind, flags, bytes.slice(TERMINAL_LOCAL_HEADER_BYTES))
+}
+
+/** `pasteFile`'s payload (the frame's opaque `bytes`) is itself a tiny sub-format: a 2-byte
+ *  big-endian filename length, the UTF-8 filename, then the file's own content — one small header
+ *  inside the existing opaque `bytes` field, so the outer frame format needs no changes for this. */
+export function encodePasteFilePayload(filename: string, content: Uint8Array): Uint8Array | null {
+  const nameBytes = utf8(filename)
+  if (nameBytes.length === 0 || nameBytes.length > 0xffff) return null
+  const out = new Uint8Array(2 + nameBytes.length + content.length)
+  const view = new DataView(out.buffer)
+  view.setUint16(0, nameBytes.length, false)
+  out.set(nameBytes, 2)
+  out.set(content, 2 + nameBytes.length)
+  return out
+}
+
+export function decodePasteFilePayload(payload: Uint8Array): { filename: string; content: Uint8Array } | null {
+  if (payload.length < 2) return null
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+  const nameLength = view.getUint16(0, false)
+  if (nameLength === 0 || payload.length < 2 + nameLength) return null
+  let filename: string
+  try {
+    filename = new TextDecoder('utf-8', { fatal: true }).decode(payload.subarray(2, 2 + nameLength))
+  } catch {
+    return null
+  }
+  return { filename, content: payload.subarray(2 + nameLength) }
 }
 
 export const enum TerminalHopDirection {
