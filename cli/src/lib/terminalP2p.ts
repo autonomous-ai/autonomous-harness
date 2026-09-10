@@ -663,8 +663,11 @@ export class TerminalP2pResponderPool {
     payload: TerminalP2pSignal,
     stillCurrent: () => boolean,
   ): Promise<ResponderEntry | null> {
+    // Kept in step with remoteRelay.ts's own cap on the offerer's side (p2pPolicy()'s stunUrls slice)
+    // and with the backend's default STUN list length — see that file's comment for why the two must
+    // match: this ceiling is unreachable in practice if the offerer's own is lower.
     const offeredStunUrls = Array.isArray(payload.stunUrls)
-      ? payload.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 8)
+      ? payload.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 10)
       : []
     // The offerer raced these too, and may well have landed on a different server. That is fine: a
     // srflx candidate is each peer's own public address, so the two sides need not agree on who to ask.

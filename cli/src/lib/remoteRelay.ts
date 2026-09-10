@@ -141,8 +141,13 @@ function p2pPolicy(value: unknown): TerminalP2pPolicy | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
   if (raw.enabled !== true || raw.protocolVersion !== TERMINAL_P2P_PROTOCOL_VERSION) return null
+  // Regression: this used to cap at 4 while the responder's own parsing of the resulting offer
+  // (buildResponderEntry in terminalP2p.ts) caps at 10 — since the offer only ever carries what THIS
+  // cap let through, half of whatever the backend configured was silently dropped before an offer was
+  // ever built, and the responder's higher ceiling was unreachable in practice. Kept in step with that
+  // one and with the backend's own default list length (autonomous-harness-backend/src/config/env.ts).
   const stunUrls = Array.isArray(raw.stunUrls)
-    ? raw.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 4)
+    ? raw.stunUrls.filter((url): url is string => typeof url === 'string' && /^stuns?:/i.test(url)).slice(0, 10)
     : []
   const openWaitMs = typeof raw.openWaitMs === 'number' && Number.isSafeInteger(raw.openWaitMs)
     ? Math.max(0, Math.min(5_000, raw.openWaitMs))
