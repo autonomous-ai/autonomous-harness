@@ -242,7 +242,9 @@ export async function findLiveSession(
   engine: AgentEngine,
   cwd: string,
   startedAtMs: number,
-  opts?: { bornOnly?: boolean; pid?: number },
+  // codexHome: the specific agent's own CODEX_HOME profile, when it isn't this machine's default —
+  // see RegisteredSession.codexHome. Only the 'codex' case below reads it.
+  opts?: { bornOnly?: boolean; pid?: number; codexHome?: string },
 ): Promise<RepairedSession | null> {
   const sinceMs = startedAtMs - START_SLACK_MS
   // The DB engines match on a directory STRING, so ask for both spellings of it (see sameDir).
@@ -257,7 +259,7 @@ export async function findLiveSession(
       // belongs to a subagent, which must never become an agent of its own.
       // Its session id lives INSIDE the file: the name is `rollout-<timestamp>-<id>.jsonl`, so deriving
       // the id from the filename produced the literal string "rollout-…" (seen on a live pane).
-      return fileEngineSession(join(env.CODEX_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
+      return fileEngineSession(join(opts?.codexHome || env.CODEX_HOME, 'sessions'), cwd, startedAtMs, async (path) => {
         const meta = readCodexRolloutMeta(path)
         return meta && !meta.isSubagent ? { cwd: meta.cwd, sessionId: meta.id || undefined } : null
       }, opts)

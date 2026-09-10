@@ -1043,6 +1043,53 @@ describe('agent identity: the process owns the agent, the session is bound to it
     })
   })
 
+  it('validates a Codex transcript against the agent\'s own profile, not the daemon default', async () => {
+    const { validTranscriptPath } = await loadRegistryModule()
+    const profile = mkdtempSync(join(tmpdir(), 'adapter-codex-profile-'))
+    try {
+      const file = join(profile, 'sessions', 'rollout-x.jsonl')
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, '{}\n')
+      expect(validTranscriptPath('codex', file, profile)).toBe(true)
+      // Without the override this file sits outside the (default) trusted root and must be refused.
+      expect(validTranscriptPath('codex', file)).toBe(false)
+    } finally {
+      rmSync(profile, { recursive: true, force: true })
+    }
+  })
+
+  it('registers a codex session against the profile it was created with', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const profile = mkdtempSync(join(tmpdir(), 'adapter-codex-profile-'))
+    try {
+      const pending = registry.openPendingAgent({
+        engine: 'codex',
+        runtimes: [{ backend: 'tmux', paneId: '%9' }],
+        cwd: '/tmp/demo',
+        codexHome: profile,
+      })!
+      expect(pending.codexHome).toBe(profile)
+
+      const transcriptFile = join(profile, 'sessions', 'rollout-x.jsonl')
+      mkdirSync(join(transcriptFile, '..'), { recursive: true })
+      writeFileSync(transcriptFile, '{}\n')
+
+      const result = registry.register({
+        engine: 'codex',
+        sessionId: 'sess-1',
+        transcriptPath: transcriptFile,
+        tmuxPane: '%9',
+        cwd: '/tmp/demo',
+        processIdentity: processIdentity(909),
+      })
+      expect(result?.entry.sessionId).toBe('sess-1')
+      expect(result?.entry.codexHome).toBe(profile)
+    } finally {
+      rmSync(profile, { recursive: true, force: true })
+    }
+  })
+
   it('keeps a name given before the agent had a session', async () => {
     // Names live under the ENGINE session id — that is what survives the launcher and comes back on a
     // resume, since the agent id is minted fresh each launch. An agent renamed while still unbound has

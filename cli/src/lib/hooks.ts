@@ -14,7 +14,6 @@ import { VERSION } from '../version.js'
 import { managedNodePath } from './nodeRuntime.js'
 
 const SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
-const CODEX_HOOKS_PATH = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'hooks.json')
 const GROK_HOOKS_PATH = join(env.GROK_HOME, 'hooks', 'harness.json')
 const CURSOR_HOOKS_PATH = join(process.env.CURSOR_HOME || join(homedir(), '.cursor'), 'hooks.json')
 // agy reads hooks from its SHARED customization root (~/.gemini/config), not from its own state dir —
@@ -57,7 +56,13 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok' | 'agy' | 'copilot'): string {
+function command(
+  port: number,
+  engine: 'claude' | 'codex' | 'cursor' | 'hermes' | 'commandcode' | 'devin' | 'grok' | 'agy' | 'copilot',
+  // Only ever non-default for 'codex': a per-agent CODEX_HOME profile gets its OWN hooks.json, and
+  // that file's baked --codex-home must match where it actually lives (see installCodexHooks).
+  codexHome: string = env.CODEX_HOME,
+): string {
   return [
     // Absolute, never the bare word `node`. This string is executed later by the ENGINE, in a shell
     // whose PATH is none of our business — and since the product ships its own Node, a computer with
@@ -68,7 +73,7 @@ function command(port: number, engine: 'claude' | 'codex' | 'cursor' | 'hermes' 
     '--port', String(port),
     '--data-dir', shellQuote(env.ADAPTER_DATA_DIR),
     '--claude-projects-dir', shellQuote(env.CLAUDE_PROJECTS_DIR),
-    '--codex-home', shellQuote(env.CODEX_HOME),
+    '--codex-home', shellQuote(codexHome),
     '--grok-home', shellQuote(env.GROK_HOME),
     '--cursor-home', shellQuote(env.CURSOR_HOME),
     '--hermes-home', shellQuote(env.HERMES_HOME),
@@ -142,22 +147,30 @@ function writeJsonAtomic(file: string, value: unknown): void {
   renameSync(tmp, file)
 }
 
-/** Merge Machine's user-level Codex hooks without replacing unrelated hooks. A malformed existing file
- * is left untouched: silently replacing it could disable user security/automation hooks. */
-export function installCodexHooks(port: number): void {
+/**
+ * Merge Machine's user-level Codex hooks without replacing unrelated hooks. A malformed existing
+ * file is left untouched: silently replacing it could disable user security/automation hooks.
+ *
+ * `codexHome` defaults to this machine's own default profile, but a Codex agent launched against a
+ * different CODEX_HOME profile (see `Agent.codexHome`/`agent_create`) reads hooks.json from THAT
+ * folder, not this one — so `onCreateAgent` calls this again with the chosen profile before
+ * spawning such an agent. Idempotent either way.
+ */
+export function installCodexHooks(port: number, codexHome: string = env.CODEX_HOME): void {
+  const hooksPath = join(codexHome, 'hooks.json')
   let settings: Settings = {}
-  if (existsSync(CODEX_HOOKS_PATH)) {
+  if (existsSync(hooksPath)) {
     try {
-      settings = JSON.parse(readFileSync(CODEX_HOOKS_PATH, 'utf-8')) as Settings
+      settings = JSON.parse(readFileSync(hooksPath, 'utf-8')) as Settings
     } catch (err) {
-      console.error(`[hooks] Codex hooks file is invalid JSON; leaving it unchanged: ${CODEX_HOOKS_PATH}`)
+      console.error(`[hooks] Codex hooks file is invalid JSON; leaving it unchanged: ${hooksPath}`)
       console.error('[hooks] fix the file, then restart harness login')
       return
     }
   }
   if (!settings.hooks || typeof settings.hooks !== 'object') settings.hooks = {}
 
-  const cmd = command(port, 'codex')
+  const cmd = command(port, 'codex', codexHome)
   const required: Array<{ event: 'SessionStart' | 'UserPromptSubmit'; matcher?: string }> = [
     { event: 'SessionStart', matcher: 'startup|resume|clear|compact' },
     { event: 'UserPromptSubmit' },
@@ -177,12 +190,12 @@ export function installCodexHooks(port: number): void {
   }
 
   if (!changed) {
-    console.log('[hooks] Codex SessionStart/UserPromptSubmit hooks already installed')
+    console.log(`[hooks] Codex SessionStart/UserPromptSubmit hooks already installed → ${hooksPath}`)
     return
   }
   try {
-    writeJsonAtomic(CODEX_HOOKS_PATH, settings)
-    console.log(`[hooks] installed Codex SessionStart/UserPromptSubmit hooks → ${CODEX_HOOKS_PATH}`)
+    writeJsonAtomic(hooksPath, settings)
+    console.log(`[hooks] installed Codex SessionStart/UserPromptSubmit hooks → ${hooksPath}`)
     console.log('[hooks] Codex requires reviewing these user hooks with /hooks before normal use')
   } catch (err) {
     console.error('[hooks] failed to write Codex hooks.json:', err)

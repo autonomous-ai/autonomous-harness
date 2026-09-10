@@ -42,13 +42,17 @@ const HEARTBEAT_MS = 20_000
 
 // A p2p attempt that never reaches 'direct', or one that did and then got demoted mid-session, both
 // leave the stream(s) on the ws relay with nothing to bring them back — see scheduleP2pRetry(). One
-// policy for both cases: retry every 60s, capped at 3 retries (4 attempts total) since the last
-// success, reset on the next 'direct'. p2pRetryLifetimeTotal is the belt-and-braces cap across the
-// entry's whole life, so a connection that flaps direct/demoted forever every few minutes cannot
-// retry forever just because each success resets the short-term counter.
+// policy for both cases: retry every 60s, capped at P2P_RETRY_HOURLY_CAP attempts within any trailing
+// hour (tracked in p2pRetryTimestamps, not a plain counter) — a ROLLING window rather than a lifetime
+// total, deliberately: the underlying reason a connection can't reach p2p is often transient at the
+// scale of hours (the machine's public IP changed, a router rebooted, a NAT binding thawed), so a
+// connection that burned its whole budget hours ago should still get to try again now rather than
+// staying stuck on relay for the rest of the daemon's uptime. Old attempts simply age out of the
+// lookback on their own, which is also why there is no separate "reset on a success" step any more —
+// a connection that's been healthy for a while naturally has an empty recent window already.
 const P2P_RETRY_DELAY_MS = 60_000
-const P2P_RETRY_MAX = 3
-const P2P_RETRY_LIFETIME_CAP = 10
+const P2P_RETRY_WINDOW_MS = 60 * 60 * 1000
+const P2P_RETRY_HOURLY_CAP = 10
 // How long a stream may sit in p2pMigrating before the sweep (piggybacked on heartbeatTimer) gives up
 // on it and lets the ordinary demote-on-mismatch rule apply again.
 const P2P_MIGRATION_TTL_MS = 30_000
@@ -100,11 +104,9 @@ interface Entry {
   streams: Set<string>
   /** streamId -> when its migration to p2p started, so a stuck one can be swept off the heartbeat. */
   p2pMigrating: Map<string, number>
-  /** Retries since the last 'direct' (or since entry creation, if never direct). Reset to 0 on 'direct'. */
-  p2pRetryCount: number
-  /** Retries across this entry's whole life — never reset. The safeguard against a flapping connection
-   *  retrying forever purely because each success resets p2pRetryCount. */
-  p2pRetryLifetimeTotal: number
+  /** Timestamps (ms epoch) of retry attempts within the trailing P2P_RETRY_WINDOW_MS — see
+   *  scheduleP2pRetry(). A rolling window, not a lifetime counter: old attempts age out on their own. */
+  p2pRetryTimestamps: number[]
   p2pRetryTimer: ReturnType<typeof setTimeout> | null
   /** TURN-to-direct upgrade trials — see scheduleUpgradeAttempt()/attemptUpgrade()/promoteToDirect().
    *  Entirely separate bookkeeping from p2pMigrating/p2pRetry*: this never touches entry.p2p (the live,
@@ -123,8 +125,9 @@ interface Entry {
    *  than guessed closed (see promoteToDirect()) — cleaned up wherever the entry itself is torn down. */
   upgradeOrphan: TerminalP2pInitiator | null
   /** True once this entry has either cut over to a true direct pair, or spent all 3 attempts without
-   *  one — either way, stop trying. Never reset (unlike p2pRetryCount): there is no "next demote" to
-   *  re-arm a budget for here, since staying on direct or giving up are both permanent for this entry. */
+   *  one — either way, stop trying. Never reset (unlike p2pRetryTimestamps' rolling window): there is
+   *  no "next demote" to re-arm a budget for here, since staying on direct or giving up are both
+   *  permanent for this entry. */
   upgradeDone: boolean
 }
 
@@ -268,8 +271,7 @@ export class RemoteRelayPool {
       p2pStreams: new Set(),
       streams: new Set(),
       p2pMigrating: new Map(),
-      p2pRetryCount: 0,
-      p2pRetryLifetimeTotal: 0,
+      p2pRetryTimestamps: [],
       p2pRetryTimer: null,
       upgradeAttempts: 0,
       upgradeTimer: null,
@@ -563,7 +565,8 @@ export class RemoteRelayPool {
       onState: (state, setupMs, reason) => {
         if (state === 'direct') {
           wasDirect = true
-          entry.p2pRetryCount = 0 // a fresh success re-arms the full retry budget for the NEXT demote, if any
+          // No explicit retry-budget reset here any more: p2pRetryTimestamps is a rolling window, so a
+          // connection that's been healthy for a while already has an empty recent window on its own.
           // 'relayed' distinguishes a Cloudflare TURN path from a truly direct one. Both are "p2p" as far
           // as the terminal is concerned, but only one of them is billed per GB.
           const relayed = p2p.transport === 'relay'
@@ -695,16 +698,18 @@ export class RemoteRelayPool {
    * or reached it once and then got demoted. Either way `entry.p2p` is null here (the failed/demoted
    * instance already cleared it) so `startP2p`'s own guard will accept the retry once the timer fires.
    *
-   * p2pRetryCount is reset to 0 on every 'direct' (see startP2p's onState), so a demote long after a
-   * clean run gets the full budget again — p2pRetryLifetimeTotal, which never resets, is what stops a
-   * connection that flaps direct/demoted forever from retrying forever.
+   * The budget is a ROLLING window (P2P_RETRY_HOURLY_CAP attempts within the trailing
+   * P2P_RETRY_WINDOW_MS), not a lifetime total — see the constants' own comment for why: the reason a
+   * connection can't reach p2p right now is often no longer true an hour from now (a changed IP, a
+   * router reboot, a NAT binding that thawed), and a connection that burned its whole budget hours ago
+   * should still get another shot rather than being stuck on relay for the rest of the daemon's uptime.
    */
   private scheduleP2pRetry(machineId: string, entry: Entry): void {
     if (entry.p2pRetryTimer) return
-    if (entry.p2pRetryLifetimeTotal >= P2P_RETRY_LIFETIME_CAP) return
-    if (entry.p2pRetryCount >= P2P_RETRY_MAX) return
-    entry.p2pRetryCount++
-    entry.p2pRetryLifetimeTotal++
+    const windowStart = Date.now() - P2P_RETRY_WINDOW_MS
+    entry.p2pRetryTimestamps = entry.p2pRetryTimestamps.filter((t) => t > windowStart)
+    if (entry.p2pRetryTimestamps.length >= P2P_RETRY_HOURLY_CAP) return
+    entry.p2pRetryTimestamps.push(Date.now())
     entry.p2pRetryTimer = setTimeout(() => {
       entry.p2pRetryTimer = null
       if (this.entries.get(machineId) !== entry) return // entry was torn down/replaced meanwhile

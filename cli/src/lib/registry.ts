@@ -485,7 +485,7 @@ function isWithin(root: string, file: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`/`) && !rel.startsWith(`\\`))
 }
 
-export function validTranscriptPath(engine: AgentEngine, filePath: string): boolean {
+export function validTranscriptPath(engine: AgentEngine, filePath: string, codexHome?: string): boolean {
   try {
     const actual = realpathSync(filePath)
     const root = realpathSync(
@@ -496,7 +496,8 @@ export function validTranscriptPath(engine: AgentEngine, filePath: string): bool
         : engine === 'muse'
         ? join(env.MUSE_HOME, 'sessions')
         : engine === 'codex'
-        ? join(env.CODEX_HOME, 'sessions')
+        // The specific agent's own CODEX_HOME profile, when it has one — see RegisteredSession.codexHome.
+        ? join(codexHome || env.CODEX_HOME, 'sessions')
         : engine === 'grok'
         ? join(env.GROK_HOME, 'sessions')
         : engine === 'agy'
@@ -689,14 +690,17 @@ class Registry {
             : null
         let bound = typeof raw?.sessionId === 'string' && raw.sessionId !== ''
         const rawSessionId = typeof raw?.sessionId === 'string' ? raw.sessionId : ''
+        // This row's own CODEX_HOME profile, when it was created against one other than the default —
+        // see RegisteredSession.codexHome.
+        const rawCodexHome = raw?.codexHome ?? undefined
         let repairedCodexTranscript = false
         if (engine === 'codex' && transcriptPath) {
           const meta = readCodexRolloutMeta(transcriptPath)
           if (meta?.isSubagent) {
             const repaired = meta.parentThreadId === rawSessionId
-              ? resolveCodexRollout(rawSessionId, join(env.CODEX_HOME, 'sessions'))
+              ? resolveCodexRollout(rawSessionId, join(rawCodexHome || env.CODEX_HOME, 'sessions'))
               : null
-            if (!repaired || !validTranscriptPath('codex', repaired) || readCodexRolloutMeta(repaired)?.isSubagent) {
+            if (!repaired || !validTranscriptPath('codex', repaired, rawCodexHome) || readCodexRolloutMeta(repaired)?.isSubagent) {
               changed = true
               bound = false
               transcriptPath = null
@@ -717,7 +721,7 @@ class Registry {
         }
         if (
           (bound && engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && !transcriptPath)
-          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath))
+          || (bound && transcriptPath !== null && !validTranscriptPath(engine, transcriptPath, rawCodexHome))
         ) {
           bound = false
           transcriptPath = null
@@ -1039,7 +1043,9 @@ class Registry {
       // Copilot's session id is a uuid and names the directory its event stream lives in.
       || (engine === 'copilot' && !GROK_SESSION_RE.test(sessionId))
       || (engine !== 'cursor' && engine !== 'opencode' && engine !== 'kilo' && engine !== 'pi' && engine !== 'hermes' && engine !== 'commandcode' && engine !== 'devin' && engine !== 'grok' && engine !== 'agy' && engine !== 'copilot' && !transcriptPath)
-      || (transcriptPath && !validTranscriptPath(engine, transcriptPath))
+      // The already-registered agent (opened at agent_create time) already carries its own
+      // CODEX_HOME profile, if it has one other than the default — see RegisteredSession.codexHome.
+      || (transcriptPath && !validTranscriptPath(engine, transcriptPath, processAgent?.codexHome ?? undefined))
     ) return null
     if (engine === 'codex' && transcriptPath && readCodexRolloutMeta(transcriptPath)?.isSubagent) return null
 
@@ -1110,6 +1116,10 @@ class Registry {
       title: titleDisplayName(input.title ?? existing?.title ?? null),
       model: modelString(input.model) ?? existing?.model ?? null,
       cliVersion: input.cliVersion ?? existing?.cliVersion ?? null,
+      // Chosen once at agent_create time and never re-derived (unlike `grid`, which openProcessAgent
+      // re-reads off the live process on every discovery) — a hook-triggered bind must carry it
+      // forward or the very first SessionStart hook would silently wipe the agent's chosen profile.
+      codexHome: existing?.codexHome ?? null,
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
       updatedAt: now,

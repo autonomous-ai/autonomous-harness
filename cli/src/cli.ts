@@ -2282,6 +2282,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       const found = await findLiveSession(observed.engine, observed.cwd, startedAtMs, {
         bornOnly: true,
         pid: observed.processIdentity.pid,
+        codexHome: agent.codexHome ?? undefined,
       })
       if (!found || registry.has(found.sessionId) || isRecentlyDeleted(found.sessionId)) return
       sessionId = found.sessionId
@@ -3344,6 +3345,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       // normally launched one. The key is never printed.
       console.log(describeGridLaunch(engine, grid))
     }
+    // A Codex agent pointed at a profile OTHER than this machine's default reads hooks.json from
+    // THAT folder, not the one `harness login` already installed into — without this, such an agent
+    // fires no hook at all (no SessionStart/UserPromptSubmit/Stop) and never streams a single event.
+    // Idempotent, so paying this on every create against an already-set-up profile is free.
+    if (codexHome && !env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, codexHome)
     // Do not start a second interactive login shell merely to ask whether the engine is installed.
     // The pane's own shell performs the same check before exec, and installs only when necessary.
     // This removes ~1s of shell startup from the click-to-terminal critical path.

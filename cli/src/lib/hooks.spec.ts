@@ -60,6 +60,29 @@ describe('Codex hook installation', () => {
     expect(readFileSync(file, 'utf-8')).toBe(first)
   })
 
+  it('installs into a custom CODEX_HOME profile, with a matching --codex-home baked in', async () => {
+    const customProfile = mkdtempSync(join(tmpdir(), 'adapter-codex-profile-'))
+    try {
+      const { installCodexHooks } = await loadHooks()
+      installCodexHooks(19473, customProfile)
+
+      const profileFile = join(customProfile, 'hooks.json')
+      const first = readFileSync(profileFile, 'utf-8')
+      const parsed = JSON.parse(first)
+      const cmd = parsed.hooks.SessionStart[0].hooks[0].command
+      expect(cmd).toContain(`--codex-home '${customProfile}'`)
+
+      // The default profile is untouched by installing into a different one.
+      expect(existsSync(join(codexHome, 'hooks.json'))).toBe(false)
+
+      // Idempotent: a second install into the same profile is a no-op.
+      installCodexHooks(19473, customProfile)
+      expect(readFileSync(profileFile, 'utf-8')).toBe(first)
+    } finally {
+      rmSync(customProfile, { recursive: true, force: true })
+    }
+  })
+
   it('leaves malformed user hook configuration untouched', async () => {
     const file = join(codexHome, 'hooks.json')
     writeFileSync(file, '{not-json')

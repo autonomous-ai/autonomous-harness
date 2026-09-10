@@ -20,8 +20,7 @@ function fakeEntry(overrides: Partial<Record<string, unknown>> = {}) {
     p2pStreams: new Set<string>(),
     streams: new Set<string>(),
     p2pMigrating: new Map<string, number>(),
-    p2pRetryCount: 0,
-    p2pRetryLifetimeTotal: 0,
+    p2pRetryTimestamps: [] as number[],
     p2pRetryTimer: null,
     upgradeAttempts: 0,
     upgradeTimer: null,
@@ -161,23 +160,23 @@ describe('RemoteRelayPool p2p retry policy', () => {
     demoteP2p: (machineId: string, entry: ReturnType<typeof fakeEntry>, reason: string) => void
   }
 
-  it('schedules up to 3 retries (i.e. 4 attempts total: 1 initial + 3 retries), then refuses a 4th', () => {
+  it('schedules up to 10 retries within an hour, then refuses an 11th', () => {
     vi.useFakeTimers()
-    const RETRY_MAX = 3 // mirrors the unexported P2P_RETRY_MAX constant in remoteRelay.ts
+    const HOURLY_CAP = 10 // mirrors the unexported P2P_RETRY_HOURLY_CAP constant in remoteRelay.ts
     try {
       const entry = fakeEntry()
       // The initial attempt itself is NOT scheduled through scheduleP2pRetry (it fires unconditionally
       // at e2e_welcome) — this exercises only the retries that follow each subsequent failure.
-      for (let i = 1; i <= RETRY_MAX; i++) {
+      for (let i = 1; i <= HOURLY_CAP; i++) {
         pool.scheduleP2pRetry('machine-1', entry)
         expect(entry.p2pRetryTimer, `retry #${i} should have been scheduled`).not.toBeNull()
-        expect(entry.p2pRetryCount).toBe(i)
+        expect(entry.p2pRetryTimestamps).toHaveLength(i)
         vi.advanceTimersByTime(60_000)
         entry.p2pRetryTimer = null // the real timer callback nulls this before re-dialing; simulate that
       }
-      pool.scheduleP2pRetry('machine-1', entry) // one retry past the cap — refused, quota spent
+      pool.scheduleP2pRetry('machine-1', entry) // one retry past the cap — refused, quota spent for this hour
       expect(entry.p2pRetryTimer).toBeNull()
-      expect(entry.p2pRetryCount).toBe(RETRY_MAX)
+      expect(entry.p2pRetryTimestamps).toHaveLength(HOURLY_CAP)
     } finally {
       vi.useRealTimers()
     }
@@ -191,32 +190,38 @@ describe('RemoteRelayPool p2p retry policy', () => {
       const firstTimer = entry.p2pRetryTimer
       pool.scheduleP2pRetry('machine-1', entry) // a second failure before the first retry even fires
       expect(entry.p2pRetryTimer).toBe(firstTimer)
-      expect(entry.p2pRetryCount).toBe(1)
+      expect(entry.p2pRetryTimestamps).toHaveLength(1)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('a success resets the short-term counter so a later demote gets a fresh budget', () => {
-    const entry = fakeEntry({ p2pRetryCount: 3 }) // quota exhausted from a prior run of failures
-    entry.p2pRetryCount = 0 // what startP2p's onState does on 'direct' — exercised here directly
-    pool.scheduleP2pRetry('machine-1', entry)
-    expect(entry.p2pRetryTimer).not.toBeNull()
-    expect(entry.p2pRetryCount).toBe(1)
+  it('a retry from over an hour ago ages out of the window, freeing up budget again', () => {
+    vi.useFakeTimers()
+    try {
+      const longAgo = Date.now() - 61 * 60 * 1000 // just past the 1-hour lookback
+      // Quota looks fully spent at a glance (10 timestamps), but every one of them is stale.
+      const entry = fakeEntry({ p2pRetryTimestamps: Array(10).fill(longAgo) })
+      pool.scheduleP2pRetry('machine-1', entry)
+      expect(entry.p2pRetryTimer).not.toBeNull()
+      expect(entry.p2pRetryTimestamps).toHaveLength(1) // the 10 stale ones were pruned, one fresh one added
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('the lifetime cap stops scheduling even with a fresh short-term counter', () => {
-    const entry = fakeEntry({ p2pRetryLifetimeTotal: 10 })
+  it('the hourly cap stops scheduling while those attempts are still within the window', () => {
+    const entry = fakeEntry({ p2pRetryTimestamps: Array(10).fill(Date.now()) })
     pool.scheduleP2pRetry('machine-1', entry)
     expect(entry.p2pRetryTimer).toBeNull()
-    expect(entry.p2pRetryCount).toBe(0)
+    expect(entry.p2pRetryTimestamps).toHaveLength(10) // refused — nothing new was recorded
   })
 
   it('demoteP2p (case B: was direct, then demoted) schedules a retry through the same policy', () => {
     const entry = fakeEntry({ p2pStreams: new Set(['stream-a']) })
     pool.demoteP2p('machine-1', entry, 'send_failed')
     expect(entry.p2pRetryTimer).not.toBeNull()
-    expect(entry.p2pRetryCount).toBe(1)
+    expect(entry.p2pRetryTimestamps).toHaveLength(1)
   })
 })
 

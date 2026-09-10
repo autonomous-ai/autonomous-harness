@@ -281,3 +281,43 @@ describe('session repair — Grok', () => {
     await expect(findLiveSession('grok', CWD, STARTED_AT)).resolves.toEqual({ sessionId: id, transcriptPath: file })
   })
 })
+
+/** A codex rollout-shaped transcript: session_meta line one, under <codexHome>/sessions/. */
+function writeCodexRollout(codexHome: string, id: string, cwd: string, mtimeMs: number): string {
+  const dir = join(codexHome, 'sessions')
+  mkdirSync(dir, { recursive: true })
+  const file = join(dir, `rollout-2026-08-03T09-00-00-${id}.jsonl`)
+  writeFileSync(file, `${JSON.stringify({ type: 'session_meta', payload: { id, cwd } })}\n`)
+  utimesSync(file, new Date(mtimeMs), new Date(mtimeMs))
+  return file
+}
+
+describe('session repair — Codex profiles', () => {
+  it('scans the agent\'s own codexHome profile, not the default', async () => {
+    const profile = tempRoot()
+    const id = 'a1b2c3d4-1111-4a4a-8a8a-000000000001'
+    const file = writeCodexRollout(profile, id, CWD, STARTED_AT + 5_000)
+    vi.resetModules()
+    const { findLiveSession } = await import('./sessionRepair.js')
+
+    await expect(findLiveSession('codex', CWD, STARTED_AT, { codexHome: profile, bornOnly: true }))
+      .resolves.toEqual({ sessionId: id, transcriptPath: file })
+  })
+
+  it('finds nothing when no codexHome override is given and the rollout lives in a custom profile', async () => {
+    const profile = tempRoot()
+    const defaultHome = tempRoot() // an empty stand-in default, so the assertion cannot depend on this machine's real ~/.codex
+    const id = 'a1b2c3d4-1111-4a4a-8a8a-000000000002'
+    writeCodexRollout(profile, id, CWD, STARTED_AT + 5_000)
+    vi.resetModules()
+    process.env.CODEX_HOME = defaultHome
+    const { findLiveSession } = await import('./sessionRepair.js')
+
+    try {
+      // No opts.codexHome: falls back to the default CODEX_HOME, which does not contain this rollout.
+      await expect(findLiveSession('codex', CWD, STARTED_AT, { bornOnly: true })).resolves.toBeNull()
+    } finally {
+      delete process.env.CODEX_HOME
+    }
+  })
+})

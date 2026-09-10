@@ -21,6 +21,15 @@ export const TERMINAL_P2P_CHANNEL = 'terminal-v1'
  */
 export const TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS = 25_000
 export const TERMINAL_P2P_MAX_BUFFERED_BYTES = 2 * 1024 * 1024
+/**
+ * ICE's `disconnected` state means checks are currently failing but the agent is still trying — it
+ * can recover back to `connected` on its own within seconds after a brief wifi drop, NAT rebind, or
+ * packet-loss blip, which is the whole reason WebRTC has this as a state distinct from `failed`.
+ * Treating it as instantly fatal (as this file used to) killed the whole p2p connection over
+ * hiccups that would have cleared up on their own. This is how long to wait for that self-recovery
+ * before giving up and reporting it as a real failure ourselves.
+ */
+export const TERMINAL_P2P_DISCONNECT_GRACE_MS = 5_000
 
 export const TERMINAL_P2P_SIGNAL_TYPES = new Set([
   'p2p_offer',
@@ -222,6 +231,7 @@ export class TerminalP2pInitiator {
   private starting = false
   private finished = false
   private timeout: ReturnType<typeof setTimeout> | null = null
+  private disconnectGraceTimer: ReturnType<typeof setTimeout> | null = null
   private waiters: ReadyWaiter[] = []
   private sawAnswer = false
 
@@ -405,6 +415,7 @@ export class TerminalP2pInitiator {
     this.ready = false
     if (this.timeout) clearTimeout(this.timeout)
     this.timeout = null
+    this.clearDisconnectGrace()
     for (const waiter of this.waiters.splice(0)) waiter(false)
     if (notifyPeer) {
       this.deps.sendSignal('p2p_abort', {
@@ -421,11 +432,27 @@ export class TerminalP2pInitiator {
     this.deps.onState?.('closed', this.now() - this.startedAt, reason)
   }
 
+  private clearDisconnectGrace(): void {
+    if (this.disconnectGraceTimer) { clearTimeout(this.disconnectGraceTimer); this.disconnectGraceTimer = null }
+  }
+
   private wirePeer(pc: RTCPeerConnection): void {
     pc.connectionStateChange.subscribe((state) => {
       if (this.pc !== pc || this.finished) return
       this.step(`ice-${state}`)
-      if (state === 'failed' || state === 'disconnected') this.fail(`peer_${state}`)
+      if (state === 'failed') { this.clearDisconnectGrace(); this.fail('peer_failed'); return }
+      if (state === 'disconnected') {
+        if (this.disconnectGraceTimer) return // already waiting on a previous disconnect
+        this.disconnectGraceTimer = setTimeout(() => {
+          this.disconnectGraceTimer = null
+          if (this.pc === pc && !this.finished) this.fail('peer_disconnected_timeout')
+        }, TERMINAL_P2P_DISCONNECT_GRACE_MS)
+        this.disconnectGraceTimer.unref?.()
+        return
+      }
+      // Any other state (back to 'connected', or 'connecting' mid-ICE-restart) means it self-healed —
+      // a pending grace timer from an earlier 'disconnected' no longer applies.
+      this.clearDisconnectGrace()
     })
   }
 
@@ -472,6 +499,7 @@ interface ResponderEntry {
   channel: RTCDataChannel | null
   ready: boolean
   timeout: ReturnType<typeof setTimeout>
+  disconnectGraceTimer: ReturnType<typeof setTimeout> | null
   closing: boolean
 }
 
@@ -553,6 +581,7 @@ export class TerminalP2pResponderPool {
     if (entry.closing) return
     entry.closing = true
     clearTimeout(entry.timeout)
+    if (entry.disconnectGraceTimer) clearTimeout(entry.disconnectGraceTimer)
     if (notifyPeer) {
       this.deps.sendSignal(connId, 'p2p_abort', {
         sessionId: entry.sessionId,
@@ -649,6 +678,7 @@ export class TerminalP2pResponderPool {
       channel: null,
       ready: false,
       closing: false,
+      disconnectGraceTimer: null,
       timeout: setTimeout(() => {
         if (entry.ready) this.deps.onUnavailable?.(connId, 'negotiation_timeout')
         void (stillCurrent() ? this.closeConnection(connId, 'negotiation_timeout') : this.closeShadow(connId, 'negotiation_timeout'))
@@ -670,10 +700,26 @@ export class TerminalP2pResponderPool {
   ): void {
     entry.pc.connectionStateChange.subscribe((state) => {
       if (!isCurrent() || entry.closing) return
-      if (state === 'failed' || state === 'disconnected') {
-        if (entry.ready && this.entries.get(connId) === entry) this.deps.onUnavailable?.(connId, `peer_${state}`)
-        void close(`peer_${state}`)
+      if (state === 'failed') {
+        if (entry.disconnectGraceTimer) { clearTimeout(entry.disconnectGraceTimer); entry.disconnectGraceTimer = null }
+        if (entry.ready && this.entries.get(connId) === entry) this.deps.onUnavailable?.(connId, 'peer_failed')
+        void close('peer_failed')
+        return
       }
+      if (state === 'disconnected') {
+        if (entry.disconnectGraceTimer) return // already waiting on a previous disconnect
+        // Same reasoning as TerminalP2pInitiator's wirePeer: 'disconnected' is ICE still trying, not a
+        // verdict — give it a beat to recover on its own before treating this as a real failure.
+        entry.disconnectGraceTimer = setTimeout(() => {
+          entry.disconnectGraceTimer = null
+          if (!isCurrent() || entry.closing) return
+          if (entry.ready && this.entries.get(connId) === entry) this.deps.onUnavailable?.(connId, 'peer_disconnected_timeout')
+          void close('peer_disconnected_timeout')
+        }, TERMINAL_P2P_DISCONNECT_GRACE_MS)
+        entry.disconnectGraceTimer.unref?.()
+        return
+      }
+      if (entry.disconnectGraceTimer) { clearTimeout(entry.disconnectGraceTimer); entry.disconnectGraceTimer = null }
     })
     entry.pc.onDataChannel.subscribe((channel) => {
       if (!isCurrent() || channel.label !== TERMINAL_P2P_CHANNEL) {
