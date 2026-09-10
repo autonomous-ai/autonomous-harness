@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RemoteRelayPool } from './remoteRelay.js'
 
 /** Minimal fake of the private `Entry` shape `noteTerminalResponse`/`demoteP2p` operate on — exercised
@@ -160,6 +160,14 @@ describe('RemoteRelayPool p2p retry policy', () => {
     demoteP2p: (machineId: string, entry: ReturnType<typeof fakeEntry>, reason: string) => void
   }
 
+  // Regression: demoteP2p/scheduleP2pRetry used to produce zero log output — the exact gap that made
+  // "did a demoted connection actually try to come back?" unanswerable from harness.log for a real
+  // production case (machine-remote-2 staying stuck on relay with no trace of why). Every outcome
+  // below must now be a distinct, findable line rather than three different ways to stay silent.
+  let logSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => { logSpy = vi.spyOn(console, 'log').mockImplementation(() => {}) })
+  afterEach(() => { logSpy.mockRestore() })
+
   it('schedules up to 10 retries within an hour, then refuses an 11th', () => {
     vi.useFakeTimers()
     const HOURLY_CAP = 10 // mirrors the unexported P2P_RETRY_HOURLY_CAP constant in remoteRelay.ts
@@ -171,12 +179,14 @@ describe('RemoteRelayPool p2p retry policy', () => {
         pool.scheduleP2pRetry('machine-1', entry)
         expect(entry.p2pRetryTimer, `retry #${i} should have been scheduled`).not.toBeNull()
         expect(entry.p2pRetryTimestamps).toHaveLength(i)
+        expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('[p2p] retry scheduled'))
         vi.advanceTimersByTime(60_000)
         entry.p2pRetryTimer = null // the real timer callback nulls this before re-dialing; simulate that
       }
       pool.scheduleP2pRetry('machine-1', entry) // one retry past the cap — refused, quota spent for this hour
       expect(entry.p2pRetryTimer).toBeNull()
       expect(entry.p2pRetryTimestamps).toHaveLength(HOURLY_CAP)
+      expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('[p2p] retry budget exhausted'))
     } finally {
       vi.useRealTimers()
     }
@@ -191,6 +201,7 @@ describe('RemoteRelayPool p2p retry policy', () => {
       pool.scheduleP2pRetry('machine-1', entry) // a second failure before the first retry even fires
       expect(entry.p2pRetryTimer).toBe(firstTimer)
       expect(entry.p2pRetryTimestamps).toHaveLength(1)
+      expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('[p2p] retry already pending'))
     } finally {
       vi.useRealTimers()
     }
@@ -217,11 +228,28 @@ describe('RemoteRelayPool p2p retry policy', () => {
     expect(entry.p2pRetryTimestamps).toHaveLength(10) // refused — nothing new was recorded
   })
 
+  it('logs when a retry fires but finds its entry already torn down/replaced', () => {
+    vi.useFakeTimers()
+    try {
+      const entry = fakeEntry()
+      pool.scheduleP2pRetry('machine-1', entry)
+      // Nothing ever registered this entry into pool.entries (this test drives scheduleP2pRetry
+      // directly, same shortcut every other test here takes) — so `entries.get('machine-1') !== entry`
+      // holds by construction once the timer fires, exactly like a real entry replaced mid-flight.
+      vi.advanceTimersByTime(60_000)
+      expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('[p2p] retry orphaned'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('demoteP2p (case B: was direct, then demoted) schedules a retry through the same policy', () => {
     const entry = fakeEntry({ p2pStreams: new Set(['stream-a']) })
     pool.demoteP2p('machine-1', entry, 'send_failed')
     expect(entry.p2pRetryTimer).not.toBeNull()
     expect(entry.p2pRetryTimestamps).toHaveLength(1)
+    // sid() truncates to 8 chars — 'machine-1'.slice(0, 8) is 'machine-'
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[p2p] demoted · machine=machine- reason=send_failed streams=1'))
   })
 })
 

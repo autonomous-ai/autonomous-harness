@@ -676,6 +676,14 @@ export class RemoteRelayPool {
   }
 
   private demoteP2p(machineId: string, entry: Entry, reason: string): void {
+    // The ONE place every demotion converges, regardless of cause (a bad send, ICE failing outright,
+    // or ICE failing after this connection had already been direct for a while) — log here rather than
+    // at each call site so none of them can silently fall through with zero trace. This was the exact
+    // gap that made a real production case ("machine-remote-2 stuck on relay, remote-1 stayed p2p")
+    // untraceable: the connection HAD been direct, then failed, and nothing printed a single line
+    // about it — 'failed && !wasDirect' in startP2p()'s onState is the only sibling that already logs,
+    // and it deliberately does not cover this case (see that method's own comment).
+    console.log(`[p2p] demoted · machine=${sid(machineId)} reason=${reason} streams=${entry.p2pStreams.size}`)
     // The primary just died (or is dying) — an upgrade trial in flight for it no longer means anything,
     // and scheduleP2pRetry() below is about to take over recovery via the normal path anyway.
     if (entry.upgradeTimer) { clearTimeout(entry.upgradeTimer); entry.upgradeTimer = null }
@@ -710,14 +718,30 @@ export class RemoteRelayPool {
    * should still get another shot rather than being stuck on relay for the rest of the daemon's uptime.
    */
   private scheduleP2pRetry(machineId: string, entry: Entry): void {
-    if (entry.p2pRetryTimer) return
+    // Every outcome below gets a line — this used to be silent end to end, which is exactly what made
+    // "did it even try to retry?" unanswerable from harness.log for the machine-remote-2 case this
+    // was added for: a retry can be skipped (already pending, or budget spent this hour) or scheduled
+    // and then orphaned by the time it fires (the entry it was scheduled for got replaced), and each of
+    // those needs to be a different, findable line rather than three ways to produce the same silence.
+    if (entry.p2pRetryTimer) {
+      console.log(`[p2p] retry already pending · machine=${sid(machineId)}`)
+      return
+    }
     const windowStart = Date.now() - P2P_RETRY_WINDOW_MS
     entry.p2pRetryTimestamps = entry.p2pRetryTimestamps.filter((t) => t > windowStart)
-    if (entry.p2pRetryTimestamps.length >= P2P_RETRY_HOURLY_CAP) return
+    if (entry.p2pRetryTimestamps.length >= P2P_RETRY_HOURLY_CAP) {
+      console.log(`[p2p] retry budget exhausted · machine=${sid(machineId)} (${entry.p2pRetryTimestamps.length}/${P2P_RETRY_HOURLY_CAP} in the last hour)`)
+      return
+    }
     entry.p2pRetryTimestamps.push(Date.now())
+    console.log(`[p2p] retry scheduled · machine=${sid(machineId)} in ${P2P_RETRY_DELAY_MS / 1000}s`
+      + ` (${entry.p2pRetryTimestamps.length}/${P2P_RETRY_HOURLY_CAP} this hour)`)
     entry.p2pRetryTimer = setTimeout(() => {
       entry.p2pRetryTimer = null
-      if (this.entries.get(machineId) !== entry) return // entry was torn down/replaced meanwhile
+      if (this.entries.get(machineId) !== entry) {
+        console.log(`[p2p] retry orphaned · machine=${sid(machineId)} — entry was torn down/replaced meanwhile`)
+        return
+      }
       entry.p2p = null
       this.startP2p(machineId, entry)
     }, P2P_RETRY_DELAY_MS)
