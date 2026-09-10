@@ -24,6 +24,7 @@ import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
+import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
@@ -315,6 +316,8 @@ export class BackendSocket {
     bypassPermission: boolean
     /** A grid to point this agent at instead of the engine's own login; null when none was chosen. */
     grid: GridLaunchOverride | null
+    /** A Codex CODEX_HOME folder to launch this agent against instead of `~/.codex`; codex only. */
+    codexHome: string | null
   }) =>
     Promise<{ ok: true; session: RegisteredSession } | { ok: false; error: string; detail?: string }>) | null = null
   /** Injectable for queue-isolation tests; production uses the machine-local probe. */
@@ -1422,6 +1425,10 @@ export class BackendSocket {
                 command: entry.command,
                 installable: entry.installable,
                 installCommand: entry.installable ? engineInstallRecipe(entry.engine).command : null,
+                // Static per-CLI-version capability, not a probe result: its mere presence is what
+                // lets an older CLI (which never sends the field) keep reading as "unknown" rather
+                // than "no", per the desktop app's `EngineAvailability.fromJson`.
+                ...(entry.engine === 'codex' ? { supportsCodexHome: true } : {}),
               })),
             }))
             .catch(() => reply(type, requestId, { error: 'ENGINE_PROBE_FAILED' }))
@@ -1520,11 +1527,24 @@ export class BackendSocket {
           // that quietly ran on the engine's own login would look like it worked.
           const grid = parseGridLaunchOverride(payload.grid)
           if (grid.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: grid.reason }); return }
+          // Same validation the desktop app already applies client-side (`Agent._safeCodexHome`) —
+          // repeated here because a client's own check is not a guarantee about what actually
+          // arrives on the wire.
+          const rawCodexHome = typeof payload.codexHome === 'string' ? payload.codexHome : null
+          const codexHome = rawCodexHome && rawCodexHome.startsWith('/') && rawCodexHome.length <= 4096
+            && !/[\x00-\x1f\x7f]/.test(rawCodexHome)
+            ? rawCodexHome
+            : null
+          if (codexHome && (engine !== 'codex' || grid.state === 'ok')) {
+            reply(type, requestId, { error: 'INVALID_CODEX_HOME', detail: 'codexHome is only valid for codex, without a grid' })
+            return
+          }
           const result = await this.onCreateAgent({
             engine,
             cwd,
             bypassPermission: payload.bypassPermission === true,
             grid: grid.state === 'ok' ? grid.override : null,
+            codexHome,
           })
           // `detail` carries the underlying cause (tmux's own message) so the person who clicked
           // Create can read it, rather than having to open a log on the machine that failed.
@@ -1611,6 +1631,29 @@ export class BackendSocket {
           const result = listDir(path)
           if ('error' in result) { reply(type, requestId, { error: result.error }); return }
           reply(type, requestId, { ...result })
+          return
+        }
+
+        case 'codex_profiles_list': {
+          // Which CODEX_HOME folders THIS machine can offer — answered here, on the machine in
+          // question, for the same reason `engines_probe` is: a Codex profile is a folder on disk,
+          // and a folder on a Mac means nothing on the Docker rig it was asked about instead.
+          const observed = Array.isArray(payload.observedPaths)
+            ? payload.observedPaths.filter((p): p is string => typeof p === 'string')
+            : []
+          try {
+            reply(type, requestId, { profiles: listCodexProfiles(observed) })
+          } catch {
+            reply(type, requestId, { error: 'CODEX_PROFILES_FAILED' })
+          }
+          return
+        }
+
+        case 'codex_profile_link': {
+          const path = typeof payload.path === 'string' ? payload.path : ''
+          const result = linkCodexProfile(path)
+          if ('error' in result) { reply(type, requestId, { error: result.error }); return }
+          reply(type, requestId, { profile: result })
           return
         }
 

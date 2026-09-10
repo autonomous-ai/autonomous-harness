@@ -42,6 +42,7 @@ export type AgentFrame = {
   engine: RegisteredSession['engine']
   selectedModel: string | null
   grid: GridAssignment | null
+  codexHome: string | null
 }
 
 /** What the caller knows and this module deliberately does not look up for itself. */
@@ -82,5 +83,9 @@ export async function agentFrame(
     // a real answer ("on no grid") and must be sent as one — omitting the key would make every push
     // indistinguishable from a daemon too old to know about grids.
     grid: s.grid ?? null,
+    // The Codex profile folder this agent launched against, if one was chosen instead of the
+    // engine's own login. Codex only; null is a real answer ("uses ~/.codex") for the same reason
+    // `grid: null` is above.
+    codexHome: s.codexHome ?? null,
   }
 }

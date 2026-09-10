@@ -3295,7 +3295,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     return undefined
   }
 
-  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid }) => {
+  backend.onCreateAgent = async ({ engine, cwd, bypassPermission, grid, codexHome }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
       if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
@@ -3365,6 +3365,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // answered and refused (`SPAWN_FAILED`) — see createAgentPane.ts. Registration itself is retried
     // there: a stale registry entry from a previous tmux-server generation occasionally collides with
     // a freshly-minted pane id, and that collision clears on its own on the very next pane.
+    // Mutually exclusive with a grid (backendSocket.ts refuses the two together): a chosen Codex
+    // profile becomes the new session's CODEX_HOME, the same `-e` mechanism a grid's own env rides.
     const result = await createAndRegisterPane({
       tmuxBackend,
       registry,
@@ -3372,8 +3374,9 @@ async function runForeground(session: AuthSession): Promise<void> {
       cwd,
       sessionLabel: label,
       argv,
-      env: gridLaunch?.env,
+      env: gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
+      codexHome,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result

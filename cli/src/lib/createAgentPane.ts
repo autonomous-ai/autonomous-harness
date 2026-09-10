@@ -28,6 +28,7 @@ export interface CreateAgentPaneDeps {
     primaryRuntimeKey?: string
     cwd?: string | null
     grid?: { baseUrl: string; model: string | null } | null
+    codexHome?: string | null
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
@@ -36,6 +37,8 @@ export interface CreateAgentPaneDeps {
   argv: string[]
   env?: Record<string, string>
   grid?: { baseUrl: string; model: string | null } | null
+  /** The CODEX_HOME folder this agent was launched against, if the caller chose one; codex only. */
+  codexHome?: string | null
   maxAttempts?: number
 }
 
@@ -67,6 +70,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       primaryRuntimeKey: terminalRouteKey(spawned.runtime),
       cwd: deps.cwd,
       grid: deps.grid,
+      codexHome: deps.codexHome,
     })
     if (pending) return { ok: true, spawned, pending }
     console.warn(`[agent] create ${deps.engine} registration failed · pane ${spawned.runtime.paneId} · `

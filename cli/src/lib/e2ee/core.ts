@@ -352,6 +352,8 @@ export const ENCRYPTED_RPC_RESULT_TYPES = new Set<string>([
   'agent_recent_result', 'agent_create_result', 'agent_restart_result',
   // A remote-machine directory listing (New Agent folder browser) — leaks filesystem layout if plaintext.
   'fs_list_dir_result',
+  // Same reasoning as fs_list_dir_result: reveals Codex profile folder names/paths on this machine.
+  'codex_profiles_list_result', 'codex_profile_link_result',
 ])
 /** Client→adapter frames that carry or can trigger adapter-local user data. */
 export const ENCRYPTED_DOWN_TYPES = new Set<string>([
@@ -363,7 +365,7 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   'question_response',
   'agents_list', 'sessions_list', 'session_get', 'models_list',
   'agent_create', 'agent_delete', 'agent_restart', 'agent_recent', 'agent_update', 'agent_files', 'agent_read_file',
-  'fs_list_dir',
+  'fs_list_dir', 'codex_profiles_list', 'codex_profile_link',
   'device_e2ee_pair', 'e2ee_pairings_list', 'e2ee_pairing_unpair',
   'e2ee_pairings_unpair_all', 'e2ee_browser_link_create',
   // Remote terminal control is always pairwise E2EE. The relay may route by outer type/connId but must

@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { agentFrame } from './agentFrame.js'
 import type { RegisteredSession } from './registry.js'
 
-function session(grid: RegisteredSession['grid']): RegisteredSession {
+function session(grid: RegisteredSession['grid'], codexHome: RegisteredSession['codexHome'] = null): RegisteredSession {
   return {
     schemaVersion: 2,
     active: true,
     sessionId: 's1', engine: 'claude', agentId: 'h1', boundAt: 0, transcriptPath: null,
     projectDir: 'tmp', cwd: '/tmp', tmuxPane: '%1', source: null, title: null, model: null,
     runtimes: [{ backend: 'tmux', paneId: '%1' }], primaryRuntimeKey: 'tmux/%1',
-    cliVersion: '2.1.212', processIdentity: null, gateway: null, grid,
+    cliVersion: '2.1.212', processIdentity: null, gateway: null, grid, codexHome,
     registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
   }
 }
@@ -29,6 +29,16 @@ describe('agentFrame', () => {
   it('reports no assignment as null rather than omitting the field', async () => {
     const frame = await agentFrame(session(null), { selectedModel: null, terminalAvailable: true })
     expect(frame).toHaveProperty('grid', null)
+  })
+
+  it('carries the chosen Codex profile folder', async () => {
+    expect(await agentFrame(session(null, '/Users/x/.codex-personal'), { selectedModel: null, terminalAvailable: true }))
+      .toMatchObject({ codexHome: '/Users/x/.codex-personal' })
+  })
+
+  it('reports no Codex profile as null rather than omitting the field', async () => {
+    const frame = await agentFrame(session(null), { selectedModel: null, terminalAvailable: true })
+    expect(frame).toHaveProperty('codexHome', null)
   })
 
   it('passes through the caller-resolved model and terminal availability', async () => {

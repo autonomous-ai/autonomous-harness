@@ -99,6 +99,13 @@ export interface RegisteredSession {
    * exactly like `gateway`, never declared. See `gridAssignment.ts`. Carries no credential.
    */
   grid?: GridAssignment | null
+  /**
+   * The CODEX_HOME folder this agent was launched against, if one was chosen instead of `~/.codex`.
+   * Codex only. Unlike `grid`, this is chosen once at creation and never re-derived from the live
+   * process — a running agent cannot be moved to a different profile the way it can be retargeted
+   * to a different grid.
+   */
+  codexHome?: string | null
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -936,6 +943,7 @@ class Registry {
     primaryRuntimeKey?: string
     cwd?: string | null
     grid?: GridAssignment | null
+    codexHome?: string | null
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
     const runtimes = normalizedRuntimes(input.runtimes)
@@ -953,6 +961,7 @@ class Registry {
       engine: input.engine,
       gateway: null,
       grid: input.grid ?? null,
+      codexHome: input.codexHome ?? null,
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
