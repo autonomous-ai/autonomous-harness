@@ -4,7 +4,7 @@ import type { RegisteredSession } from './registry.js'
 import { TerminalStreamManager, terminalEngineCapabilities, UPLOAD_CHUNK_BYTES } from './terminalStreamManager.js'
 import { TERMINAL_ACTION_SUCCEEDED, type TerminalStreamHandle, type TerminalStreamSink } from './terminalTypes.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
-import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+import { TerminalBinaryKind, TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES, type TerminalBinaryClear } from './terminalBinary.js'
 import { writeImageToOsClipboard, type OsClipboardImageResult } from './osClipboard.js'
 import { writePasteDropFile, writePasteImageFile } from './pasteDropFiles.js'
 
@@ -343,7 +343,7 @@ describe('TerminalStreamManager', () => {
 
     it('rejects a begin over the per-kind size ceiling before any chunk is sent', async () => {
       const streamId = await openStream()
-      await begin(streamId, { uploadKind: 'image', totalBytes: 4 * 1024 * 1024 + 1 })
+      await begin(streamId, { uploadKind: 'image', totalBytes: TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES + 1 })
       expect(lastResult().payload).toMatchObject({ streamId, accepted: false })
       expect(sent.some((f) => f.type === 'terminal_chunked_upload_progress')).toBe(false)
     })

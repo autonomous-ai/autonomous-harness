@@ -21,14 +21,14 @@ export const TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES = 6 * 1024 * 1024
 // text paste, but the bytes are already-compressed PNG data rather than text — see
 // `terminalStreamManager.ts`'s `pasteImage()`. Mirrors terminal_binary.dart's
 // terminalLocalImagePasteMaxPayloadBytes — keep the two in step.
-export const TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024
-export const TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
+export const TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES = 8 * 1024 * 1024
+export const TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
 // A dropped (non-image) file, delivered whole so its path can be pasted on the far side — see
 // terminalStreamManager.ts's pasteFile(). Ordinary files run larger than a screenshot, hence its
 // own, more generous ceiling; this is a modest atomic-frame limit, not a general file-transfer
 // feature. Mirrors terminal_binary.dart's terminalLocalPasteFileMaxPayloadBytes — keep in step.
-export const TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES = 10 * 1024 * 1024
-export const TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
+export const TERMINAL_BINARY_PASTE_FILE_MAX_CIPHERTEXT_BYTES = 20 * 1024 * 1024
+export const TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024
 
 export const enum TerminalBinaryKind {
   input = 1,
