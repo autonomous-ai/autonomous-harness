@@ -7,8 +7,10 @@ import {
   parseTerminalBinaryEnvelope,
   sealTerminalBinary,
   TerminalBinaryKind,
+  TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES,
   TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES,
   TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES,
+  TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES,
 } from './terminalBinary.js'
 
 const key = Uint8Array.from({ length: 32 }, (_, index) => index)
@@ -125,6 +127,41 @@ describe('terminal binary protocol v3', () => {
     })).toBeNull()
   })
 
+  it('round-trips a binary image paste (not valid UTF-8) at its own ceiling', () => {
+    // A PNG magic number plus garbage — the point is that this is NOT valid UTF-8, unlike `paste`,
+    // and must still round-trip untouched.
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00])
+    const sealed = sealTerminalBinary(key, 20, {
+      kind: TerminalBinaryKind.imagePaste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })!
+    expect(sealed).not.toBeNull()
+    expect(openTerminalBinary(key, sealed)?.frame).toEqual({
+      kind: TerminalBinaryKind.imagePaste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })
+
+    // Its own ceiling, independent of paste's.
+    const tooBig = new Uint8Array(TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES + 1)
+    expect(sealTerminalBinary(key, 21, { kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, bytes: tooBig, compressed: false })).toBeNull()
+  })
+
+  it('rejects a compressed image paste, same reason as paste', () => {
+    expect(sealTerminalBinary(key, 22, {
+      kind: TerminalBinaryKind.imagePaste,
+      streamId,
+      seq: 0,
+      bytes: Uint8Array.of(1, 2, 3),
+      compressed: true,
+    })).toBeNull()
+  })
+
   it('rejects tamper, truncation and unsupported flags', () => {
     const sealed = sealTerminalBinary(key, 1, {
       kind: TerminalBinaryKind.output,
@@ -205,6 +242,37 @@ describe('authenticated loopback terminal framing v1', () => {
       streamId,
       seq: 0,
       bytes,
+      compressed: false,
+    })).toBeNull()
+  })
+
+  it('carries an image paste well past the ordinary local frame ceiling, independent of paste', () => {
+    // Comfortably over the 512 KiB generic ceiling, well under imagePaste's own 4 MiB one — big
+    // enough to prove the kind-specific ceiling applies, small enough that a byte-for-byte
+    // deep-equal below stays fast.
+    const bytes = new Uint8Array(1.5 * 1024 * 1024).fill(0xab)
+    const encoded = encodeTerminalLocal({
+      kind: TerminalBinaryKind.imagePaste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })
+    expect(encoded).not.toBeNull()
+    expect(decodeTerminalLocal(encoded!)).toEqual({
+      kind: TerminalBinaryKind.imagePaste,
+      streamId,
+      seq: 0,
+      bytes,
+      compressed: false,
+    })
+
+    const tooBig = new Uint8Array(TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES + 1)
+    expect(encodeTerminalLocal({
+      kind: TerminalBinaryKind.imagePaste,
+      streamId,
+      seq: 0,
+      bytes: tooBig,
       compressed: false,
     })).toBeNull()
   })

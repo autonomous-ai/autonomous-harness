@@ -17,6 +17,12 @@ export const TERMINAL_LOCAL_MAX_PAYLOAD_BYTES = 512 * 1024
 // see PASTE_MAX_BYTES's own history in terminalStreamManager.ts.
 export const TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES = 6 * 1024 * 1024
 export const TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES = 6 * 1024 * 1024
+// An image paste (a clipboard screenshot, "Copy Image", ...) is delivered whole, same shape as a
+// text paste, but the bytes are already-compressed PNG data rather than text — see
+// `terminalStreamManager.ts`'s `pasteImage()`. Mirrors terminal_binary.dart's
+// terminalLocalImagePasteMaxPayloadBytes — keep the two in step.
+export const TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES = 4 * 1024 * 1024
+export const TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 
 export const enum TerminalBinaryKind {
   input = 1,
@@ -27,6 +33,11 @@ export const enum TerminalBinaryKind {
    *  `pasteRawIntoTmux` in tmux.ts for why this needs its own kind instead of riding `input`. Upload
    *  (client→CLI) only; nothing ever sends this back down. */
   paste = 5,
+  /** A clipboard IMAGE paste (raw PNG bytes) — same "atomic, out-of-band" shape as `paste`, but
+   *  binary rather than UTF-8 text, so it can't share that kind (`paste()` requires valid UTF-8).
+   *  See `terminalStreamManager.ts`'s `pasteImage()`. Upload (client→CLI) only; nothing ever sends
+   *  this back down. */
+  imagePaste = 6,
 }
 
 export interface TerminalBinaryClear {
@@ -80,6 +91,7 @@ function validKind(value: number): value is TerminalBinaryKind {
     || value === TerminalBinaryKind.keyframe
     || value === TerminalBinaryKind.sync
     || value === TerminalBinaryKind.paste
+    || value === TerminalBinaryKind.imagePaste
 }
 
 export function terminalBinaryType(kind: TerminalBinaryKind): string {
@@ -87,21 +99,23 @@ export function terminalBinaryType(kind: TerminalBinaryKind): string {
   if (kind === TerminalBinaryKind.output) return 'terminal_output'
   if (kind === TerminalBinaryKind.keyframe) return 'terminal_keyframe'
   if (kind === TerminalBinaryKind.paste) return 'terminal_paste'
+  if (kind === TerminalBinaryKind.imagePaste) return 'terminal_paste_image'
   return 'terminal_sync'
 }
 
-/** The seal/parse/encode/decode size ceiling for [kind] — paste gets a much larger one; see
- *  TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES. */
+/** The seal/parse/encode/decode size ceiling for [kind] — paste and imagePaste get a much larger
+ *  one each; see TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES /
+ *  TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES. */
 function maxCiphertextBytesFor(kind: TerminalBinaryKind): number {
-  return kind === TerminalBinaryKind.paste
-    ? TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES
-    : TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES
+  if (kind === TerminalBinaryKind.paste) return TERMINAL_BINARY_PASTE_MAX_CIPHERTEXT_BYTES
+  if (kind === TerminalBinaryKind.imagePaste) return TERMINAL_BINARY_IMAGE_PASTE_MAX_CIPHERTEXT_BYTES
+  return TERMINAL_BINARY_MAX_CIPHERTEXT_BYTES
 }
 
 function maxLocalPayloadBytesFor(kind: TerminalBinaryKind): number {
-  return kind === TerminalBinaryKind.paste
-    ? TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES
-    : TERMINAL_LOCAL_MAX_PAYLOAD_BYTES
+  if (kind === TerminalBinaryKind.paste) return TERMINAL_LOCAL_PASTE_MAX_PAYLOAD_BYTES
+  if (kind === TerminalBinaryKind.imagePaste) return TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES
+  return TERMINAL_LOCAL_MAX_PAYLOAD_BYTES
 }
 
 export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | null {
@@ -111,7 +125,8 @@ export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | nu
   // to inflate. Nothing on this side inflates an incoming frame, so a client-compressed kind (input,
   // sync, and — for now — paste too) would silently hand tmux a compressed blob instead of text.
   if ((frame.kind === TerminalBinaryKind.input || frame.kind === TerminalBinaryKind.sync
-    || frame.kind === TerminalBinaryKind.paste) && frame.compressed) return null
+    || frame.kind === TerminalBinaryKind.paste || frame.kind === TerminalBinaryKind.imagePaste)
+    && frame.compressed) return null
   if (frame.kind === TerminalBinaryKind.sync && frame.bytes.length !== 0) return null
   const metaBytes = frame.kind === TerminalBinaryKind.keyframe ? 28 : 24
   const out = new Uint8Array(metaBytes + frame.bytes.length)
@@ -131,7 +146,7 @@ export function encodeTerminalPlain(frame: TerminalBinaryClear): Uint8Array | nu
 export function decodeTerminalPlain(kind: TerminalBinaryKind, flags: number, plaintext: Uint8Array): TerminalBinaryClear | null {
   if ((flags & ~FLAG_ZLIB) !== 0
     || ((kind === TerminalBinaryKind.input || kind === TerminalBinaryKind.sync
-      || kind === TerminalBinaryKind.paste) && flags !== 0)) return null
+      || kind === TerminalBinaryKind.paste || kind === TerminalBinaryKind.imagePaste) && flags !== 0)) return null
   const metaBytes = kind === TerminalBinaryKind.keyframe ? 28 : 24
   if (plaintext.length < metaBytes || (kind === TerminalBinaryKind.sync && plaintext.length !== metaBytes)) return null
   const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength)

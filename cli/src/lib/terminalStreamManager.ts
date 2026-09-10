@@ -1,11 +1,20 @@
 import { randomUUID } from 'node:crypto'
+import { unlink } from 'node:fs/promises'
 import { deflateSync } from 'node:zlib'
 import { ENGINES } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
+import { writeImageToOsClipboard } from './osClipboard.js'
+import { writePasteImageFile } from './pasteImageFiles.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { TerminalStreamHandle, TerminalStreamSize } from './terminalTypes.js'
 import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+
+/** Ctrl+V as a literal byte (ASCII SUB, 0x16) — the same nudge a real Ctrl+V keystroke sends down
+ *  the ordinary keystroke pipe. Written after the OS clipboard write below succeeds, so the engine
+ *  attached to the pane reads its OWN OS clipboard exactly as it already does for a locally-driven
+ *  session — see `pasteImage()`. */
+const CTRL_V_BYTE = Uint8Array.of(0x16)
 
 type FramePayload = Record<string, unknown>
 
@@ -150,9 +159,10 @@ export class TerminalStreamManager {
         await this.resize(connId, payload)
         return true
       case 'terminal_paste':
-        // Same reason as terminal_input: a paste is a binary frame (TerminalBinaryKind.paste) so it
-        // rides the same AEAD channel every other terminal byte does, which is what makes it safe to
-        // deliver over a relayed (E2EE) connection. Nothing sends this as JSON.
+      case 'terminal_paste_image':
+        // Same reason as terminal_input: a paste is a binary frame (TerminalBinaryKind.paste /
+        // .imagePaste) so it rides the same AEAD channel every other terminal byte does, which is
+        // what makes it safe to deliver over a relayed (E2EE) connection. Nothing sends this as JSON.
         this.sendError(connId, 'TERMINAL_BINARY_REQUIRED', { streamId: typeof payload.streamId === 'string' ? payload.streamId : undefined })
         return true
       case 'terminal_scroll':
@@ -170,9 +180,14 @@ export class TerminalStreamManager {
   }
 
   async handleBinary(connId: string, frame: TerminalBinaryClear): Promise<void> {
-    if (frame.kind !== TerminalBinaryKind.input && frame.kind !== TerminalBinaryKind.paste) return
+    if (frame.kind !== TerminalBinaryKind.input && frame.kind !== TerminalBinaryKind.paste
+      && frame.kind !== TerminalBinaryKind.imagePaste) return
     const state = this.streams.get(frame.streamId)
     if (!state || state.connId !== connId || state.closing) return
+    if (frame.kind === TerminalBinaryKind.imagePaste) {
+      await this.pasteImage(state, frame.bytes)
+      return
+    }
     if (frame.kind === TerminalBinaryKind.paste) {
       await this.paste(state, frame.bytes)
       return
@@ -197,6 +212,10 @@ export class TerminalStreamManager {
         // through `terminal_input` — checked here rather than assumed, so it degrades instead of
         // silently going nowhere against a CLI that doesn't recognize the newer frame type.
         pasteRaw: true,
+        // A client old enough to predate `TerminalBinaryKind.imagePaste` must keep forwarding a bare
+        // Ctrl+V and hoping the engine's own clipboard read finds something local — see
+        // `pasteImage()` for the frame this unlocks.
+        imagePaste: true,
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
     })
@@ -447,6 +466,69 @@ export class TerminalStreamManager {
       this.sendError(state.connId, 'TERMINAL_PASTE_FAILED', { streamId: state.streamId, message: result.reason })
       if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
     }
+  }
+
+  /**
+   * A clipboard IMAGE paste (raw PNG bytes) — writes the bytes into THIS machine's own OS
+   * clipboard (see osClipboard.ts), then replays a literal Ctrl+V so whichever engine is attached
+   * to the pane reads that clipboard exactly as it already does for a locally-driven session.
+   * Nothing here is engine-specific: this only bridges the clipboard and the keystroke, the same
+   * way `paste()` only bridges a clipboard string into the pty.
+   *
+   * When no native clipboard is reachable right now (the clipboard tool isn't installed, or this
+   * is a genuinely headless Linux box with no X11/Wayland session at all), this does not fail —
+   * it falls back to pasting the image's file PATH as plain text through the exact same
+   * `pasteRaw` call `paste()` uses, so the user/engine can still get at the image, just not via
+   * the OS clipboard. The client is told which happened (`terminal_paste_image_result`) so it can
+   * show the right feedback instead of a silent difference in behavior.
+   */
+  private async pasteImage(state: ActiveStream, bytes: Uint8Array): Promise<void> {
+    if (bytes.length === 0) return
+    state.expiresAt = this.now() + HEARTBEAT_TIMEOUT_MS
+    let path: string
+    try {
+      path = await writePasteImageFile(bytes)
+    } catch (error) {
+      this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', {
+        streamId: state.streamId,
+        message: error instanceof Error ? error.message : 'could not save the pasted image',
+      })
+      return
+    }
+    const clipboard = await writeImageToOsClipboard(path, bytes)
+    if (clipboard.state === 'written') {
+      // The OS clipboard now owns the bytes — the file was only a hand-off.
+      void unlink(path).catch(() => { /* best effort */ })
+      const result = await state.handle.writeRaw(CTRL_V_BYTE)
+      if (result.state !== 'succeeded') {
+        this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: result.reason })
+        if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+        return
+      }
+      this.deps.sendTarget(state.connId, 'terminal_paste_image_result', {
+        streamId: state.streamId,
+        outcome: 'clipboard',
+      })
+      return
+    }
+    if (clipboard.state === 'failed') {
+      this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: clipboard.reason })
+      void unlink(path).catch(() => { /* best effort */ })
+      return
+    }
+    // 'unavailable' — no native clipboard right now. Fall back to the file's path as ordinary text,
+    // and keep the file: it has to keep resolving after this call returns.
+    const result = await state.handle.pasteRaw(path)
+    if (result.state !== 'succeeded') {
+      this.sendError(state.connId, 'TERMINAL_PASTE_IMAGE_FAILED', { streamId: state.streamId, message: result.reason })
+      if (result.dispatch === 'possibly_executed') await this.sendKeyframe(state)
+      return
+    }
+    this.deps.sendTarget(state.connId, 'terminal_paste_image_result', {
+      streamId: state.streamId,
+      outcome: 'fallback_path',
+      reason: clipboard.reason,
+    })
   }
 
   /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,

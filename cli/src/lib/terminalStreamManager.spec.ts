@@ -5,6 +5,11 @@ import { TerminalStreamManager, terminalEngineCapabilities } from './terminalStr
 import { TERMINAL_ACTION_SUCCEEDED, type TerminalStreamHandle, type TerminalStreamSink } from './terminalTypes.js'
 import type { TerminalBackendCoordinator } from './terminalBackendCoordinator.js'
 import { TerminalBinaryKind, type TerminalBinaryClear } from './terminalBinary.js'
+import { writeImageToOsClipboard, type OsClipboardImageResult } from './osClipboard.js'
+import { writePasteImageFile } from './pasteImageFiles.js'
+
+vi.mock('./osClipboard.js', () => ({ writeImageToOsClipboard: vi.fn() }))
+vi.mock('./pasteImageFiles.js', () => ({ writePasteImageFile: vi.fn() }))
 
 class FakeStream implements TerminalStreamHandle {
   readonly runtime = { backend: 'tmux' as const, paneId: '%1' }
@@ -78,6 +83,8 @@ describe('TerminalStreamManager', () => {
       streamingAvailable: true,
       now: () => Date.now(),
     })
+    vi.mocked(writePasteImageFile).mockReset().mockResolvedValue('/fake/paste-images/fake.png')
+    vi.mocked(writeImageToOsClipboard).mockReset().mockResolvedValue({ state: 'written' })
   })
 
   afterEach(async () => {
@@ -214,6 +221,91 @@ describe('TerminalStreamManager', () => {
     await manager.handleBinary('web-1', paste(ordinaryLargePaste))
     expect(stream.pastes.at(-1)).toBe(ordinaryLargePaste)
     expect(stream.pastes).toHaveLength(3)
+  })
+
+  describe('image paste', () => {
+    const pngBytes = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+    const imagePaste = (streamId: string): TerminalBinaryClear => ({
+      kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, compressed: false, bytes: pngBytes,
+    })
+
+    it('advertises imagePaste in terminal_capabilities', async () => {
+      await manager.handleFrame('web-1', 'terminal_capabilities', { requestId: 'r1' })
+      expect((sent.at(-1)?.payload.features as Record<string, unknown>).imagePaste).toBe(true)
+    })
+
+    it('rejects a legacy JSON terminal_paste_image the same way as terminal_paste', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-img', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+      await manager.handleFrame('web-1', 'terminal_paste_image', { streamId })
+      expect(sent.at(-1)?.payload.code).toBe('TERMINAL_BINARY_REQUIRED')
+    })
+
+    it('on a successful clipboard write, replays a literal Ctrl+V and reports outcome "clipboard"', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-img', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+
+      await manager.handleBinary('web-1', imagePaste(streamId))
+
+      expect(vi.mocked(writeImageToOsClipboard)).toHaveBeenCalledWith('/fake/paste-images/fake.png', pngBytes)
+      expect(stream.writes).toHaveLength(1)
+      expect(Buffer.from(stream.writes[0])).toEqual(Buffer.from([0x16])) // literal Ctrl+V
+      expect(stream.pastes).toHaveLength(0) // never goes through the text-paste path
+      const result = sent.at(-1)!
+      expect(result.type).toBe('terminal_paste_image_result')
+      expect(result.payload).toMatchObject({ streamId, outcome: 'clipboard' })
+    })
+
+    it('falls back to pasting the file path as text when no native clipboard is reachable', async () => {
+      vi.mocked(writeImageToOsClipboard).mockResolvedValue(
+        { state: 'unavailable', reason: 'no X11 or Wayland display on this machine' } satisfies OsClipboardImageResult,
+      )
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-img2', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+
+      await manager.handleBinary('web-1', imagePaste(streamId))
+
+      expect(stream.writes).toHaveLength(0) // no Ctrl+V — nothing was put on a clipboard
+      expect(stream.pastes).toEqual(['/fake/paste-images/fake.png'])
+      const result = sent.at(-1)!
+      expect(result.type).toBe('terminal_paste_image_result')
+      expect(result.payload).toMatchObject({
+        streamId, outcome: 'fallback_path', reason: 'no X11 or Wayland display on this machine',
+      })
+    })
+
+    it('reports a genuine clipboard-write failure as an error, not a silent no-op', async () => {
+      vi.mocked(writeImageToOsClipboard).mockResolvedValue(
+        { state: 'failed', reason: 'xclip exited with code 1' } satisfies OsClipboardImageResult,
+      )
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-img3', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+
+      await manager.handleBinary('web-1', imagePaste(streamId))
+
+      expect(stream.writes).toHaveLength(0)
+      expect(stream.pastes).toHaveLength(0)
+      expect(sent.at(-1)?.payload).toMatchObject({
+        code: 'TERMINAL_PASTE_IMAGE_FAILED', streamId, message: 'xclip exited with code 1',
+      })
+    })
+
+    it('ignores an empty image paste', async () => {
+      await manager.handleFrame('web-1', 'terminal_open', {
+        requestId: 'open-img4', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+      })
+      const streamId = sent[0].payload.streamId as string
+      await manager.handleBinary('web-1', { kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, compressed: false, bytes: new Uint8Array() })
+      expect(vi.mocked(writePasteImageFile)).not.toHaveBeenCalled()
+    })
   })
 
   it('does not replay pre-snapshot repaint bytes after the authoritative keyframe', async () => {
