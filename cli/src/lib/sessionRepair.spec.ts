@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { claudeContinuation } from './sessionRepair.js'
 
 /**
  * Repair binds a live launcher back to a session the daemon lost track of. The danger is not failing to
@@ -319,5 +320,63 @@ describe('session repair — Codex profiles', () => {
     } finally {
       delete process.env.CODEX_HOME
     }
+  })
+})
+
+describe('claudeContinuation', () => {
+  it('follows a continued-in marker to the new session file', async () => {
+    const dir = tempRoot()
+    const oldPath = join(dir, 'old-session.jsonl')
+    const newId = 'b6758945-6852-4214-8a42-2b448d8ad391'
+    writeFileSync(
+      oldPath,
+      [
+        JSON.stringify({ type: 'session', cwd: CWD, id: 'old-session' }),
+        JSON.stringify({ type: 'continued-in', sessionId: 'old-session', continuedInSessionId: newId }),
+      ].join('\n') + '\n',
+    )
+    writeFileSync(join(dir, `${newId}.jsonl`), `${JSON.stringify({ type: 'session', cwd: CWD, id: newId })}\n`)
+
+    await expect(claudeContinuation(oldPath)).resolves.toEqual({
+      sessionId: newId,
+      transcriptPath: join(dir, `${newId}.jsonl`),
+    })
+  })
+
+  it('returns null when the transcript has not rotated', async () => {
+    const dir = tempRoot()
+    const path = join(dir, 'session.jsonl')
+    writeFileSync(path, `${JSON.stringify({ type: 'session', cwd: CWD, id: 'session' })}\n`)
+    await expect(claudeContinuation(path)).resolves.toBeNull()
+  })
+
+  it('returns null when the continued-in target file does not exist yet', async () => {
+    const dir = tempRoot()
+    const oldPath = join(dir, 'old-session.jsonl')
+    writeFileSync(
+      oldPath,
+      `${JSON.stringify({ type: 'continued-in', continuedInSessionId: 'not-written-yet' })}\n`,
+    )
+    await expect(claudeContinuation(oldPath)).resolves.toBeNull()
+  })
+
+  it('finds the marker even past a large tail (bounded read)', async () => {
+    const dir = tempRoot()
+    const oldPath = join(dir, 'old-session.jsonl')
+    const newId = 'b6758945-6852-4214-8a42-2b448d8ad391'
+    const filler = JSON.stringify({ type: 'assistant', text: 'x'.repeat(200) })
+    const lines = Array.from({ length: 50 }, () => filler)
+    lines.push(JSON.stringify({ type: 'continued-in', continuedInSessionId: newId }))
+    writeFileSync(oldPath, lines.join('\n') + '\n')
+    writeFileSync(join(dir, `${newId}.jsonl`), `${JSON.stringify({ type: 'session', cwd: CWD, id: newId })}\n`)
+
+    await expect(claudeContinuation(oldPath)).resolves.toEqual({
+      sessionId: newId,
+      transcriptPath: join(dir, `${newId}.jsonl`),
+    })
+  })
+
+  it('returns null for a missing file', async () => {
+    await expect(claudeContinuation('/nonexistent/path/session.jsonl')).resolves.toBeNull()
   })
 })

@@ -57,7 +57,7 @@ import { tmuxSupportsSessionEnv, TMUX_SESSION_ENV_MIN } from './lib/tmuxVersion.
 import { clearDeleted, isRecentlyDeleted, markDeleted } from './lib/deletedSessions.js'
 import { terminateDeletedAgent, checkPidRuntime } from './lib/deleteAgentFallback.js'
 import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
-import { findLiveSession } from './lib/sessionRepair.js'
+import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { basename } from 'node:path'
@@ -2228,23 +2228,51 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The switch leaves exactly one trace — the `inuse.<pid>.lock` Copilot takes on the new session
     // directory. It writes nothing to the transcript and fires no hook until the next prompt.
     if (agent.sessionId) {
-      if (observed.engine !== 'copilot') return
-      const current = await copilotSessionForPid(env.COPILOT_HOME, observed.processIdentity.pid)
-      if (!current || current === agent.sessionId || isRecentlyDeleted(current)) return
-      const transcript = await findCopilotTranscript(env.COPILOT_HOME, current)
-      console.log(`[discovery] ${sid(agent.agentId)} switched copilot session ${sid(agent.sessionId)} → ${sid(current)} (/resume)`)
-      const rotated = registry.register({
-        engine: 'copilot',
-        sessionId: current,
-        transcriptPath: transcript ?? undefined,
-        cwd: observed.cwd,
-        source: 'copilot-resume',
-        runtimes: observed.runtimes,
-        primaryRuntimeKey: observed.primaryRuntimeKey,
-        processIdentity: observed.processIdentity,
-        hookEvent: 'CopilotResume',
-      })
-      if (rotated?.isNew) await handleRegistered(rotated.entry, rotated)
+      if (observed.engine === 'copilot') {
+        const current = await copilotSessionForPid(env.COPILOT_HOME, observed.processIdentity.pid)
+        if (!current || current === agent.sessionId || isRecentlyDeleted(current)) return
+        const transcript = await findCopilotTranscript(env.COPILOT_HOME, current)
+        console.log(`[discovery] ${sid(agent.agentId)} switched copilot session ${sid(agent.sessionId)} → ${sid(current)} (/resume)`)
+        const rotated = registry.register({
+          engine: 'copilot',
+          sessionId: current,
+          transcriptPath: transcript ?? undefined,
+          cwd: observed.cwd,
+          source: 'copilot-resume',
+          runtimes: observed.runtimes,
+          primaryRuntimeKey: observed.primaryRuntimeKey,
+          processIdentity: observed.processIdentity,
+          hookEvent: 'CopilotResume',
+        })
+        if (rotated?.isNew) await handleRegistered(rotated.entry, rotated)
+        return
+      }
+      // Claude can also change session WITHOUT any hook firing: a long conversation's transcript
+      // rolls over to a new file on its own (compaction/a resume chain), and if the turn that follows
+      // lands on a pooled/"spare" worker process rather than one spawned fresh in the pane, no
+      // SessionStart/UserPromptSubmit ever reaches us for it — the agent is left bound to a transcript
+      // that has gone quiet forever while the real conversation continues one file over. Checked on
+      // the same cadence this reconciler already re-observes every live process, so it costs nothing
+      // extra to ask.
+      if (observed.engine === 'claude' && agent.transcriptPath) {
+        const continuation = await claudeContinuation(agent.transcriptPath)
+        if (!continuation || continuation.sessionId === agent.sessionId
+          || registry.has(continuation.sessionId) || isRecentlyDeleted(continuation.sessionId)) return
+        console.log(`[discovery] ${sid(agent.agentId)} claude session continued ${sid(agent.sessionId)} → ${sid(continuation.sessionId)}`)
+        const rotated = registry.register({
+          engine: 'claude',
+          sessionId: continuation.sessionId,
+          transcriptPath: continuation.transcriptPath,
+          cwd: observed.cwd,
+          source: 'claude-continuation',
+          runtimes: observed.runtimes,
+          primaryRuntimeKey: observed.primaryRuntimeKey,
+          processIdentity: observed.processIdentity,
+          hookEvent: 'ClaudeContinuation',
+        })
+        if (rotated?.isNew) await handleRegistered(rotated.entry, rotated)
+        return
+      }
       return
     }
 

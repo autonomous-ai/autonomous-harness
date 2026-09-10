@@ -15,7 +15,7 @@
  */
 
 import { execFile } from 'child_process'
-import { readdir, readFile, realpath, stat } from 'fs/promises'
+import { open, readdir, readFile, realpath, stat } from 'fs/promises'
 import { basename, dirname, join, sep } from 'path'
 import { promisify } from 'util'
 import { env } from '../config/env.js'
@@ -376,4 +376,60 @@ async function agySession(pid: number): Promise<RepairedSession | null> {
   // A conversation with no transcript is one agy has opened but not written to; registry derives the
   // path anyway, so bind it and let the watcher pick the file up when it appears.
   return { sessionId: conversationId, transcriptPath: transcriptPath ?? undefined }
+}
+
+/** The last `maxBytes` of a file, as text. Bounded so a multi-MB transcript costs nothing to check. */
+async function tailBytes(path: string, maxBytes: number): Promise<string> {
+  const handle = await open(path, 'r')
+  try {
+    const info = await handle.stat()
+    const start = Math.max(0, info.size - maxBytes)
+    const length = info.size - start
+    if (length <= 0) return ''
+    const buffer = Buffer.alloc(length)
+    await handle.read(buffer, 0, length, start)
+    return buffer.toString('utf-8')
+  } finally {
+    await handle.close()
+  }
+}
+
+const CLAUDE_CONTINUATION_TAIL_BYTES = 4 * 1024
+
+/**
+ * Claude rolls a long conversation's transcript over to a NEW file on its own (compaction, a resume
+ * chain) — the old file's last line names the new session and Claude simply starts writing there. No
+ * fresh SessionStart/UserPromptSubmit fires for it on its own if the actual turn that follows is
+ * served by a pooled/"spare" worker process rather than one spawned directly in the pane — so a
+ * hook-only bind can be left pointed at a transcript that has gone permanently quiet while the real
+ * conversation continues one file over. This is a cheap, bounded check for exactly that marker, read
+ * from the tail since it is always the very last line and tiny.
+ */
+export async function claudeContinuation(transcriptPath: string): Promise<RepairedSession | null> {
+  let tail: string
+  try {
+    tail = await tailBytes(transcriptPath, CLAUDE_CONTINUATION_TAIL_BYTES)
+  } catch {
+    return null
+  }
+  const lines = tail.split('\n').map((line) => line.trim()).filter(Boolean)
+  const lastLine = lines[lines.length - 1]
+  if (!lastLine) return null
+  let record: Record<string, unknown>
+  try {
+    record = JSON.parse(lastLine) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const nextId = record.type === 'continued-in' && typeof record.continuedInSessionId === 'string'
+    ? record.continuedInSessionId
+    : ''
+  if (!nextId) return null
+  const nextPath = join(dirname(transcriptPath), `${nextId}.jsonl`)
+  try {
+    if (!(await stat(nextPath)).isFile()) return null
+  } catch {
+    return null
+  }
+  return { sessionId: nextId, transcriptPath: nextPath }
 }
