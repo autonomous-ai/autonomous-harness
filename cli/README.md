@@ -139,6 +139,11 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
   named `harness-<engine>-<timestamp>`, which is what `agent_create` names them. A tmux session you
   open by hand and run an engine in, or one an agent spawns itself with a nested `tmux new-session`,
   never becomes an agent — create it through the app (or `agent_create`) instead.
+- **Agents survive a reboot.** The registry outlives the tmux server. On start, every registered agent
+  whose pane is gone (a reboot, a `tmux kill-server`) gets a new pane running the same engine in the
+  same folder, resuming its engine session when it has one, under the same agent id — so the app's
+  tiles reattach by themselves. Agents that were pointed at a grid are not restored (the launch
+  credential is never persisted), and an engine with no resume flag (devin) comes back fresh.
 - **Hooks bind mutable engine sessions** to the process agent using authenticated tmux and/or Herdr
   runtime hints plus verified caller ancestry. Hook socket paths are lookup hints only. They do not
   require `MACHINE_ID`. `SessionStart` and catch hooks attach transcript/store metadata; `SessionEnd` only

@@ -265,13 +265,12 @@ describe('authenticated loopback terminal framing v1', () => {
       compressed: false,
     })
     expect(encoded).not.toBeNull()
-    expect(decodeTerminalLocal(encoded!)).toEqual({
-      kind: TerminalBinaryKind.paste,
-      streamId,
-      seq: 0,
-      bytes,
-      compressed: false,
-    })
+    // Metadata via deep-equal, payload via native memcmp: vitest's toEqual walks a typed array one
+    // element at a time, and on a multi-MiB payload that alone took ~1-3s on a fast laptop and blew
+    // through the 5s test timeout on a CI runner (v0.2.16_cli release run).
+    const decoded = decodeTerminalLocal(encoded!)!
+    expect(decoded).toMatchObject({ kind: TerminalBinaryKind.paste, streamId, seq: 0, compressed: false })
+    expect(Buffer.compare(decoded.bytes, bytes)).toBe(0)
 
     expect(encodeTerminalLocal({
       kind: TerminalBinaryKind.output,
@@ -295,13 +294,9 @@ describe('authenticated loopback terminal framing v1', () => {
       compressed: false,
     })
     expect(encoded).not.toBeNull()
-    expect(decodeTerminalLocal(encoded!)).toEqual({
-      kind: TerminalBinaryKind.imagePaste,
-      streamId,
-      seq: 0,
-      bytes,
-      compressed: false,
-    })
+    const decoded = decodeTerminalLocal(encoded!)!
+    expect(decoded).toMatchObject({ kind: TerminalBinaryKind.imagePaste, streamId, seq: 0, compressed: false })
+    expect(Buffer.compare(decoded.bytes, bytes)).toBe(0) // memcmp, not element-wise — see the paste test above
 
     const tooBig = new Uint8Array(TERMINAL_LOCAL_IMAGE_PASTE_MAX_PAYLOAD_BYTES + 1)
     expect(encodeTerminalLocal({
@@ -326,10 +321,9 @@ describe('authenticated loopback terminal framing v1', () => {
       compressed: false,
     })
     expect(encoded).not.toBeNull()
-    const decoded = decodeTerminalLocal(encoded!)
-    expect(decoded?.kind).toBe(TerminalBinaryKind.pasteFile)
-    expect(decoded?.seq).toBe(2)
-    expect(decoded?.bytes).toEqual(content)
+    const decoded = decodeTerminalLocal(encoded!)!
+    expect(decoded).toMatchObject({ kind: TerminalBinaryKind.pasteFile, seq: 2 })
+    expect(Buffer.compare(decoded.bytes, content)).toBe(0) // memcmp, not element-wise — see the paste test above
 
     const tooBig = new Uint8Array(TERMINAL_LOCAL_PASTE_FILE_MAX_PAYLOAD_BYTES + 1)
     expect(encodeTerminalLocal({
