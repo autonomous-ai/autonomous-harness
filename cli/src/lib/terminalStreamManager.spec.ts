@@ -252,6 +252,7 @@ describe('TerminalStreamManager', () => {
       const features = sent.at(-1)?.payload.features as Record<string, unknown>
       expect(features.imagePaste).toBe(true)
       expect(features.pasteFile).toBe(true)
+      expect(features.mediaPreview).toBe(true)
     })
 
     it('rejects legacy JSON terminal_paste_image/terminal_paste_file the same way as terminal_paste', async () => {

@@ -254,6 +254,8 @@ export class TerminalStreamManager {
         // dropped non-image file to a REMOTE pane at all (a local pane needs no capability — it
         // pastes the file's own path directly, never touching the wire) — see `pasteFile()`.
         pasteFile: true,
+        // Bounded media reads through the already encrypted agent_read_file RPC.
+        mediaPreview: true,
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
     })
