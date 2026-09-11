@@ -177,6 +177,42 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('answers usage_read with this machine\'s own readings, wrapped for the requester', async () => {
+    // What goes back names what the person spends and on whose account, so it must leave encrypted.
+    // The reader is the socket's own field: this never touches a real home, Keychain or network.
+    const socket = new BackendSocket('token')
+    const readings = [
+      {
+        provider: 'claude' as const,
+        account: 'k1',
+        outcome: 'answered' as const,
+        httpStatus: 200,
+        body: { seven_day: { utilization: 42 } },
+      },
+    ]
+    socket.accountUsageReader = async () => readings
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    vi.spyOn(socket.e2ee, 'unwrapDown').mockReturnValue({
+      type: 'usage_read', payload: { requestId: 'usage-1' },
+    })
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'usage_read_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
+    })
+    ws.message({
+      t: 'down',
+      connId: 'web-1',
+      frame: { type: 'usage_read', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } } },
+    })
+
+    await vi.waitFor(() => {
+      expect(wrapReply).toHaveBeenCalledWith('web-1', 'usage_read_result', 'usage-1', { providers: readings })
+    })
+    await socket.stop()
+  })
+
   it('includes engine session correlation in the web agent list', async () => {
     const session: RegisteredSession = {
       schemaVersion: 2,

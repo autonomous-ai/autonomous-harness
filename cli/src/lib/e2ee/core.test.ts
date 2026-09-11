@@ -132,6 +132,10 @@ describe('e2ee core — codes + fingerprint + classification', () => {
     expect(C.isEncryptedUpType('node_status')).toBe(false)
     expect(C.isEncryptedDownType('agents_list')).toBe(true)
     expect(C.isEncryptedDownType('agent_update')).toBe(true)
+    // A machine's account usage names what the person spends and on whose subscription. Missing from
+    // either list the request would not fail — it would time out, which is harder to find.
+    expect(C.isEncryptedDownType('usage_read')).toBe(true)
+    expect(C.isEncryptedRpcResultType('usage_read_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('session_get_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('agents_list_result')).toBe(true)
     expect(C.ENCRYPTED_RPC_RESULT_TYPES.has('agent_update_result')).toBe(true)
@@ -197,6 +201,6 @@ describe('e2ee core — interop keystone', () => {
   it('core.ts still hashes to the pinned value shared with the other implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const actual = createHash('sha256').update(readFileSync(join(here, 'core.ts'))).digest('hex')
-    expect(actual).toBe('e21ceb78f3cf8ca56d09bc52daf336f89a75d05dd84ee6882c7b736cfd5bb415')
+    expect(actual).toBe('76b0171f0dd53a1a00e5e321f376ae956faacf3db85cd95b644ef3dd9f91e78c')
   })
 })

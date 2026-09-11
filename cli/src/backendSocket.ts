@@ -26,6 +26,7 @@ import { ENGINES, type AgentEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
+import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
 import { probeEngines } from './lib/engineProbe.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { agentFrame, type AgentFrame } from './lib/agentFrame.js'
@@ -365,6 +366,9 @@ export class BackendSocket {
   recentProvider: RecentProvider | null = null
   /** Runtime Model/Effort integration, wired by cli.ts for registered tmux sessions. */
   runtimeModelsProvider: ((sessionId?: string) => Promise<RuntimeModelOption[]>) | null = null
+  /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
+   *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
+  accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
   runtimeProfileProvider: ((session: RegisteredSession) => string | null) | null = null
   onRuntimeProfileUpdate: ((sessionId: string, selectedModel: string) => Promise<void>) | null = null
   /** Web↔adapter E2EE: group-encrypts user events, runs the CPace pairing, holds per-conn sessions. */
@@ -1716,6 +1720,15 @@ export class BackendSocket {
           // cli.ts keys the answer straight into that session's tmux dialog.
           const p = payload as { requestId?: string; sessionId?: string; agentId?: string; answers?: Record<string, string> }
           this.onQuestionAnswer?.(p)
+          return
+        }
+
+        // This machine's Claude/Codex rate limits, read with ITS OWN credentials. The desktop reads the
+        // account on the computer it runs on directly; this is how it reads one on a machine it does
+        // not — which may be signed in to a different subscription entirely. The vendor's answer goes
+        // back as it came: see lib/accountUsage.ts for why the parsing stays on the client.
+        case 'usage_read': {
+          reply(type, requestId, { providers: await this.accountUsageReader() })
           return
         }
 
