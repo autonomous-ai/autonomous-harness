@@ -41,6 +41,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEngine } from '../engines/types.js'
 import {
+  CLAUDE_DISALLOW_WEB_SEARCH_ARG,
   mcpServersConfig,
   codexMcpArgs,
   GRID_MCP_AUTH_VAR,
@@ -512,7 +513,12 @@ const GRID_ENGINE_CONTRACTS: Partial<Record<AgentEngine, GridEngineContract>> = 
         // below, and setting it otherwise would leave a key in the pane that nothing reads.
         ...(override.mcpUrl ? { [GRID_KEY_VAR]: override.apiKey } : {}),
       },
-      args: override.mcpUrl ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)] : [],
+      args: [
+        // On every grid launch, web tools or not: the built-in search is an Anthropic server tool
+        // that no grid runs. See `CLAUDE_DISALLOW_WEB_SEARCH_ARG`.
+        CLAUDE_DISALLOW_WEB_SEARCH_ARG,
+        ...(override.mcpUrl ? ['--mcp-config', mcpServersConfig(override.mcpUrl, GRID_KEY_VAR)] : []),
+      ],
     }),
   },
 

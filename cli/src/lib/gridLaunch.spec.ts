@@ -100,7 +100,8 @@ describe('the launch each engine gets', () => {
         ANTHROPIC_AUTH_TOKEN: WIRE.apiKey,
         ANTHROPIC_MODEL: 'GLM-4.7-Flash',
       },
-      args: [],
+      // The built-in search no grid can run — see "takes Claude Code's built-in WebSearch away".
+      args: ['--disallowedTools=WebSearch'],
     })
     // Setting it too makes Claude Code warn that auth may not work, and it decides nothing.
     expect(launchOf('claude').env).not.toHaveProperty('ANTHROPIC_API_KEY')
@@ -607,9 +608,21 @@ describe('web tools (grid ADR 0041)', () => {
     }
   })
 
-  it('adds nothing at all when the desktop sends no mcpUrl', () => {
-    // An older desktop, and the no-regression promise: the launch is byte-for-byte what it was.
-    expect(launchOf('claude', WITH_MODEL).args).toEqual([])
+  it("takes Claude Code's built-in WebSearch away on every grid launch, web tools or not", () => {
+    // `WebSearch` is an Anthropic SERVER tool (`web_search_20250305`) that no grid runs: the grid
+    // answers it with a 400, and a model offered it reaches for it before `mcp__grid-web__web_search`.
+    for (const override of [OVERRIDE, WITH_MODEL, WITH_MCP]) {
+      expect(launchOf('claude', override).args).toContain('--disallowedTools=WebSearch')
+    }
+    // ONE token. The flag is variadic, so the two-token form would swallow any positional after it as
+    // another tool name — measured on Claude Code 2.1.268, it then sent no request at all.
+    expect(launchOf('claude', WITH_MCP).args).not.toContain('--disallowedTools')
+  })
+
+  it('adds no web tools when the desktop sends no mcpUrl', () => {
+    // An older desktop, and the no-regression promise: no server it did not ask for. Claude's one flag
+    // is not a web tool but the removal of one no grid can run — see the test above.
+    expect(launchOf('claude', WITH_MODEL).args).toEqual(['--disallowedTools=WebSearch'])
     expect(launchOf('claude', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
     expect(launchOf('copilot', WITH_MODEL).args).toEqual([])
     expect(launchOf('copilot', WITH_MODEL).env.GRID_API_KEY).toBeUndefined()
