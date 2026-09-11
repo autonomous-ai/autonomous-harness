@@ -107,6 +107,11 @@ Your agents stay your processes, on your hardware, with your credentials.
           └───────── CLI ─────────┘             └─────── API ───────┘
 ```
 
+This repo holds all three sides of that picture: the CLI in [`cli/`](cli/README.md), the relay
+backend in [`backend/`](backend/README.md), and the desktop app that attaches terminals to your
+machines in [`desktop/`](desktop/README.md). Each releases on its own tag — see
+[`docs/cicd.md`](docs/cicd.md).
+
 ## End-to-end encryption
 
 On the CLI path it's always on — there's no switch for it. Everything between your machines and the

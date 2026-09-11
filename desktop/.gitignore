@@ -1,0 +1,137 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+/terminal_web/node_modules/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Widget Preview related
+.widget_preview/
+
+# Design scratch — icon/layout comparisons rendered for a human to look at.
+# They inline whole font files to stay openable straight off disk, so they are
+# megabytes of base64 that git would keep forever for a page nobody reads twice.
+/mockup/
+
+# ---------------------------------------------------------------------------
+# Local / personal — machine- or developer-specific, never pushed
+# ---------------------------------------------------------------------------
+
+# AI coding assistants (chat history, local rules, per-dev config).
+# .claude/ contents are ignored by default; whitelist below anything the team
+# should actually share (drop the leading "#" to start tracking it).
+.claude/*
+#!.claude/settings.json
+#!.claude/commands/
+#!.claude/agents/
+#!.claude/skills/
+.claude/settings.local.json
+CLAUDE.local.md
+AGENTS.local.md
+
+.cursor/
+.cursorignore
+.windsurf/
+.codeium/
+.continue/
+.cline/
+.roo/
+.kilocode/
+.trae/
+.junie/
+.gemini/
+.opencode/
+.crush/
+.amp/
+.qodo/
+.specstory/
+.serena/
+.aider*
+.mcp.local.json
+
+# Editors / IDEs — personal workspace state
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+*.code-workspace
+.fleet/
+.zed/
+.nova/
+*.sublime-project
+*.sublime-workspace
+
+# Xcode per-user state (macOS runner)
+**/xcuserdata/
+**/*.xcuserdatad
+**/DerivedData/
+
+# OS junk
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# Secrets & signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.key
+*.jks
+*.keystore
+key.properties
+secrets/
+service-account*.json
+
+# Local scratch — notes, experiments, throwaway scripts
+scratch/
+tmp/
+notes/
+docs/
+*.local
+*.local.*
+TODO.local.md

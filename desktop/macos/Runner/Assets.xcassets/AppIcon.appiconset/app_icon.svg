@@ -1,0 +1,19 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="harness-tile" x1="200" y1="0" x2="200" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B2B2C"/>
+      <stop offset="1" stop-color="#141415"/>
+    </linearGradient>
+  </defs>
+  <!-- The mark, 400x400 as the design ships it, fitted into the 916px box this icon set has always used:
+       54px of margin on every side is what keeps macOS from clipping the corners of its own squircle. -->
+  <g transform="translate(54 54) scale(2.29)">
+<rect width="400" height="400" rx="80" fill="url(#harness-tile)"/>
+  <rect x="120.977" y="63" width="223.8" height="209.362" fill="white"/>
+  <rect x="99.3125" y="84.6562" width="223.8" height="209.362" fill="#2F7FFF"/>
+  <rect x="77.6562" y="106.312" width="223.8" height="209.362" fill="#FF8250"/>
+  <rect x="56" y="127.977" width="223.8" height="209.362" fill="#90FF50"/>
+  <path d="M210.744 192.945L216.153 207.634C219.482 216.675 226.528 223.807 235.46 227.177L250.929 232.173L235.46 238.127C226.528 241.497 219.482 248.628 216.153 257.67L210.744 272.358L205.335 257.67C202.005 248.628 194.96 241.497 186.027 238.127L171.516 232.173L186.027 227.177C194.96 223.807 202.005 216.675 205.335 207.634L210.744 192.945Z" fill="#111111"/>
+  <path d="M84.8828 192.945L143.227 231.145L84.8828 272.528" stroke="#111111" stroke-width="19.0997"/>
+  </g>
+</svg>

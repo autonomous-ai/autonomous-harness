@@ -1,0 +1,212 @@
+name: Desktop internal build
+
+# A signed, notarized macOS build of any branch for testers — not a release. Nothing a running app
+# polls is touched, and nothing is tagged. The Flutter project lives under desktop/, so every job
+# that touches the tree runs with working-directory: desktop.
+#
+#   git push origin HEAD:internal/<name>                 # builds that commit, Debug off
+#   Actions -> Desktop internal build -> Run workflow    # any branch, with the flag below
+#
+# The run prints both .dmg links: as notices at the top of the run page, and in its summary. THIS
+# REPOSITORY IS PUBLIC, so that page is too — anyone who opens it can download the build. The path
+# carries 128 random bits and the bucket refuses anonymous listing (checked 2026-09-10), so a build is
+# reached through its run page or a forwarded link and not by guessing: unlisted, not private. The team
+# chose that on 2026-09-10 over a key-derived link only key holders could work out; if it ever stops
+# being acceptable, that is the design to go back to. Take a build back by deleting its prefix (the
+# summary says how); the upload step drops the release's year-long cache headers so a deletion sticks.
+#
+# Built by the release's own code, so it IS what a release would ship, flags aside:
+# scripts/publish-macos-variant.sh --build-only builds and pins each renderer (Intel on Skia, Apple
+# Silicon on Impeller — RELEASE.md, "Two macOS builds"), then scripts/upload-desktop.sh --no-build
+# signs, notarizes, staples, runs Gatekeeper's check and uploads, moved onto the internal path by the
+# env overrides it already has. A build made by hand, Info.plist edited and re-signed by hand, is how
+# a tester got "The application "Harness" can't be opened"; this replaces that rather than copying it.
+#
+# Self-update is pinned OFF: DESKTOP_UPDATE_METADATA_URL names a manifest nothing ever writes, so the
+# updater finds nothing, forever. A tester stays on the build they were asked to test instead of being
+# moved onto the next public release; the next internal build is installed by its own link.
+#
+# The version is the one the next release would take (scripts/release-desktop.sh --dry-run): the
+# scripts insist on X.Y.Z, and with the updater pinned nothing compares it. The file name carries the
+# commit as well.
+
+on:
+  push:
+    branches: ['internal/**']
+  workflow_dispatch:
+    inputs:
+      debug_surface:
+        description: 'Show Settings > Debug and Tracking (HARNESS_DEBUG_SURFACE)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to the same internal branch supersedes the build still notarizing — nobody is
+  # waiting on the old one. Never the release's group: an internal build must not queue behind a
+  # release, and must never cancel one.
+  group: desktop-internal-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GCS_BUCKET: s3-autonomous-upgrade-3   # the release scripts read this too
+
+jobs:
+  prepare:
+    # A branch deletion is a push too, and there is nothing left to build.
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      flutter_version: ${{ steps.plan.outputs.flutter_version }}
+      prefix: ${{ steps.plan.outputs.prefix }}
+      short_sha: ${{ steps.plan.outputs.short_sha }}
+      debug_surface: ${{ steps.plan.outputs.debug_surface }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # release-desktop.sh reads every tag and checks HEAD is on the branch
+
+      - id: plan
+        # Through env, never `${{ }}` inline in run: — a ref name may carry quotes and $().
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          # A push has no inputs: it gets Debug off.
+          DEBUG_SURFACE: ${{ github.event_name != 'push' && inputs.debug_surface }}
+        run: |
+          set -euo pipefail
+          # The next release's version, by that script's own reasoning (tags AND the live manifest)
+          # rather than a second copy of it. --dry-run tags nothing and pushes nothing.
+          plan="$(BRANCH="$REF_NAME" bash scripts/release-desktop.sh --dry-run)"
+          version="$(printf '%s\n' "$plan" | sed -n 's/^  releasing  *\([0-9][0-9.]*\) .*/\1/p')"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::could not read the next version out of release-desktop.sh --dry-run"
+            printf '%s\n' "$plan"
+            exit 1
+          fi
+          # One toolchain for releases and internal builds: the pin is read out of
+          # release-desktop.yml, not restated here, where it would drift. Path is relative to the
+          # working directory (desktop/), hence the ../.
+          flutter="$(sed -n "s/^  FLUTTER_VERSION: '\([^']*\)'.*/\1/p" ../.github/workflows/release-desktop.yml)"
+          [ -n "$flutter" ] || { echo "::error::FLUTTER_VERSION not found in release-desktop.yml"; exit 1; }
+          # Keeps a build from being found by guessing: only its run page, or a forwarded link, leads to it.
+          token="$(openssl rand -hex 16)"
+          {
+            echo "version=$version"
+            echo "flutter_version=$flutter"
+            echo "prefix=harness/desktop-internal/$token"
+            echo "short_sha=${GITHUB_SHA::7}"
+            echo "debug_surface=$DEBUG_SURFACE"
+          } >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 60   # two notarization submissions per build (zip, then dmg)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { variant: intel, artifact: Harness-macos, ota_key: desktop-macos, label: 'Intel, on Skia (runs on any Mac)' }
+          - { variant: apple-silicon, artifact: Harness-macos-arm64, ota_key: desktop-macos-arm64, label: 'Apple Silicon, on Impeller' }
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PREFIX: ${{ needs.prepare.outputs.prefix }}
+      VARIANT: ${{ matrix.variant }}
+      DEBUG_SURFACE: ${{ needs.prepare.outputs.debug_surface }}
+      # The file a tester downloads names the build it is: version AND commit.
+      ARTIFACT: ${{ matrix.artifact }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.short_sha }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ needs.prepare.outputs.flutter_version }}
+          channel: stable
+          cache: true
+
+      # SPM must be on BEFORE pub get — see release-desktop.yml and desktop/CLAUDE.md.
+      - name: Enable Swift Package Manager
+        run: flutter config --enable-swift-package-manager
+
+      - run: flutter pub get
+
+      - uses: ./.github/actions/macos-signing
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          apple-app-password: ${{ secrets.APPLE_APP_PASSWORD }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build ${{ matrix.variant }} and pin its renderer
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          bash scripts/publish-macos-variant.sh "$VARIANT" "$VERSION" --build-only \
+            --dart-define=HARNESS_DEBUG_SURFACE="$DEBUG_SURFACE" \
+            --dart-define=DESKTOP_UPDATE_METADATA_URL="https://storage.googleapis.com/${GCS_BUCKET}/harness/desktop-internal/no-updates.json"
+
+      - name: Sign, notarize and upload ${{ matrix.variant }} to its unlisted path
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          OTA_KEY: ${{ matrix.ota_key }}
+          DMG_KEY: ${{ matrix.ota_key }}-dmg
+        run: |
+          set -euo pipefail
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # upload-desktop.sh's own overrides, every path moved off the release's. The manifest it
+          # always writes lands under the prefix too: read by nothing, it records what was published.
+          export GCS_PATH="$PREFIX/$ARTIFACT.zip"
+          export DMG_GCS_PATH="$PREFIX/$ARTIFACT.dmg"
+          export METADATA_PATH="$PREFIX/manifest-$VARIANT.json"
+          bash scripts/upload-desktop.sh --no-build "$VERSION"
+          # upload-desktop.sh uploads with a year-long immutable cache: right for a release path
+          # nobody ever changes, wrong for a build that may have to be taken back.
+          gsutil -m setmeta -h "Cache-Control:private, max-age=0, no-store" \
+            "gs://${GCS_BUCKET}/${GCS_PATH}" "gs://${GCS_BUCKET}/${DMG_GCS_PATH}"
+
+      - name: Hand out the link
+        env:
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          url="https://storage.googleapis.com/${GCS_BUCKET}/${PREFIX}/${ARTIFACT}.dmg"
+          sha="$(shasum -a 256 "build/Harness-macos-${VERSION}.dmg" | awk '{print $1}')"
+          # A notice as well as the summary: it sits at the top of the run page, where it is found.
+          echo "::notice title=macOS ${VARIANT}::${url}"
+          {
+            echo "### macOS — ${LABEL}"
+            echo
+            echo "**[${ARTIFACT}.dmg](${url})**"
+            echo
+            echo "${VERSION} · \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\` · Debug ${DEBUG_SURFACE} · self-update off"
+            echo
+            echo "dmg sha256 \`${sha}\`"
+            echo
+            echo "Unlisted, not private: this repository is public, so anyone who opens this page can"
+            echo "download the build. Take it back with \`gsutil -m rm -r gs://${GCS_BUCKET}/${PREFIX}\`"
+            echo "(both builds of this run)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN_PATH" || true

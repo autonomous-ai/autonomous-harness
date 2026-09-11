@@ -1,0 +1,868 @@
+<title>Provider Settings Prototypes</title>
+<style>
+  /* ---------- SHELL (neutral chrome, never mistaken for a prototype) ---------- */
+  .shell {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #16181d;
+    color: #9aa2ae;
+    border-bottom: 1px solid #262a32;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .shell__bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 14px 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .shell__bar::-webkit-scrollbar { display: none; }
+  .shell__tab {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: #8b93a0;
+    font: inherit;
+    padding: 7px 12px 9px;
+    cursor: pointer;
+    white-space: nowrap;
+    border-radius: 4px 4px 0 0;
+  }
+  .shell__tab:hover { color: #d6dbe3; background: #1c1f26; }
+  .shell__tab:focus-visible { outline: 2px solid #5b8cff; outline-offset: -2px; }
+  .shell__tab[aria-selected="true"] { color: #f0f2f6; border-bottom-color: #5b8cff; }
+  .shell__tab .k { opacity: .5; font-size: 11px; margin-left: 6px; }
+  .shell__thesis {
+    padding: 9px 16px 11px;
+    font-size: 12.5px;
+    color: #7d8593;
+    border-top: 1px solid #1e2128;
+    margin-top: -1px;
+  }
+  .shell__thesis b { color: #b9c0cb; font-weight: 600; }
+  @media (max-width: 560px) {
+    .shell__tab .nm { display: none; }
+    .shell__tab .k { display: none; }
+  }
+
+  /* =========================================================================
+     DIRECTION A — "Roster"
+     ========================================================================= */
+  #dir-a {
+    --a-bg: #0f1115;
+    --a-panel: #161920;
+    --a-panel-2: #1b1f27;
+    --a-line: #252a33;
+    --a-line-soft: #1e222a;
+    --a-fg: #eef1f5;
+    --a-fg-2: #99a1ad;
+    --a-fg-3: #6b7280;
+    --a-accent: #5b8cff;
+    --a-accent-wash: rgba(91,140,255,.10);
+    --a-on: #34d399;
+    --a-off: #4b5563;
+    --a-warn: #fbbf24;
+    --a-r: 9px;
+    --a-r-sm: 6px;
+    --a-s: 4px;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--a-bg);
+    color: var(--a-fg);
+    min-height: 640px;
+    padding: 26px 30px 40px;
+  }
+  #dir-a .a-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  #dir-a .a-head { display: flex; align-items: baseline; gap: 11px; margin-bottom: 7px; }
+  #dir-a .a-h1 { font-size: 27px; font-weight: 650; letter-spacing: -.5px; margin: 0; }
+  #dir-a .a-count { font-size: 12.5px; color: var(--a-fg-3); }
+  #dir-a .a-sub { font-size: 12.5px; color: var(--a-fg-2); max-width: 780px; margin: 0 0 20px; line-height: 1.5; }
+
+  /* summary strip replaces the old hero */
+  #dir-a .a-strip {
+    display: flex; align-items: center; gap: 0;
+    background: var(--a-panel); border: 1px solid var(--a-line);
+    border-radius: var(--a-r); padding: 12px 16px; margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  #dir-a .a-stat { padding: 0 20px 0 0; margin-right: 20px; border-right: 1px solid var(--a-line-soft); }
+  #dir-a .a-stat:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
+  #dir-a .a-stat__k { font-size: 9.5px; letter-spacing: .9px; font-weight: 600; color: var(--a-fg-3); text-transform: uppercase; display: block; margin-bottom: 4px; }
+  #dir-a .a-stat__v { font-size: 15px; font-weight: 600; color: var(--a-fg); }
+  #dir-a .a-stat__v.on { color: var(--a-on); }
+  #dir-a .a-stat__v .a-mono { font-size: 12px; color: var(--a-fg-3); font-weight: 400; margin-left: 6px; }
+
+  #dir-a .a-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  #dir-a .a-search {
+    flex: 1 1 200px; min-width: 160px; max-width: 300px;
+    background: var(--a-panel); border: 1px solid var(--a-line); border-radius: var(--a-r-sm);
+    padding: 7px 11px; color: var(--a-fg); font: inherit;
+  }
+  #dir-a .a-search::placeholder { color: var(--a-fg-3); }
+  #dir-a .a-search:focus { outline: none; border-color: var(--a-accent); box-shadow: 0 0 0 3px var(--a-accent-wash); }
+  #dir-a .a-chip {
+    appearance: none; background: var(--a-panel); border: 1px solid var(--a-line);
+    color: var(--a-fg-2); font: inherit; font-size: 12.5px; padding: 6px 13px;
+    border-radius: 999px; cursor: pointer;
+  }
+  #dir-a .a-chip:hover { border-color: #333a45; color: var(--a-fg); }
+  #dir-a .a-chip:focus-visible { outline: 2px solid var(--a-accent); outline-offset: 1px; }
+  #dir-a .a-chip[aria-pressed="true"] { background: var(--a-accent); border-color: var(--a-accent); color: #fff; }
+  #dir-a .a-spacer { flex: 1 1 auto; }
+  #dir-a .a-who { font-size: 12px; color: var(--a-fg-3); }
+  #dir-a .a-btn {
+    appearance: none; background: var(--a-panel-2); border: 1px solid var(--a-line);
+    color: var(--a-fg); font: inherit; font-size: 12.5px; padding: 6px 13px;
+    border-radius: var(--a-r-sm); cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  #dir-a .a-btn:hover { background: #222731; }
+  #dir-a .a-btn:focus-visible { outline: 2px solid var(--a-accent); outline-offset: 1px; }
+  #dir-a .a-btn--primary { background: var(--a-accent); border-color: var(--a-accent); color: #fff; }
+  #dir-a .a-btn--primary:hover { background: #4a7bee; }
+
+  #dir-a .a-tablewrap { border: 1px solid var(--a-line); border-radius: var(--a-r); overflow: hidden; background: var(--a-panel); }
+  #dir-a .a-scroll { overflow-x: auto; }
+  #dir-a table { width: 100%; border-collapse: collapse; min-width: 820px; }
+  #dir-a th {
+    text-align: left; font-size: 9.5px; letter-spacing: .9px; font-weight: 600;
+    color: var(--a-fg-3); text-transform: uppercase; padding: 10px 14px;
+    border-bottom: 1px solid var(--a-line); background: #13161c; white-space: nowrap;
+  }
+  #dir-a th.a-num, #dir-a td.a-num { text-align: right; }
+  #dir-a td { padding: 12px 14px; border-bottom: 1px solid var(--a-line-soft); vertical-align: middle; }
+  #dir-a tbody tr:last-child td { border-bottom: 0; }
+  #dir-a tbody tr:hover { background: #191d24; }
+  #dir-a tr.a-default td { background: var(--a-accent-wash); }
+  #dir-a tr.a-default:hover td { background: rgba(91,140,255,.14); }
+  #dir-a tr.a-off td .a-name, #dir-a tr.a-off td .a-mono { opacity: .45; }
+
+  #dir-a .a-namecell { display: flex; align-items: center; gap: 9px; }
+  #dir-a .a-name { font-weight: 600; font-size: 13.5px; }
+  #dir-a .a-id { display: block; font-size: 11px; color: var(--a-fg-3); margin-top: 2px; }
+  #dir-a .a-badge {
+    font-size: 9px; letter-spacing: .7px; font-weight: 700; text-transform: uppercase;
+    border: 1px solid #2f6d5a; color: #4ade80; background: rgba(52,211,153,.09);
+    padding: 2px 6px; border-radius: 4px;
+  }
+  #dir-a .a-badge--def { border-color: #33549e; color: #93b4ff; background: rgba(91,140,255,.12); }
+
+  /* the switch */
+  #dir-a .a-sw {
+    appearance: none; width: 36px; height: 20px; border-radius: 999px;
+    background: var(--a-off); border: 0; cursor: pointer; position: relative;
+    transition: background .13s ease; flex: none;
+  }
+  #dir-a .a-sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; transition: transform .13s ease;
+  }
+  #dir-a .a-sw[aria-checked="true"] { background: var(--a-on); }
+  #dir-a .a-sw[aria-checked="true"]::after { transform: translateX(16px); }
+  #dir-a .a-sw:focus-visible { outline: 2px solid var(--a-accent); outline-offset: 2px; }
+  #dir-a .a-sw:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* default radio */
+  #dir-a .a-radio {
+    appearance: none; width: 15px; height: 15px; border-radius: 50%;
+    border: 1.5px solid #3d444f; background: transparent; cursor: pointer; position: relative;
+  }
+  #dir-a .a-radio[aria-checked="true"] { border-color: var(--a-accent); }
+  #dir-a .a-radio[aria-checked="true"]::after {
+    content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--a-accent);
+  }
+  #dir-a .a-radio:focus-visible { outline: 2px solid var(--a-accent); outline-offset: 2px; }
+  #dir-a .a-radio:disabled { opacity: .3; cursor: not-allowed; }
+
+  #dir-a .a-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  #dir-a .a-dot--on { background: var(--a-on); }
+  #dir-a .a-dot--off { background: var(--a-off); }
+  #dir-a .a-muted { color: var(--a-fg-3); }
+  #dir-a .a-models { font-size: 11.5px; color: var(--a-fg-2); }
+  #dir-a .a-models .a-mono { color: var(--a-fg-3); }
+
+  #dir-a .a-alloff {
+    display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+    background: rgba(251,191,36,.06); border: 1px solid #4a3a15;
+    border-radius: var(--a-r); margin-bottom: 12px;
+  }
+  #dir-a .a-alloff__i { color: var(--a-warn); font-size: 13px; line-height: 1.3; flex: none; }
+  #dir-a .a-alloff__t { font-weight: 600; font-size: 12.5px; color: #f5d896; }
+  #dir-a .a-alloff__d { font-size: 11.5px; color: var(--a-fg-2); margin-top: 3px; line-height: 1.45; }
+  #dir-a .a-foot { font-size: 11.5px; color: var(--a-fg-3); margin-top: 14px; }
+
+  /* =========================================================================
+     DIRECTION B — "Provider cards"
+     ========================================================================= */
+  #dir-b {
+    --b-bg: #0d0f13;
+    --b-card: #15181f;
+    --b-card-2: #1a1e26;
+    --b-line: #232830;
+    --b-fg: #f2f4f8;
+    --b-fg-2: #9ba3af;
+    --b-fg-3: #666d79;
+    --b-accent: #7c9dff;
+    --b-accent-line: #3a5296;
+    --b-accent-wash: rgba(124,157,255,.09);
+    --b-on: #3ddc97;
+    --b-off: #454c57;
+    --b-r: 12px;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--b-bg);
+    color: var(--b-fg);
+    min-height: 640px;
+    padding: 26px 30px 40px;
+  }
+  #dir-b .b-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  #dir-b .b-head { display: flex; align-items: baseline; gap: 11px; margin-bottom: 7px; }
+  #dir-b .b-h1 { font-size: 27px; font-weight: 650; letter-spacing: -.5px; margin: 0; }
+  #dir-b .b-count { font-size: 12.5px; color: var(--b-fg-3); }
+  #dir-b .b-sub { font-size: 12.5px; color: var(--b-fg-2); max-width: 780px; margin: 0 0 20px; line-height: 1.5; }
+
+  #dir-b .b-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  #dir-b .b-search {
+    flex: 1 1 200px; min-width: 160px; max-width: 300px;
+    background: var(--b-card); border: 1px solid var(--b-line); border-radius: 7px;
+    padding: 7px 11px; color: var(--b-fg); font: inherit;
+  }
+  #dir-b .b-search::placeholder { color: var(--b-fg-3); }
+  #dir-b .b-search:focus { outline: none; border-color: var(--b-accent); box-shadow: 0 0 0 3px var(--b-accent-wash); }
+  #dir-b .b-chip {
+    appearance: none; background: var(--b-card); border: 1px solid var(--b-line);
+    color: var(--b-fg-2); font: inherit; font-size: 12.5px; padding: 6px 13px;
+    border-radius: 999px; cursor: pointer;
+  }
+  #dir-b .b-chip:hover { color: var(--b-fg); border-color: #2f3641; }
+  #dir-b .b-chip:focus-visible { outline: 2px solid var(--b-accent); outline-offset: 1px; }
+  #dir-b .b-chip[aria-pressed="true"] { background: var(--b-accent); border-color: var(--b-accent); color: #0d0f13; font-weight: 600; }
+  #dir-b .b-spacer { flex: 1 1 auto; }
+  #dir-b .b-who { font-size: 12px; color: var(--b-fg-3); }
+  #dir-b .b-btn {
+    appearance: none; background: var(--b-card-2); border: 1px solid var(--b-line);
+    color: var(--b-fg); font: inherit; font-size: 12.5px; padding: 6px 13px;
+    border-radius: 7px; cursor: pointer;
+  }
+  #dir-b .b-btn:hover { background: #202530; }
+  #dir-b .b-btn:focus-visible { outline: 2px solid var(--b-accent); outline-offset: 1px; }
+  #dir-b .b-btn--primary { background: var(--b-accent); border-color: var(--b-accent); color: #0d0f13; font-weight: 600; }
+
+  #dir-b .b-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 13px; }
+  #dir-b .b-alloff {
+    display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+    background: rgba(251,191,36,.06); border: 1px solid #4a3a15;
+    border-radius: 9px; margin-bottom: 14px;
+  }
+  #dir-b .b-alloff__i { color: #fbbf24; font-size: 13px; line-height: 1.3; flex: none; }
+  #dir-b .b-alloff__t { font-weight: 600; font-size: 12.5px; color: #f5d896; }
+  #dir-b .b-alloff__d { font-size: 11.5px; color: var(--b-fg-2); margin-top: 3px; line-height: 1.45; }
+
+  #dir-b .b-card {
+    background: var(--b-card); border: 1px solid var(--b-line); border-radius: var(--b-r);
+    padding: 15px 16px 14px; display: flex; flex-direction: column; gap: 12px;
+  }
+  #dir-b .b-card--default { border-color: var(--b-accent-line); background: linear-gradient(180deg, var(--b-accent-wash), transparent 62%), var(--b-card); }
+  #dir-b .b-card--off { opacity: .58; }
+
+  #dir-b .b-card__top { display: flex; align-items: flex-start; gap: 10px; }
+  #dir-b .b-card__id { flex: 1; min-width: 0; }
+  #dir-b .b-card__name { font-size: 15.5px; font-weight: 650; letter-spacing: -.2px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  #dir-b .b-card__sub { font-size: 11px; color: var(--b-fg-3); margin-top: 3px; }
+  #dir-b .b-tag {
+    font-size: 9px; letter-spacing: .7px; font-weight: 700; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 4px; border: 1px solid #2c6a58; color: #4fe0a4; background: rgba(61,220,151,.08);
+  }
+  #dir-b .b-tag--def { border-color: var(--b-accent-line); color: var(--b-accent); background: var(--b-accent-wash); }
+
+  #dir-b .b-sw {
+    appearance: none; width: 38px; height: 21px; border-radius: 999px; flex: none;
+    background: var(--b-off); border: 0; cursor: pointer; position: relative; transition: background .13s ease;
+  }
+  #dir-b .b-sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+    border-radius: 50%; background: #fff; transition: transform .13s ease;
+  }
+  #dir-b .b-sw[aria-checked="true"] { background: var(--b-on); }
+  #dir-b .b-sw[aria-checked="true"]::after { transform: translateX(17px); }
+  #dir-b .b-sw:focus-visible { outline: 2px solid var(--b-accent); outline-offset: 2px; }
+  #dir-b .b-sw:disabled { opacity: .4; cursor: not-allowed; }
+
+  #dir-b .b-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  #dir-b .b-fact__k { font-size: 9px; letter-spacing: .8px; font-weight: 600; color: var(--b-fg-3); text-transform: uppercase; display: block; margin-bottom: 3px; }
+  #dir-b .b-fact__v { font-size: 12.5px; color: var(--b-fg); }
+  #dir-b .b-fact__v.dim { color: var(--b-fg-3); }
+  #dir-b .b-fact--wide { grid-column: 1 / -1; }
+  #dir-b .b-models { display: flex; flex-wrap: wrap; gap: 4px; }
+  #dir-b .b-model {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px;
+    background: var(--b-card-2); border: 1px solid var(--b-line); color: var(--b-fg-2);
+    padding: 2px 6px; border-radius: 4px;
+  }
+
+  #dir-b .b-card__foot {
+    display: flex; align-items: center; gap: 8px; padding-top: 11px;
+    border-top: 1px solid var(--b-line); margin-top: auto;
+  }
+  #dir-b .b-status { font-size: 11.5px; color: var(--b-fg-2); display: flex; align-items: center; gap: 6px; flex: 1; }
+  #dir-b .b-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--b-on); }
+  #dir-b .b-dot--off { background: var(--b-off); }
+  #dir-b .b-link {
+    appearance: none; background: none; border: 0; color: var(--b-fg-2);
+    font: inherit; font-size: 11.5px; cursor: pointer; padding: 3px 6px; border-radius: 4px;
+  }
+  #dir-b .b-link:hover { color: var(--b-fg); background: var(--b-card-2); }
+  #dir-b .b-link:focus-visible { outline: 2px solid var(--b-accent); outline-offset: 1px; }
+  #dir-b .b-link--def { color: var(--b-accent); font-weight: 600; }
+  #dir-b .b-link--def[disabled] { color: var(--b-fg-3); font-weight: 400; cursor: default; }
+  #dir-b .b-link--def[disabled]:hover { background: none; }
+  #dir-b .b-foot { font-size: 11.5px; color: var(--b-fg-3); margin-top: 18px; }
+
+  /* =========================================================================
+     DIRECTION C — "Split panel"
+     ========================================================================= */
+  #dir-c {
+    --c-bg: #0f1114;
+    --c-rail: #14171c;
+    --c-detail: #191d23;
+    --c-line: #242931;
+    --c-line-soft: #1d2128;
+    --c-fg: #eceff4;
+    --c-fg-2: #98a0ac;
+    --c-fg-3: #69707b;
+    --c-accent: #6ee7b7;
+    --c-accent-2: #34d399;
+    --c-accent-wash: rgba(110,231,183,.08);
+    --c-on: #34d399;
+    --c-off: #474e58;
+    --c-r: 10px;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--c-bg);
+    color: var(--c-fg);
+    min-height: 640px;
+    padding: 26px 30px 34px;
+  }
+  #dir-c .c-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  #dir-c .c-head { display: flex; align-items: baseline; gap: 11px; margin-bottom: 7px; }
+  #dir-c .c-h1 { font-size: 27px; font-weight: 650; letter-spacing: -.5px; margin: 0; }
+  #dir-c .c-count { font-size: 12.5px; color: var(--c-fg-3); }
+  #dir-c .c-sub { font-size: 12.5px; color: var(--c-fg-2); max-width: 760px; margin: 0 0 18px; line-height: 1.5; }
+
+  #dir-c .c-split { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 900px) { #dir-c .c-split { grid-template-columns: 1fr; } }
+
+  #dir-c .c-rail { background: var(--c-rail); border: 1px solid var(--c-line); border-radius: var(--c-r); overflow: hidden; }
+  #dir-c .c-railtop { padding: 10px; border-bottom: 1px solid var(--c-line); display: flex; gap: 7px; }
+  #dir-c .c-search {
+    flex: 1; min-width: 0; background: var(--c-bg); border: 1px solid var(--c-line);
+    border-radius: 6px; padding: 6px 9px; color: var(--c-fg); font: inherit; font-size: 12.5px;
+  }
+  #dir-c .c-search::placeholder { color: var(--c-fg-3); }
+  #dir-c .c-search:focus { outline: none; border-color: var(--c-accent-2); box-shadow: 0 0 0 3px var(--c-accent-wash); }
+  #dir-c .c-add {
+    appearance: none; background: var(--c-accent-2); border: 0; color: #06281c;
+    font: inherit; font-weight: 700; font-size: 15px; line-height: 1; width: 30px;
+    border-radius: 6px; cursor: pointer; flex: none;
+  }
+  #dir-c .c-add:hover { background: var(--c-accent); }
+  #dir-c .c-add:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+
+  #dir-c .c-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px 12px; background: none; border: 0; border-bottom: 1px solid var(--c-line-soft);
+    color: inherit; font: inherit; text-align: left; cursor: pointer; position: relative;
+  }
+  #dir-c .c-item:hover { background: #181c22; }
+  #dir-c .c-item:focus-visible { outline: 2px solid var(--c-accent-2); outline-offset: -2px; }
+  #dir-c .c-item[aria-current="true"] { background: #1c2129; }
+  #dir-c .c-item[aria-current="true"]::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2.5px; background: var(--c-accent-2);
+  }
+  #dir-c .c-item__body { flex: 1; min-width: 0; }
+  #dir-c .c-item__name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  #dir-c .c-item__meta { font-size: 11px; color: var(--c-fg-3); margin-top: 2px; }
+  #dir-c .c-item--off .c-item__name, #dir-c .c-item--off .c-item__meta { opacity: .5; }
+  #dir-c .c-star { font-size: 9px; letter-spacing: .6px; font-weight: 700; color: var(--c-accent); text-transform: uppercase; }
+
+  #dir-c .c-sw {
+    appearance: none; width: 32px; height: 18px; border-radius: 999px; flex: none;
+    background: var(--c-off); border: 0; cursor: pointer; position: relative; transition: background .13s ease;
+  }
+  #dir-c .c-sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+    border-radius: 50%; background: #fff; transition: transform .13s ease;
+  }
+  #dir-c .c-sw[aria-checked="true"] { background: var(--c-on); }
+  #dir-c .c-sw[aria-checked="true"]::after { transform: translateX(14px); }
+  #dir-c .c-sw:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+  #dir-c .c-sw:disabled { opacity: .4; cursor: not-allowed; }
+
+  #dir-c .c-alloff {
+    display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+    background: rgba(251,191,36,.06); border: 1px solid #4a3a15;
+    border-radius: var(--c-r); margin-bottom: 14px;
+  }
+  #dir-c .c-alloff__i { color: #fbbf24; font-size: 13px; line-height: 1.3; flex: none; }
+  #dir-c .c-alloff__t { font-weight: 600; font-size: 12.5px; color: #f5d896; }
+  #dir-c .c-alloff__d { font-size: 11.5px; color: var(--c-fg-2); margin-top: 3px; line-height: 1.45; }
+  #dir-c .c-detail { background: var(--c-detail); border: 1px solid var(--c-line); border-radius: var(--c-r); padding: 20px 22px 20px; }
+  #dir-c .c-dhead { display: flex; align-items: flex-start; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--c-line); }
+  #dir-c .c-dhead__id { flex: 1; min-width: 0; }
+  #dir-c .c-dname { font-size: 21px; font-weight: 650; letter-spacing: -.35px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  #dir-c .c-did { font-size: 11.5px; color: var(--c-fg-3); margin-top: 5px; }
+  #dir-c .c-tag {
+    font-size: 9px; letter-spacing: .7px; font-weight: 700; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 4px; border: 1px solid #2c6a58; color: var(--c-accent); background: var(--c-accent-wash);
+  }
+  #dir-c .c-swwrap { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  #dir-c .c-swlabel { font-size: 10px; letter-spacing: .7px; font-weight: 600; text-transform: uppercase; color: var(--c-fg-3); }
+
+  #dir-c .c-props { display: grid; grid-template-columns: 132px 1fr; gap: 0; margin-top: 4px; }
+  #dir-c .c-prop__k {
+    font-size: 11px; color: var(--c-fg-3); padding: 11px 14px 11px 0;
+    border-bottom: 1px solid var(--c-line-soft);
+  }
+  #dir-c .c-prop__v { font-size: 12.5px; padding: 11px 0; border-bottom: 1px solid var(--c-line-soft); min-width: 0; }
+  #dir-c .c-props > :nth-last-child(-n+2) { border-bottom: 0; }
+  #dir-c .c-prop__v .dim { color: var(--c-fg-3); }
+  #dir-c .c-note { font-size: 11.5px; color: var(--c-fg-3); margin-top: 4px; line-height: 1.45; }
+  #dir-c .c-models { display: flex; flex-wrap: wrap; gap: 4px; }
+  #dir-c .c-model {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px;
+    background: #12161b; border: 1px solid var(--c-line); color: var(--c-fg-2);
+    padding: 2px 6px; border-radius: 4px;
+  }
+  #dir-c .c-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c-on); display: inline-block; margin-right: 6px; }
+  #dir-c .c-dot--off { background: var(--c-off); }
+
+  #dir-c .c-actions { display: flex; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--c-line); flex-wrap: wrap; }
+  #dir-c .c-btn {
+    appearance: none; background: #1f242c; border: 1px solid var(--c-line); color: var(--c-fg);
+    font: inherit; font-size: 12.5px; padding: 7px 14px; border-radius: 7px; cursor: pointer;
+  }
+  #dir-c .c-btn:hover { background: #252b34; }
+  #dir-c .c-btn:focus-visible { outline: 2px solid var(--c-accent-2); outline-offset: 1px; }
+  #dir-c .c-btn--primary { background: var(--c-accent-2); border-color: var(--c-accent-2); color: #06281c; font-weight: 600; }
+  #dir-c .c-btn--primary:hover { background: var(--c-accent); }
+  #dir-c .c-btn--primary[disabled] { background: #1f242c; border-color: var(--c-line); color: var(--c-fg-3); cursor: default; font-weight: 400; }
+  #dir-c .c-btn--primary[disabled]:hover { background: #1f242c; }
+  #dir-c .c-btn--danger { color: #f87171; }
+  #dir-c .c-btn--danger:hover { background: rgba(248,113,113,.09); border-color: #5c2b2b; }
+  #dir-c .c-foot { font-size: 11.5px; color: var(--c-fg-3); margin-top: 16px; }
+</style>
+
+<div class="shell">
+  <div class="shell__bar" role="tablist" aria-label="Design directions">
+    <button class="shell__tab" role="tab" id="tab-a" aria-controls="dir-a" aria-selected="true">A <span class="nm">· Roster</span><span class="k">1</span></button>
+    <button class="shell__tab" role="tab" id="tab-b" aria-controls="dir-b" aria-selected="false" tabindex="-1">B <span class="nm">· Provider cards</span><span class="k">2</span></button>
+    <button class="shell__tab" role="tab" id="tab-c" aria-controls="dir-c" aria-selected="false" tabindex="-1">C <span class="nm">· Split panel</span><span class="k">3</span></button>
+  </div>
+  <div class="shell__thesis" id="thesis"></div>
+</div>
+
+<!-- ======================= A — ROSTER ======================= -->
+<section id="dir-a" role="tabpanel" aria-labelledby="tab-a">
+  <div class="a-head">
+    <h1 class="a-h1">Providers</h1>
+    <span class="a-count">5 providers · 4 enabled</span>
+  </div>
+  <p class="a-sub">Every provider this account can reach. Enabled providers are available to your agents; the default is the one new agents launch against. Agents already running stay where they are.</p>
+
+  <div class="a-strip" id="a-strip"></div>
+
+  <div id="a-alloff"></div>
+
+  <div class="a-toolbar">
+    <input class="a-search" id="a-search" type="search" placeholder="Filter providers" aria-label="Filter providers">
+    <button class="a-chip" aria-pressed="true">All</button>
+    <button class="a-chip" aria-pressed="false">You own</button>
+    <button class="a-chip" aria-pressed="false">Enabled</button>
+    <button class="a-chip" aria-pressed="false">Router on</button>
+    <span class="a-spacer"></span>
+    <button class="a-btn" title="Reload providers">⟳</button>
+    <button class="a-btn a-btn--primary">+ New provider</button>
+  </div>
+
+  <div class="a-tablewrap">
+    <div class="a-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:56px">On</th>
+            <th style="width:62px">Default</th>
+            <th>Provider</th>
+            <th>Who can join</th>
+            <th>Router</th>
+            <th>Owner</th>
+            <th style="width:96px">Status</th>
+            <th style="width:44px"></th>
+          </tr>
+        </thead>
+        <tbody id="a-rows"></tbody>
+      </table>
+    </div>
+  </div>
+  <p class="a-foot">A provider is where new agents get their credentials. Each agent picks its own model from its header.</p>
+</section>
+
+<!-- ======================= B — PROVIDER CARDS ======================= -->
+<section id="dir-b" role="tabpanel" aria-labelledby="tab-b" hidden>
+  <div class="b-head">
+    <h1 class="b-h1">Providers</h1>
+    <span class="b-count">5 providers · 4 enabled</span>
+  </div>
+  <p class="b-sub">Every provider this account can reach. Enabled providers are available to your agents; the default is the one new agents launch against. Agents already running stay where they are.</p>
+
+  <div class="b-toolbar">
+    <input class="b-search" id="b-search" type="search" placeholder="Filter providers" aria-label="Filter providers">
+    <button class="b-chip" aria-pressed="true">All</button>
+    <button class="b-chip" aria-pressed="false">You own</button>
+    <button class="b-chip" aria-pressed="false">Enabled</button>
+    <button class="b-chip" aria-pressed="false">Router on</button>
+    <span class="b-spacer"></span>
+    <span class="b-who">tony@autonomous.ai</span>
+    <button class="b-btn" title="Reload providers">⟳</button>
+    <button class="b-btn b-btn--primary">+ New provider</button>
+  </div>
+
+  <div id="b-alloff"></div>
+  <div class="b-grid" id="b-grid"></div>
+  <p class="b-foot">A provider is where new agents get their credentials. Each agent picks its own model from its header.</p>
+</section>
+
+<!-- ======================= C — SPLIT PANEL ======================= -->
+<section id="dir-c" role="tabpanel" aria-labelledby="tab-c" hidden>
+  <div class="c-head">
+    <h1 class="c-h1">Providers</h1>
+    <span class="c-count">5 providers · 4 enabled · tony@autonomous.ai</span>
+  </div>
+  <p class="c-sub">Every provider this account can reach. Enabled providers are available to your agents; the default is the one new agents launch against. Agents already running stay where they are.</p>
+
+  <div id="c-alloff"></div>
+
+  <div class="c-split">
+    <div class="c-rail">
+      <div class="c-railtop">
+        <input class="c-search" id="c-search" type="search" placeholder="Filter providers" aria-label="Filter providers">
+        <button class="c-add" title="New provider" aria-label="New provider">+</button>
+      </div>
+      <div id="c-list" role="list"></div>
+    </div>
+    <div class="c-detail" id="c-detail"></div>
+  </div>
+  <p class="c-foot">A provider is where new agents get their credentials. Each agent picks its own model from its header.</p>
+</section>
+
+<script>
+(function () {
+  /* ---------------- shared data — identical across all three directions ---------------- */
+  var providers = [
+    {
+      id: 'grid-3378218621364f16', name: 'autonomous.ai', enabled: true, isDefault: true,
+      owned: false, owner: 'dev@autonomous.ai', join: '@autonomous.ai emails',
+      joinNote: 'Anyone with an @autonomous.ai email can use this provider, or start an AI node to power it, as well as the people you invite.',
+      router: true, models: ['claude/opus-5', 'claude/sonnet-5', 'openai/gpt-5'],
+      status: 'active', type: 'private-domain', signaling: 'wss://relay.autonomous.ai/grid',
+      created: 'Mar 4, 2026', description: 'Company-wide provider for all @autonomous.ai accounts.'
+    },
+    {
+      id: 'grid-e25bf7fbbb214cab', name: 'DDDD', enabled: true, isDefault: false,
+      owned: true, owner: 'tony@autonomous.ai', join: 'Invite only',
+      joinNote: 'Only the people you invite can use this provider, or start an AI node to power it.',
+      router: true, models: ['claude/sonnet-5'],
+      status: 'active', type: 'permissioned', signaling: 'wss://relay.autonomous.ai/grid',
+      created: 'Aug 21, 2026', description: null
+    },
+    {
+      id: 'grid-f8b91113662d45ad', name: 'BBB', enabled: false, isDefault: false,
+      owned: true, owner: 'tony@autonomous.ai', join: 'domain-restricted',
+      joinNote: 'Anyone with a matching email domain can use this provider, as well as the people you invite.',
+      router: false, models: [],
+      status: 'active', type: 'private-domain', signaling: 'wss://relay.autonomous.ai/grid',
+      created: 'Jul 2, 2026', description: null
+    },
+    {
+      id: 'grid-98d3bff06b0c44ed', name: 'AAA', enabled: true, isDefault: false,
+      owned: true, owner: 'tony@autonomous.ai', join: 'Invite only',
+      joinNote: 'Only the people you invite can use this provider, or start an AI node to power it.',
+      router: true, models: ['claude/haiku-4-5'],
+      status: 'active', type: 'permissioned', signaling: 'wss://relay.autonomous.ai/grid',
+      created: 'Jun 18, 2026', description: null
+    },
+    {
+      id: 'grid-71c40a92e8b3f204', name: 'Research', enabled: true, isDefault: false,
+      owned: false, owner: 'lab@autonomous.ai', join: 'Anyone signed in',
+      joinNote: 'Anyone signed in can use it. Only the people on the list can start an AI node to power it.',
+      router: false, models: [],
+      status: 'active', type: 'permissioned-providers', signaling: 'wss://relay.autonomous.ai/grid',
+      created: 'Feb 11, 2026', description: 'Shared pool for evaluation runs.'
+    }
+  ];
+
+  function routerText(p) {
+    if (!p.router) return 'Off';
+    if (p.models.length === 0) return 'On';
+    if (p.models.length === 1) return 'On · 1 model';
+    return 'On · ' + p.models.length + ' models';
+  }
+  var ALLOFF_TITLE = 'No provider enabled';
+  var ALLOFF_BODY = 'New agents fall back to each engine\u2019s own account \u2014 models and billing come from the engine, the way the app worked before providers.';
+  function allOff() { return providers.every(function (p) { return !p.enabled; }); }
+  function enabledCount() { return providers.filter(function (p) { return p.enabled; }).length; }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /* ---------------- shell tabs ---------------- */
+  var theses = {
+    'tab-a': '<b>A · Roster</b> — one dense table, a switch per row and the default as a separate column. Bets you come here to scan and compare providers side by side.',
+    'tab-b': '<b>B · Provider cards</b> — one card per provider with every fact on its face, nothing behind a drawer. Bets you come here to read one provider properly.',
+    'tab-c': '<b>C · Split panel</b> — a compact list on the left, full detail on the right. Bets that "see all provider information" means depth, not breadth.'
+  };
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.shell__tab'));
+  var thesisEl = document.getElementById('thesis');
+  var active = 'tab-a';
+
+  function select(id) {
+    active = id;
+    tabs.forEach(function (t) {
+      var on = t.id === id;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    thesisEl.innerHTML = theses[id];
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { select(t.id); });
+    t.addEventListener('keydown', function (e) {
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      var n = tabs[(i + d + tabs.length) % tabs.length];
+      n.focus(); select(n.id);
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    var i = ['1', '2', '3'].indexOf(e.key);
+    if (i > -1) { tabs[i].focus(); select(tabs[i].id); }
+  });
+  select('tab-a');
+
+  /* ---------------- A — roster table ---------------- */
+  function renderA() {
+    var def = providers.filter(function (p) { return p.isDefault; })[0];
+    var routerOn = providers.filter(function (p) { return p.enabled && p.router; });
+    var modelCount = routerOn.reduce(function (n, p) { return n + p.models.length; }, 0);
+    document.getElementById('a-strip').innerHTML =
+        '<div class="a-stat"><span class="a-stat__k">Default for new agents</span><span class="a-stat__v">'
+        + (def ? esc(def.name) + '<span class="a-mono">' + esc(def.id) + '</span>'
+               : '<span style="color:var(--a-fg-3);font-weight:400">None \u2014 engines use their own account</span>')
+        + '</span></div>'
+      + '<div class="a-stat"><span class="a-stat__k">Enabled</span><span class="a-stat__v'
+        + (enabledCount() ? ' on' : '') + '">' + enabledCount() + ' of ' + providers.length + '</span></div>'
+      + '<div class="a-stat"><span class="a-stat__k">Router models</span><span class="a-stat__v">'
+        + modelCount + ' across ' + routerOn.length + ' provider' + (routerOn.length === 1 ? '' : 's') + '</span></div>'
+      + '<div class="a-stat"><span class="a-stat__k">Signed in as</span>'
+        + '<span class="a-stat__v" style="font-size:13px;font-weight:400;color:var(--a-fg-2)">tony@autonomous.ai</span></div>';
+
+    var head = document.querySelector('#dir-a .a-count');
+    if (head) head.textContent = providers.length + ' providers \u00b7 ' + enabledCount() + ' enabled';
+
+    document.getElementById('a-alloff').innerHTML = allOff()
+      ? '<div class="a-alloff"><span class="a-alloff__i">\u26a0</span><div>'
+        + '<div class="a-alloff__t">' + ALLOFF_TITLE + '</div>'
+        + '<div class="a-alloff__d">' + ALLOFF_BODY + '</div></div></div>'
+      : '';
+    var tb = document.getElementById('a-rows');
+    tb.innerHTML = providers.map(function (p, i) {
+      var cls = [];
+      if (p.isDefault) cls.push('a-default');
+      if (!p.enabled) cls.push('a-off');
+      return '<tr class="' + cls.join(' ') + '">'
+        + '<td><button class="a-sw" role="switch" aria-checked="' + p.enabled + '" data-a-sw="' + i + '" aria-label="Enable ' + esc(p.name) + '"></button></td>'
+        + '<td><button class="a-radio" role="radio" aria-checked="' + p.isDefault + '" data-a-def="' + i + '"' + (p.enabled ? '' : ' disabled') + ' aria-label="Make ' + esc(p.name) + ' the default"></button></td>'
+        + '<td><div class="a-namecell"><span class="a-name">' + esc(p.name) + '</span>'
+          + (p.owned ? '<span class="a-badge">Yours</span>' : '')
+          + (p.isDefault ? '<span class="a-badge a-badge--def">Default</span>' : '')
+          + '</div><span class="a-id a-mono">' + esc(p.id) + '</span></td>'
+        + '<td>' + esc(p.join) + '</td>'
+        + '<td>' + (p.router
+            ? '<span>' + routerText(p) + '</span>' + (p.models.length ? '<div class="a-models a-mono">' + p.models.map(esc).join(' · ') + '</div>' : '')
+            : '<span class="a-muted">Off</span>') + '</td>'
+        + '<td>' + (p.owned ? 'You' : '<span class="a-muted">' + esc(p.owner) + '</span>') + '</td>'
+        + '<td><span class="a-dot ' + (p.enabled ? 'a-dot--on' : 'a-dot--off') + '"></span>' + (p.enabled ? esc(p.status) : '<span class="a-muted">disabled</span>') + '</td>'
+        + '<td><button class="a-btn" style="padding:4px 8px" aria-label="Details for ' + esc(p.name) + '">›</button></td>'
+        + '</tr>';
+    }).join('');
+
+    tb.querySelectorAll('[data-a-sw]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var p = providers[+b.dataset.aSw];
+        p.enabled = !p.enabled;
+        if (!p.enabled) p.isDefault = false;
+        // The default must always be an enabled provider; hand it to the next one.
+        if (!providers.some(function (x) { return x.isDefault; })) {
+          var next = providers.filter(function (x) { return x.enabled; })[0];
+          if (next) next.isDefault = true;
+        }
+        renderA();
+      });
+    });
+    tb.querySelectorAll('[data-a-def]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        providers.forEach(function (x) { x.isDefault = false; });
+        providers[+b.dataset.aDef].isDefault = true;
+        renderA();
+      });
+    });
+  }
+  renderA();
+
+  /* ---------------- B — provider cards ---------------- */
+  function renderB() {
+    document.getElementById('b-alloff').innerHTML = allOff()
+      ? '<div class="b-alloff"><span class="b-alloff__i">\u26a0</span><div>'
+        + '<div class="b-alloff__t">' + ALLOFF_TITLE + '</div>'
+        + '<div class="b-alloff__d">' + ALLOFF_BODY + '</div></div></div>'
+      : '';
+    var bc = document.querySelector('#dir-b .b-count');
+    if (bc) bc.textContent = providers.length + ' providers \u00b7 ' + enabledCount() + ' enabled';
+    var grid = document.getElementById('b-grid');
+    grid.innerHTML = providers.map(function (p, i) {
+      var cls = 'b-card' + (p.isDefault ? ' b-card--default' : '') + (p.enabled ? '' : ' b-card--off');
+      return '<div class="' + cls + '">'
+        + '<div class="b-card__top"><div class="b-card__id">'
+          + '<div class="b-card__name">' + esc(p.name)
+            + (p.owned ? '<span class="b-tag">Yours</span>' : '')
+            + (p.isDefault ? '<span class="b-tag b-tag--def">Default</span>' : '')
+          + '</div><div class="b-card__sub b-mono">' + esc(p.id) + '</div></div>'
+          + '<button class="b-sw" role="switch" aria-checked="' + p.enabled + '" data-b-sw="' + i + '" aria-label="Enable ' + esc(p.name) + '"></button>'
+        + '</div>'
+        + '<div class="b-facts">'
+          + '<div><span class="b-fact__k">Who can join</span><span class="b-fact__v">' + esc(p.join) + '</span></div>'
+          + '<div><span class="b-fact__k">Owner</span><span class="b-fact__v' + (p.owned ? '' : ' dim') + '">' + (p.owned ? 'You' : esc(p.owner)) + '</span></div>'
+          + '<div><span class="b-fact__k">Router</span><span class="b-fact__v' + (p.router ? '' : ' dim') + '">' + routerText(p) + '</span></div>'
+          + '<div><span class="b-fact__k">Created</span><span class="b-fact__v dim">' + esc(p.created) + '</span></div>'
+          + (p.models.length
+              ? '<div class="b-fact--wide"><span class="b-fact__k">Router models</span><div class="b-models">' + p.models.map(function (m) { return '<span class="b-model">' + esc(m) + '</span>'; }).join('') + '</div></div>'
+              : '')
+          + '<div class="b-fact--wide"><span class="b-fact__k">Signaling</span><span class="b-fact__v dim b-mono" style="font-size:11px">' + esc(p.signaling) + '</span></div>'
+        + '</div>'
+        + '<div class="b-card__foot">'
+          + '<span class="b-status"><span class="b-dot' + (p.enabled ? '' : ' b-dot--off') + '"></span>' + (p.enabled ? esc(p.status) : 'disabled') + '</span>'
+          + '<button class="b-link b-link--def" data-b-def="' + i + '"' + (p.isDefault || !p.enabled ? ' disabled' : '') + '>' + (p.isDefault ? 'Default' : 'Make default') + '</button>'
+          + '<button class="b-link">Share</button>'
+          + (p.owned ? '<button class="b-link">Rename</button>' : '')
+        + '</div></div>';
+    }).join('');
+
+    grid.querySelectorAll('[data-b-sw]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var p = providers[+b.dataset.bSw];
+        p.enabled = !p.enabled;
+        if (!p.enabled) p.isDefault = false;
+        if (!providers.some(function (x) { return x.isDefault; })) {
+          var next = providers.filter(function (x) { return x.enabled; })[0];
+          if (next) next.isDefault = true;
+        }
+        renderB();
+      });
+    });
+    grid.querySelectorAll('[data-b-def]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        providers.forEach(function (x) { x.isDefault = false; });
+        providers[+b.dataset.bDef].isDefault = true;
+        renderB();
+      });
+    });
+  }
+  renderB();
+
+  /* ---------------- C — split panel ---------------- */
+  var cSel = 0;
+  function renderC() {
+    document.getElementById('c-alloff').innerHTML = allOff()
+      ? '<div class="c-alloff"><span class="c-alloff__i">\u26a0</span><div>'
+        + '<div class="c-alloff__t">' + ALLOFF_TITLE + '</div>'
+        + '<div class="c-alloff__d">' + ALLOFF_BODY + '</div></div></div>'
+      : '';
+    var cc = document.querySelector('#dir-c .c-count');
+    if (cc) cc.textContent = providers.length + ' providers \u00b7 ' + enabledCount() + ' enabled \u00b7 tony@autonomous.ai';
+    var list = document.getElementById('c-list');
+    list.innerHTML = providers.map(function (p, i) {
+      return '<button class="c-item' + (p.enabled ? '' : ' c-item--off') + '" role="listitem" aria-current="' + (i === cSel) + '" data-c-pick="' + i + '">'
+        + '<span class="c-item__body"><span class="c-item__name">' + esc(p.name)
+          + (p.isDefault ? '<span class="c-star">Default</span>' : '') + '</span>'
+          + '<span class="c-item__meta">' + esc(p.join) + ' · ' + routerText(p) + '</span></span>'
+        + '<span class="c-sw" role="switch" aria-checked="' + p.enabled + '" data-c-sw="' + i + '" tabindex="0" aria-label="Enable ' + esc(p.name) + '"></span>'
+        + '</button>';
+    }).join('');
+
+    var d = document.getElementById('c-detail');
+    {
+      var p = providers[cSel];
+      d.innerHTML = '<div class="c-dhead"><div class="c-dhead__id">'
+        + '<div class="c-dname">' + esc(p.name)
+          + (p.owned ? '<span class="c-tag">Yours</span>' : '')
+          + (p.isDefault ? '<span class="c-tag">Default</span>' : '') + '</div>'
+        + '<div class="c-did c-mono">' + esc(p.id) + '</div></div>'
+        + '<div class="c-swwrap"><span class="c-swlabel">' + (p.enabled ? 'Enabled' : 'Disabled') + '</span>'
+        + '<button class="c-sw" role="switch" aria-checked="' + p.enabled + '" data-c-sw="' + cSel + '" aria-label="Enable ' + esc(p.name) + '"></button></div></div>'
+        + '<div class="c-props">'
+          + (p.description ? '<div class="c-prop__k">Description</div><div class="c-prop__v">' + esc(p.description) + '</div>' : '')
+          + '<div class="c-prop__k">Status</div><div class="c-prop__v"><span class="c-dot' + (p.enabled ? '' : ' c-dot--off') + '"></span>' + (p.enabled ? esc(p.status) : 'disabled') + '</div>'
+          + '<div class="c-prop__k">Who can join</div><div class="c-prop__v">' + esc(p.join) + '<div class="c-note">' + esc(p.joinNote) + '</div></div>'
+          + '<div class="c-prop__k">Owner</div><div class="c-prop__v">' + (p.owned ? 'You <span class="dim">(' + esc(p.owner) + ')</span>' : '<span class="dim">' + esc(p.owner) + '</span>') + '</div>'
+          + '<div class="c-prop__k">Router</div><div class="c-prop__v">' + routerText(p)
+            + (p.models.length ? '<div class="c-models" style="margin-top:6px">' + p.models.map(function (m) { return '<span class="c-model">' + esc(m) + '</span>'; }).join('') + '</div>' : '') + '</div>'
+          + '<div class="c-prop__k">Signaling</div><div class="c-prop__v c-mono dim" style="font-size:11.5px">' + esc(p.signaling) + '</div>'
+          + '<div class="c-prop__k">Provider type</div><div class="c-prop__v c-mono dim" style="font-size:11.5px">' + esc(p.type) + '</div>'
+          + '<div class="c-prop__k">Created</div><div class="c-prop__v dim">' + esc(p.created) + '</div>'
+        + '</div>'
+        + '<div class="c-actions">'
+          + '<button class="c-btn c-btn--primary" data-c-def="' + cSel + '"' + (p.isDefault || !p.enabled ? ' disabled' : '') + '>' + (p.isDefault ? 'Current default' : 'Make default') + '</button>'
+          + '<button class="c-btn">Share</button>'
+          + (p.owned ? '<button class="c-btn">Rename</button><button class="c-btn c-btn--danger">Delete</button>' : '')
+        + '</div>';
+    }
+
+    document.querySelectorAll('#dir-c [data-c-pick]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        if (e.target.closest('[data-c-sw]')) return;
+        cSel = +b.dataset.cPick; renderC();
+      });
+    });
+    document.querySelectorAll('#dir-c [data-c-sw]').forEach(function (b) {
+      function toggle(e) {
+        e.stopPropagation();
+        var p = providers[+b.dataset.cSw];
+        p.enabled = !p.enabled;
+        if (!p.enabled) p.isDefault = false;
+        if (!providers.some(function (x) { return x.isDefault; })) {
+          var next = providers.filter(function (x) { return x.enabled; })[0];
+          if (next) next.isDefault = true;
+        }
+        renderC();
+      }
+      b.addEventListener('click', toggle);
+      b.addEventListener('keydown', function (e) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(e); } });
+    });
+    document.querySelectorAll('#dir-c [data-c-def]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        providers.forEach(function (x) { x.isDefault = false; });
+        providers[+b.dataset.cDef].isDefault = true;
+        renderC();
+      });
+    });
+  }
+  renderC();
+})();
+</script>

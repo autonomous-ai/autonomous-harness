@@ -1,0 +1,688 @@
+<title>Harness Desktop · Environment Setup Prototype</title>
+
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #0d0f13;
+    --window: #111318;
+    --panel: #171a20;
+    --card: #1d2027;
+    --card-strong: #232731;
+    --line: #2b303a;
+    --line-strong: #3a414e;
+    --text: #f2f4f8;
+    --muted: #9ba4b2;
+    --faint: #6f7886;
+    --blue: #5b8cff;
+    --blue-strong: #3f73ed;
+    --green: #42d392;
+    --amber: #f4bf50;
+    --red: #ff7070;
+    --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-width: 1080px;
+    min-height: 100vh;
+    background: var(--page);
+    color: var(--text);
+  }
+  button, input { font: inherit; }
+  button { color: inherit; }
+
+  .prototype-bar {
+    height: 62px;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #22262e;
+    background: #101217;
+  }
+  .prototype-title { display: flex; align-items: baseline; gap: 12px; }
+  .prototype-title strong { font-size: 14px; letter-spacing: .01em; }
+  .prototype-title span { color: var(--faint); font-size: 12px; }
+  .prototype-actions { display: flex; align-items: center; gap: 8px; }
+  .jump-button {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .jump-button:hover, .jump-button.active { border-color: var(--line-strong); background: #1a1d24; color: var(--text); }
+
+  .canvas { padding: 28px; }
+  .app-window {
+    max-width: 1240px;
+    height: calc(100vh - 118px);
+    min-height: 690px;
+    margin: 0 auto;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: 58px 1fr;
+    border: 1px solid #303640;
+    border-radius: 14px;
+    background: var(--window);
+    box-shadow: var(--shadow);
+  }
+  .titlebar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: #15181e;
+  }
+  .traffic-lights { display: flex; gap: 8px; }
+  .traffic-lights i { width: 11px; height: 11px; border-radius: 50%; background: #454b56; }
+  .traffic-lights i:first-child { background: #ff6159; }
+  .traffic-lights i:nth-child(2) { background: #ffbd2e; }
+  .traffic-lights i:nth-child(3) { background: #28c941; }
+  .brand { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 650; }
+  .brand img { width: 25px; height: 25px; border-radius: 6px; }
+  .secure-note { justify-self: end; color: var(--faint); font-size: 11px; }
+
+  .app-body { min-height: 0; display: grid; grid-template-columns: 268px 1fr; }
+  .setup-rail {
+    padding: 34px 24px;
+    border-right: 1px solid var(--line);
+    background: #13161b;
+  }
+  .rail-eyebrow { margin: 0 0 8px; color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .rail-title { margin: 0 0 32px; font-size: 20px; line-height: 1.25; }
+  .steps { display: grid; gap: 4px; }
+  .step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 11px;
+    min-height: 70px;
+    padding: 8px 7px;
+    border-radius: 9px;
+    color: var(--faint);
+  }
+  .step::after {
+    content: "";
+    position: absolute;
+    top: 40px;
+    bottom: -8px;
+    left: 21px;
+    width: 1px;
+    background: var(--line);
+  }
+  .step:last-child::after { display: none; }
+  .step.active { background: #1a1e26; color: var(--text); }
+  .step.done { color: var(--muted); }
+  .step-number {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    background: #171a20;
+    font-size: 12px;
+    font-weight: 700;
+    z-index: 1;
+  }
+  .step.active .step-number { border-color: var(--blue); background: var(--blue); color: white; }
+  .step.done .step-number { border-color: rgba(66, 211, 146, .48); background: rgba(66, 211, 146, .12); color: var(--green); }
+  .step-copy strong { display: block; margin: 3px 0 4px; color: inherit; font-size: 13px; }
+  .step-copy small { display: block; color: var(--faint); font-size: 11px; line-height: 1.4; }
+  .rail-help {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-size: 11px;
+    line-height: 1.55;
+  }
+
+  .main { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; }
+  .screen { min-height: 0; overflow: auto; padding: 42px 48px 32px; }
+  .screen-inner { max-width: 760px; margin: 0 auto; }
+  .eyebrow { margin-bottom: 12px; color: var(--blue); font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -.025em; line-height: 1.15; }
+  .lead { max-width: 680px; margin: 13px 0 28px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+  .notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    margin: 0 0 18px;
+    padding: 13px 15px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #171a20;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .notice strong { color: var(--text); }
+  .notice-mark { color: var(--blue); font-weight: 800; }
+  .notice.warning { border-color: rgba(244, 191, 80, .35); background: rgba(244, 191, 80, .06); }
+  .notice.warning .notice-mark { color: var(--amber); }
+  .notice.error { border-color: rgba(255, 112, 112, .38); background: rgba(255, 112, 112, .06); }
+  .notice.error .notice-mark { color: var(--red); }
+
+  .check-list, .plan-list { overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+  .check-row, .plan-row {
+    display: grid;
+    align-items: center;
+    gap: 14px;
+    padding: 15px 17px;
+    border-bottom: 1px solid var(--line);
+  }
+  .check-row:last-child, .plan-row:last-child { border-bottom: 0; }
+  .check-row { grid-template-columns: 22px 1fr auto; }
+  .plan-row { grid-template-columns: 32px 1fr auto; }
+  .status-dot { width: 9px; height: 9px; margin-left: 4px; border-radius: 50%; background: #555d69; }
+  .status-dot.checking { background: var(--blue); box-shadow: 0 0 0 4px rgba(91, 140, 255, .12); animation: pulse 1.2s infinite; }
+  .status-dot.ready { background: var(--green); }
+  @keyframes pulse { 50% { opacity: .4; } }
+  .row-copy strong { display: block; margin-bottom: 3px; font-size: 13px; }
+  .row-copy small { color: var(--faint); font-size: 11px; }
+  .row-status { color: var(--muted); font-size: 11px; }
+  .row-status.ready { color: var(--green); }
+  .plan-index { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: var(--card-strong); color: var(--muted); font-size: 11px; font-weight: 750; }
+  .tag { padding: 4px 7px; border: 1px solid var(--line); border-radius: 99px; color: var(--faint); font-size: 10px; white-space: nowrap; }
+  .tag.required { border-color: rgba(91, 140, 255, .35); color: #91b1ff; }
+  .tag.optional { color: var(--muted); }
+
+  details { margin-top: 14px; border: 1px solid var(--line); border-radius: 9px; background: #14171c; }
+  summary { padding: 13px 15px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .details-body { padding: 0 15px 15px; }
+  pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  pre { margin: 0; white-space: pre-wrap; color: #cbd5e1; font-size: 11px; line-height: 1.65; }
+
+  .mode-switch { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: #12151a; }
+  .mode-button { padding: 8px 16px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 650; }
+  .mode-button.active { background: var(--card-strong); color: var(--text); }
+  .mode-description { margin: 14px 0 22px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+  .install-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; }
+  .setup-card { padding: 18px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+  .setup-card h2 { margin: 0 0 5px; font-size: 15px; }
+  .setup-card > p { margin: 0 0 18px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .mini-steps { display: grid; gap: 2px; }
+  .mini-step { display: grid; grid-template-columns: 18px 1fr auto; gap: 9px; align-items: center; padding: 8px 0; color: var(--muted); font-size: 11px; }
+  .mini-icon { width: 16px; height: 16px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--faint); font-size: 9px; }
+  .mini-step.complete .mini-icon { border-color: rgba(66, 211, 146, .45); color: var(--green); }
+  .mini-step.current { color: var(--text); }
+  .mini-step.current .mini-icon { border-color: var(--blue); color: var(--blue); }
+  .mini-step small { color: var(--faint); }
+  .security-card { padding: 16px; border: 1px solid rgba(244, 191, 80, .28); border-radius: 11px; background: rgba(244, 191, 80, .05); }
+  .security-card strong { display: block; margin-bottom: 7px; color: #f7d98e; font-size: 12px; }
+  .security-card p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+  .terminal-handoff { margin-top: 16px; padding: 18px; border: 1px solid rgba(91, 140, 255, .35); border-radius: 11px; background: rgba(91, 140, 255, .06); }
+  .terminal-handoff h2 { margin: 0 0 7px; font-size: 16px; }
+  .terminal-handoff p { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .command-preview { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #0d1014; color: #d7dee8; font-size: 11px; line-height: 1.55; }
+  .inline-actions { display: flex; gap: 9px; margin-top: 14px; }
+
+  .log-panel { margin-top: 16px; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: #0d1014; }
+  .log-header { height: 42px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: #15181e; }
+  .log-header strong { font-size: 11px; }
+  .log-meta { color: var(--faint); font-size: 10px; }
+  .log-output { height: 170px; margin: 0; padding: 13px 14px; overflow: auto; color: #aeb8c6; font-size: 10.5px; line-height: 1.65; }
+  .log-output .ok { color: var(--green); }
+  .log-output .warn { color: var(--amber); }
+  .log-output .bad { color: var(--red); }
+
+  .manual-list { display: grid; gap: 10px; }
+  .manual-item { padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  .manual-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .manual-head strong { font-size: 12px; }
+  .manual-command { padding: 11px 12px; border-radius: 7px; background: #0d1014; color: #cbd5e1; font-size: 10.5px; line-height: 1.5; word-break: break-all; }
+  .copy-button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-size: 10px; }
+  .copy-button:hover { color: var(--text); border-color: var(--line-strong); }
+
+  .error-card { margin-top: 16px; padding: 18px; border: 1px solid rgba(255, 112, 112, .38); border-radius: 11px; background: rgba(255, 112, 112, .055); }
+  .error-code { color: var(--red); font-family: ui-monospace, monospace; font-size: 10px; }
+  .error-card h2 { margin: 8px 0 7px; font-size: 16px; }
+  .error-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+  .success-card { padding: 20px; border: 1px solid rgba(66, 211, 146, .34); border-radius: 11px; background: rgba(66, 211, 146, .055); }
+  .success-card h2 { margin: 0 0 7px; font-size: 18px; }
+  .success-card p { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+  .version-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+  .version { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, .14); }
+  .version small { display: block; margin-bottom: 5px; color: var(--faint); font-size: 10px; }
+  .version strong { color: var(--green); font-size: 12px; }
+
+  .footer {
+    min-height: 70px;
+    padding: 13px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--line);
+    background: #14171c;
+  }
+  .footer-note { color: var(--faint); font-size: 11px; }
+  .footer-actions { display: flex; gap: 9px; }
+  .button { min-height: 36px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: #1b1f26; cursor: pointer; font-size: 12px; font-weight: 650; }
+  .button:hover { background: #232833; }
+  .button.primary { border-color: var(--blue-strong); background: var(--blue-strong); color: white; }
+  .button.primary:hover { background: #4a7cf1; }
+  .button.danger { border-color: rgba(255, 112, 112, .42); color: #ff9696; }
+  .button:disabled { opacity: .45; cursor: not-allowed; }
+  .hidden { display: none !important; }
+  :focus-visible { outline: 2px solid #8aabff; outline-offset: 2px; }
+</style>
+
+<!-- Standalone interaction prototype. No production code or dependencies. -->
+<div class="prototype-bar">
+  <div class="prototype-title">
+    <strong>Environment setup · interactive prototype</strong>
+    <span>Standalone HTML / CSS / JS</span>
+  </div>
+  <nav class="prototype-actions" aria-label="Prototype states">
+    <button class="jump-button active" data-jump="preflight">1 · Pre-flight</button>
+    <button class="jump-button" data-jump="plan">2 · Setup plan</button>
+    <button class="jump-button" data-jump="install">3 · Install</button>
+    <button class="jump-button" data-jump="admin">A · Admin</button>
+    <button class="jump-button" data-jump="error">E · Error</button>
+    <button class="jump-button" data-jump="reset">Reset</button>
+  </nav>
+</div>
+
+<main class="canvas">
+  <section class="app-window" aria-label="Harness Desktop environment setup mockup">
+    <header class="titlebar">
+      <div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand"><img src="../assets/app_icon.png" alt=""><span>Harness Desktop</span></div>
+      <div class="secure-note">Setup runs locally on this Mac</div>
+    </header>
+
+    <div class="app-body">
+      <aside class="setup-rail">
+        <p class="rail-eyebrow">First-time setup</p>
+        <h2 class="rail-title">Prepare your environment</h2>
+        <div class="steps" id="steps">
+          <div class="step active" data-step="1">
+            <span class="step-number">1</span>
+            <span class="step-copy"><strong>Pre-flight check</strong><small>Read-only system checks</small></span>
+          </div>
+          <div class="step" data-step="2">
+            <span class="step-number">2</span>
+            <span class="step-copy"><strong>Review setup</strong><small>Know what will change</small></span>
+          </div>
+          <div class="step" data-step="3">
+            <span class="step-number">3</span>
+            <span class="step-copy"><strong>Choose & install</strong><small>Automatic or manual</small></span>
+          </div>
+        </div>
+        <div class="rail-help">
+          Harness never asks for your Mac password inside the app. If macOS requires approval, setup continues in Terminal.
+        </div>
+      </aside>
+
+      <div class="main">
+        <div class="screen" id="screen" aria-live="polite"></div>
+        <footer class="footer" id="footer"></footer>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  (function () {
+    const screen = document.getElementById('screen');
+    const footer = document.getElementById('footer');
+    const checks = [
+      ['System', 'macOS 15.6 · Apple silicon'],
+      ['Network', 'Harness CDN and GitHub are reachable'],
+      ['Shell tools', 'curl, zsh and security are available'],
+      ['Home folder', 'Writable · 18.4 GB available'],
+      ['Existing tools', 'Homebrew and tmux need installation']
+    ];
+    const logLines = [
+      '<span class="ok">[10:42:18] Pre-flight checks passed</span>',
+      '[10:42:19] Checking Apple Command Line Tools…',
+      '<span class="ok">[10:42:19] Command Line Tools found</span>',
+      '[10:42:20] Opening Terminal for Homebrew approval…'
+    ];
+    let state = { page: 'preflight', checksDone: false, mode: 'automatic', phase: 'ready', timers: [] };
+
+    function clearTimers() {
+      state.timers.forEach(clearTimeout);
+      state.timers = [];
+    }
+
+    function setStep(number) {
+      document.querySelectorAll('.step').forEach((item) => {
+        const current = Number(item.dataset.step);
+        item.classList.toggle('active', current === number);
+        item.classList.toggle('done', current < number);
+        if (current < number) item.querySelector('.step-number').textContent = '✓';
+        else item.querySelector('.step-number').textContent = String(current);
+      });
+      document.querySelectorAll('.jump-button[data-jump]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.jump === state.page ||
+          (state.page === 'install' && button.dataset.jump === 'install'));
+      });
+    }
+
+    function renderPreflight(runChecks) {
+      clearTimers();
+      state.page = 'preflight';
+      setStep(1);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow">Step 1 of 3</div>
+          <h1>Checking this Mac</h1>
+          <p class="lead">Harness checks the basics before offering any installation. This step is read-only and does not change your system.</p>
+          <div class="notice"><span class="notice-mark">i</span><div><strong>No changes yet.</strong> Nothing is downloaded, installed or granted admin access during pre-flight.</div></div>
+          <div class="check-list" id="check-list">
+            ${checks.map((item, index) => `
+              <div class="check-row" data-check="${index}">
+                <span class="status-dot ${state.checksDone ? 'ready' : index === 0 ? 'checking' : ''}"></span>
+                <span class="row-copy"><strong>${item[0]}</strong><small>${item[1]}</small></span>
+                <span class="row-status ${state.checksDone ? 'ready' : ''}">${state.checksDone ? 'Ready' : index === 0 ? 'Checking…' : 'Waiting'}</span>
+              </div>`).join('')}
+          </div>
+        </div>`;
+      footer.innerHTML = `
+        <span class="footer-note" id="check-summary">${state.checksDone ? '5 checks completed · 2 tools need setup' : 'Checking system requirements…'}</span>
+        <div class="footer-actions">
+          <button class="button" id="rerun">Run checks again</button>
+          <button class="button primary" id="to-plan" ${state.checksDone ? '' : 'disabled'}>Review setup plan</button>
+        </div>`;
+      document.getElementById('rerun').onclick = () => { state.checksDone = false; renderPreflight(true); };
+      document.getElementById('to-plan').onclick = renderPlan;
+      if (runChecks && !state.checksDone) animateChecks();
+    }
+
+    function animateChecks() {
+      checks.forEach((_, index) => {
+        state.timers.push(setTimeout(() => {
+          const rows = screen.querySelectorAll('.check-row');
+          rows.forEach((row, rowIndex) => {
+            const dot = row.querySelector('.status-dot');
+            const label = row.querySelector('.row-status');
+            dot.className = 'status-dot';
+            label.className = 'row-status';
+            if (rowIndex <= index) {
+              dot.classList.add('ready'); label.classList.add('ready'); label.textContent = 'Ready';
+            } else if (rowIndex === index + 1) {
+              dot.classList.add('checking'); label.textContent = 'Checking…';
+            } else label.textContent = 'Waiting';
+          });
+          if (index === checks.length - 1) {
+            state.checksDone = true;
+            document.getElementById('to-plan').disabled = false;
+            document.getElementById('check-summary').textContent = '5 checks completed · 2 tools need setup';
+          }
+        }, 380 + index * 420));
+      });
+    }
+
+    function renderPlan() {
+      clearTimers();
+      state.page = 'plan';
+      setStep(2);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow">Step 2 of 3</div>
+          <h1>Review what Harness will set up</h1>
+          <p class="lead">Dependencies install in this order. You can inspect the sources, locations and commands before continuing.</p>
+          <div class="plan-list">
+            ${[
+              ['01', 'Apple Command Line Tools', 'Required by Homebrew · macOS managed', 'Required'],
+              ['02', 'Homebrew', 'From brew.sh · installs to /opt/homebrew', 'Required'],
+              ['03', 'tmux', 'Installed by Homebrew · required by Harness CLI', 'Required'],
+              ['04', 'Harness runtime & CLI', 'Managed Node runtime · installs under ~/.harness', 'Required'],
+              ['05', 'Verify installation', 'Runs brew --version, tmux -V and harness version', 'Required'],
+              ['06', 'Grid CLI', 'Optional integration · available after core setup', 'Optional']
+            ].map((item) => `
+              <div class="plan-row">
+                <span class="plan-index">${item[0]}</span>
+                <span class="row-copy"><strong>${item[1]}</strong><small>${item[2]}</small></span>
+                <span class="tag ${item[3].toLowerCase()}">${item[3]}</span>
+              </div>`).join('')}
+          </div>
+          <div class="notice warning" style="margin-top:16px"><span class="notice-mark">!</span><div><strong>Password stays in Terminal.</strong> Homebrew may trigger a macOS admin prompt. Harness opens Terminal for that step and never reads or stores your password.</div></div>
+          <details>
+            <summary>View exact commands and install locations</summary>
+            <div class="details-body"><pre>xcode-select -p || xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+eval "$(/opt/homebrew/bin/brew shellenv)" && brew install tmux
+curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | /bin/sh
+
+Managed files: ~/.harness/runtime · ~/.harness/cli · ~/.local/bin/harness</pre></div>
+          </details>
+        </div>`;
+      footer.innerHTML = `
+        <span class="footer-note">Estimated time: 3–8 minutes · depends on Homebrew</span>
+        <div class="footer-actions"><button class="button" id="back">Back</button><button class="button primary" id="to-install">Choose setup method</button></div>`;
+      document.getElementById('back').onclick = () => renderPreflight(false);
+      document.getElementById('to-install').onclick = () => { state.phase = 'ready'; renderInstall(); };
+    }
+
+    function renderInstall() {
+      clearTimers();
+      state.page = 'install';
+      setStep(3);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow">Step 3 of 3</div>
+          <h1>Choose how to set up</h1>
+          <p class="lead">Both options install the same prerequisites and run the same verification.</p>
+          <div class="mode-switch" role="tablist" aria-label="Setup method">
+            <button class="mode-button ${state.mode === 'automatic' ? 'active' : ''}" data-mode="automatic" role="tab" aria-selected="${state.mode === 'automatic'}">Automatic</button>
+            <button class="mode-button ${state.mode === 'manual' ? 'active' : ''}" data-mode="manual" role="tab" aria-selected="${state.mode === 'manual'}">Manual</button>
+          </div>
+          <div id="mode-content"></div>
+        </div>`;
+      screen.querySelectorAll('[data-mode]').forEach((button) => button.onclick = () => {
+        state.mode = button.dataset.mode;
+        state.phase = 'ready';
+        renderInstall();
+      });
+      if (state.mode === 'automatic') renderAutomatic(); else renderManual();
+    }
+
+    function renderAutomatic() {
+      const container = document.getElementById('mode-content');
+      container.innerHTML = `
+        <p class="mode-description">Recommended. Harness coordinates each step, pauses for Terminal approval when needed, and verifies the final result.</p>
+        <div class="install-layout">
+          <div class="setup-card">
+            <h2>Automatic setup</h2>
+            <p>You stay in control. Nothing starts until you click below.</p>
+            <div class="mini-steps">
+              ${['Command Line Tools', 'Homebrew', 'tmux', 'Harness runtime & CLI', 'Final verification'].map((label, index) => `<div class="mini-step"><span class="mini-icon">${index + 1}</span><span>${label}</span><small>${index < 3 ? 'System' : 'Managed'}</small></div>`).join('')}
+            </div>
+          </div>
+          <aside class="security-card"><strong>Admin access is handled by macOS</strong><p>Harness will switch to Terminal when Homebrew needs your approval. No password field will appear in this app.</p></aside>
+        </div>`;
+      footer.innerHTML = `<span class="footer-note">You can cancel between steps</span><div class="footer-actions"><button class="button" id="back-plan">Back</button><button class="button primary" id="start-auto">Start automatic setup</button></div>`;
+      document.getElementById('back-plan').onclick = renderPlan;
+      document.getElementById('start-auto').onclick = renderAdmin;
+    }
+
+    function renderAdmin() {
+      state.page = 'admin';
+      state.phase = 'admin';
+      setStep(3);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow">Automatic setup · Permission required</div>
+          <h1>Continue setup in Terminal</h1>
+          <p class="lead">Homebrew needs macOS approval. A Terminal window has been opened with the verified command ready to run.</p>
+          <div class="terminal-handoff">
+            <h2>Finish the Homebrew step</h2>
+            <p>Review the command, press Return, then enter your Mac password directly in Terminal if prompted. Password characters may not appear while typing — this is normal.</p>
+            <div class="command-preview"><code>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</code></div>
+            <div class="inline-actions"><button class="button primary" id="focus-terminal">Bring Terminal forward</button><button class="button" id="terminal-done">I finished in Terminal</button></div>
+          </div>
+          <div class="notice warning" style="margin-top:16px"><span class="notice-mark">!</span><div><strong>Harness cannot see your password.</strong> It only checks whether Homebrew becomes available after Terminal finishes.</div></div>
+          ${logPanel(logLines)}
+        </div>`;
+      footer.innerHTML = `<span class="footer-note">Waiting for Homebrew · last check just now</span><div class="footer-actions"><button class="button danger" id="cancel">Cancel setup</button><button class="button" id="show-error">Preview error state</button></div>`;
+      document.getElementById('focus-terminal').onclick = () => toastButton('focus-terminal', 'Terminal is in front');
+      document.getElementById('terminal-done').onclick = renderRunning;
+      document.getElementById('cancel').onclick = () => { state.mode = 'automatic'; state.phase = 'ready'; renderInstall(); };
+      document.getElementById('show-error').onclick = renderError;
+    }
+
+    function renderRunning() {
+      state.page = 'install';
+      state.phase = 'running';
+      setStep(3);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow">Automatic setup · Installing</div>
+          <h1>Setting up required tools</h1>
+          <p class="lead">You can follow every command and result below. Harness stops immediately if a step fails.</p>
+          <div class="setup-card">
+            <div class="mini-steps" id="progress-steps">
+              ${['Command Line Tools', 'Homebrew', 'tmux', 'Harness runtime & CLI', 'Final verification'].map((label, index) => `<div class="mini-step ${index < 2 ? 'complete' : index === 2 ? 'current' : ''}" data-progress="${index}"><span class="mini-icon">${index < 2 ? '✓' : index + 1}</span><span>${label}</span><small>${index < 2 ? 'Complete' : index === 2 ? 'Installing…' : 'Waiting'}</small></div>`).join('')}
+            </div>
+          </div>
+          ${logPanel(logLines.concat(['<span class="ok">[10:43:02] Homebrew 4.6.2 detected</span>', '[10:43:03] $ brew install tmux']))}
+        </div>`;
+      footer.innerHTML = `<span class="footer-note" id="run-status">Installing tmux · elapsed 00:45</span><div class="footer-actions"><button class="button" id="copy-logs">Copy logs</button><button class="button danger" id="cancel-run">Cancel after current command</button></div>`;
+      document.getElementById('copy-logs').onclick = () => copyText('Harness setup logs copied', 'copy-logs');
+      document.getElementById('cancel-run').onclick = () => { state.mode = 'manual'; renderInstall(); };
+      state.timers.push(setTimeout(renderSuccess, 2500));
+    }
+
+    function renderError() {
+      clearTimers();
+      state.page = 'error';
+      state.phase = 'error';
+      setStep(3);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow" style="color:var(--red)">Automatic setup · Stopped safely</div>
+          <h1>Homebrew could not be downloaded</h1>
+          <p class="lead">No partial Harness installation was started. The setup stopped at the failing step and kept the full diagnostic output.</p>
+          <div class="error-card">
+            <span class="error-code">NETWORK_UNREACHABLE · exit 6</span>
+            <h2>GitHub could not be reached</h2>
+            <p>Check your connection, VPN or proxy, then retry only this step. Completed checks will not run again.</p>
+            <details open><summary>Failed command and output</summary><div class="details-body"><pre>$ curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
+curl: (6) Could not resolve host: raw.githubusercontent.com
+Exit status: 6</pre></div></details>
+            <div class="inline-actions"><button class="button primary" id="retry">Retry this step</button><button class="button" id="manual">Switch to Manual</button><button class="button" id="diagnostics">Copy diagnostics</button></div>
+          </div>
+          ${logPanel(logLines.concat(['<span class="bad">[10:43:09] Download failed · curl exit 6</span>', '<span class="warn">[10:43:09] Setup stopped before tmux and Harness CLI</span>']))}
+        </div>`;
+      footer.innerHTML = `<span class="footer-note">Nothing is running · safe to close</span><div class="footer-actions"><button class="button" id="back-method">Back to methods</button></div>`;
+      document.getElementById('retry').onclick = renderAdmin;
+      document.getElementById('manual').onclick = () => { state.mode = 'manual'; renderInstall(); };
+      document.getElementById('diagnostics').onclick = () => copyText('Diagnostics copied', 'diagnostics');
+      document.getElementById('back-method').onclick = () => { state.mode = 'automatic'; renderInstall(); };
+    }
+
+    function renderManual() {
+      const commands = [
+        ['1 · Apple Command Line Tools', 'xcode-select -p || xcode-select --install'],
+        ['2 · Homebrew', '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'],
+        ['3 · tmux', 'eval "$(/opt/homebrew/bin/brew shellenv)" && brew install tmux'],
+        ['4 · Harness runtime & CLI', 'curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | /bin/sh'],
+        ['5 · Verify everything', 'brew --version && tmux -V && "$HOME/.local/bin/harness" version']
+      ];
+      document.getElementById('mode-content').innerHTML = `
+        <p class="mode-description">Run each command yourself in Terminal. Return here when finished and Harness will verify the result.</p>
+        <div class="notice warning"><span class="notice-mark">!</span><div><strong>Enter passwords only in Terminal.</strong> Harness Desktop will never display an admin-password input.</div></div>
+        <div class="manual-list">
+          ${commands.map((item, index) => `<div class="manual-item"><div class="manual-head"><strong>${item[0]}</strong><button class="copy-button" data-copy="${index}">Copy command</button></div><div class="manual-command"><code>${escapeHtml(item[1])}</code></div></div>`).join('')}
+        </div>`;
+      footer.innerHTML = `<span class="footer-note">Run in order · verification is read-only</span><div class="footer-actions"><button class="button" id="back-plan">Back</button><button class="button primary" id="recheck">Recheck environment</button></div>`;
+      document.querySelectorAll('[data-copy]').forEach((button) => button.onclick = () => copyText(commands[Number(button.dataset.copy)][1], null, button));
+      document.getElementById('back-plan').onclick = renderPlan;
+      document.getElementById('recheck').onclick = renderSuccess;
+    }
+
+    function renderSuccess() {
+      clearTimers();
+      state.page = 'install';
+      state.phase = 'complete';
+      setStep(3);
+      screen.innerHTML = `
+        <div class="screen-inner">
+          <div class="eyebrow" style="color:var(--green)">Setup complete</div>
+          <h1>This Mac is ready for Harness</h1>
+          <p class="lead">All required tools were found on the active shell path and passed their version checks.</p>
+          <div class="success-card">
+            <h2>Environment verified</h2>
+            <p>Harness will use these exact installations when creating and reconnecting to agents.</p>
+            <div class="version-grid">
+              <div class="version"><small>Homebrew</small><strong>4.6.2</strong></div>
+              <div class="version"><small>tmux</small><strong>3.5a</strong></div>
+              <div class="version"><small>Harness CLI</small><strong>0.152.1</strong></div>
+            </div>
+          </div>
+          <details><summary>View verified paths</summary><div class="details-body"><pre>/opt/homebrew/bin/brew
+/opt/homebrew/bin/tmux
+/Users/you/.local/bin/harness
+/Users/you/.harness/runtime</pre></div></details>
+          <div class="notice" style="margin-top:16px"><span class="notice-mark">i</span><div><strong>Grid CLI remains optional.</strong> You can add it later from Settings without blocking Harness.</div></div>
+        </div>`;
+      footer.innerHTML = `<span class="footer-note">Verified just now</span><div class="footer-actions"><button class="button" id="view-logs">View setup logs</button><button class="button primary" id="continue">Continue to sign in</button></div>`;
+      document.getElementById('view-logs').onclick = renderRunning;
+      document.getElementById('continue').onclick = () => toastButton('continue', 'Ready to sign in');
+    }
+
+    function logPanel(lines) {
+      return `<div class="log-panel"><div class="log-header"><strong>Live setup log</strong><span class="log-meta">Local process · auto-scroll on</span></div><pre class="log-output">${lines.join('\n')}</pre></div>`;
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function copyText(value, id, element) {
+      if (navigator.clipboard) navigator.clipboard.writeText(value).catch(() => {});
+      const button = element || document.getElementById(id);
+      if (!button) return;
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => button.textContent = original, 1200);
+    }
+
+    function toastButton(id, message) {
+      const button = document.getElementById(id);
+      if (!button) return;
+      const original = button.textContent;
+      button.textContent = message;
+      setTimeout(() => button.textContent = original, 1400);
+    }
+
+    function reset() {
+      state = { page: 'preflight', checksDone: false, mode: 'automatic', phase: 'ready', timers: [] };
+      renderPreflight(true);
+    }
+
+    document.querySelectorAll('[data-jump]').forEach((button) => button.addEventListener('click', () => {
+      const target = button.dataset.jump;
+      if (target === 'preflight') renderPreflight(false);
+      if (target === 'plan') renderPlan();
+      if (target === 'install') { state.mode = 'automatic'; state.phase = 'ready'; renderInstall(); }
+      if (target === 'admin') renderAdmin();
+      if (target === 'error') renderError();
+      if (target === 'reset') reset();
+    }));
+
+    document.addEventListener('keydown', (event) => {
+      if (event.target.matches('button, input')) return;
+      if (event.key === '1') renderPreflight(false);
+      if (event.key === '2') renderPlan();
+      if (event.key === '3') renderInstall();
+      if (event.key.toLowerCase() === 'a') renderAdmin();
+      if (event.key.toLowerCase() === 'e') renderError();
+    });
+
+    renderPreflight(true);
+  }());
+</script>

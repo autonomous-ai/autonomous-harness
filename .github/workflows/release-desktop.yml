@@ -1,0 +1,441 @@
+name: Release desktop
+
+# Cut a release by pushing a tag:  git tag -a v1.0.51_desktop -F notes.md && git push origin v1.0.51_desktop
+# (or `make release-desktop` from the repo root, which does exactly that).
+#
+# The `_desktop` suffix exists only so this workflow's tag trigger never fires on the CLI's
+# `v*_cli` or the backend's `v*_api` release tags, now that all three live in this one repo. It is
+# stripped below before anything treats the value as a version — the manifest, --build-name, the
+# release title and the updater's semver comparison all only ever see a bare X.Y.Z.
+#
+# The Flutter project lives under desktop/: the jobs that touch the tree run with
+# working-directory: desktop, and `desktop/scripts/...` below is what `scripts/...` used to mean.
+#
+# Shape (the one autonomous-grid's release.yml uses): every platform builds IN PARALLEL, and the
+# real manifest is written exactly once at the end.
+#
+# metadata.json is a download-modify-reupload, so four jobs each merging their own key would drop
+# each other's. Rather than schedule around that — the first version of this file ran macOS and the
+# two Linux architectures one after another, ~70 minutes of wall clock — each build job is pointed
+# at its OWN scratch manifest under harness/desktop/.ci/<run id>/. Nothing collides because nothing
+# shares a file, the artifacts still go straight to their real paths, and the `publish` job merges
+# those scratch files into the real manifest in a single read-modify-write. ~25 minutes, and the
+# race cannot happen rather than being avoided.
+#
+# desktop/scripts/upload-desktop.sh and desktop/scripts/upload-desktop-linux.sh are used EXACTLY as
+# they are, with no flags this file invented: METADATA_PATH is an env override they already support.
+# macOS reaches upload-desktop.sh through desktop/scripts/publish-macos-variant.sh, which builds, pins
+# the renderer, then calls it with --no-build and that build's keys — a flag and env overrides it
+# already takes.
+#
+# The tag IS the version — CI never auto-bumps. The scripts bump by reading the current version out
+# of the remote metadata.json, so four jobs left to bump on their own would read the same number
+# and publish four different versions under one tag.
+#
+# Publishes the keys running apps poll (desktop/lib/update/desktop_updater.dart): desktop-macos and
+# desktop-macos-dmg (the Intel build, on Skia — also what every older install and the website read),
+# desktop-macos-arm64 and desktop-macos-arm64-dmg (Apple Silicon, on Impeller), desktop-linux-x64 and
+# desktop-linux-arm64. A MINOR bump (1.0.x -> 1.1.1) is a forced update — running apps block until it
+# is installed. See RELEASE.md, "Two macOS builds" for why macOS is published twice.
+#
+# Dry run first: Actions -> Release -> Run workflow, with metadata_path = harness/desktop/
+# metadata-test.json. Nothing a real app polls is touched, and there is no undo on the real
+# manifest — the updater refuses to move backwards, so a bad release can only be rolled back by
+# publishing a HIGHER version containing the older code.
+#
+# metadata_path moves the MANIFEST only. The scripts' GCS_PATH still defaults to
+# harness/desktop/<version>/, so a dry run uploads real artifacts there — harmless, since no live
+# manifest references them, but delete gs://<bucket>/harness/desktop/<dry-run-version>/ afterwards.
+
+on:
+  push:
+    tags: ['v*_desktop']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (X.Y.Z)'
+        required: true
+      metadata_path:
+        description: 'Manifest to write. Leave as-is for a real release; metadata-test.json for a dry run.'
+        required: false
+        default: harness/desktop/metadata.json
+
+permissions:
+  contents: read
+  id-token: write   # only used by the Workload Identity Federation variant of the auth steps below
+
+concurrency:
+  # Two releases overlapping would interleave their manifest writes. Never cancelled in progress:
+  # a half-published release leaves the manifest describing one platform's new build beside
+  # another's old one.
+  group: desktop-release
+  cancel-in-progress: false
+
+env:
+  GCS_BUCKET: s3-autonomous-upgrade-3   # the release scripts read this too — one place, not five
+  # THE toolchain pin for every release artifact, macOS and both Linux architectures alike. Pinned
+  # rather than `channel: stable` unqualified: pubspec.yaml pins `sdk: ^3.13.0`, so anything below
+  # Flutter 3.47 dies at `flutter pub get` with "version solving failed", and a floating stable ships
+  # an engine nobody here has run — the Grid app's "UI tearing itself apart" was exactly that
+  # (autonomous-grid-app 58687e7f). Bump deliberately, alongside the local toolchain.
+  #
+  # It used to live in ci.yml, whose test suite gated every release. That gate was removed by the
+  # team's decision on 2026-09-10 — it had failed every tag since v1.0.92, so none of them reached a
+  # user — and nothing here runs the tests any more: run `flutter analyze` and `flutter test` locally.
+  FLUTTER_VERSION: '3.47.2'
+
+jobs:
+  # Resolve and validate before anything expensive starts. A malformed tag fails here in seconds
+  # rather than 25 minutes into a notarized build.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      metadata_path: ${{ steps.resolve.outputs.metadata_path }}
+      scratch_prefix: ${{ steps.resolve.outputs.scratch_prefix }}
+    steps:
+      - id: resolve
+        # Through env, never `${{ }}` inline in run:. Git permits quotes, backticks and $() in a
+        # ref name, so interpolating one into the shell would let a tag name execute as code.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_METADATA_PATH: ${{ inputs.metadata_path }}
+        run: |
+          # A tag push names the ref "vX.Y.Z_desktop"; workflow_dispatch's input.version is already
+          # bare. Strip both so $ver is always X.Y.Z — the suffix routes the tag to this workflow
+          # and is never part of the published version.
+          ver="${INPUT_VERSION:-${REF_NAME#v}}"
+          ver="${ver%_desktop}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$ver' must look like X.Y.Z — tag as vX.Y.Z_desktop"
+            exit 1
+          fi
+          meta="${INPUT_METADATA_PATH:-harness/desktop/metadata.json}"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "metadata_path=$meta" >> "$GITHUB_OUTPUT"
+          echo "scratch_prefix=harness/desktop/.ci/${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Publishing **$ver** to \`$meta\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # Uploading is the last thing each build job does, ~25 minutes in. Proving the credential now
+  # means a broken one costs seconds. Runs beside `version`, so it is free in wall clock.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify GCS write access
+        run: |
+          set -euo pipefail
+          probe="gs://${GCS_BUCKET}/harness/desktop/.ci-preflight/${GITHUB_RUN_ID}"
+          echo "$GITHUB_RUN_ID" | gsutil cp - "$probe"
+          gsutil rm "$probe"
+
+  # BOTH macOS builds, side by side: one universal app built twice, differing only in its renderer
+  # (Intel on Skia, Apple Silicon on Impeller — RELEASE.md, "Two macOS builds"). A macos-15 runner is
+  # Apple Silicon and neither build needs an Intel host: both are universal, and the renderer is an
+  # Info.plist key, not a compile.
+  build-macos:
+    needs: [version, preflight]
+    runs-on: macos-15
+    timeout-minutes: 60   # two notarization submissions per build (zip, then dmg) — see RELEASE.md
+    strategy:
+      # Each build writes its own scratch manifest, so they cannot race — and one failing should say
+      # so on its own rather than cancel the other mid-notarization. `publish` needs both either way.
+      fail-fast: false
+      matrix:
+        variant: [intel, apple-silicon]
+    env:
+      # The script's own env override, pointed at this build's scratch file instead of the real
+      # manifest. The artifacts still land on their real GCS paths; only the keys land here.
+      METADATA_PATH: ${{ needs.version.outputs.scratch_prefix }}/macos-${{ matrix.variant }}.json
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # SPM must be on BEFORE pub get: the generated FlutterGeneratedPluginSwiftPackage only lists
+      # the plugin dependencies when it is enabled at `pub get` time, and with it off the build
+      # falls back to CocoaPods and rewrites tracked files under macos/. See CLAUDE.md.
+      - name: Enable Swift Package Manager
+        run: flutter config --enable-swift-package-manager
+
+      - run: flutter pub get
+
+      # The throwaway keychain, the Developer ID certificate in it and the `harness-notarize` profile
+      # upload-desktop.sh submits with. It sets KEYCHAIN_PATH. internal-build.yml signs with the same
+      # action, so every internal build proves these steps before a release depends on them.
+      - uses: ./.github/actions/macos-signing
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          apple-app-password: ${{ secrets.APPLE_APP_PASSWORD }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # SIGN_IDENTITY is read twice here: by publish-macos-variant.sh, re-signing the Intel build once
+      # it pins the renderer, and by upload-desktop.sh, signing the dmg.
+      - name: Build, sign, notarize and upload macOS (${{ matrix.variant }})
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          VERSION: ${{ needs.version.outputs.version }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          bash scripts/publish-macos-variant.sh "$VARIANT" "$VERSION"
+
+      # Free on an ephemeral runner; the whole point the day this moves to a self-hosted Mac.
+      - name: Remove the signing keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN_PATH" || true
+
+  build-linux:
+    needs: [version, preflight]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # No max-parallel: each job writes its own scratch manifest, so they cannot race.
+      fail-fast: false
+      matrix:
+        include:
+          # flutter build linux cannot cross-compile — each architecture needs its own host.
+          - { runner: ubuntu-24.04, arch: x64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    env:
+      TARGET_ARCH: ${{ matrix.arch }}
+      METADATA_PATH: ${{ needs.version.outputs.scratch_prefix }}/linux-${{ matrix.arch }}.json
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the Linux desktop toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+
+      # Flutter publishes NO linux-arm64 SDK archive — releases_linux.json carries `x64` and
+      # nothing else — so flutter-action has nothing to download on ubuntu-24.04-arm and fails
+      # outright. Everything it would have unpacked does exist for arm64 (both
+      # linux-arm64/artifacts.zip and dart-sdk-linux-arm64.zip are served for this engine), so the
+      # SAME toolchain is reached by the other route: clone the SDK at the same tag and let
+      # precache pull the artifacts. x64 keeps the action for its cache.
+      - uses: subosito/flutter-action@v2
+        if: matrix.arch != 'arm64'
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Flutter from git (arm64 has no published archive)
+        if: matrix.arch == 'arm64'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      # Runs on both arches so the two install paths have one place to prove they landed on the
+      # same toolchain, and so a missing arm64 artifact fails in a step that says so rather than
+      # halfway through a build.
+      - name: Verify the toolchain and precache Linux artifacts
+        run: |
+          flutter --version
+          flutter precache --linux
+
+      - run: flutter pub get
+
+      # appimagetool packages the Linux bundle into the single-file .AppImage the release publishes
+      # (see RELEASE.md). --appimage-extract-and-run in upload-desktop-linux.sh means the runner
+      # itself never needs FUSE. Pinned to a numbered release (not "continuous") for reproducibility.
+      - name: Download appimagetool
+        env:
+          APPIMAGETOOL_VERSION: '1.9.1'
+          APPIMAGE_ARCH: ${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${APPIMAGE_ARCH}.AppImage"
+          curl -fL "$url" -o "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and upload linux-${{ matrix.arch }}
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: bash scripts/upload-desktop-linux.sh "$VERSION"
+
+  # The only job that touches the REAL manifest, and the only one that can, because it is the only
+  # one that runs after every build has finished.
+  publish:
+    needs: [version, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    env:
+      METADATA_PATH: ${{ needs.version.outputs.metadata_path }}
+      SCRATCH_PREFIX: ${{ needs.version.outputs.scratch_prefix }}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Merge every platform's key into the manifest in one write
+        run: |
+          set -euo pipefail
+          mkdir -p parts
+          gsutil -m cp "gs://${GCS_BUCKET}/${SCRATCH_PREFIX}/*.json" parts/
+          echo "::group::scratch manifests"; ls -la parts; echo "::endgroup::"
+
+          src="$(mktemp)"; dst="$(mktemp)"
+          if ! gsutil cp "gs://${GCS_BUCKET}/${METADATA_PATH}" "$src" 2>/dev/null; then
+            echo "   (no existing manifest at ${METADATA_PATH} — creating a new one)"
+            printf '{}' > "$src"
+          fi
+          # Paths through argv, NEVER piped into this heredoc — the heredoc claims stdin, so a pipe
+          # would be silently dropped and the merge would blank the manifest.
+          python3 - "$src" "$dst" parts <<'PY'
+          import json, os, sys
+
+          src, dst, parts = sys.argv[1:4]
+          try:
+              with open(src) as f:
+                  raw = f.read()
+              data = json.loads(raw) if raw.strip() else {}
+          except (OSError, json.JSONDecodeError):
+              data = {}
+          if not isinstance(data, dict):
+              data = {}
+
+          merged = 0
+          for name in sorted(os.listdir(parts)):
+              if not name.endswith(".json"):
+                  continue
+              with open(os.path.join(parts, name)) as f:
+                  part = json.load(f)
+              if not isinstance(part, dict):
+                  sys.exit(f"error: {name} is not a JSON object")
+              for key, entry in part.items():
+                  data[key] = entry
+                  merged += 1
+                  print(f"  {key} -> {entry.get('version')}")
+
+          # An empty merge would quietly re-upload the manifest unchanged and report success, which
+          # is indistinguishable from a release that published nothing.
+          if merged == 0:
+              sys.exit("error: no manifest entries found — did the build jobs upload anything?")
+
+          with open(dst, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          PY
+          gsutil -h "Content-Type:application/json" \
+                 -h "Cache-Control:no-cache, no-store, must-revalidate" \
+                 cp "$dst" "gs://${GCS_BUCKET}/${METADATA_PATH}"
+          echo "Published to \`${METADATA_PATH}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # The GitHub Release. Notes are the tag's OWN message, verbatim — the same rule
+  # autonomous-grid's release.yml follows. CI generates nothing: what a human wrote and reviewed at
+  # tag time is exactly what publishes, and `generate_release_notes` would append a second,
+  # differently-built list under it that silently omits anything which reached main without a PR.
+  #
+  # No binaries attached. GCS is the distribution channel — the in-app updater and the website both
+  # read the manifest — so uploading 70MB of the same bytes here would create a second copy that can
+  # disagree with the one the app actually installs. The notes link to the real ones instead.
+  github-release:
+    needs: [version, publish]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # narrower than the workflow default only here, where a release is created
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Take the release notes from the tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # actions/checkout replaces the pushed annotated tag with a LIGHTWEIGHT local ref, even at
+          # fetch-depth: 0, so `git cat-file -t` below would see "commit" and reject a properly
+          # annotated tag. Re-fetch the tag object to restore the annotation before reading it.
+          git fetch --force origin tag "$REF_NAME"
+          # A lightweight tag has no message of its own, and %(contents) would quietly fall through
+          # to the commit's — publishing "chore(release): vX.Y.Z" as the notes.
+          if [ "$(git cat-file -t "$REF_NAME")" != tag ]; then
+            echo "::error::$REF_NAME is a lightweight tag, so it carries no release notes."
+            echo "::error::Re-tag with:  git tag -a $REF_NAME --cleanup=verbatim -F notes.md"
+            exit 1
+          fi
+          git tag -l --format='%(contents)' "$REF_NAME" > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::$REF_NAME has an empty tag message — no notes to publish."
+            exit 1
+          fi
+          base="https://cdn.autonomous.ai/harness/desktop/${VERSION}"
+          cat >> RELEASE_NOTES.md <<EOF
+
+          ---
+
+          ## Downloads
+
+          New install: <https://harness.autonomous.ai/desktop/download>
+
+          | | |
+          |---|---|
+          | macOS — Apple Silicon (M1 and later) | [Harness-macos-arm64.dmg](${base}/Harness-macos-arm64.dmg) |
+          | macOS — Intel (also runs on Apple Silicon) | [Harness-macos.dmg](${base}/Harness-macos.dmg) |
+          | Linux x64 | [Harness-linux-x64.AppImage](${base}/Harness-linux-x64.AppImage) |
+          | Linux arm64 | [Harness-linux-arm64.AppImage](${base}/Harness-linux-arm64.AppImage) |
+
+          Already running Harness? It updates itself — no download needed.
+          EOF
+          echo "::group::RELEASE_NOTES.md"; cat RELEASE_NOTES.md; echo "::endgroup::"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          # Three products release from this repo; a raw "v1.2.3_desktop" title reads worse than this.
+          name: Harness Desktop ${{ needs.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+
+  # Its own job, not a step in `publish`: `publish` is SKIPPED when any build fails, which is
+  # precisely when scratch manifests are left behind — the builds that DID succeed have already
+  # written theirs. `if: always()` here means the prefix is cleared whatever happened upstream.
+  cleanup:
+    needs: [version, build-macos, build-linux, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Remove the scratch manifests
+        env:
+          SCRATCH_PREFIX: ${{ needs.version.outputs.scratch_prefix }}
+        run: gsutil -m rm -r "gs://${GCS_BUCKET}/${SCRATCH_PREFIX}" || true

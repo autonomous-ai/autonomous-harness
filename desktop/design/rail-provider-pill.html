@@ -1,0 +1,507 @@
+<title>Rail Provider Pill</title>
+<style>
+  /* ---------- SHELL ---------- */
+  .shell {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #16181d; color: #9aa2ae;
+    border-bottom: 1px solid #262a32; position: sticky; top: 0; z-index: 50;
+  }
+  .shell__bar { display: flex; align-items: center; gap: 4px; padding: 8px 14px 0; overflow-x: auto; scrollbar-width: none; }
+  .shell__bar::-webkit-scrollbar { display: none; }
+  .shell__tab {
+    appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+    color: #8b93a0; font: inherit; padding: 7px 12px 9px; cursor: pointer;
+    white-space: nowrap; border-radius: 4px 4px 0 0;
+  }
+  .shell__tab:hover { color: #d6dbe3; background: #1c1f26; }
+  .shell__tab:focus-visible { outline: 2px solid #5b8cff; outline-offset: -2px; }
+  .shell__tab[aria-selected="true"] { color: #f0f2f6; border-bottom-color: #5b8cff; }
+  .shell__tab .k { opacity: .5; font-size: 11px; margin-left: 6px; }
+  .shell__thesis { padding: 9px 16px 11px; font-size: 12.5px; color: #7d8593; border-top: 1px solid #1e2128; margin-top: -1px; }
+  .shell__thesis b { color: #b9c0cb; font-weight: 600; }
+  .shell__note { padding: 0 16px 10px; font-size: 11.5px; color: #6b7280; }
+  @media (max-width: 620px) { .shell__tab .nm, .shell__tab .k { display: none; } }
+
+  /* the fake app window every direction is shown inside */
+  .stage { background: #0d0f13; padding: 26px 22px 34px; min-height: 560px;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .stage__label { font-size: 10px; letter-spacing: .9px; text-transform: uppercase;
+    color: #5d646f; font-weight: 600; margin: 0 0 8px 2px; }
+  .stage__win { border: 1px solid #23262d; border-radius: 9px; overflow: hidden;
+    background: #131519; margin-bottom: 22px; }
+  .stage__body { height: 92px; background: #16181c; display: flex; align-items: center;
+    justify-content: center; color: #3f454e; font-size: 11.5px; }
+
+  /* =========================================================================
+     A — "Named pill"
+     ========================================================================= */
+  #dir-a { --a-rail: #101216; --a-line: #23262d; --a-fg: #d6dbe3; --a-fg-2: #8a919c;
+           --a-fg-3: #5d646f; --a-accent: #7c9dff; --a-accent-wash: rgba(124,157,255,.13);
+           --a-on: #3ddc97; }
+  #dir-a .a-rail {
+    height: 26px; background: var(--a-rail); border-top: 1px solid var(--a-line);
+    display: flex; align-items: center; padding: 0 10px 0 8px; gap: 0; font-size: 11.5px;
+  }
+  #dir-a .a-pill {
+    appearance: none; border: 0; background: none; color: var(--a-fg);
+    font: inherit; font-size: 11.5px; display: inline-flex; align-items: center; gap: 6px;
+    height: 20px; padding: 0 8px; border-radius: 5px; cursor: pointer; white-space: nowrap;
+  }
+  #dir-a .a-pill:hover { background: #1c2028; }
+  #dir-a .a-pill:focus-visible { outline: 2px solid var(--a-accent); outline-offset: -1px; }
+  #dir-a .a-pill[aria-expanded="true"] { background: #1c2028; }
+  #dir-a .a-pill__bolt { color: var(--a-accent); font-size: 11px; line-height: 1; }
+  #dir-a .a-pill__bolt.off { color: var(--a-fg-3); }
+  #dir-a .a-pill__name { font-weight: 600; }
+  #dir-a .a-pill__name.sub { font-weight: 400; color: var(--a-fg-2); }
+  #dir-a .a-pill__caret { color: var(--a-fg-3); font-size: 9px; }
+  #dir-a .a-sep { width: 1px; height: 12px; background: var(--a-line); margin: 0 8px; }
+  #dir-a .a-usage { display: inline-flex; align-items: center; gap: 12px; color: var(--a-fg-2); }
+  #dir-a .a-u { display: inline-flex; align-items: center; gap: 5px; }
+  #dir-a .a-u__mark { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  #dir-a .a-u__mark--claude { background: #d97757; }
+  #dir-a .a-u__mark--codex { background: #4a7bee; }
+  #dir-a .a-u__pct { color: var(--a-fg); font-variant-numeric: tabular-nums; }
+  #dir-a .a-u__win { color: var(--a-fg-3); font-variant-numeric: tabular-nums; }
+  #dir-a .a-spacer { flex: 1 1 auto; }
+  #dir-a .a-ver { color: var(--a-fg-3); font-size: 10.5px; }
+
+  #dir-a .a-menu {
+    position: absolute; bottom: 30px; left: 6px; min-width: 232px;
+    background: #1a1d23; border: 1px solid #2b2f38; border-radius: 9px;
+    padding: 5px; box-shadow: 0 12px 32px rgba(0,0,0,.5); z-index: 20;
+  }
+  #dir-a .a-menu__hint { padding: 7px 9px 8px; font-size: 11px; color: var(--a-fg-3); line-height: 1.4; }
+  #dir-a .a-menu__rule { height: 1px; background: #2b2f38; margin: 3px 0; }
+  #dir-a .a-mi {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    appearance: none; background: none; border: 0; color: var(--a-fg);
+    font: inherit; font-size: 12.5px; padding: 7px 9px; border-radius: 6px;
+    cursor: pointer; text-align: left;
+  }
+  #dir-a .a-mi:hover { background: #22262e; }
+  #dir-a .a-mi:focus-visible { outline: 2px solid var(--a-accent); outline-offset: -2px; }
+  #dir-a .a-mi__tick { width: 12px; color: var(--a-accent); font-size: 10px; flex: none; }
+  #dir-a .a-mi__sub { color: var(--a-fg-3); font-size: 11px; margin-left: auto; }
+  #dir-a .a-anchor { position: relative; }
+
+  /* =========================================================================
+     B — "Billing first"
+     ========================================================================= */
+  #dir-b { --b-rail: #0f1115; --b-line: #22252c; --b-fg: #dfe3ea; --b-fg-2: #868d99;
+           --b-fg-3: #596069; --b-accent: #6ee7b7; --b-warn: #fbbf24; }
+  #dir-b .b-rail {
+    height: 26px; background: var(--b-rail); border-top: 1px solid var(--b-line);
+    display: flex; align-items: center; padding: 0 10px 0 6px; font-size: 11.5px;
+  }
+  #dir-b .b-pill {
+    appearance: none; border: 0; background: none; color: var(--b-fg);
+    font: inherit; font-size: 11px; display: inline-flex; align-items: center; gap: 7px;
+    height: 20px; padding: 0 9px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  #dir-b .b-pill:hover { background: #1a1e25; border-color: #2a2f38; }
+  #dir-b .b-pill:focus-visible { outline: 2px solid var(--b-accent); outline-offset: 1px; }
+  #dir-b .b-pill[aria-expanded="true"] { background: #1a1e25; border-color: #2a2f38; }
+  #dir-b .b-kicker { font-size: 9px; letter-spacing: .75px; font-weight: 700;
+    text-transform: uppercase; color: var(--b-fg-3); }
+  #dir-b .b-val { font-weight: 600; font-size: 11.5px; }
+  #dir-b .b-val--sub { color: var(--b-warn); }
+  #dir-b .b-val--grid { color: var(--b-accent); }
+  #dir-b .b-caret { color: var(--b-fg-3); font-size: 9px; }
+  #dir-b .b-sep { width: 1px; height: 12px; background: var(--b-line); margin: 0 9px; }
+  #dir-b .b-usage { display: inline-flex; align-items: center; gap: 12px; color: var(--b-fg-2); }
+  #dir-b .b-u { display: inline-flex; align-items: center; gap: 5px; }
+  #dir-b .b-u__mark { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  #dir-b .b-u__mark--claude { background: #d97757; }
+  #dir-b .b-u__mark--codex { background: #4a7bee; }
+  #dir-b .b-u__pct { color: var(--b-fg); font-variant-numeric: tabular-nums; }
+  #dir-b .b-u__win { color: var(--b-fg-3); font-variant-numeric: tabular-nums; }
+  #dir-b .b-spacer { flex: 1 1 auto; }
+  #dir-b .b-ver { color: var(--b-fg-3); font-size: 10.5px; }
+  #dir-b .b-anchor { position: relative; }
+  #dir-b .b-menu {
+    position: absolute; bottom: 30px; left: 4px; min-width: 246px;
+    background: #191c22; border: 1px solid #2a2e37; border-radius: 9px;
+    padding: 5px; box-shadow: 0 12px 32px rgba(0,0,0,.5); z-index: 20;
+  }
+  #dir-b .b-menu__hint { padding: 7px 9px 8px; font-size: 11px; color: var(--b-fg-3); line-height: 1.4; }
+  #dir-b .b-menu__rule { height: 1px; background: #2a2e37; margin: 3px 0; }
+  #dir-b .b-mi {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    appearance: none; background: none; border: 0; color: var(--b-fg);
+    font: inherit; font-size: 12.5px; padding: 7px 9px; border-radius: 6px;
+    cursor: pointer; text-align: left;
+  }
+  #dir-b .b-mi:hover { background: #212630; }
+  #dir-b .b-mi:focus-visible { outline: 2px solid var(--b-accent); outline-offset: -2px; }
+  #dir-b .b-mi__tick { width: 12px; color: var(--b-accent); font-size: 10px; flex: none; }
+  #dir-b .b-mi__sub { color: var(--b-fg-3); font-size: 11px; margin-left: auto; }
+
+  /* =========================================================================
+     C — "Segment"
+     ========================================================================= */
+  #dir-c { --c-rail: #101216; --c-line: #23262d; --c-fg: #d8dce3; --c-fg-2: #878e99;
+           --c-fg-3: #5b626c; --c-accent: #7c9dff; --c-seg: #1b1f26; }
+  #dir-c .c-rail {
+    height: 26px; background: var(--c-rail); border-top: 1px solid var(--c-line);
+    display: flex; align-items: center; padding: 0 10px 0 0; font-size: 11.5px;
+  }
+  /* the pill is a full-height segment welded to the rail's left end */
+  #dir-c .c-seg {
+    appearance: none; border: 0; border-right: 1px solid var(--c-line);
+    background: var(--c-seg); color: var(--c-fg); font: inherit; font-size: 11.5px;
+    height: 26px; padding: 0 11px; display: inline-flex; align-items: center; gap: 7px;
+    cursor: pointer; white-space: nowrap;
+  }
+  #dir-c .c-seg:hover { background: #232830; }
+  #dir-c .c-seg:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+  #dir-c .c-seg[aria-expanded="true"] { background: #232830; }
+  #dir-c .c-seg__dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  #dir-c .c-seg__dot--on { background: #3ddc97; }
+  #dir-c .c-seg__dot--sub { background: #fbbf24; }
+  #dir-c .c-seg__name { font-weight: 600; }
+  #dir-c .c-seg__caret { color: var(--c-fg-3); font-size: 9px; margin-left: 1px; }
+  #dir-c .c-usage { display: inline-flex; align-items: center; gap: 12px;
+    color: var(--c-fg-2); padding-left: 11px; }
+  #dir-c .c-u { display: inline-flex; align-items: center; gap: 5px; }
+  #dir-c .c-u__mark { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  #dir-c .c-u__mark--claude { background: #d97757; }
+  #dir-c .c-u__mark--codex { background: #4a7bee; }
+  #dir-c .c-u__pct { color: var(--c-fg); font-variant-numeric: tabular-nums; }
+  #dir-c .c-u__win { color: var(--c-fg-3); font-variant-numeric: tabular-nums; }
+  #dir-c .c-spacer { flex: 1 1 auto; }
+  #dir-c .c-ver { color: var(--c-fg-3); font-size: 10.5px; }
+  #dir-c .c-anchor { position: relative; }
+  #dir-c .c-menu {
+    position: absolute; bottom: 30px; left: 0; min-width: 238px;
+    background: #1a1d23; border: 1px solid #2b2f38; border-radius: 9px;
+    padding: 5px; box-shadow: 0 12px 32px rgba(0,0,0,.5); z-index: 20;
+  }
+  #dir-c .c-menu__hint { padding: 7px 9px 8px; font-size: 11px; color: var(--c-fg-3); line-height: 1.4; }
+  #dir-c .c-menu__rule { height: 1px; background: #2b2f38; margin: 3px 0; }
+  #dir-c .c-mi {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    appearance: none; background: none; border: 0; color: var(--c-fg);
+    font: inherit; font-size: 12.5px; padding: 7px 9px; border-radius: 6px;
+    cursor: pointer; text-align: left;
+  }
+  #dir-c .c-mi:hover { background: #22262e; }
+  #dir-c .c-mi:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+  #dir-c .c-mi__tick { width: 12px; color: var(--c-accent); font-size: 10px; flex: none; }
+  #dir-c .c-mi__sub { color: var(--c-fg-3); font-size: 11px; margin-left: auto; }
+</style>
+
+<div class="shell">
+  <div class="shell__bar" role="tablist" aria-label="Design directions">
+    <button class="shell__tab" role="tab" id="tab-a" aria-controls="dir-a" aria-selected="true">A <span class="nm">· Named pill</span><span class="k">1</span></button>
+    <button class="shell__tab" role="tab" id="tab-b" aria-controls="dir-b" aria-selected="false" tabindex="-1">B <span class="nm">· Billing first</span><span class="k">2</span></button>
+    <button class="shell__tab" role="tab" id="tab-c" aria-controls="dir-c" aria-selected="false" tabindex="-1">C <span class="nm">· Segment</span><span class="k">3</span></button>
+  </div>
+  <div class="shell__thesis" id="thesis"></div>
+  <div class="shell__note">Mỗi hướng hiện cả hai trạng thái. Bấm pill để mở menu — chọn provider và xem thanh đổi theo.</div>
+</div>
+
+<!-- ======================= A ======================= -->
+<section id="dir-a" role="tabpanel" aria-labelledby="tab-a">
+  <div class="stage">
+    <p class="stage__label">Chưa chọn provider</p>
+    <div class="stage__win">
+      <div class="stage__body">cửa sổ ứng dụng</div>
+      <div class="a-anchor">
+        <div class="a-rail" id="a-rail-1"></div>
+        <div id="a-menu-1"></div>
+      </div>
+    </div>
+
+    <p class="stage__label">Đã chọn provider</p>
+    <div class="stage__win">
+      <div class="stage__body">cửa sổ ứng dụng</div>
+      <div class="a-anchor">
+        <div class="a-rail" id="a-rail-2"></div>
+        <div id="a-menu-2"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= B ======================= -->
+<section id="dir-b" role="tabpanel" aria-labelledby="tab-b" hidden>
+  <div class="stage">
+    <p class="stage__label">Chưa chọn provider</p>
+    <div class="stage__win">
+      <div class="stage__body">cửa sổ ứng dụng</div>
+      <div class="b-anchor">
+        <div class="b-rail" id="b-rail-1"></div>
+        <div id="b-menu-1"></div>
+      </div>
+    </div>
+
+    <p class="stage__label">Đã chọn provider</p>
+    <div class="stage__win">
+      <div class="stage__body">cửa sổ ứng dụng</div>
+      <div class="b-anchor">
+        <div class="b-rail" id="b-rail-2"></div>
+        <div id="b-menu-2"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= C ======================= -->
+<section id="dir-c" role="tabpanel" aria-labelledby="tab-c" hidden>
+  <div class="stage">
+    <p class="stage__label">Chưa chọn provider</p>
+    <div class="stage__win">
+      <div class="stage__body">cửa sổ ứng dụng</div>
+      <div class="c-anchor">
+        <div class="c-rail" id="c-rail-1"></div>
+        <div id="c-menu-1"></div>
+      </div>
+    </div>
+
+    <p class="stage__label">Đã chọn provider</p>
+    <div class="stage__win">
+      <div class="stage__body">cửa sổ ứng dụng</div>
+      <div class="c-anchor">
+        <div class="c-rail" id="c-rail-2"></div>
+        <div id="c-menu-2"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  /* ---------------- shared data — identical across all three ---------------- */
+  var PROVIDERS = [
+    { id: 'grid-e25bf7fbbb214cab', name: 'DDDD', models: '1 model' },
+    { id: 'grid-98d3bff06b0c44ed', name: 'AAA', models: '1 model' },
+    { id: 'grid-3378218621364f16', name: 'autonomous.ai', models: '3 models' }
+  ];
+  var USAGE = [
+    { key: 'claude', pct: '2% used', win: '4h 3m' },
+    { key: 'claude2', pct: '8% used', win: '3d 13h' },
+    { key: 'codex', pct: '40% used', win: '14d 8h' }
+  ];
+  var VERSION = 'v1.0.0';
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  // Each rail keeps its own selection so both states stay on screen at once.
+  var state = {};
+  function sel(id) { return state[id]; }
+  function markClass(k) { return k === 'codex' ? 'codex' : 'claude'; }
+
+  /* ---------------- shell tabs ---------------- */
+  var theses = {
+    'tab-a': '<b>A · Named pill</b> — pill chữ, giống mọi thứ khác trên thanh. Cược rằng thanh này để ĐỌC, và pill chỉ cần đủ thấy để bấm khi cần.',
+    'tab-b': '<b>B · Billing first</b> — nhãn micro-caps nói rõ "AGENTS RUN ON", giá trị đổi màu theo loại. Cược rằng người dùng cần biết mình đang tiêu tiền của ai.',
+    'tab-c': '<b>C · Segment</b> — khối đặc cao hết thanh, hàn vào mép trái. Cược rằng provider là thứ khác loại với các con số, nên phải tách bằng hình khối.'
+  };
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.shell__tab'));
+  var thesisEl = document.getElementById('thesis');
+  function select(id) {
+    tabs.forEach(function (t) {
+      var on = t.id === id;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    thesisEl.innerHTML = theses[id];
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { select(t.id); });
+    t.addEventListener('keydown', function (e) {
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      var n = tabs[(i + d + tabs.length) % tabs.length];
+      n.focus(); select(n.id);
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    var i = ['1', '2', '3'].indexOf(e.key);
+    if (i > -1) { tabs[i].focus(); select(tabs[i].id); }
+  });
+  select('tab-a');
+
+  /* ================= A — named pill ================= */
+  function usageA() {
+    return '<span class="a-usage">' + USAGE.map(function (u) {
+      return '<span class="a-u"><span class="a-u__mark a-u__mark--' + markClass(u.key) + '"></span>'
+        + '<span class="a-u__pct">' + esc(u.pct) + '</span>'
+        + '<span class="a-u__win">' + esc(u.win) + '</span></span>';
+    }).join('') + '</span>';
+  }
+  function renderA(railId, menuId) {
+    var p = sel(railId);
+    var open = state[menuId + ':open'];
+    document.getElementById(railId).innerHTML =
+      '<button class="a-pill" data-a-toggle="' + menuId + '" aria-expanded="' + !!open + '" aria-haspopup="menu">'
+        + '<span class="a-pill__bolt' + (p ? '' : ' off') + '">⚡</span>'
+        + '<span class="a-pill__name' + (p ? '' : ' sub') + '">' + (p ? esc(p.name) : 'Subscription') + '</span>'
+        + '<span class="a-pill__caret">▾</span>'
+      + '</button>'
+      + '<span class="a-sep"></span>'
+      + usageA()
+      + '<span class="a-spacer"></span>'
+      + '<span class="a-ver">' + VERSION + '</span>';
+
+    document.getElementById(menuId).innerHTML = !open ? '' :
+      '<div class="a-menu" role="menu">'
+        + '<div class="a-menu__hint">Agent mới chạy ở đây. Agent đang chạy giữ nguyên nơi nó bắt đầu.</div>'
+        + '<div class="a-menu__rule"></div>'
+        + '<button class="a-mi" role="menuitemradio" data-a-pick="' + menuId + '|" aria-checked="' + !p + '">'
+          + '<span class="a-mi__tick">' + (p ? '' : '✓') + '</span>Subscription'
+          + '<span class="a-mi__sub">tài khoản engine</span></button>'
+        + PROVIDERS.map(function (x, i) {
+            var on = p && p.id === x.id;
+            return '<button class="a-mi" role="menuitemradio" data-a-pick="' + menuId + '|' + i + '" aria-checked="' + !!on + '">'
+              + '<span class="a-mi__tick">' + (on ? '✓' : '') + '</span>' + esc(x.name)
+              + '<span class="a-mi__sub">' + esc(x.models) + '</span></button>';
+          }).join('')
+        + '<div class="a-menu__rule"></div>'
+        + '<button class="a-mi" role="menuitem"><span class="a-mi__tick">⚙</span>Provider settings…</button>'
+      + '</div>';
+  }
+
+  /* ================= B — billing first ================= */
+  function usageB() {
+    return '<span class="b-usage">' + USAGE.map(function (u) {
+      return '<span class="b-u"><span class="b-u__mark b-u__mark--' + markClass(u.key) + '"></span>'
+        + '<span class="b-u__pct">' + esc(u.pct) + '</span>'
+        + '<span class="b-u__win">' + esc(u.win) + '</span></span>';
+    }).join('') + '</span>';
+  }
+  function renderB(railId, menuId) {
+    var p = sel(railId);
+    var open = state[menuId + ':open'];
+    document.getElementById(railId).innerHTML =
+      '<button class="b-pill" data-b-toggle="' + menuId + '" aria-expanded="' + !!open + '" aria-haspopup="menu">'
+        + '<span class="b-kicker">AGENTS RUN ON</span>'
+        + '<span class="b-val ' + (p ? 'b-val--grid' : 'b-val--sub') + '">'
+          + (p ? esc(p.name) : 'Subscription') + '</span>'
+        + '<span class="b-caret">▾</span>'
+      + '</button>'
+      + '<span class="b-sep"></span>'
+      + usageB()
+      + '<span class="b-spacer"></span>'
+      + '<span class="b-ver">' + VERSION + '</span>';
+
+    document.getElementById(menuId).innerHTML = !open ? '' :
+      '<div class="b-menu" role="menu">'
+        + '<div class="b-menu__hint">Agent mới chạy ở đây. Agent đang chạy giữ nguyên nơi nó bắt đầu.</div>'
+        + '<div class="b-menu__rule"></div>'
+        + '<button class="b-mi" role="menuitemradio" data-b-pick="' + menuId + '|" aria-checked="' + !p + '">'
+          + '<span class="b-mi__tick">' + (p ? '' : '✓') + '</span>Subscription'
+          + '<span class="b-mi__sub">tài khoản engine</span></button>'
+        + PROVIDERS.map(function (x, i) {
+            var on = p && p.id === x.id;
+            return '<button class="b-mi" role="menuitemradio" data-b-pick="' + menuId + '|' + i + '" aria-checked="' + !!on + '">'
+              + '<span class="b-mi__tick">' + (on ? '✓' : '') + '</span>' + esc(x.name)
+              + '<span class="b-mi__sub">' + esc(x.models) + '</span></button>';
+          }).join('')
+        + '<div class="b-menu__rule"></div>'
+        + '<button class="b-mi" role="menuitem"><span class="b-mi__tick">⚙</span>Provider settings…</button>'
+      + '</div>';
+  }
+
+  /* ================= C — segment ================= */
+  function usageC() {
+    return '<span class="c-usage">' + USAGE.map(function (u) {
+      return '<span class="c-u"><span class="c-u__mark c-u__mark--' + markClass(u.key) + '"></span>'
+        + '<span class="c-u__pct">' + esc(u.pct) + '</span>'
+        + '<span class="c-u__win">' + esc(u.win) + '</span></span>';
+    }).join('') + '</span>';
+  }
+  function renderC(railId, menuId) {
+    var p = sel(railId);
+    var open = state[menuId + ':open'];
+    document.getElementById(railId).innerHTML =
+      '<button class="c-seg" data-c-toggle="' + menuId + '" aria-expanded="' + !!open + '" aria-haspopup="menu">'
+        + '<span class="c-seg__dot ' + (p ? 'c-seg__dot--on' : 'c-seg__dot--sub') + '"></span>'
+        + '<span class="c-seg__name">' + (p ? esc(p.name) : 'Subscription') + '</span>'
+        + '<span class="c-seg__caret">▾</span>'
+      + '</button>'
+      + usageC()
+      + '<span class="c-spacer"></span>'
+      + '<span class="c-ver">' + VERSION + '</span>';
+
+    document.getElementById(menuId).innerHTML = !open ? '' :
+      '<div class="c-menu" role="menu">'
+        + '<div class="c-menu__hint">Agent mới chạy ở đây. Agent đang chạy giữ nguyên nơi nó bắt đầu.</div>'
+        + '<div class="c-menu__rule"></div>'
+        + '<button class="c-mi" role="menuitemradio" data-c-pick="' + menuId + '|" aria-checked="' + !p + '">'
+          + '<span class="c-mi__tick">' + (p ? '' : '✓') + '</span>Subscription'
+          + '<span class="c-mi__sub">tài khoản engine</span></button>'
+        + PROVIDERS.map(function (x, i) {
+            var on = p && p.id === x.id;
+            return '<button class="c-mi" role="menuitemradio" data-c-pick="' + menuId + '|' + i + '" aria-checked="' + !!on + '">'
+              + '<span class="c-mi__tick">' + (on ? '✓' : '') + '</span>' + esc(x.name)
+              + '<span class="c-mi__sub">' + esc(x.models) + '</span></button>';
+          }).join('')
+        + '<div class="c-menu__rule"></div>'
+        + '<button class="c-mi" role="menuitem"><span class="c-mi__tick">⚙</span>Provider settings…</button>'
+      + '</div>';
+  }
+
+  /* ---------------- wiring: one delegated listener for all three ---------------- */
+  var RAILS = [
+    { r: 'a-rail-1', m: 'a-menu-1', fn: renderA },
+    { r: 'a-rail-2', m: 'a-menu-2', fn: renderA },
+    { r: 'b-rail-1', m: 'b-menu-1', fn: renderB },
+    { r: 'b-rail-2', m: 'b-menu-2', fn: renderB },
+    { r: 'c-rail-1', m: 'c-menu-1', fn: renderC },
+    { r: 'c-rail-2', m: 'c-menu-2', fn: renderC }
+  ];
+  function byMenu(menuId) {
+    for (var i = 0; i < RAILS.length; i++) if (RAILS[i].m === menuId) return RAILS[i];
+    return null;
+  }
+  function drawAll() { RAILS.forEach(function (x) { x.fn(x.r, x.m); }); }
+
+  document.addEventListener('click', function (e) {
+    var toggle = e.target.closest('[data-a-toggle],[data-b-toggle],[data-c-toggle]');
+    if (toggle) {
+      var mid = toggle.getAttribute('data-a-toggle') || toggle.getAttribute('data-b-toggle')
+             || toggle.getAttribute('data-c-toggle');
+      var wasOpen = state[mid + ':open'];
+      RAILS.forEach(function (x) { state[x.m + ':open'] = false; });
+      state[mid + ':open'] = !wasOpen;
+      drawAll();
+      return;
+    }
+    var pick = e.target.closest('[data-a-pick],[data-b-pick],[data-c-pick]');
+    if (pick) {
+      var raw = pick.getAttribute('data-a-pick') || pick.getAttribute('data-b-pick')
+             || pick.getAttribute('data-c-pick');
+      var parts = raw.split('|');
+      var rail = byMenu(parts[0]);
+      if (rail) {
+        state[rail.r] = parts[1] === '' ? null : PROVIDERS[+parts[1]];
+        state[parts[0] + ':open'] = false;
+      }
+      drawAll();
+      return;
+    }
+    // A click anywhere else closes every menu.
+    var anyOpen = RAILS.some(function (x) { return state[x.m + ':open']; });
+    if (anyOpen) {
+      RAILS.forEach(function (x) { state[x.m + ':open'] = false; });
+      drawAll();
+    }
+  });
+
+  // The second rail of each pair opens already pointed at a provider, so both
+  // states are on screen at once and can be compared without clicking.
+  state['a-rail-2'] = PROVIDERS[0];
+  state['b-rail-2'] = PROVIDERS[0];
+  state['c-rail-2'] = PROVIDERS[0];
+  drawAll();
+})();
+</script>

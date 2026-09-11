@@ -4,7 +4,7 @@
 #   make install-cli ARGS="--no-restart"
 #   make upload-cli  ARGS="0.1.0"
 
-.PHONY: cli-test install-cli upload-cli release-cli release-backend remote-machine
+.PHONY: cli-test install-cli upload-cli release-cli release-backend release-desktop remote-machine
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
@@ -22,6 +22,14 @@ release-cli:
 ## See backend/scripts/release-be.sh.
 release-backend:
 	bash backend/scripts/release-be.sh $(ARGS)
+
+## release-desktop: tag this commit vX.Y.Z_desktop and push the tag — CI builds both macOS builds
+## and both Linux architectures, publishes to GCS, and cuts the GitHub Release. The version is bumped
+## from max(last git tag, live harness/desktop/metadata.json). ARGS="--dry-run" to preview,
+## ARGS="--minor" for a forced-update minor bump, ARGS="X.Y.Z" for an explicit version. The by-hand
+## escape hatches (upload-desktop, upload-desktop-linux, upload-node-runtime) live in desktop/Makefile.
+release-desktop:
+	bash desktop/scripts/release-desktop.sh $(ARGS)
 
 ## install-cli: bundle the CLI from THIS working tree and install it into ~/.harness/cli — the local dev
 ## loop, nothing published. Restarts the daemon on the new bytes. Self-update stays ON: the build is

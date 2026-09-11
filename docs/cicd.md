@@ -1,24 +1,31 @@
 # CI/CD
 
-Three workflows, all under [`.github/workflows/`](../.github/workflows/).
+Three products release from this repo — the CLI (`cli/`), the backend (`backend/`) and the desktop
+app (`desktop/`) — and every workflow lives under [`.github/workflows/`](../.github/workflows/).
 
 | File | Runs when | Does |
 |---|---|---|
 | `ci.yml` | every pull request against `main`; on demand | `npm ci` → `npx tsc --noEmit` → `npx vitest run`, i.e. `make cli-test` |
-| `release.yml` | a pushed `v*_cli` tag; on demand | bundles and publishes the CLI, then verifies the published bytes |
-| `production-be-build.yaml` | a pushed `v*_api` tag | builds `backend/Dockerfile.k8s` and pushes it to GCR |
+| `release.yml` | a pushed `v*_cli` tag (`make release-cli`); on demand | bundles and publishes the CLI, then verifies the published bytes |
+| `production-be-build.yaml` | a pushed `v*_api` tag (`make release-backend`) | builds `backend/Dockerfile.k8s` and pushes it to GCR |
+| `release-desktop.yml` | a pushed `v*_desktop` tag (`make release-desktop`); on demand | builds, signs and publishes both macOS builds and both Linux architectures of the desktop app — see `desktop/RELEASE.md` |
+| `desktop-internal-build.yml` | a push to `internal/**`; on demand | a signed, notarized desktop build for testers behind an unlisted link, no release |
 
-`ci.yml` and `release.yml` are modelled on the ones in `autonomous-harness-desktop` and share that
-repo's release infrastructure: the same GCS bucket (`s3-autonomous-upgrade-3`), the same service
-account, the same "the tag is the version" rule, the same annotated-tag release notes, and the same
-`metadata_path` dry run. What follows is only what is specific to this repo.
+`ci.yml` and `release.yml` share one shape with `release-desktop.yml` and one release infrastructure:
+the same GCS bucket (`s3-autonomous-upgrade-3`), the same "the tag is the version" rule, the same
+annotated-tag release notes, and the same `metadata_path` dry run. They do NOT yet share a
+credential: `release.yml` authenticates with workload identity federation (below), while the desktop
+workflows still use the `GCP_SA_KEY` service-account key and `gsutil` — move them onto the same
+`HAS_WIF` pattern and `gcloud storage` before that key is deleted. What follows is only what is
+specific to this repo.
 
 ## Why the tag suffixes
 
-Both release triggers live in one repo, so each one has to be unmistakable: `v0.1.72_cli` publishes
-the CLI and `v1.4.0_api` builds the backend image. `release.yml` strips both the `v` and the `_cli`
-before anything treats the string as a version — the suffix is a routing marker for the trigger and
-never reaches the manifest, the release title or the daemon's self-update comparison.
+Three release triggers live in one repo, so each one has to be unmistakable: `v0.1.72_cli` publishes
+the CLI, `v1.4.0_api` builds the backend image, and `v1.1.14_desktop` releases the desktop app. Each
+workflow (and each `release-*.sh`) strips both the `v` and its suffix before anything treats the
+string as a version — the suffix is a routing marker for the trigger and never reaches the manifest,
+the release title or an updater's version comparison.
 
 ## Setup
 
