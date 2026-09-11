@@ -31,7 +31,8 @@ install-cli:
 	bash cli/scripts/install-cli.sh $(ARGS)
 
 ## upload-cli: bump version -> bundle -> publish the CLI. MAINTAINER ONLY — it writes to the release
-## bucket, so it needs an authenticated `gsutil` with write access (plus node/npm for the bundle step).
+## bucket, so it needs an authenticated `gcloud storage` (or gsutil) with write access on it, plus
+## node/npm for the bundle step.
 ## Running daemons pick the new version up within ~1 min.
 upload-cli:
 	bash cli/scripts/upload-cli.sh $(ARGS)
