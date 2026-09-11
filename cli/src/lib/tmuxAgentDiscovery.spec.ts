@@ -13,7 +13,7 @@ import {
 } from './tmuxAgentDiscovery.js'
 
 const START = 'Mon Aug 10 12:00:00 2026'
-const pane = { tmuxPane: '%1', rootPid: 1, cwd: '/work/demo' }
+const pane = { tmuxPane: '%1', rootPid: 1, tmuxSessionName: 'harness-claude-1', cwd: '/work/demo' }
 const row = (pid: number, parentPid: number, executable: string, args = executable): ProcessRow => ({
   pid, parentPid, executable, args, startMarker: START,
 })
@@ -27,9 +27,9 @@ const ownership = (cursor: string[] = [], grok: string[] = []): AgentCommandOwne
 })
 
 it('parses printable tmux separators without truncating a pipe in cwd', () => {
-  expect(parsePanes('%1|42|/work/a|b\n%2|84|/tmp\n')).toEqual([
-    { tmuxPane: '%1', rootPid: 42, cwd: '/work/a|b' },
-    { tmuxPane: '%2', rootPid: 84, cwd: '/tmp' },
+  expect(parsePanes('%1|42|harness-claude-1|/work/a|b\n%2|84|mysession|/tmp\n')).toEqual([
+    { tmuxPane: '%1', rootPid: 42, tmuxSessionName: 'harness-claude-1', cwd: '/work/a|b' },
+    { tmuxPane: '%2', rootPid: 84, tmuxSessionName: 'mysession', cwd: '/tmp' },
   ])
 })
 
@@ -245,7 +245,7 @@ describe('tmux process agent snapshot discovery', () => {
 
   it('creates independent agents for two panes running the same engine', () => {
     const result = discoverTmuxAgentsFromSnapshot(
-      [pane, { tmuxPane: '%2', rootPid: 10, cwd: '/work/other' }],
+      [pane, { tmuxPane: '%2', rootPid: 10, tmuxSessionName: 'harness-claude-2', cwd: '/work/other' }],
       [row(1, 0, 'zsh'), row(2, 1, 'claude'), row(10, 0, 'zsh'), row(11, 10, 'claude')],
       900,
     )

@@ -31,6 +31,7 @@ import {
 export interface TmuxPaneSnapshot {
   tmuxPane: string
   rootPid: number
+  tmuxSessionName: string
   cwd: string
 }
 
@@ -84,12 +85,18 @@ export function parsePanes(stdout: string): TmuxPaneSnapshot[] {
   for (const line of stdout.split('\n')) {
     const first = line.indexOf('|')
     const second = first < 0 ? -1 : line.indexOf('|', first + 1)
-    if (first < 0 || second < 0) continue
+    const third = second < 0 ? -1 : line.indexOf('|', second + 1)
+    if (first < 0 || second < 0 || third < 0) continue
     const tmuxPane = line.slice(0, first)
     const pidText = line.slice(first + 1, second)
     const rootPid = Number(pidText)
     if (!/^%\d+$/.test(tmuxPane) || !Number.isSafeInteger(rootPid) || rootPid <= 0) continue
-    panes.push({ tmuxPane, rootPid, cwd: line.slice(second + 1) })
+    panes.push({
+      tmuxPane,
+      rootPid,
+      tmuxSessionName: line.slice(second + 1, third),
+      cwd: line.slice(third + 1),
+    })
   }
   return panes
 }
@@ -100,9 +107,9 @@ export type TmuxPaneInventory =
 
 /** One bounded tmux inventory read, shared by discovery and the neutral backend adapter. */
 export async function listTmuxPanes(): Promise<TmuxPaneInventory> {
-  // Printable delimiters survive tmux's POSIX-locale output sanitiser. Split only the two fixed
+  // Printable delimiters survive tmux's POSIX-locale output sanitiser. Split only the three fixed
   // separators so a legitimate `|` in pane_current_path remains part of the path.
-  const result = await execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}|#{pane_pid}|#{pane_current_path}'], 2_000)
+  const result = await execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}|#{pane_pid}|#{session_name}|#{pane_current_path}'], 2_000)
   return result.ok ? { ok: true, panes: parsePanes(result.stdout) } : result
 }
 

@@ -60,6 +60,7 @@ import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
 import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
+import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { basename } from 'node:path'
 import {
   bypassPermissionActive,
@@ -3329,7 +3330,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     // Harness-created sessions are easy to distinguish from a user's organic tmux sessions while
     // retaining the engine and a collision-resistant creation suffix for diagnostics. Computed
     // before the grid block because a file-configured engine keys its config directory on it.
-    const label = `harness-${engine}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    // The `harness-` prefix is also discovery's whitelist (see `isHarnessSession` /
+    // `TmuxBackend.inventory()`) — every pane outside it is invisible to the daemon.
+    const label = buildHarnessSessionLabel(engine)
     // A grid is the user's answer to "where should this run", so every way of not honouring it is a
     // refusal rather than a fallback — an agent silently started on the engine's own login spends the
     // wrong account and looks identical to one that worked.

@@ -98,6 +98,35 @@ printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
     expect(readFileSync(calls, 'utf8').trim()).toBe('set-option -w -t %9 remain-on-exit on')
   })
 
+  it('inventory only exposes panes whose session was named by agent_create (autonomous-harness-desktop#6)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-inventory-'))
+    dirs.push(dir)
+    const tmux = join(dir, 'tmux')
+    // Three panes: one from a daemon-created `harness-*` session (must be listed), one from a
+    // session the user opened by hand, and one from a session an agent spawned itself with a
+    // nested `tmux new-session` — neither of the latter two went through agent_create, so
+    // neither should ever reach discovery.
+    writeFileSync(tmux, `#!/bin/sh
+case "$1" in
+  list-panes)
+    printf '%%1|100|harness-claude-1699999999999|/work/demo\\n'
+    printf '%%2|200|mysession|/home/user\\n'
+    printf '%%3|300|child-of-agent|/work/demo\\n'
+    ;;
+esac
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+
+    const result = await new TmuxBackend().inventory()
+
+    expect(result.state).toBe('available')
+    if (result.state !== 'available') return
+    expect(result.roots).toEqual([
+      { runtime: { backend: 'tmux', paneId: '%1' }, rootPid: 100, cwd: '/work/demo' },
+    ])
+  })
+
   it('respawns a pane in place with -k, an optional cwd, and the exact argv, no shell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-'))
     dirs.push(dir)
