@@ -16,6 +16,7 @@ import {
 import type { AgentEngine } from '../engines/types.js'
 import { probeGatewayRuntime } from './gatewayRuntime.js'
 import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
+import { isHarnessSession } from './harnessSessionLabel.js'
 import type { ProcessIdentity, RegisteredSession } from './registry.js'
 import {
   ambiguousAgentProcess,
@@ -105,12 +106,19 @@ export type TmuxPaneInventory =
   | { ok: true; panes: TmuxPaneSnapshot[] }
   | { ok: false; error: string }
 
-/** One bounded tmux inventory read, shared by discovery and the neutral backend adapter. */
+/**
+ * One bounded tmux inventory read, shared by discovery and the neutral backend adapter.
+ *
+ * Only panes from sessions this daemon itself named via `agent_create` are returned — a session
+ * the user opened by hand, or one an agent spawned itself with a nested `tmux new-session`, is
+ * invisible to every discovery path (autonomous-harness-desktop#6).
+ */
 export async function listTmuxPanes(): Promise<TmuxPaneInventory> {
   // Printable delimiters survive tmux's POSIX-locale output sanitiser. Split only the three fixed
   // separators so a legitimate `|` in pane_current_path remains part of the path.
   const result = await execText('tmux', ['list-panes', '-a', '-F', '#{pane_id}|#{pane_pid}|#{session_name}|#{pane_current_path}'], 2_000)
-  return result.ok ? { ok: true, panes: parsePanes(result.stdout) } : result
+  if (!result.ok) return result
+  return { ok: true, panes: parsePanes(result.stdout).filter((pane) => isHarnessSession(pane.tmuxSessionName)) }
 }
 
 function childrenByParent(rows: readonly ProcessRow[]): Map<number, ProcessRow[]> {

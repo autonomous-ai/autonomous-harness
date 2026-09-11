@@ -116,6 +116,10 @@ claude under a terminal backend ──writes──▶ ~/.claude/projects/**.json
   configured terminal inventory and one shared process table. A supported top-level engine creates an agent immediately,
   before an engine session exists. A changed process in the same pane replaces it immediately; an absent
   process is removed after two successful scans. Probe failures do not remove anything.
+- **Only sessions the daemon created are discoverable.** The tmux inventory is limited to sessions
+  named `harness-<engine>-<timestamp>`, which is what `agent_create` names them. A tmux session you
+  open by hand and run an engine in, or one an agent spawns itself with a nested `tmux new-session`,
+  never becomes an agent — create it through the app (or `agent_create`) instead.
 - **Hooks bind mutable engine sessions** to the process agent using authenticated tmux and/or Herdr
   runtime hints plus verified caller ancestry. Hook socket paths are lookup hints only. They do not
   require `MACHINE_ID`. `SessionStart` and catch hooks attach transcript/store metadata; `SessionEnd` only

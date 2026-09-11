@@ -31,7 +31,6 @@ import {
 } from './tmux.js'
 import { listTmuxPanes } from './tmuxAgentDiscovery.js'
 import { terminalRouteKey } from './terminalRuntime.js'
-import { isHarnessSession } from './harnessSessionLabel.js'
 
 const TMUX_KEYS: Record<TerminalLogicalKey, string> = {
   enter: 'Enter',
@@ -230,16 +229,11 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     if (!result.ok) return { state: 'unavailable', reason: result.error }
     return {
       state: 'available',
-      // Only panes from sessions this daemon itself named via `agent_create` are ever discoverable —
-      // a session the user opened by hand, or one an agent spawned itself with a nested
-      // `tmux new-session`, never gets surfaced (autonomous-harness-desktop#6).
-      roots: result.panes
-        .filter((pane) => isHarnessSession(pane.tmuxSessionName))
-        .map((pane) => ({
-          runtime: { backend: 'tmux' as const, paneId: pane.tmuxPane },
-          rootPid: pane.rootPid,
-          cwd: pane.cwd,
-        })),
+      roots: result.panes.map((pane) => ({
+        runtime: { backend: 'tmux' as const, paneId: pane.tmuxPane },
+        rootPid: pane.rootPid,
+        cwd: pane.cwd,
+      })),
     }
   }
 

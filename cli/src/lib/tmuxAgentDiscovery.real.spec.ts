@@ -15,6 +15,11 @@ import {
 } from './engineBin.js'
 import { TmuxBackend } from './tmuxBackend.js'
 import { probeTmuxAgents } from './tmuxAgentDiscovery.js'
+import { HARNESS_SESSION_PREFIX } from './harnessSessionLabel.js'
+
+// Discovery only sees sessions named like agent_create's; a session outside the prefix is
+// invisible to it by design, so every session this suite expects to find must wear it.
+const SESSION_PREFIX = `${HARNESS_SESSION_PREFIX}real-${process.pid}`
 
 const exec = promisify(execFile)
 const realDescribe = process.env.RUN_REAL_TMUX_DISCOVERY === '1' ? describe : describe.skip
@@ -63,7 +68,7 @@ realDescribe.sequential('real installed CLI process discovery', () => {
 
   it('creates, notifies, and kills a test-owned session through the shared backend contract', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'harness-real-tmux-lifecycle-'))
-    const session = `harness-real-${process.pid}-lifecycle`
+    const session = `${SESSION_PREFIX}-lifecycle`
     const backend = new TmuxBackend()
     createdSessions.add(session)
     try {
@@ -90,7 +95,7 @@ realDescribe.sequential('real installed CLI process discovery', () => {
     const matrixIt = path ? it : it.skip
     matrixIt(`discovers ${engine} once and process-only deletion preserves its pane`, async () => {
       const dir = await mkdtemp(join(tmpdir(), `harness-real-${engine}-`))
-      const session = `harness-real-${process.pid}-${engine}`
+      const session = `${SESSION_PREFIX}-${engine}`
       createdSessions.add(session)
 
       try {
@@ -137,7 +142,7 @@ realDescribe.sequential('real installed CLI process discovery', () => {
 
   it('types literally and submits short text through stdin-loaded buffers', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'harness-real-tmux-input-'))
-    const session = `harness-real-${process.pid}-input`
+    const session = `${SESSION_PREFIX}-input`
     createdSessions.add(session)
     try {
       await tmux(['new-session', '-d', '-s', session, '-c', dir])
@@ -168,7 +173,7 @@ realDescribe.sequential('real installed CLI process discovery', () => {
 
   it.each(installedAgentAliases)('classifies installed %s alias named agent from its executable identity', async (engine, path) => {
     const dir = await mkdtemp(join(tmpdir(), `harness-real-agent-alias-${engine}-`))
-    const session = `harness-real-${process.pid}-${engine}-agent-alias`
+    const session = `${SESSION_PREFIX}-${engine}-agent-alias`
     createdSessions.add(session)
     try {
       await tmux(['new-session', '-d', '-s', session, '-c', dir])
