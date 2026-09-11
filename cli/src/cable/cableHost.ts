@@ -30,6 +30,8 @@ export interface RecentTurn {
 }
 
 export interface CableHostWiring {
+  /** The person's own last questions to a LOCAL agent, newest first. */
+  recentAsks: (agentId: string) => string[]
   machineName: () => string
   /** This computer's machineId, or '' when the daemon has never resolved one (signed out). */
   machineId: () => string
@@ -620,6 +622,21 @@ export class DaemonCableHost implements CableHost {
       .filter((s) => s.recap || s.text || s.ask)
   }
 
+  /**
+   * The person's own last questions to an agent, newest first — what the router ranks on.
+   *
+   * Its own trip rather than a field on [recentSummaries]: a question is recorded when it is asked and
+   * a recap when the answer is summarised, so the two lists are different lengths on any machine where
+   * a turn ended without one. Folding them together is what left the newest question — the one that
+   * says where the next one belongs — off the end.
+   */
+  async recentAsks(agentId: string): Promise<string[]> {
+    const raw = this.isLocalAgent(agentId)
+      ? this.wiring.recentAsks(agentId)
+      : await this.fleet!.recentAsks(this.machineOf(agentId), agentId)
+    return raw.map((a) => (a || '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+  }
+
   async listModels(agentId: string): Promise<string[]> {
     if (!this.isLocalAgent(agentId)) return this.fleet!.listModels(this.machineOf(agentId), agentId)
 
@@ -688,9 +705,7 @@ export class DaemonCableHost implements CableHost {
       // when an agent has none; the local ladder below it still reads `recentSummary`, where a recap
       // standing in for a missing ask is the best it has. Mixing the two into one field is what let a
       // summary of the agent's own replies reach a prompt that called them the person's questions.
-      prompts: (await this.recentSummaries(a.id))
-        .map((r) => (r.ask || '').replace(/\s+/g, ' ').trim())
-        .filter(Boolean),
+      prompts: await this.recentAsks(a.id),
       recentSummary: (await this.recentSummaries(a.id))
         .map((r) => r.ask || r.recap || r.text || '')
         .filter(Boolean)

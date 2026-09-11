@@ -337,6 +337,18 @@ export class CommanderMirror {
           st.summarizing = false
           st.lastAssistantText = ''
           st.lastUserMessage = e.payload.userMessage || ''
+          // RECORDED HERE, WHEN IT IS ASKED — not when the answer is summarised.
+          //
+          // It used to be written in the summariser's success branch, index-aligned with the recaps,
+          // which meant a question only existed once its ANSWER had been summarised. Measured on this
+          // desk: three of eight agents had any questions on record at all, and the missing ones were
+          // the newest — a turn that produced no assistant text, or whose summariser returned null,
+          // left no trace of what the person had asked. The router then ranked those agents on their
+          // name alone, which is exactly the case it is worst at.
+          //
+          // The question is a fact about the TURN, not about the recap, so it is kept on its own list
+          // and no longer has to wait for, or stay in step with, anything else.
+          this.rememberAsk(sessionId, e.payload.userMessage || '')
           st.turnOpen = true
           st.everOpened = true
           st.lastTool = null
@@ -625,9 +637,6 @@ export class CommanderMirror {
           // Recorded in the SAME branch as the summary, so the two arrays cannot drift out of step —
           // a turn that produced no summary produces no row in either.
           this.rememberFullText(sessionId, text)
-          // Recorded in the SAME branch as the summary and the full text, so all three arrays stay
-          // index-aligned: a turn either contributes a row to each or to none.
-          this.rememberAsk(sessionId, userMessage)
           this.saveSoon()
           const { recap, body } = splitSummary(summary)
           this.trace(sessionId, `${sid} done in ${ms}ms · recap="${recap}" · bodyLen=${body.length}`)
@@ -700,7 +709,7 @@ export class CommanderMirror {
    * Falls back to the single latest summary when the history is empty, so the recaps already on disk from
    * before this existed are usable on the first run rather than after three more turns.
    */
-  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string; fullText?: string; ask?: string }> {
+  recent(sessionId: string, n = 2): Array<{ kind: string; text: string; recap?: string; fullText?: string }> {
     const want = Math.max(1, n)
     const stored = this.history.get(sessionId) ?? []
     const latest = this.summaries.get(sessionId)
@@ -708,18 +717,29 @@ export class CommanderMirror {
     const usingHistory = stored.length > 0
     const all = usingHistory ? stored : latest ? [latest] : []
     const fulls = this.fullTexts.get(sessionId) ?? []
-    const asks = this.asks.get(sessionId) ?? []
     return all
       .slice(0, want)
       // PAIRED BEFORE FILTERING, not after. The filter below drops empty summaries, and dropping them
       // from one array while reading the other by position is how a turn ends up carrying the previous
       // turn's answer — wrong in the one way nobody would think to check.
-      .map((summary, at) => ({ summary, full: fulls[usingHistory ? at : 0], ask: asks[usingHistory ? at : 0] }))
+      .map((summary, at) => ({ summary, full: fulls[usingHistory ? at : 0] }))
       .filter(({ summary }) => summary && summary.trim())
-      .map(({ summary, full, ask }) => {
+      .map(({ summary, full }) => {
         const { recap, body } = splitSummary(summary)
-        return { kind: 'summary', text: body || recap, recap, ...(full ? { fullText: full } : {}), ...(ask ? { ask } : {}) }
+        return { kind: 'summary', text: body || recap, recap, ...(full ? { fullText: full } : {}) }
       })
+  }
+
+  /**
+   * The person's own last questions to this agent, newest first.
+   *
+   * Its OWN accessor rather than a field on [recent], because the two no longer describe the same
+   * thing: a recap exists once a turn has been answered and summarised, a question exists the moment
+   * it is asked. Pairing them cost the newest question — the one most likely to say where the next
+   * one belongs — every time a turn ended without a summary.
+   */
+  recentAsks(sessionId: string, n = RECENT_TURNS): string[] {
+    return (this.asks.get(sessionId) ?? []).filter(Boolean).slice(0, Math.max(1, n))
   }
 
   /** The newest turn's complete final answer, for a consumer that reads rather than glances. */

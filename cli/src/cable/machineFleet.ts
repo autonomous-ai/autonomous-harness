@@ -73,6 +73,8 @@ export interface MachineFleet {
   updateAgent(machineId: string, agentId: string, model?: string, effort?: string): void
   listModels(machineId: string, agentId: string): Promise<string[]>
   recentSummaries(machineId: string, agentId: string): Promise<RecentTurn[]>
+  /** The person's own last questions to that agent, newest first — the router's input. */
+  recentAsks(machineId: string, agentId: string): Promise<string[]>
   /**
    * How the last round trip to this machine went, or null if nobody has asked it yet.
    *

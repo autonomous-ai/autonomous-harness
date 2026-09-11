@@ -1901,6 +1901,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   // back under a brand-new agent — but they are ASKED FOR by agent id, which is the only id the device
   // and the voice router know. Resolve across the two, or every tile restores empty.
   backend.recentProvider = (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n)
+  backend.recentAsksProvider = (id, n) => mirror.recentAsks(registry.resolve(id)?.sessionId || id, n)
 
   const runtimeController = new RuntimeProfileController({
     manager: runtimeProfiles,
@@ -2958,9 +2959,7 @@ async function runForeground(session: AuthSession): Promise<void> {
         // a Vietnamese sentence at sixty takes the object with it — which is the topic. The bound that
         // matters now lives at the two ends: ASK_MAX_CHARS where the question is recorded, and the
         // endpoint's own per-prompt ceiling.
-        prompts: (await host.recentSummaries(agent.id))
-          .map((turn) => (turn.ask || '').replace(/\s+/g, ' ').trim())
-          .filter(Boolean),
+        prompts: await host.recentAsks(agent.id),
       })))
       // 20s, not the shared 12s: this path answers a person watching a spinner in their own window, and
       // it is under nobody else's deadline — the app's rpc waits longer still. The dial and the web keep
@@ -4027,6 +4026,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     // named a question that does not exist.
     answer: (agentId, requestId, answers) => backend.onQuestionAnswer?.({ agentId, requestId, answers }),
     recent: (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n),
+    recentAsks: (id) => mirror.recentAsks(registry.resolve(id)?.sessionId || id),
     runtimeProfile: (session) => runtimeProfiles.selectedModel(session),
     updateAgent: (agentId, model, effort) => {
       const s = registry.resolve(agentId)

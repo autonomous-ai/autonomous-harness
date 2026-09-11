@@ -48,6 +48,8 @@ export interface DeviceFleetOpts {
 export class DeviceFleet implements MachineFleet {
   private lingerTimer: NodeJS.Timeout | null = null
   private readonly recapCache = new Map<string, RecentTurn[]>()
+  /** Filled by the same `agent_recent` round trip the recaps come from — see recentSummaries. */
+  private readonly askCache = new Map<string, string[]>()
   private readonly listeners = new Set<(e: FleetEvent) => void>()
   /**
    * How the last round trip to each machine went.
@@ -117,6 +119,7 @@ export class DeviceFleet implements MachineFleet {
     // machine you were reading and pick up another one"; now every other machine's tiles are still on the
     // dial's carousel, and blanking them would make a select look like N agents forgetting their work.
     for (const key of [...this.recapCache.keys()]) if (key.startsWith(`${machineId}:`)) this.recapCache.delete(key)
+    for (const key of [...this.askCache.keys()]) if (key.startsWith(`${machineId}:`)) this.askCache.delete(key)
     // NOTHING is read over the lane for this computer. Selecting it is an ANNOUNCEMENT — it tells the
     // backend where the dial is — and its agents, turns and recaps all come from this process. Asking the
     // cloud for them instead round-trips to ourselves and, because a computer-backed machine is
@@ -143,6 +146,7 @@ export class DeviceFleet implements MachineFleet {
     if (!immediate) return
     this.opts.link.release()
     this.recapCache.clear()
+    this.askCache.clear()
   }
 
 
@@ -235,6 +239,15 @@ export class DeviceFleet implements MachineFleet {
     return raw.map((m) => (typeof m === 'string' ? m : String((m as Record<string, unknown>)?.id ?? ''))).filter(Boolean)
   }
 
+  /** The person's own last questions to a remote agent, newest first. Cached with the recaps. */
+  async recentAsks(machineId: string, agentId: string): Promise<string[]> {
+    const key = `${machineId}:${agentId}`
+    const cached = this.askCache.get(key)
+    if (cached) return cached
+    await this.recentSummaries(machineId, agentId)   // one round trip fills both
+    return this.askCache.get(key) ?? []
+  }
+
   async recentSummaries(machineId: string, agentId: string): Promise<RecentTurn[]> {
     const key = `${machineId}:${agentId}`
     const cached = this.recapCache.get(key)
@@ -256,6 +269,10 @@ export class DeviceFleet implements MachineFleet {
         }
       })
       this.recapCache.set(key, turns)
+      this.askCache.set(
+        key,
+        (Array.isArray(res.asks) ? res.asks : []).filter((a): a is string => typeof a === 'string' && !!a.trim()),
+      )
 
       return turns
     } catch (err) {

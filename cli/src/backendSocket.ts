@@ -364,6 +364,8 @@ export class BackendSocket {
   onBusy: (() => void) | null = null
   /** Answers the device `project_recent` RPC (cli.ts wires this to CommanderMirror.recent). */
   recentProvider: RecentProvider | null = null
+  /** The person's own last questions for an agent, newest first. See the `agent_recent` case. */
+  recentAsksProvider: ((agentId: string, n: number) => string[]) | null = null
   /** Runtime Model/Effort integration, wired by cli.ts for registered tmux sessions. */
   runtimeModelsProvider: ((sessionId?: string) => Promise<RuntimeModelOption[]>) | null = null
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
@@ -1447,7 +1449,13 @@ export class BackendSocket {
           if (!projectId) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
           const n = Math.max(1, Math.min(5, Number(payload.n) || 2))
           const events = this.recentProvider ? this.recentProvider(projectId, n) : []
-          reply(type, requestId, { agentId: projectId, events })
+          // ASKS TRAVEL AS THEIR OWN LIST, beside the events rather than inside them. A question exists
+          // the moment it is asked; a recap exists once the turn has been answered and summarised. They
+          // are different lengths on any machine where a turn ended without one, so a reply that folds
+          // the questions into the event rows loses exactly the newest ones — and a REMOTE agent then
+          // reaches the router with nothing but its name.
+          const asks = this.recentAsksProvider ? this.recentAsksProvider(projectId, n) : []
+          reply(type, requestId, { agentId: projectId, events, asks })
           return
         }
 

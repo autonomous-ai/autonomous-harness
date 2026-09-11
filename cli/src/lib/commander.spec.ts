@@ -41,10 +41,50 @@ describe('CommanderMirror recap events', () => {
     await vi.runAllTimersAsync()
     await Promise.resolve()
 
-    const turn = mirror.recent('session-ask', 3)[0]
-    expect(turn.ask).toBe('Chiến tranh thế giới thứ hai kết thúc vào năm nào?')
-    // The recap is still exactly what it was — this adds a field, it does not change one.
-    expect(turn.recap).toBe('1945.')
+    expect(mirror.recentAsks('session-ask')).toEqual(['Chiến tranh thế giới thứ hai kết thúc vào năm nào?'])
+    // The recap is still exactly what it was — this adds a list, it does not change one.
+    expect(mirror.recent('session-ask', 3)[0].recap).toBe('1945.')
+  })
+
+  it('keeps the question even when the turn produces no summary at all', async () => {
+    // The fault this replaced: the ask was written in the summariser's success branch, so a turn with
+    // no assistant text — or a summariser that returned null — left no record of what was asked.
+    // Measured on a real machine: three of eight agents had any questions on record, and the missing
+    // ones were the NEWEST, which is the signal the router most needs.
+    const mirror = new CommanderMirror({
+      send: () => {},
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async () => null,
+      dataDir,
+    })
+
+    mirror.ingest([
+      { type: 'turn_started', payload: { userMessage: 'qua bong vang vietnam 2026 thuoc ve ai' } },
+      { type: 'turn_ended', payload: {} },
+    ] as LiveEvent[], 'session-nosummary')
+
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+
+    expect(mirror.recentAsks('session-nosummary')).toEqual(['qua bong vang vietnam 2026 thuoc ve ai'])
+    // …and there is genuinely no recap for it. The question stands on its own.
+    expect(mirror.recent('session-nosummary', 3)).toEqual([])
+  })
+
+  it('keeps the three newest questions, newest first', async () => {
+    const mirror = new CommanderMirror({
+      send: () => {},
+      sendWeb: () => {},
+      hasDevice: () => true,
+      summarize: async () => null,
+      dataDir,
+    })
+    for (const q of ['one', 'two', 'three', 'four']) {
+      mirror.ingest([{ type: 'turn_started', payload: { userMessage: q } }] as LiveEvent[], 'session-many')
+    }
+    await vi.runAllTimersAsync()
+    expect(mirror.recentAsks('session-many')).toEqual(['four', 'three', 'two'])
   })
 
   it('fans a TodoWrite out to the device as a todo list, whatever engine produced it', () => {

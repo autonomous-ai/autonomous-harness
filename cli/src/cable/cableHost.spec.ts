@@ -23,6 +23,7 @@ function wiring(over: Partial<CableHostWiring> = {}): CableHostWiring {
     stopTurn: vi.fn(),
     answer: vi.fn(),
     recent: () => [],
+    recentAsks: () => [],
     log: vi.fn(),
     ...over,
   }
@@ -31,6 +32,7 @@ function wiring(over: Partial<CableHostWiring> = {}): CableHostWiring {
 function fleetOf(machines: FleetMachine[]): MachineFleet {
   return {
     list: async () => ({ machines, source: 'backend' as const }),
+    recentAsks: async () => [],
     online: async () => {},
     select: async () => {},
     release: vi.fn(),
