@@ -245,7 +245,15 @@ export class DeviceFleet implements MachineFleet {
       const events = Array.isArray(res.events) ? res.events : []
       const turns = events.map((e) => {
         const r = (e ?? {}) as Record<string, unknown>
-        return { recap: typeof r.recap === 'string' ? r.recap : '', text: typeof r.text === 'string' ? r.text : '' }
+        // `ask` travels too. The wire has always carried it — commander.recent() puts it on every
+        // turn — and dropping it here left every agent on a REMOTE machine with no questions on
+        // record, so the router ranked them on their name alone while local agents were ranked on
+        // what the person had actually said to them.
+        return {
+          recap: typeof r.recap === 'string' ? r.recap : '',
+          text: typeof r.text === 'string' ? r.text : '',
+          ask: typeof r.ask === 'string' ? r.ask : '',
+        }
       })
       this.recapCache.set(key, turns)
 

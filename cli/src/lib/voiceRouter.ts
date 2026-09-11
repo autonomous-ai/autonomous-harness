@@ -8,6 +8,7 @@ import { join } from 'path'
 import { env } from '../config/env.js'
 import { runGrokOneShot, runRouterOneShot, configureRouterOneShot, setRouterOneShotDeviceConnected, shutdownRouterOneShot } from './oneshot.js'
 import { openRouterComplete, resolveOpenRouterKey } from './openrouter.js'
+import { rankAgents } from './routeApi.js'
 
 export interface RouterAgent {
   id: string
@@ -18,8 +19,15 @@ export interface RouterAgent {
   /** 'ori' when this agent's CLI is pointed at OpenRouter — see the direct-call path in routeVoiceTask. */
   gateway?: 'ori' | null
   /** Recaps of the agent's last few completed turns (up to 3), joined — a broader, less skewed picture
-   *  of what it's working on than a single turn. */
+   *  of what it's working on than a single turn.
+   *
+   *  ONLY the local fallback ladder reads this now. The backend router is sent [prompts] instead: a
+   *  recap describes what the AGENT REPLIED, and the old prompt presented those replies under a
+   *  heading claiming they were the person's questions. */
   recentSummary?: string
+  /** The person's OWN last questions to this agent, newest first, uncut. Empty for a fresh agent —
+   *  and empty is sent as empty, never backfilled with a recap of the agent's answers. */
+  prompts?: string[]
   /** The machine it runs on. The candidate list spans every machine the owner has, so this is the only
    *  thing that separates two agents with the same name on two computers — and it is how a spoken "the
    *  one on the mac mini" can be answered at all. */
@@ -392,6 +400,31 @@ export async function routeVoiceTask(
   }
   if (agents.length === 1) {
     return logDecision('only-agent', agents, { agentId: agents[0].id, confidence: 1, reason: 'only agent in machine', needNewAgent: false })
+  }
+
+  // THE BACKEND FIRST — it owns the prompt now, so a wording fix ships with a deploy instead of with a
+  // CLI release that every machine has to self-update into. It is also the only path that works on a
+  // machine with no model credential of its own, which is most of them: those used to fall straight
+  // through to name matching, whose confidence is capped at 0.4 and can therefore never dispatch.
+  //
+  // Everything below stays as the ladder beneath it. A backend that is down, or too old to have this
+  // endpoint, must not cost anybody a turn.
+  const ranked = await rankAgents({
+    task: transcript,
+    agents: agents.map((agent) => ({ id: agent.id, name: agent.name, prompts: agent.prompts ?? [] })),
+    budgetMs: timeoutMs,
+    ...(continuity && continuity.agoMs <= CONTINUITY_WINDOW_MS ? { continuity } : {}),
+    ...(signal ? { signal } : {}),
+  })
+  if (ranked && ranked.length > 0) {
+    const [top, ...rest] = ranked
+    return logDecision('backend', agents, {
+      agentId: top.agentId,
+      confidence: top.score,
+      reason: top.reason,
+      needNewAgent: false,
+      scores: rest.slice(0, ROUTE_SCORED_ROWS - 1).map((row) => ({ agentId: row.agentId, confidence: row.score })),
+    })
   }
 
   const prompt = buildRouterPrompt(transcript, agents, continuity)

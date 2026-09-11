@@ -682,8 +682,15 @@ export class DaemonCableHost implements CableHost {
 
       // THE QUESTION, not the answer. A recap summarises what the agent replied — "1945." is a correct
       // recap and a useless routing signal, and the next question about the same conversation matches
-      // nothing in it. The ask carries the topic, so it wins when there is one; the recap stands in for
-      // turns recorded before this was stored, and for agents on other machines.
+      // nothing in it.
+      //
+      // TWO FIELDS, because two routers read this. The backend is sent `prompts` and is told plainly
+      // when an agent has none; the local ladder below it still reads `recentSummary`, where a recap
+      // standing in for a missing ask is the best it has. Mixing the two into one field is what let a
+      // summary of the agent's own replies reach a prompt that called them the person's questions.
+      prompts: (await this.recentSummaries(a.id))
+        .map((r) => (r.ask || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean),
       recentSummary: (await this.recentSummaries(a.id))
         .map((r) => r.ask || r.recap || r.text || '')
         .filter(Boolean)

@@ -209,8 +209,6 @@ let cableHostRef: DaemonCableHost | null = null
  * Fifteen is the owner's number; the ordering that decides WHICH fifteen is in onRouteTask.
  */
 const ROUTE_MAX_CANDIDATES = 15
-/** Each recent turn, cut to this before it enters the classifier's prompt. See onRouteTask. */
-const ROUTE_RECAP_CHARS = 60
 /** What ⌘K gives the classifier before the name matcher answers instead. */
 const ROUTE_CLASSIFY_APP_MS = 20_000
 /**
@@ -2945,24 +2943,24 @@ async function runForeground(session: AuthSession): Promise<void> {
         name: agent.name,
         engine: agent.engine,
         machine: agent.machine,
-        // EACH TURN CUT TO 60 CHARS before it goes anywhere near the prompt.
+        // THE PERSON'S OWN QUESTIONS, AND NOTHING ELSE.
         //
-        // Nothing trimmed these: the 120-char cut further down is for the PICKER, which the person reads,
-        // and the classifier was being handed three recaps at full length per agent. That is what turned a
-        // list of ten into a 12-second timeout while eight had answered in nine — the agents cost little,
-        // their recent work cost a lot. Sixty characters still separates "webhook retry fix" from
-        // "round 3 standings", which is all the router is being asked to tell apart.
-        // THE QUESTION FIRST, and the recap only when there is no question on record.
+        // This used to be `turn.ask || turn.recap || turn.text`, cut to sixty characters and joined
+        // into one blob — under a prompt heading that told the model every word of it was something
+        // the person had asked. For any agent with no recorded question that was false: it was a
+        // summary of what the AGENT REPLIED. Measured on this desk, "which year did the second world
+        // war end" summarised to "1945." — an answer, labelled as a question, handed to a model asked
+        // to recognise a topic. An agent with nothing on record now sends an empty list and is
+        // described honestly in the prompt.
         //
-        // A recap describes what the AGENT REPLIED. Measured on this desk: "which year did the second
-        // world war end" recapped to "1945." — correct, and carrying not one word the next question
-        // about the same conversation could match. The router was being handed answers and asked to
-        // recognise topics. The ask is the topic, costs the same sixty characters, and needs no extra
-        // room in a prompt that already times out often enough to matter.
-        recentSummary: (await host.recentSummaries(agent.id))
-          .map((turn) => (turn.ask || turn.recap || turn.text || '').replace(/\s+/g, ' ').trim().slice(0, ROUTE_RECAP_CHARS))
-          .filter(Boolean)
-          .join(' · '),
+        // UNCUT, too. Sixty characters was chosen when fifteen agents each carried three recaps at
+        // full length and the prompt timed out; a real machine has four to eight agents, and cutting
+        // a Vietnamese sentence at sixty takes the object with it — which is the topic. The bound that
+        // matters now lives at the two ends: ASK_MAX_CHARS where the question is recorded, and the
+        // endpoint's own per-prompt ceiling.
+        prompts: (await host.recentSummaries(agent.id))
+          .map((turn) => (turn.ask || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean),
       })))
       // 20s, not the shared 12s: this path answers a person watching a spinner in their own window, and
       // it is under nobody else's deadline — the app's rpc waits longer still. The dial and the web keep

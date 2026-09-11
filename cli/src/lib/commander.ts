@@ -209,9 +209,21 @@ const RECENT_TURNS = 3
  */
 const FULL_TEXT_MAX_BYTES = 8192
 
-/** How much of the user's own words is kept per turn. Long enough for the topic, short enough that three
- *  of them per agent still fit a router prompt that already carries fifteen agents. */
-const ASK_MAX_CHARS = 200
+/**
+ * How much of the user's own words is kept per turn.
+ *
+ * Raised 200 → 1000 when the router stopped cutting these again on the way out. Two hundred was set
+ * against a worst case that does not happen — fifteen agents each carrying three questions — while a
+ * real machine has four to eight, and the cost of the old number was paid on every long question by
+ * losing its second half.
+ *
+ * Still bounded, and the bound is not about prompt size: somebody pasting a stack trace or a file at
+ * an agent must not put the whole thing on disk here and then into a routing prompt.
+ *
+ * Only affects questions recorded from now on — `summaries-asks.json` keeps what it already holds at
+ * the old length.
+ */
+const ASK_MAX_CHARS = 1000
 
 /**
  * Truncate to a byte budget without splitting a character.

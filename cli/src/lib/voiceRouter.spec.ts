@@ -23,6 +23,14 @@ vi.mock('./openrouter.js', () => ({
   openRouterComplete: (...args: unknown[]) => openRouterComplete(...args),
 }))
 
+// The backend router: it answers first when it can, so every existing test below depends on this
+// mock returning null — which is exactly what a machine with no session, or an undeployed endpoint,
+// does in the field.
+type RankArgs = Parameters<typeof import('./routeApi.js').rankAgents>[0]
+type RankResult = Awaited<ReturnType<typeof import('./routeApi.js').rankAgents>>
+const rankAgents = vi.fn(async (_options: RankArgs): Promise<RankResult> => null)
+vi.mock('./routeApi.js', () => ({ rankAgents: (options: RankArgs) => rankAgents(options) }))
+
 // Import AFTER the mock is registered.
 const { buildRouterPrompt, parseRouteOutput, routeVoiceTask, pickAgentHeuristic, chooseRouterEngine, routerModelFor, ROUTE_SCORED_ROWS, CONTINUITY_WINDOW_MS } = await import('./voiceRouter.js')
 type RouterAgent = import('./voiceRouter.js').RouterAgent
@@ -232,7 +240,52 @@ describe('buildRouterPrompt', () => {
 })
 
 describe('routeVoiceTask', () => {
-  beforeEach(() => { runRouterOneShot.mockReset(); runGrokOneShot.mockReset(); routerImpl = async () => ({ text: '', sessionId: null }) })
+  beforeEach(() => {
+    runRouterOneShot.mockReset(); runGrokOneShot.mockReset()
+    rankAgents.mockReset(); rankAgents.mockResolvedValue(null)
+    routerImpl = async () => ({ text: '', sessionId: null })
+  })
+
+  it('takes the backend ranking when there is one, and asks no engine', async () => {
+    rankAgents.mockResolvedValue([
+      { agentId: '2', score: 0.92, reason: 'auth' },
+      { agentId: '1', score: 0.31, reason: 'frontend' },
+    ] as never)
+    const d = await routeVoiceTask('refresh tokens are expiring early', AGENTS)
+    expect(d).toMatchObject({ agentId: '2', confidence: 0.92, reason: 'auth', via: 'backend' })
+    // The ranking IS the answer: the pick is its first row and the rest become the picker's scores.
+    expect(d.scores).toEqual([{ agentId: '1', confidence: 0.31 }])
+    expect(runRouterOneShot).not.toHaveBeenCalled()
+    expect(openRouterComplete).not.toHaveBeenCalled()
+  })
+
+  it('sends each agent its own questions, and an empty list for one with none', async () => {
+    rankAgents.mockResolvedValue([{ agentId: '1', score: 0.9, reason: '' }] as never)
+    await routeVoiceTask('dark mode', [
+      { id: '1', name: 'Frontend', prompts: ['make the settings page dark'] },
+      { id: '2', name: 'Fresh' },
+    ])
+    expect(rankAgents.mock.calls[0][0]).toMatchObject({
+      agents: [
+        { id: '1', name: 'Frontend', prompts: ['make the settings page dark'] },
+        { id: '2', name: 'Fresh', prompts: [] },
+      ],
+    })
+  })
+
+  it('falls through to the ladder when the backend cannot answer', async () => {
+    // The rollout case: this build reaches a machine before the endpoint is deployed.
+    rankAgents.mockResolvedValue(null)
+    routerImpl = async () => ({ text: '{"agentId":"2","confidence":0.88,"reason":"auth"}', sessionId: null })
+    const d = await routeVoiceTask('jwt refresh', AGENTS)
+    expect(d).toMatchObject({ agentId: '2', confidence: 0.88 })
+    expect(runRouterOneShot).toHaveBeenCalled()
+  })
+
+  it('does not ask the backend at all for a single agent', async () => {
+    await routeVoiceTask('anything', [{ id: '7', name: 'Solo' }])
+    expect(rankAgents).not.toHaveBeenCalled()
+  })
 
   it('returns needNewAgent for an empty machine WITHOUT calling the LLM', async () => {
     const d = await routeVoiceTask('anything', [])
