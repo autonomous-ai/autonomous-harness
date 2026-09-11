@@ -4,11 +4,16 @@ Running daemons self-update from a public GCS bucket (`src/lib/selfUpdate.ts`). 
 tag: `.github/workflows/release.yml` bundles the CLI, publishes it to that bucket, and cuts the GitHub
 Release. **The tag IS the version — CI never bumps.**
 
+Tags are `vX.Y.Z_cli`, not plain `vX.Y.Z`: the backend now lives in this same repo under `backend/`
+and releases as `vX.Y.Z_api` (see `../backend/README.md`), so the suffix is what tells each tag-push
+trigger which workflow to run. It's stripped before anything treats it as a version — the published
+version everywhere below (manifest, release title, `ADAPTER_VERSION`) is always a bare `X.Y.Z`.
+
 ```bash
-make release                       # bump the patch, tag, push — CI does the rest
-make release ARGS="--dry-run"      # print the version it would cut and the notes, do nothing
-make release ARGS="0.2.0"          # release an explicit version
-make release ARGS="--notes-file notes.md"   # hand-written release notes
+make release-cli                       # bump the patch, tag, push — CI does the rest
+make release-cli ARGS="--dry-run"      # print the version it would cut and the notes, do nothing
+make release-cli ARGS="0.2.0"          # release an explicit version
+make release-cli ARGS="--notes-file notes.md"   # hand-written release notes
 ```
 
 Nothing is built locally and no GCS credentials are needed: the only things `cli/scripts/release-cli.sh`
@@ -43,7 +48,7 @@ make upload-cli ARGS="--no-build"  # upload the existing dist/ artifact as-is
 ```
 
 **This creates no git tag.** It bumps from the remote manifest, so the repo stops reflecting what's
-published. Prefer `make release`; if you do publish by hand, cut a `make release` afterwards to bring
+published. Prefer `make release-cli`; if you do publish by hand, cut a `make release-cli` afterwards to bring
 the tag back in line.
 
 1. Reads the current version from the live manifest (falling back to `package.json` if the manifest is

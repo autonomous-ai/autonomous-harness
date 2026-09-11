@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Cut a backend release: bump the version, tag HEAD `vX.Y.Z`, push the tag.
+# Cut a backend release: bump the version, tag HEAD `vX.Y.Z_api`, push the tag.
 #
-#   ./scripts/release-be.sh              # patch bump  (v1.1.2 -> v1.1.3)
-#   ./scripts/release-be.sh minor        # v1.1.2 -> v1.2.0
-#   ./scripts/release-be.sh major        # v1.1.2 -> v2.0.0
-#   ./scripts/release-be.sh 1.4.1        # exact version -> v1.4.1
+#   ./scripts/release-be.sh              # patch bump  (v1.1.2_api -> v1.1.3_api)
+#   ./scripts/release-be.sh minor        # v1.1.2_api -> v1.2.0_api
+#   ./scripts/release-be.sh major        # v1.1.2_api -> v2.0.0_api
+#   ./scripts/release-be.sh 1.4.1        # exact version -> v1.4.1_api
 #   ./scripts/release-be.sh --dry-run    # print what it WOULD do, touch nothing
 #
-# Pushing the tag is the whole point: .github/workflows/production-be-build.yaml triggers on
-# SemVer tags (`vX.Y.Z`) and builds
-# Dockerfile.k8s -> autonomous-code-be.
+# Pushing the tag is the whole point: ../.github/workflows/production-be-build.yaml triggers on
+# `vX.Y.Z_api` tags and builds Dockerfile.k8s -> autonomous-code-be.
 # The image ArgoCD deploys is named after this tag, so the tag must point at the commit you want live.
+#
+# The `_api` suffix exists only so this tag never also fires the CLI's release workflow
+# (../.github/workflows/release.yml, which reacts to `vX.Y.Z_cli`) now that both live in one repo.
+# It is stripped below before anything treats it as a version.
 # Bash 3.2-compatible (macOS default).
 set -euo pipefail
 
@@ -55,10 +58,11 @@ if ! git merge-base --is-ancestor "$HEAD_SHA" "origin/$BRANCH" 2>/dev/null; then
 fi
 
 # --- next version: highest valid SemVer release tag, then bump.
+# Tags are "vX.Y.Z_api" — strip "v" and "_api" so LATEST is a bare X.Y.Z.
 # `sort -V` handles numeric ordering while grep drops malformed tags.
-LATEST="$(git tag -l 'v*' \
-  | { grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || true; } \
-  | sed -E 's/^v//' \
+LATEST="$(git tag -l 'v*_api' \
+  | { grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)_api$' || true; } \
+  | sed -E 's/^v//; s/_api$//' \
   | sort -V | tail -1)"
 LATEST="${LATEST:-0.0.0}"
 
@@ -74,7 +78,7 @@ case "$BUMP" in
   exact) NEXT="$EXACT" ;;
 esac
 
-TAG="v${NEXT}"
+TAG="v${NEXT}_api"
 
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   echo "ERROR tag $TAG already exists. Re-tagging a released version breaks the image<->commit mapping." >&2
@@ -83,7 +87,7 @@ fi
 
 echo "  service : $SERVICE"
 echo "  branch  : $BRANCH @ $(git rev-parse --short HEAD)  $(git log -1 --format=%s | cut -c1-60)"
-echo "  latest  : v$LATEST"
+echo "  latest  : v${LATEST}_api"
 echo "  new tag : $TAG   [$BUMP]"
 
 if [[ "$DRY_RUN" == "1" ]]; then
