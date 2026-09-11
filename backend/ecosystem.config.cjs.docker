@@ -1,0 +1,36 @@
+// pm2 deployment for the central backend.
+//
+//   npm run build && pm2 start ecosystem.config.cjs     (or `npm run start` → pm2-runtime, in Docker)
+//
+// The HTTP/WS server is stateless and clusters cleanly. Schema/catalog/reconcile jobs live in a
+// separate singleton worker so no server process owns background state.
+//
+// Runs on Kubernetes → default to 'max' (use every core in the pod). Caveat: pm2 'max' reads
+// os.cpus().length, which under a cgroup CPU *limit* still reports the NODE's cores, not the pod's
+// limit → it can over-subscribe. If the pod has a CPU limit, pin BACKEND_INSTANCES from the
+// downward API (resources.limits.cpu) instead of relying on 'max'.
+const instances = process.env.BACKEND_INSTANCES
+  ? (process.env.BACKEND_INSTANCES === 'max' ? 'max' : Number(process.env.BACKEND_INSTANCES))
+  : 'max'
+
+module.exports = {
+  apps: [
+    {
+      name: 'backend-worker',
+      script: 'dist/worker.js',
+      exec_mode: 'fork',
+      instances: 1,
+      wait_ready: true,
+      listen_timeout: 120000,
+      kill_timeout: 6000,
+      env: { NODE_ENV: 'production' },
+    },
+    {
+      name: 'backend',
+      script: 'dist/server.js',
+      exec_mode: 'cluster',
+      instances,
+      env: { NODE_ENV: 'production' },
+    },
+  ],
+}

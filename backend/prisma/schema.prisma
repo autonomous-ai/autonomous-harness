@@ -1,0 +1,421 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/// A thin MIRROR of a product user. Identity is the normalized email authenticated by Autonomous
+/// SSO. The two Autonomous account planes issue different subjects for the same email, so production
+/// and staging subjects are stored separately. Lives in the SAME MongoDB the agent-manager uses, but
+/// in its own `users` collection — the manager never touches it.
+///
+/// The production subject (`externalId`) remains unique because SDS stores that value as a device's
+/// `customer_id`. A device may connect before its owner has signed in, so that provisional row uses a
+/// deterministic non-deliverable email until the first production SSO login claims it.
+model User {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  email          String   @unique // normalized SSO identity; provisional device rows use @pending.harness.invalid
+  externalId     String   @unique // production SSO subject == SDS `customer_id`; local-prod-* until known
+  stagExternalId String? // staging SSO subject; authentication still keys by email
+  passwordHash   String? // legacy only; SSO users have none
+  name           String?
+  role           String   @default("user") // user | admin
+  // Which Autonomous account plane this user signs in against. Existing rows are backfilled to
+  // staging because they were created while the app used staging globally; new users default prod.
+  autonomousEnv  String   @default("prod") // prod | stag
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([stagExternalId])
+  @@map("users")
+}
+
+/// A machine: the unit that groups N agents and the thing a user creates, names, pays for and
+/// attaches a device to. Maps a user to their provisioned machine (agent-node) + the per-machine
+/// api-key the backend generated for it. The backend injects this key when reverse-proxying the
+/// user's data-plane traffic to the manager (the web never sees it). One node per machine.
+/// The manager owns the authoritative `machine_nodes` record; this is the backend's routing view
+/// (api-key + which manager owns the node).
+model Machine {
+  id                              String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId                          String // owner (User.id); a user may own many machines
+  machineId                       String    @unique // sha256(apiKey)[:32] — the routing key, on the wire as `machineId`
+  apiKey                          String // per-machine key; the data-plane credential (handed to the owner) + routing/node auth
+  managerId                       String // which manager owns the node → its dial-in socket routes this machine's traffic
+  workspaceId                     String?
+  // Immutable upstream plane copied from the owner when the machine is created. Billing and campaign
+  // credentials always resolve from this value, even if an admin later switches the user env.
+  autonomousEnv                   String    @default("prod") // prod | stag
+  // Subscription plan the machine is on (SubscriptionPlan.id). cpus/memory are resolved THROUGH the
+  // plan (the manager reads it), replacing the old per-machine cpus/memory fields. Optional so legacy
+  // rows read; set to the default plan on every new create.
+  planId                          String?
+  // Denormalized from SubscriptionPlan.authMode at creation — IMMUTABLE (set once; there is no
+  // plan-switch path). All authMode logic reads THIS field, never the plan (a later plan-doc edit
+  // must not flip a live machine's mode). Optional so legacy rows read; backfilled at backend startup.
+  authMode                        String?
+  // The machine's display name. User-editable (PATCH /api/machines/:id); seeded ONCE from the
+  // connecting computer's hostname when still empty, then never overwritten by a connect.
+  name                            String?
+  // Hostname of the COMPUTER on its LAST adapter-ws connect (remote machines only) — the adapter
+  // sends it as `?label=` and it is overwritten every time, so it reflects the most recent computer.
+  // Secondary detail only: never used as the machine's name. Null for machines that never connected.
+  hostname                        String?
+  // The COMPUTER currently bound to this machine — the CLI's per-computer id, normalized
+  // (lib/deviceAuth.ts:normalizeComputerId). Stamped when a computer is connected through the
+  // device-auth grant and refreshed on every adapter-ws connect, so `harness auth device` on the same
+  // box reconnects to THAT machine instead of minting a second one. Null on rows that predate it.
+  computerId                      String?
+  // Version string the CLIENT reported on its LAST adapter-ws connect (remote machines only) — the
+  // client sends it as `?v=` and it is overwritten every time, so it reflects the most recent connect.
+  // Self-declared and sanitized at the upgrade; null for a machine that never connected or a client
+  // old enough not to send it.
+  clientVersion                   String?
+  // Billing lifecycle for newly-created campaign machines. Missing on old rows means legacy-active.
+  // Grandfathered Remote machines are `not_required`; new paid Remote and managed machines move pending -> active only after
+  // checkout verification. A cancelled paid subscription stays active until its period end, then
+  // the billing worker moves it to `suspended` and the manager stops (but preserves) its node.
+  billingStatus                   String?
+  externalDeviceId                String?
+  externalSubscriptionId          String?
+  externalSubscriptionStatus      Int?
+  externalSubscriptionEndAt       DateTime?
+  externalSubscriptionCancelledAt DateTime?
+  billingActivatedAt              DateTime?
+  billingError                    String?
+  billingErrorAt                  DateTime?
+  // AES-256-GCM envelope containing the managed campaign llm_api_key. Always null for Remote.
+  llmApiKeyEncrypted              String?
+  // authMode 'provider' only. The A2A endpoint this machine is backed by — supplied by the OWNER, so
+  // every outbound request to it goes through lib/providerUrl.ts (SSRF guard), never a bare fetch.
+  providerUrl                     String?
+  // AES-256-GCM envelope (lib/machineCredential.ts) holding the owner's credential FOR THE PROVIDER.
+  // Write-only from the client's point of view: never returned by an API, never logged.
+  providerCredentialEncrypted     String?
+  // Soft-delete marker: destroy() stamps this instead of removing the row (the container/node is
+  // still torn down). Every read path treats a stamped row as absent. NOTE (Prisma-Mongo): legacy
+  // rows LACK the field entirely and `{deletedAt: null}` does not match absent — filter with the
+  // shared `machineAlive` helper (lib/prisma.ts), never an inline `deletedAt: null`.
+  deletedAt                       DateTime?
+  createdAt                       DateTime  @default(now())
+
+  @@index([userId])
+  @@index([userId, computerId])
+  @@index([managerId, billingStatus])
+  @@index([billingStatus, externalSubscriptionStatus, externalSubscriptionEndAt])
+  @@map("machines")
+}
+
+/// Durable, account-scoped right to use the Free campaign tier. `reserved` prevents two tabs from
+/// starting two Free machines; once activation succeeds it becomes `claimed` and is never deleted,
+/// even if the machine is later upgraded or removed.
+model MachineFreeEntitlement {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String
+  autonomousEnv String    @default("prod") // copied from the machine; one lifetime Free grant per env
+  machineId     String    @unique
+  status        String    @default("reserved") // reserved | claimed
+  reservedAt    DateTime  @default(now())
+  claimedAt     DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([userId, autonomousEnv])
+  @@map("machine_free_entitlements")
+}
+
+/// Subscription package: the per-machine resource tier + price. A machine is assigned a plan at
+/// create (the default one); the manager reads cpus/memory THROUGH the machine's plan. The backend
+/// owns writes; the manager mirrors this read-only. Exactly one plan should have isDefault=true.
+model SubscriptionPlan {
+  id                     String    @id @default(auto()) @map("_id") @db.ObjectId
+  name                   String
+  autonomousEnv          String    @default("prod") // prod | stag; external ids differ between planes
+  cpus                   String // docker --cpus, e.g. "1"
+  memory                 String // docker --memory, e.g. "2g"
+  maxAgents              Int       @default(1) // cap enforced by the backend on agent create
+  priceUsd               Float     @default(0)
+  // Backend-owned daily voice/STT allowance in seconds. `0` means unlimited; null keeps legacy
+  // plans unlimited until the worker backfills their explicit value.
+  dailyVoiceLimitSeconds Int?
+  // How the agent-node authenticates with Claude:
+  //  "self"    → the user logs the in-container `claude` CLI in (creds in ~/.claude), no env injected.
+  //  "managed" → the manager injects ANTHROPIC_* creds into the container at start (no user login).
+  authMode               String    @default("self")
+  isDefault              Boolean   @default(false)
+  // Catalog visibility is explicit so legacy Self-Auth/Managed rows remain readable but cannot be
+  // selected for new machines. Missing means unavailable. Free/Pro/Max/Remote are synchronized from
+  // the environment-specific Autonomous campaign catalog when billing is enabled.
+  available              Boolean?
+  externalPlanId         Int?
+  externalPlanName       String?
+  campaignCode           String?
+  // Origin that supplied externalPlanId (staging/prod ids are not interchangeable). A cached
+  // catalog is reusable only when this matches the current AUTONOMOUS_BFF_URL origin.
+  catalogSource          String?
+  externalMetadata       Json?
+  catalogSyncedAt        DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@unique([autonomousEnv, name])
+  @@index([autonomousEnv, externalPlanId])
+  @@map("subscription_plans")
+}
+
+/// One UTC-day usage bucket per machine. `usedMs` includes pending STT reservations so concurrent
+/// devices cannot both pass the same remaining allowance.
+model MachineVoiceDailyUsage {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  machineId String
+  dayKey    String
+  usedMs    Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([machineId, dayKey])
+  @@index([expiresAt])
+  @@map("machine_voice_daily_usage")
+}
+
+/// Idempotency + crash-recovery record for a completed voice upload. A reservation is created in
+/// the same transaction that increments MachineVoiceDailyUsage, committed after STT returns, and
+/// released by the worker if STT fails or the process disappears.
+model MachineVoiceReservation {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  uploadId    String    @unique
+  machineId   String
+  dayKey      String
+  durationMs  Int
+  status      String    @default("pending") // pending | committed | released
+  releaseAt   DateTime?
+  expiresAt   DateTime
+  committedAt DateTime?
+  releasedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, releaseAt])
+  @@index([expiresAt])
+  @@index([machineId, dayKey])
+  @@map("machine_voice_reservations")
+}
+
+/// Audit/idempotency record for every hosted checkout attempt. Redirect URLs can contain opaque
+/// provider state, so they are owner-only and never logged. Multiple attempts may exist per machine.
+model MachineCheckoutAttempt {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  machineId         String
+  userId            String
+  // Snapshot of the machine's immutable upstream plane. Callback completion must not depend on the
+  // user's current env because an admin may switch it while Stripe is open.
+  autonomousEnv     String    @default("prod")
+  externalPlanId    Int
+  externalDeviceId  String
+  sessionId         String    @unique
+  // Stable local operation id embedded in success/failure callback URLs. Hosted checkout operations
+  // use this instead of relying on the provider returning a checkout-session id, including Free card setup.
+  operationId       String?
+  operationType     String? // subscribe | plan_change
+  sourcePlanId      String?
+  targetPlanId      String?
+  providerSessionId String?
+  redirectUrl       String?
+  // Snapshot of the non-secret checkout request so checkout-complete can resend the exact same
+  // fields even if the user's email, WEB_URL, or callback config changes while Stripe is open.
+  checkoutEmail     String?
+  successUrl        String?
+  failureUrl        String?
+  webOrigin         String?
+  status            String    @default("pending") // pending|completed|failed|cancelled
+  error             String?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([machineId, createdAt])
+  @@index([userId])
+  // MongoDB unique indexes treat repeated null optional fields as duplicates. sessionId is already
+  // unique and equals operationId for every new attempt; keep this nullable legacy field indexed.
+  @@index([operationId])
+  @@map("machine_checkout_attempts")
+}
+
+/// Per-machine agent association (an "agent" = one working unit with its own workspace and engine),
+/// populated by the data-plane tap (lib/agentTracker.ts): when a create succeeds we upsert one row;
+/// on DELETE we remove it. Lets the backend answer "how many agents does this machine have" without
+/// owning contents (the agent-node's SQLite remains the source of truth).
+model MachineAgent {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  machineId String // owning machine (matches Machine.machineId)
+  agentId   String // the agent unit's UUID, from the create response
+  name      String?
+  createdAt DateTime @default(now())
+
+  @@unique([machineId, agentId])
+  @@index([machineId])
+  @@map("machine_agents")
+}
+
+/// A device: one COMPUTER running the `harness` daemon, which serves a dial over USB and drives the
+/// owner's machines on its behalf. There is no pairing code and no device token — `/api/device-ws`
+/// authenticates with the owner's SSO access token plus a `?computer=` id, and this row is
+/// resolved-or-created from that. Deleting a row therefore FORGETS a dial (and closes its live socket);
+/// it is not a revocation, because the daemon re-creates it on its next connect.
+model DeviceBinding {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String // owner (User.id)
+  // The COMPUTER this device row belongs to — the `harness` CLI's per-computer id, normalized
+  // (lib/deviceAuth.ts:normalizeComputerId). This is the ONLY way a device comes into existence now:
+  // `/api/device-ws` authenticates with the owner's SSO token plus `?computer=`, and the row is
+  // resolved-or-created from it. Optional only so `prisma db push` reads rows that predate it — those
+  // are pruned at boot (pruneLegacyDeviceBindings), since nothing can ever connect as them again.
+  computerId String?
+  // LEGACY per-machine pairing pinned the device here. NULL for per-user devices — they pick machines at
+  // runtime over the commander socket (`machine_select`). Kept only to read a legacy device's origin.
+  machineId  String? // (Machine.machineId)
+  // Derived, never random: "cmp-" + sha256(userId:autonomousEnv:computerId)[:24]. See
+  // DeviceService.resolveOrCreateForComputer for why each ingredient is load-bearing.
+  deviceId   String    @unique
+  name       String    @default("device")
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  // ── Reported by the device, snapshotted at each `device_hello` (deviceWs handleHello) ──────────
+  // These exist so the mobile app can render a device WITHOUT a live socket of its own; the web reads
+  // the same facts off the wire instead. All nullable: a device that has never connected on a build
+  // that reports them has none of them, and that must read as "unknown", never as a zero value.
+  firmwareVersion String?
+  chip            String?
+  // WiFi as of the last hello. No shipping client reports these since the dial went cable-only, so they
+  // stay null — which clients must render as "no data" rather than an empty name or a zero-bar meter.
+  ssid            String?
+  rssi            Int? // dBm, negative. 0 is never stored — the firmware uses it for "unknown".
+  // The machine this device is CURRENTLY attached to (`machine_select` → relay setActiveMachine).
+  // Deliberately NOT the legacy `machineId` above: that one is the immutable pairing origin, this one
+  // moves every time the user picks a different machine on the device screen. Null while the device is
+  // parked on the picker. NOT cleared on socket close — a fast reconnect would race its own teardown —
+  // so on an offline device this reads as "last attached to"; clients gate it on liveness.
+  activeMachineId String?
+
+  @@index([userId])
+  @@index([userId, computerId])
+  @@map("device_bindings")
+}
+
+/// READ-ONLY view of the agent-manager's `managers` collection (the manager owns writes).
+/// The backend reads capacity (maxNodes/nodeCount) to pick a manager on create, and apiKey to
+/// authenticate its dial-in socket (/api/manager-ws). No address is needed — the manager dials the
+/// backend (inverted transport). The `@unique` on managerId matches the manager's own index so
+/// `prisma db push` from both services stays consistent.
+model Manager {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  managerId   String    @unique
+  maxNodes    Int       @default(0)
+  nodeCount   Int       @default(0)
+  apiKey      String? // this manager's MANAGER_API_KEY (x-api-key on its dial-in socket)
+  agentEngine String? // manager AGENT_ENGINE default for machine_nodes without an explicit engine
+  lastSeenAt  DateTime?
+
+  @@map("managers")
+}
+
+/// Backend-owned routing record for a published app (mirrors Machine's role for machines):
+/// answers "which manager owns this subdomain" for the :8087 public app-proxy. The manager owns
+/// the parallel `app_deployments` record (subdomain → appPort). Written at register; the subdomain
+/// is a random slug (user never picks it). machineId/agentId denormalized for filtered list/get.
+model Subdomain {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  subdomain String   @unique
+  machineId String // owning machine (Machine.machineId — the data path routes by it)
+  agentId   String // the agent unit
+  managerId String // which manager serves it (app control RPC target)
+  userId    String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([machineId])
+  @@index([machineId, agentId])
+  @@map("subdomains")
+}
+
+/// Harness Analytics — ADDITIVE counters only (see docs/design/harness-analytics.md).
+/// Safe to sum along engine, mode, origin, machine, and day. A union of intervals or a distinct
+/// count must NEVER live here: splitting one by engine and re-summing double-counts concurrency,
+/// which is the exact error the wall-clock metric exists to prevent. Those live on
+/// AnalyticsDailyMachine at (machine, day) granularity instead.
+model AnalyticsDailyBucket {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId           String
+  machineId        String
+  dayUtc           DateTime // midnight UTC of the day these counters belong to
+  engine           String
+  mode             String // self | managed | remote | provider
+  origin           String // human | scheduled | system | api
+  schemaVersion    Int
+  // Client monotonic stamp, CLAMPED server-side against receivedAt. Ordering key for last-write-wins:
+  // each (machine, day, engine, mode, origin) has exactly ONE writer, so no version vector is needed.
+  // A client-chosen revision was rejected — a bad or hostile value could pin a record permanently.
+  generatedAt      DateTime
+  instructions     Int      @default(0)
+  turnsStarted     Int      @default(0)
+  turnsCompleted   Int      @default(0)
+  turnsFailed      Int      @default(0)
+  turnsCancelled   Int      @default(0)
+  turnsInputNeeded Int      @default(0)
+  agentRuntimeMs   BigInt   @default(0) // sum of terminal turn durations; overlaps counted twice by design
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, machineId, dayUtc, engine, mode, origin, schemaVersion])
+  @@index([userId, dayUtc])
+  @@map("analytics_daily_buckets")
+}
+
+/// Harness Analytics — NON-ADDITIVE metrics plus the reporting heartbeat. Exactly one row per
+/// machine per day. A row with all-zero counters means "the machine was up and idle"; a MISSING row
+/// means "we have no data". The UI must never render those two states the same way.
+model AnalyticsDailyMachine {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String
+  machineId         String
+  dayUtc            DateTime
+  wallClockActiveMs BigInt   @default(0) // union of turn intervals, computed locally where all are visible
+  activeAgents      Int      @default(0) // distinct agents; sums across machines (an agent has one machine)
+  uptimeMs          BigInt   @default(0) // denominator for utilization; 0 when not meaningful (provider)
+  reported          Boolean  @default(true) // heartbeat: this machine DID report this day
+  generatedAt       DateTime
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, machineId, dayUtc])
+  @@index([userId, dayUtc])
+  @@map("analytics_daily_machines")
+}
+
+/// Harness Analytics — per-machine collector control and coverage state. Backs the Coverage panel
+/// and the ingest response, which is the ONLY channel a headless collector has for learning that the
+/// account turned collection off or deleted its history.
+model AnalyticsMachineState {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  machineId        String    @unique
+  userId           String
+  // Collection is ON by default; the owner can switch it off per machine or for the whole account.
+  consent          String    @default("on") // on | off
+  // Bumped by a user-triggered deletion. Uploads carrying an older epoch are refused, so a collector
+  // still holding queued records cannot resurrect erased history.
+  epoch            Int       @default(0)
+  collectorVersion String?
+  engineCoverage   String[] // engines this collector instruments
+  // Engines the collector can SEE here (registered agents / discovered binaries). The difference
+  // enginesPresent - engineCoverage is what the UI shows as "not instrumented" — coverage alone
+  // cannot tell an uninstrumented engine from one that is simply not installed.
+  enginesPresent   String[]
+  lastReportAt     DateTime?
+  clockSkewMs      Int? // receivedAt - generatedAt at the last report; surfaced in Coverage
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("analytics_machine_states")
+}

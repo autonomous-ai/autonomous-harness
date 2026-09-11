@@ -1,0 +1,47 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,worker -c cyan,magenta \"npm run dev:server\" \"npm run dev:worker\"",
+    "dev:server": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "build": "node build.mjs",
+    "build:tsc": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "pm2 start ecosystem.config.cjs",
+    "stop": "pm2 stop ecosystem.config.cjs",
+    "start:runtime": "pm2-runtime start ecosystem.config.cjs",
+    "restart": "pm2 startOrReload ecosystem.config.cjs --update-env",
+    "start:server": "node dist/server.js",
+    "start:worker": "node dist/worker.js",
+    "start:local": "concurrently -k -n server,worker -c cyan,magenta \"node dist/server.js\" \"node dist/worker.js\"",
+    "test": "NODE_ENV=test HARNESS_CREDENTIAL_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= vitest run",
+    "test:watch": "vitest",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.1.0",
+    "@fastify/multipart": "^9.4.0",
+    "@noble/curves": "^2.4.0",
+    "@prisma/client": "^5.22.0",
+    "@types/ws": "^8.18.1",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.6.2",
+    "http-proxy": "^1.18.1",
+    "ioredis": "^5.11.1",
+    "ws": "^8.21.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "^1.17.15",
+    "@types/node": "^20.14.10",
+    "concurrently": "^9.1.2",
+    "esbuild": "^0.27.2",
+    "prisma": "^5.22.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3",
+    "vitest": "^4.0.17"
+  }
+}

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Cut a CLI release: work out the next version, tag it, push the tag. CI does everything else —
 # .github/workflows/release.yml bundles the CLI, publishes it to GCS, and creates the GitHub Release.
-# The tag IS the version; CI never bumps on its own.
+# The tag IS the version; CI never bumps on its own. Tags are "vX.Y.Z_cli" — the "_cli" suffix is
+# stripped by release.yml before anything treats it as a version; it exists only so this tag never
+# also triggers the backend's "vX.Y.Z_api" release (.github/workflows/production-be-build.yaml).
 #
 # Usage:
 #   bash cli/scripts/release-cli.sh                    # bump the patch and release
@@ -104,12 +106,15 @@ fi
 
 # --- current version, source 1: the highest release tag in git ---
 # The brace group keeps `set -e` from killing the script when grep legitimately matches nothing.
-TAG_VER="$(git tag -l 'v*' \
-  | { grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || true; } \
-  | sed -E 's/^v//' \
+# Tags are "vX.Y.Z_cli" — the suffix only exists so release.yml's tag trigger never collides with
+# the backend's "vX.Y.Z_api" tags now that both live in one repo. Strip "v" and "_cli" so TAG_VER
+# is always a bare X.Y.Z for the version-comparison logic below.
+TAG_VER="$(git tag -l 'v*_cli' \
+  | { grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)_cli$' || true; } \
+  | sed -E 's/^v//; s/_cli$//' \
   | sort -V | tail -1)"
 LAST_TAG=""
-[ -z "$TAG_VER" ] || LAST_TAG="v${TAG_VER}"
+[ -z "$TAG_VER" ] || LAST_TAG="v${TAG_VER}_cli"
 TAG_VER="${TAG_VER:-0.0.0}"
 
 # --- current version, source 2: the version actually being served ---
@@ -158,7 +163,7 @@ if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
-TAG="v${VER}"
+TAG="v${VER}_cli"
 
 # The last gate against a release no daemon can install.
 if ! version_gt "$VER" "$GCS_VER"; then

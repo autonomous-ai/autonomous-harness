@@ -1,6 +1,11 @@
 name: Release
 
-# Cut a release by pushing a tag:  git tag -a v0.1.72 -F notes.md && git push origin v0.1.72
+# Cut a release by pushing a tag:  git tag -a v0.1.72_cli -F notes.md && git push origin v0.1.72_cli
+#
+# The `_cli` suffix exists only so this workflow's tag trigger never fires on the backend's
+# `v*_api` release tags (see .github/workflows/production-be-build.yaml) now that both live in one
+# repo. It is stripped below before anything treats it as a version — the manifest, the release
+# title, and the daemon's self-update comparison all only ever see a bare X.Y.Z.
 #
 # Publishes the `cli` key of harness/cli/metadata.json — the manifest EVERY RUNNING DAEMON POLLS
 # EVERY 60 SECONDS (src/config/env.ts: ADAPTER_UPDATE_URL / ADAPTER_UPDATE_CHECK_MS). That is the
@@ -38,7 +43,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*_cli']
   workflow_dispatch:
     inputs:
       version:
@@ -81,9 +86,13 @@ jobs:
           INPUT_METADATA_PATH: ${{ inputs.metadata_path }}
         run: |
           set -euo pipefail
+          # A tag push names the ref "vX.Y.Z_cli"; workflow_dispatch's input.version is already
+          # bare. Strip both the leading "v" and the trailing "_cli" so $ver is always X.Y.Z —
+          # the suffix is a tag-trigger routing marker only, never part of the published version.
           ver="${INPUT_VERSION:-${REF_NAME#v}}"
+          ver="${ver%_cli}"
           if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version '$ver' must look like X.Y.Z — tag as vX.Y.Z"
+            echo "::error::version '$ver' must look like X.Y.Z — tag as vX.Y.Z_cli"
             exit 1
           fi
           meta="${INPUT_METADATA_PATH:-harness/cli/metadata.json}"

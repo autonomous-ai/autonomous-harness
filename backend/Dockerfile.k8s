@@ -1,0 +1,73 @@
+# Central product backend — Kubernetes image. (The sibling `Dockerfile` is the pm2/compose one;
+# this file is the k8s-shaped variant and is what the k8s build should target.)
+#
+# ONE image, TWO roles — selected by the APP env var, so both Deployments run the same image and the
+# manifests differ only by `env` + `replicas`:
+#   APP=api  (N replicas) : node dist/server.js   ← default
+#   APP=job  (1 replica)  : node dist/worker.js
+#
+# Why one process per container: src/worker.ts owns schema push, migrateHarnessRename, ensurePlans and
+# the backfills, and those boot steps are NOT guarded across processes (only the recurring billing
+# loop takes a Redis lease). Baking the pm2 ecosystem here would start a worker in EVERY replica and
+# race them. K8s owns the replica count; a pm2 cluster inside a pod would also mis-size itself, since
+# os.cpus() reports the node's cores, not the pod's cgroup CPU limit.
+
+# --- builder: full install (postinstall = prisma generate) + esbuild → dist/ ------------------
+FROM node:22-bookworm-slim AS builder
+WORKDIR /app
+
+# openssl so `prisma generate` detects the correct engine target (bookworm = openssl-3.0.x).
+# Without it Prisma mis-detects openssl-1.1.x and the runtime can't load the query engine.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+
+# postinstall runs `prisma generate`, so the schema must be present first.
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+RUN npm ci
+
+COPY tsconfig.json build.mjs ./
+COPY src ./src
+RUN npm run build
+
+# --- runner: dist/ + production node_modules only, non-root ----------------------------------
+FROM node:22-bookworm-slim AS runner
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 1001 nodejs \
+    && useradd --system --uid 1001 --gid nodejs backend
+
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+# Production deps WITHOUT lifecycle scripts: postinstall is `prisma generate`, which needs the Prisma
+# CLI — a devDependency that `--omit=dev` does not install.
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+# Take the Prisma pieces from the builder, where the full install already generated them:
+#   .prisma  generated client + query engine
+#   prisma   the CLI — the worker shells out to prisma/build/index.js for `db push` at boot
+#            (lib/db/migrate.ts ensureSchema). Miss it and schema management SILENTLY no-ops.
+#   @prisma  client runtime + engines
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Runtime artifacts only — no src/, tsconfig.json or build.mjs in the published image. dist/ mirrors
+# src/ 1:1 (build.mjs sets bundle:false), so node_modules must ship with it.
+COPY --from=builder /app/dist ./dist
+
+ENV NODE_ENV=production
+# Role selector. Override to `job` on the worker Deployment (replicas: 1).
+ENV APP=api
+
+USER backend
+
+# 8085 = control API + /proxy data-plane; 8087 = public subdomain app-proxy (same process, so the
+# api Service must expose BOTH). Documentation only — k8s publishes via the Service.
+EXPOSE 8085 8087
+
+# `exec` replaces the shell, so node ends up as PID 1 and receives SIGTERM directly; both entry
+# points shut down on it (server.ts closes the listeners; worker.ts stops the billing loop and hard-
+# exits after 5s, so give the worker terminationGracePeriodSeconds >= 10).
+CMD ["sh", "-c", "case \"$APP\" in api) exec node dist/server.js ;; job) exec node dist/worker.js ;; *) echo \"FATAL: unknown APP='$APP' (expected 'api' or 'job')\" >&2; exit 1 ;; esac"]

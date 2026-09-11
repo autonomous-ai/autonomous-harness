@@ -1,0 +1,28 @@
+# Central backend in a container. Mirrors apps/machine-manager. Connects to an ALREADY-RUNNING MongoDB
+# (start it from apps/mongodb: `docker compose up -d`).
+#
+# START IT WITH:
+#   docker compose up -d --build
+#
+# Config: the local `.env` is injected straight into the container (env_file). Because that .env
+# points at 127.0.0.1 for both MongoDB (:27017) and the agent-manager (publicHost :8090), the service
+# uses HOST networking so those addresses resolve to the services on the same VM — no rewriting .env.
+#
+# Notes:
+#   - `network_mode: host` is a Linux feature (this is the production path). On Docker-Desktop-Mac it's
+#     unreliable → for Mac dev run the backend natively (`npm run dev`).
+#   - With host networking `ports:` is ignored; the app binds PORT (default 8085, from .env) on the host.
+#   - To use bridge networking instead: drop `network_mode`, add `ports: ["8085:8085"]` +
+#     `extra_hosts: ["host.docker.internal:host-gateway"]`, and point DATABASE_URL (and the manager
+#     publicHost it reads from the DB) at host.docker.internal.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: backend:local
+    container_name: backend
+    env_file:
+      - .env
+    network_mode: host
+    restart: unless-stopped
