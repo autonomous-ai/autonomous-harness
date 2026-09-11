@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TmuxBackend } from './tmuxBackend.js'
-import { ensureTmuxOnPath, resolveViaLoginShell } from './tmuxOnPath.js'
+import { ensureTmuxOnPath, requireTmuxAvailable, resolveViaLoginShell } from './tmuxOnPath.js'
 
 const dirs: string[] = []
 const originalPath = process.env.PATH
@@ -122,6 +122,13 @@ PATH="${binDir}" exec /bin/sh -c "$@"
 
     expect(outcome.state).toBe('absent')
     expect(env.PATH).toBe('/nonexistent-for-this-test')
+  })
+
+  it('fails before daemon startup when tmux is unavailable', () => {
+    expect(() => requireTmuxAvailable({
+      state: 'absent',
+      reason: 'the user\'s login shell does not resolve tmux either',
+    })).toThrow('tmux is required but unavailable')
   })
 
   it('does not consult a shell it cannot trust', async () => {

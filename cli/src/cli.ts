@@ -38,7 +38,7 @@ import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
-import { ensureTmuxOnPath } from './lib/tmuxOnPath.js'
+import { ensureTmuxOnPath, requireTmuxAvailable } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
@@ -985,11 +985,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   const tmuxPathPromise = terminalConfig.backends.includes('tmux') ? ensureTmuxOnPath() : null
   const loginShellEnvPromise = warmLoginShellEnvironment()
   if (tmuxPathPromise) {
-    const tmuxPath = await tmuxPathPromise
+    const tmuxPath = requireTmuxAvailable(await tmuxPathPromise)
     if (tmuxPath.state === 'adopted') {
       console.log(`[tmux] not on the daemon PATH · adopted ${tmuxPath.from} from the user's login shell`)
-    } else if (tmuxPath.state === 'absent') {
-      console.warn(`[tmux] unavailable · ${tmuxPath.reason} · new agents cannot be created`)
     }
   }
   const tmuxBackend = terminalConfig.backends.includes('tmux') ? new TmuxBackend() : null

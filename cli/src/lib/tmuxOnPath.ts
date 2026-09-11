@@ -29,6 +29,19 @@ export type TmuxPathOutcome =
   /** Not resolvable either way — tmux is genuinely absent, or there is no usable login shell. */
   | { state: 'absent'; reason: string }
 
+export type AvailableTmuxPathOutcome = Exclude<TmuxPathOutcome, { state: 'absent' }>
+
+/** Refuse to start a daemon that cannot create terminals. */
+export function requireTmuxAvailable(outcome: TmuxPathOutcome): AvailableTmuxPathOutcome {
+  if (outcome.state === 'absent') {
+    throw new Error(
+      `tmux is required but unavailable: ${outcome.reason}. `
+      + 'Install tmux, verify `tmux -V`, then run `harness start` again.',
+    )
+  }
+  return outcome
+}
+
 /** Where the user's own interactive shell finds a command, which is not where the daemon looks. */
 export async function resolveViaLoginShell(
   command: string,
