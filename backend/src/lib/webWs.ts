@@ -49,6 +49,8 @@ import {
   P2pSignalRateGuard,
   terminalP2pPolicy,
 } from './p2pSignaling.js'
+import { touchUserOnlineDay, recordRemoteUsage } from './dailyTracking.js'
+import { utcDayKey } from '../types/analytics.js'
 
 const wss = new WebSocketServer({
   noServer: true,
@@ -118,6 +120,20 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
 
   logger.info('web user connected', { userId: user.sub })
   try { ws.send(JSON.stringify({ type: 'connected', payload: { userId: user.sub } })) } catch { /* ignore */ }
+
+  // Daily presence: mark today online now, and re-check on the existing 30s re-seed tick / on
+  // disconnect so a connection spanning UTC midnight gets counted for the new day too.
+  let lastPresenceDayKey: string | null = utcDayKey(new Date())
+  touchUserOnlineDay(user.sub, new Date(), { isNewConnection: true })
+    .catch((err) => logger.warn('presence tracking failed', { userId: user.sub, error: String(err) }))
+  const touchPresenceIfDayChanged = (): void => {
+    const now = new Date()
+    const dayKey = utcDayKey(now)
+    if (dayKey === lastPresenceDayKey) return
+    lastPresenceDayKey = dayKey
+    touchUserOnlineDay(user.sub, now, { isNewConnection: false })
+      .catch((err) => logger.warn('presence tracking failed', { userId: user.sub, error: String(err) }))
+  }
 
   // An unattached socket (user parked on the Machines page, no agent selected) holds no hub client, so a
   // registry-driven sweep can't see it — it would be killed by LB idle timeouts, or never reaped when
@@ -198,7 +214,10 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
       if (closed) { deviceStatusUnsub(); deviceStatusUnsub = null; return }
     }
     if (!deviceSeedTimer) {
-      deviceSeedTimer = setInterval(() => { void seedDeviceStatuses().catch(() => { /* ignore */ }) }, DEVICE_RESEED_MS)
+      deviceSeedTimer = setInterval(() => {
+        void seedDeviceStatuses().catch(() => { /* ignore */ })
+        touchPresenceIfDayChanged()
+      }, DEVICE_RESEED_MS)
     }
     await seedDeviceStatuses()
   }
@@ -351,6 +370,12 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
         try { ws.send(JSON.stringify({ type: 'p2p_transport_error', payload: { code: 'P2P_SIGNAL_REJECTED' } })) } catch { /* ignore */ }
         return
       }
+      // Remote-usage signal: a p2p_offer actually starts a new p2p session (vs. the ICE/abort
+      // frames that follow one), so it's the one point that means "used remote to stream terminal".
+      if (type === 'p2p_offer' && currentBinding) {
+        recordRemoteUsage(user.sub, currentBinding.machineId, new Date())
+          .catch((err) => logger.warn('remote usage tracking failed', { userId: user.sub, machineId: currentBinding?.machineId, error: String(err) }))
+      }
     }
     if (type === 'machine_select') {
       const machineId = (frame.payload as { machineId?: unknown } | undefined)?.machineId
@@ -439,6 +464,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     if (deviceStatusUnsub) { deviceStatusUnsub(); deviceStatusUnsub = null }
     if (machineListUnsub) { machineListUnsub(); machineListUnsub = null }
     if (deviceE2eePairUnsub) { deviceE2eePairUnsub(); deviceE2eePairUnsub = null }
+    touchPresenceIfDayChanged()
     logger.info('web user disconnected', { userId: user.sub, machineId: currentAgentId ?? undefined })
   }
   ws.on('close', cleanup)

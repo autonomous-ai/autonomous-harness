@@ -419,3 +419,40 @@ model AnalyticsMachineState {
   @@index([userId])
   @@map("analytics_machine_states")
 }
+
+/// Presence/remote-usage tracking — separate from the Analytics family above (not opt-in, not
+/// collector-reported; derived directly from the web-ws relay in src/lib/webWs.ts).
+
+/// Per-day record of whether a user's desktop app was connected to the web-ws relay. One row per
+/// (user, UTC day). A connection spanning midnight produces a row for each day it touches.
+model UserDailyPresence {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String
+  dayUtc      DateTime
+  connections Int      @default(0)
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, dayUtc])
+  @@map("user_daily_presence")
+}
+
+/// Per-day record of whether a user actually established a remote p2p connection to stream a
+/// terminal (signaled by a p2p_offer frame passing through the web-ws relay), scoped to the machine.
+model UserDailyRemoteUsage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String
+  machineId   String
+  dayUtc      DateTime
+  sessions    Int      @default(0)
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, machineId, dayUtc])
+  @@index([userId, dayUtc])
+  @@map("user_daily_remote_usage")
+}
