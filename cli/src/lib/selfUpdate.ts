@@ -17,6 +17,7 @@ import { createHash } from 'crypto'
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { join } from 'path'
+import { SpawnLockBusyError, describeSpawnLockFailure } from './daemonSpawnLock.js'
 import { managedNodePath } from './nodeRuntime.js'
 
 export interface FileRef {
@@ -166,11 +167,21 @@ export function startSelfUpdater(opts: {
   key: string
   dir: string
   intervalMs: number
-  onStaged: (version: string) => void
+  /** Awaited: the section from the byte swap through whatever `onStaged` does (the daemon's restart
+   *  handoff) is ONE critical section, and the lock `withLock` takes must outlive all of it. */
+  onStaged: (version: string) => void | Promise<void>
+  /** Wrap the swap + `onStaged` in a mutual exclusion with every other process that writes the
+   *  bundle or spawns the daemon. Default: none (tests, and callers that hold their own). */
+  withLock?: <T>(fn: () => Promise<T>) => Promise<T>
 }): Poller {
   let checking = false
   let done = false
   let timer: NodeJS.Timeout | null = null
+  const withLock = opts.withLock ?? ((fn) => fn())
+  // The bytes of a build we have already downloaded, verified and canaried, kept across ticks: when
+  // the lock was busy (a `harness start` or `harness update` mid-flight) the next tick should try the
+  // swap again, not the whole download.
+  let verified: { version: string; cliBuf: Buffer; notifyBuf: Buffer } | null = null
 
   const stop = (): void => { if (timer) { clearInterval(timer); timer = null } }
 
@@ -180,17 +191,31 @@ export function startSelfUpdater(opts: {
     try {
       const entry = await fetchManifest(opts.url, opts.key)
       if (!entry || !shouldAutoUpdate(entry.version, opts.currentVersion)) return
-      console.log(`[update] newer build available: ${opts.currentVersion} → ${entry.version}`)
-      const cliBuf = await downloadVerified(entry.cli)
-      const notifyBuf = await downloadVerified(entry.notify)
-      if (!canary(cliBuf, opts.dir)) { console.error('[update] canary failed for the new build — skipping'); return }
-      stage(opts.dir, cliBuf, notifyBuf)
-      done = true
-      stop()
-      console.log(`[update] staged ${entry.version} — restarting now`)
-      opts.onStaged(entry.version)
+      if (verified?.version !== entry.version) {
+        console.log(`[update] newer build available: ${opts.currentVersion} → ${entry.version}`)
+        const cliBuf = await downloadVerified(entry.cli)
+        const notifyBuf = await downloadVerified(entry.notify)
+        if (!canary(cliBuf, opts.dir)) { console.error('[update] canary failed for the new build — skipping'); return }
+        verified = { version: entry.version, cliBuf, notifyBuf }
+      }
+      const ready = verified
+      // Downloaded and verified OUTSIDE the lock (that can take a while on a slow link and touches
+      // nothing shared); swapped and handed off INSIDE it.
+      await withLock(async () => {
+        stage(opts.dir, ready.cliBuf, ready.notifyBuf)
+        done = true
+        stop()
+        console.log(`[update] staged ${ready.version} — restarting now`)
+        await opts.onStaged(ready.version)
+      })
     } catch (err) {
-      console.error('[update] check failed (will retry):', err instanceof Error ? err.message : err)
+      // A busy lock is not a failed check: the bytes are good and waiting, and the next tick tries
+      // the swap again. Say so, or a minute of "check failed" reads as the updater being broken.
+      if (err instanceof SpawnLockBusyError) {
+        console.log(`[update] ${verified?.version ?? 'a new build'} is ready but the daemon spawn lock is ${describeSpawnLockFailure(err)} — trying again next check`)
+      } else {
+        console.error('[update] check failed (will retry):', err instanceof Error ? err.message : err)
+      }
     } finally {
       checking = false
     }

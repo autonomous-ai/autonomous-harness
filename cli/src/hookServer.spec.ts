@@ -159,3 +159,14 @@ describe('chooseHookAgent', () => {
     expect(chooseHookAgent(['a', 'b'], ['c'])).toEqual({ agent: null, reason: 'ambiguous' })
   })
 })
+
+describe('/api/status', () => {
+  it('serves whatever the daemon reports — including the pid the desktop uses to tell daemons apart', async () => {
+    const { base } = await start({
+      onStatus: () => ({ pid: process.pid, connected: false, restarting: false, discoveryReady: true }),
+    })
+    const response = await fetch(`${base}/api/status`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ pid: process.pid, connected: false, restarting: false, discoveryReady: true })
+  })
+})

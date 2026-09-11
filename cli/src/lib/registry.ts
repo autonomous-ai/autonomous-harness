@@ -29,7 +29,6 @@ import {
   statSync,
   writeFileSync,
 } from 'fs'
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'crypto'
 import { join, basename, dirname, relative } from 'path'
 import { hostname, uptime } from 'os'
@@ -40,6 +39,7 @@ import type { GridAssignment } from './gridAssignment.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
 import { agyTranscriptPath } from '../engines/agy/session.js'
 import { copilotTranscriptPath } from '../engines/copilot/session.js'
+import { lockOwnerAlive, processStartMarker } from './processLiveness.js'
 import { hardenPrivateStateFileIfPresent, readPrivateStateFile, secureStateDirectory } from './secureState.js'
 import { mergeTerminalRuntimes, processIdentityKey, terminalPlacementKey, terminalRouteKey } from './terminalRuntime.js'
 import type { HookTerminalHint, ProcessIdentity, TerminalRuntimeRef } from './terminalTypes.js'
@@ -178,35 +178,6 @@ const LOCK_ATTEMPTS = 100
 function sleepSync(ms: number): void {
   const view = new Int32Array(new SharedArrayBuffer(4))
   Atomics.wait(view, 0, 0, ms)
-}
-
-function processExists(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false
-  try { process.kill(pid, 0); return true } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-function processStartMarker(pid: number): string | null {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
-    const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/)
-    if (fields[19]) return `linux:${fields[19]}`
-  } catch { /* non-Linux or exited process; use ps below */ }
-  try {
-    const started = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
-      encoding: 'utf8', timeout: 1_000,
-    }).trim()
-    return started ? `ps:${started}` : null
-  } catch { return null }
-}
-
-function lockOwnerAlive(pid: number, startMarker: string): boolean {
-  if (!processExists(pid)) return false
-  if (!startMarker) return true
-  const current = processStartMarker(pid)
-  return current === null || current === startMarker
 }
 
 function removeRegistryLockOwnedBy(token: string): void {

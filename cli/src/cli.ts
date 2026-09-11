@@ -38,6 +38,11 @@ import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
 import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
+import {
+  BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
+} from './lib/daemonLaunch.js'
+import { SpawnLockBusyError, describeSpawnLockFailure, describeSpawnLockOwner, withSpawnLock } from './lib/daemonSpawnLock.js'
+import { stopDaemonProcess } from './lib/daemonStop.js'
 import { ensureTmuxOnPath, requireTmuxAvailable } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
 import { readOrMintComputerId } from './lib/computerIdentity.js'
@@ -780,15 +785,29 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
   // and self-updates on its own) and on a dev/repo build; never blocks start if the check fails.
   // Run alongside resolveComputerMachine() rather than before it — the two touch disjoint resources
   // (bundle files vs. the auth-session file/a machine-resolve POST), so there is nothing to serialize.
+  //
+  // Under the spawn lock from the staging onwards: the running daemon's own updater swaps the same
+  // cli.js/.prev, and two writers there can leave `.prev` holding the NEW bytes — which is what a
+  // later rollback would then "restore". The lock is re-entrant, so `launch` below just joins it.
   if (!foreground) {
-    const [v] = await Promise.all([
-      stageLatestBundle((m) => console.log(m)),
-      resolveComputerMachine(),
-    ])
-    if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
-  } else {
-    await resolveComputerMachine()
+    await withSpawnLock('start', async () => {
+      const [v] = await Promise.all([
+        stageLatestBundle((m) => console.log(m)),
+        resolveComputerMachine(),
+      ])
+      if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
+      await launch(foreground, repair)
+    }, {
+      onWaiting: (owner) => console.log(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
+    }).catch((error: unknown) => {
+      if (!(error instanceof SpawnLockBusyError)) throw error
+      console.error(`\n✗ Could not start: the daemon spawn lock is ${describeSpawnLockFailure(error)}.`)
+      console.error('  check   harness status   ·   stop it   harness stop')
+      process.exit(1)
+    })
+    return
   }
+  await resolveComputerMachine()
   await launch(foreground, repair)
 }
 
@@ -859,27 +878,40 @@ async function updateCommand(force: boolean): Promise<void> {
 
   // A newer build exists. Stop the running daemon FIRST so its own background updater can't race our
   // staging on the .prev/.tmp files, then swap the bytes and bring it back up on the new build.
-  const running = readPid()
-  const wasRunning = !!(running && isAlive(running))
-  const relaunch = async (): Promise<void> => {
-  if (!readAuthSession()) { console.log('  (not signed in — run `harness login`, then `harness start`.)'); process.exit(0) }
-    await new Promise((r) => setTimeout(r, 1000)) // grace for the backend to release the one-machine claim
-    await launch(false) // spawns a fresh daemon on the new bytes, prints status, and exits
-  }
-  if (wasRunning) { console.log('  stopping the running adapter…'); await stopDaemonProcess() }
+  //
+  // The whole stop → stage → relaunch sequence runs under the spawn lock. Between the stop and the
+  // relaunch there is no pid file for several seconds, and anything that spawns `harness start` on
+  // "no daemon" (the desktop app does, every few seconds) used to land a second child in that gap.
+  const staged = entry
+  await withSpawnLock('update', async () => {
+    const running = readPid()
+    const wasRunning = !!(running && isAlive(running))
+    const relaunch = async (): Promise<void> => {
+      if (!readAuthSession()) { console.log('  (not signed in — run `harness login`, then `harness start`.)'); process.exit(0) }
+      await new Promise((r) => setTimeout(r, 1000)) // grace for the backend to release the one-machine claim
+      await launch(false) // spawns a fresh daemon on the new bytes, prints status, and exits
+    }
+    if (wasRunning) { console.log('  stopping the running adapter…'); await stopDaemonProcess() }
 
-  console.log(`▸ Updating v${VERSION} → v${entry.version}…`)
-  let ok = false
-  try { ok = await downloadCanaryStage(entry, resolve(env.ADAPTER_CLI_DIR), (m) => console.log(m)) }
-  catch (e) { console.error(`✗ Update failed: ${e instanceof Error ? e.message : e}`); ok = false }
-  if (!ok) {
-    if (wasRunning) await relaunch() // staging failed → bring the OLD build back so `update` never leaves it down
+    console.log(`▸ Updating v${VERSION} → v${staged.version}…`)
+    let ok = false
+    try { ok = await downloadCanaryStage(staged, resolve(env.ADAPTER_CLI_DIR), (m) => console.log(m)) }
+    catch (e) { console.error(`✗ Update failed: ${e instanceof Error ? e.message : e}`); ok = false }
+    if (!ok) {
+      if (wasRunning) await relaunch() // staging failed → bring the OLD build back so `update` never leaves it down
+      process.exit(1)
+    }
+    console.log(`  ✓ installed v${staged.version}`)
+    if (wasRunning) { await relaunch(); return }
+    console.log(`✓ Updated to v${staged.version}. Run \`harness start\` to connect.`)
+    process.exit(0)
+  }, {
+    onWaiting: (owner) => console.log(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
+  }).catch((error: unknown) => {
+    if (!(error instanceof SpawnLockBusyError)) throw error
+    console.error(`\n✗ Could not update: the daemon spawn lock is ${describeSpawnLockFailure(error)}. Try again in a moment.`)
     process.exit(1)
-  }
-  console.log(`  ✓ installed v${entry.version}`)
-  if (wasRunning) { await relaunch(); return }
-  console.log(`✓ Updated to v${entry.version}. Run \`harness start\` to connect.`)
-  process.exit(0)
+  })
 }
 
 /**
@@ -893,9 +925,9 @@ async function updateCommand(force: boolean): Promise<void> {
  * long-lived credential is not left behind in silence.
  */
 async function logout(): Promise<void> {
-  const pid = readPid()
-  if (pid && isAlive(pid)) { try { process.kill(pid, 'SIGTERM') } catch { /* ignore */ } }
-  rmSync(PID_FILE, { force: true })
+  // Through the lock-taking stop, not an inline kill: a logout that lands mid-handoff would otherwise
+  // SIGTERM the OLD daemon, leave the new one coming up, and then delete the session under it.
+  await stopDaemonProcess()
   clearAuthSession()
   rmSync(MACHINE_NAME_FILE, { force: true })
   console.log('Signed out. Run `harness login`, then `harness start`, to reconnect this computer.')
@@ -929,12 +961,8 @@ async function runForeground(session: AuthSession): Promise<void> {
   let discoveryReady = false
   let discoveryError: string | null = null
 
-  // Claim the pid file for OURSELVES, first thing. It used to be written by whoever spawned us — the
-  // update-restart's parent, after supervising the handover — so a parent that died mid-handover (a
-  // `harness stop` landing in that window is enough) left a daemon nothing could manage: `status` said
-  // stopped, `stop` had no pid to signal, and `join` walked into "port already in use" against the very
-  // daemon it could not see. A process that is running is the only honest author of its own pid.
-  try { writeFileSync(PID_FILE, String(process.pid) + '\n') } catch { /* best effort */ }
+  // The pid file is claimed further down, the moment the control port is bound — not here, and not
+  // by whoever spawned us. See the comment at that claim.
 
   // Last-resort net: a stray throw in ANY long-lived callback (a malformed JSONL line, a hostile backend
   // frame, a timer) must NEVER take the daemon down — there is no supervisor. Log it and keep running.
@@ -2441,6 +2469,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     return { status: res.status, body: json }
   }
 
+  // Update-handoff state, declared here — ahead of the /api/status handler that reads `restarting` —
+  // rather than beside the updater that writes it, so the closure never reaches a `let` in its TDZ.
+  let restarting = false
+  // The child a handoff is supervising, so a signal that lands mid-handoff can take it down with us
+  // rather than leaving two daemons — see shutdown(). Cleared the moment the handoff is CONFIRMED:
+  // from then on that child is the daemon, and a signal must not take it down with the old one.
+  let handoffChild: ReturnType<typeof spawn> | null = null
+
   const { server: hookServer, port: hookPort } = await startHookServer(env.PORT, {
     onAutonomousDeviceRequest: async (method, target, body) => {
       if (!autonomousDeviceService) return { status: 503, body: { error: { code: 'UNAVAILABLE', message: 'Autonomous device service is starting' } } }
@@ -2766,6 +2802,11 @@ async function runForeground(session: AuthSession): Promise<void> {
       deviceTransportConnected: backend.hasCommander(),
       deviceE2eeConnected: backend.deviceE2eeConnected(),
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+      pid: process.pid,
+      startedAt,
+      // True for the few hundred ms between an update being staged and this server closing for the
+      // handoff. Informational: nothing should build readiness on a field the server stops serving.
+      restarting,
       discoveryReady,
       discoveryError,
       fingerprint: backend.e2eeFingerprint(),
@@ -2811,6 +2852,14 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
   })
+  // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
+  // written by whoever spawned us — so a parent that died mid-handover left a daemon nothing could
+  // manage — and then, for a while, by us at the top of this function, before the bind — so a child
+  // that LOST the port to a sibling still left a file naming itself, a corpse, over the winner. A
+  // process that is running AND holds the port is the only honest author of its own pid; that claim
+  // is also the signal `harness start` and the update handoff wait on to know the bind succeeded.
+  try { writeFileSync(PID_FILE, String(process.pid) + '\n') } catch { /* best effort */ }
+  console.log(`[cli] daemon pid ${process.pid} · v${VERSION}${process.env.ADAPTER_UPDATED_TO ? ' · updated' : ''} · listening on 127.0.0.1:${hookPort}`)
   // Same on-disk identity `harness remote-password set`/`link connect` use (E2eeStore.init() is
   // idempotent per file, so a separate in-memory instance here just reads the one this machine
   // already has).
@@ -3778,10 +3827,13 @@ async function runForeground(session: AuthSession): Promise<void> {
   // The cost is real and accepted: a turn streaming at that moment loses the rest of its events, and its
   // clients see no turn_end for it until the new daemon re-attaches the session and the next turn runs.
   let updater: Poller | null = null
-  let restarting = false
 
   // Hand off to a freshly-spawned daemon running the just-swapped cli.js, then SUPERVISE it and roll
   // back to the .prev bytes if it fails to come up. NOT launch() — that refuses while a daemon is alive.
+  //
+  // Runs under the spawn lock for its whole length (the updater's `withLock` wraps the staging and
+  // this together), so no `harness start` can spawn into the seconds where the port is free and the
+  // pid file names nothing.
   const restartForUpdate = async (newVersion: string): Promise<void> => {
     if (restarting) return
     restarting = true
@@ -3830,37 +3882,49 @@ async function runForeground(session: AuthSession): Promise<void> {
 
     const sinceOffset = existsSync(LOG_FILE) ? statSync(LOG_FILE).size : 0
     const child = spawnDaemon({ ADAPTER_UPDATED_TO: newVersion })
+    handoffChild = child
     let childExited = false
     child.on('exit', () => { childExited = true })
 
-    // KEEP on connected/unreachable/busy (new build RAN); ROLL BACK only on an early exit or a `fatal`
-    // (bad bundle / can't bind). unreachable = backend transient, not a bad build → don't bounce.
-    const ready = await waitForReady(sinceOffset, 30_000)
-    if (!childExited && ready.state !== 'fatal') {
-      try { writeFileSync(PID_FILE, String(child.pid) + '\n') } catch { /* ignore */ }
+    // Two phases. First the child has to BIND the port — it claims the pid file itself at that
+    // moment, and nothing else writes that file any more. A child that exits or stalls before then
+    // is a bad build (or a port it could not take): roll back at once instead of burning the whole
+    // connect window on it. Then, bound, wait for the backend: KEEP on connected/unreachable/busy
+    // (the new build RAN), ROLL BACK only on `fatal`. unreachable = backend transient, not a bad build.
+    const bind = await waitForBind(child.pid ?? -1, () => childExited, BIND_WAIT_MS, launchDeps)
+    const ready = bind === 'bound' ? await waitForReady(sinceOffset, 30_000, launchDeps) : null
+    if (bind === 'bound' && !childExited && ready?.state !== 'fatal') {
+      // Confirmed: it is the daemon now. Let go of it BEFORE anything else — a SIGTERM landing between
+      // here and the exit below must not take it down with us (see shutdown()).
+      handoffChild = null
       child.unref()
       confirmUpdate(env.ADAPTER_CLI_DIR) // drop the .prev backups
       console.log(`[update] now running ${newVersion} (pid ${child.pid})`)
       process.exit(0)
     }
-    console.error(`[update] new build failed to start (${childExited ? 'exited' : ready.state}) — rolling back`)
+    console.error(`[update] new build failed to start (${bind !== 'bound' ? bind : childExited ? 'exited' : ready?.state}) — rolling back`)
     try { if (child.pid) process.kill(child.pid, 'SIGKILL') } catch { /* ignore */ }
+    // A killed child cannot remove its own pid file; do it for it — but only once it is actually
+    // dead (SIGKILL is asynchronous, and a child mid-bind could still write the file after our
+    // removal) and only if it is still ITS file.
+    if (child.pid) {
+      const gone = Date.now() + 2_000
+      while (Date.now() < gone && isAlive(child.pid)) await new Promise((r) => setTimeout(r, 50))
+    }
+    removePidFileIf(child.pid)
     restoreUpdate(env.ADAPTER_CLI_DIR) // restore .prev → cli.js/notify.mjs
     const good = spawnDaemon({})
-    try { writeFileSync(PID_FILE, String(good.pid) + '\n') } catch { /* ignore */ }
+    handoffChild = good
+    let goodExited = false
+    good.on('exit', () => { goodExited = true })
+    // Hold the lock — and this process — until the rollback child has bound too. Exiting the moment it
+    // is spawned would free the lock while the port is still unclaimed, which is the window this whole
+    // arrangement exists to close. Nothing to do if it fails: the .prev bytes were the build that was
+    // running a minute ago, and `harness start` can be tried by hand.
+    const goodBind = await waitForBind(good.pid ?? -1, () => goodExited, BIND_WAIT_MS, launchDeps)
+    if (goodBind !== 'bound') console.error(`[update] rollback build did not come up either (${goodBind}) — run harness start`)
     good.unref()
     process.exit(0)
-  }
-
-  // Staged → restart, right now. `restartForUpdate` already latches on `restarting`, so a second call
-  // (e.g. the poller staging again before teardown finishes) is a no-op rather than two daemons.
-  const applyUpdate = (version: string): void => {
-    // If the restart handoff itself throws/rejects (I/O fault during teardown), don't let it become an
-    // unhandledRejection — log, un-latch `restarting`, and stay on the current build until the next poll.
-    void restartForUpdate(version).catch((err) => {
-      console.error('[update] restart failed — staying on current build:', err instanceof Error ? err.message : err)
-      restarting = false
-    })
   }
 
   // Self-update ONLY manages the INSTALLED copy (`~/.harness/cli/cli.js`). A dev/repo run — `tsx`
@@ -3877,7 +3941,19 @@ async function runForeground(session: AuthSession): Promise<void> {
       key: env.ADAPTER_UPDATE_KEY,
       dir: env.ADAPTER_CLI_DIR,
       intervalMs: env.ADAPTER_UPDATE_CHECK_MS,
-      onStaged: (v) => applyUpdate(v),
+      // The lock spans the byte swap AND the handoff it triggers, as one critical section: a
+      // `harness start` that lands between the two would otherwise stage over our .prev, and one
+      // that lands during the handoff would spawn a second daemon.
+      withLock: (fn) => withSpawnLock('handoff', fn, {
+        onWaiting: (owner) => console.log(`[update] waiting — the daemon is ${describeSpawnLockOwner(owner)}`),
+      }),
+      onStaged: (v) => restartForUpdate(v).catch((err) => {
+        // If the restart handoff itself throws/rejects (I/O fault during teardown), don't let it
+        // become an unhandledRejection — log, un-latch `restarting`, and stay on the current build.
+        console.error('[update] restart failed — staying on current build:', err instanceof Error ? err.message : err)
+        restarting = false
+        handoffChild = null
+      }),
     })
     console.log(`[update] self-update on · v${VERSION} · every ${Math.round(env.ADAPTER_UPDATE_CHECK_MS / 1000)}s`)
   } else if (!env.ADAPTER_UPDATE_DISABLE) {
@@ -3886,6 +3962,19 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`\n[cli] ${signal} — shutting down`)
+    // Mid-handoff everything below has already been torn down once, and the daemon that matters is
+    // the child being supervised. Take it down with us and leave — a second teardown of closed servers
+    // is noise, and a child left running would be a daemon nothing manages.
+    if (restarting) {
+      const child = handoffChild // null once the handoff was confirmed — that daemon stays up
+      if (child?.pid) {
+        console.log(`[cli] ${signal} during an update handoff — stopping the new daemon (pid ${child.pid}) too`)
+        try { process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
+        removePidFileIf(child.pid)
+      }
+      try { if (readPid() === process.pid) rmSync(PID_FILE, { force: true }) } catch { /* ignore */ }
+      process.exit(0)
+    }
     // Release the serial port first. It is exclusive, and a daemon that exits still holding it makes
     // esptool fail in a way that reads exactly like dead hardware.
     void cableRef?.stop()
@@ -4187,65 +4276,9 @@ function printInfoBlock(opts: {
   console.log('')
 }
 
-// 'fatal'       = misconfig; retrying is pointless → kill the daemon + error out.
-// 'unreachable' = transient (backend deploying / 5xx / slow / not up yet) → the daemon keeps retrying
-//                 in the background and connects on its own, so DON'T kill it — just report the state.
-// 'deauth' = the saved credential is invalid/revoked (401/403) → clear it and ask for a fresh token.
-// 'busy'   = this machine is already connected from another computer (409) → keep token, stop, inform.
-interface ReadyResult { state: 'connected' | 'deauth' | 'fatal' | 'unreachable' | 'busy'; detail?: string }
-
-/** Classify a backend connection error from the log tail: a human reason + fatal (won't self-heal) vs
- *  transient (will), and `deauth` for 401/403 (the token is no longer valid). null = no signal yet. */
-function connectFailure(tail: string): { detail: string; fatal: boolean; deauth?: boolean; busy?: boolean } | null {
-  // The daemon logs this marker when the backend rejected us with 409 (machine held by another computer).
-  if (tail.includes('[backend] machine busy')) {
-    return { detail: 'this machine is already connected from another computer', fatal: true, busy: true }
-  }
-  // The daemon couldn't bind the (fixed) hook port → another adapter is almost certainly already
-  // running. Fatal: don't sit on "retrying"; tell the user how to find/stop the other one.
-  if (/EADDRINUSE|already in use/.test(tail)) {
-    return { detail: `hook port ${env.PORT} is already in use — is another machine daemon running? (harness stop, or lsof -ti :${env.PORT} | xargs kill)`, fatal: true }
-  }
-  const m = tail.match(/Unexpected server response: (\d+)/)
-  if (m) {
-    const code = Number(m[1])
-    // 401/403 = this computer's machine was deleted/revoked (or a bad token) → deauth: clear + re-join.
-    // 409 = one machine per machine: already connected from another computer → busy (keep token, stop).
-    // 404 = wrong backend / route not deployed → misconfig (fatal, don't wipe the token).
-    // 5xx (esp. 502/503/504) = gateway up but the app is deploying/restarting → transient, keep retrying.
-    if (code === 409) return { detail: 'this machine is already connected from another computer', fatal: true, busy: true }
-    const deauth = code === 401 || code === 403
-    return { detail: `backend returned HTTP ${code}`, fatal: deauth || code === 404, deauth }
-  }
-  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/.test(tail)) return { detail: 'host not found (DNS)', fatal: true }
-  if (/certificate|CERT_|self-signed/i.test(tail)) return { detail: 'TLS certificate error', fatal: true }
-  if (/ECONNREFUSED/.test(tail)) return { detail: 'connection refused', fatal: false } // backend not up yet → retry
-  // A 1006 close with no HTTP code — generic "couldn't reach it right now"; transient.
-  if (/disconnected \(close 1006\)/.test(tail)) return { detail: 'cannot reach backend', fatal: false }
-  return null
-}
-
-/** Poll the log until the adapter connects, hits a FATAL error, or the window ends. Transient errors
- *  don't short-circuit — the connection may recover within the window (e.g. a 502 during a deploy). */
-async function waitForReady(sinceOffset: number, timeoutMs = 8000): Promise<ReadyResult> {
-  const deadline = Date.now() + timeoutMs
-  let lastTransient: string | undefined
-  while (Date.now() < deadline) {
-    let tail = ''
-    // Slice the raw BYTES from sinceOffset (a Buffer byte length) THEN decode. The log is full of
-    // multi-byte glyphs (→ · ─ ● …), so decoding first and slicing the STRING by that byte count
-    // overshoots (byte length > char length) and returns "" — the classic false "no connection".
-    try { tail = readFileSync(LOG_FILE).subarray(sinceOffset).toString('utf-8') } catch { /* not yet */ }
-    if (tail.includes('[backend] connected')) return { state: 'connected' }
-    const fail = connectFailure(tail)
-    if (fail?.busy) return { state: 'busy', detail: fail.detail }
-    if (fail?.deauth) return { state: 'deauth', detail: fail.detail }
-    if (fail?.fatal) return { state: 'fatal', detail: fail.detail }
-    if (fail) lastTransient = fail.detail // remember, but keep waiting — it may connect on a retry
-    await new Promise((r) => setTimeout(r, 250))
-  }
-  return { state: 'unreachable', detail: lastTransient ?? `no connection within ${timeoutMs / 1000}s` }
-}
+/** The log-tail readiness classifier and the two-phase wait live in lib/daemonLaunch.ts — see there.
+ *  `launchDeps` binds them to this process's log file and port. */
+const launchDeps = defaultLaunchDeps(LOG_FILE, daemonPort())
 
 // ── daemon start / stop / status ───────────────────────────────────────────────────────────────
 
@@ -4271,6 +4304,26 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
     return
   }
 
+  // ONE spawner at a time. The desktop app re-runs `harness start` every few seconds while the daemon
+  // looks down — which it does for the length of an update handoff, or of `harness update` — and a
+  // second child racing the first for the fixed port is how an orphan ends up holding it. Waiting is
+  // the right answer: when the holder finishes, the pid file names a live daemon and the check below
+  // says "already running", which is exactly what the caller wanted to hear.
+  try {
+    await withSpawnLock('start', () => spawnDaemon(session, runtimeNode), {
+      onWaiting: (owner) => console.log(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
+    })
+  } catch (error) {
+    if (!(error instanceof SpawnLockBusyError)) throw error
+    console.error(`\n✗ Could not start: the daemon spawn lock is ${describeSpawnLockFailure(error)}.`)
+    console.error('  check   harness status   ·   stop it   harness stop')
+    console.error(`  logs    ${tildify(LOG_FILE)}`)
+    process.exit(1)
+  }
+}
+
+/** The part of `launch` that runs under the spawn lock: check, spawn, wait for bind, wait for connect. */
+async function spawnDaemon(session: AuthSession, runtimeNode: string | null): Promise<void> {
   const running = readPid()
   if (running && isAlive(running)) {
     console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
@@ -4289,16 +4342,31 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
     env: { ...process.env },
     stdio: ['ignore', logFd, logFd],
   })
-  writeFileSync(PID_FILE, String(child.pid) + '\n')
+  let childExited = false
+  child.on('exit', () => { childExited = true })
+  child.on('error', () => { childExited = true })
   child.unref()
 
-  const ready = await waitForReady(logOffset, CONNECT_WAIT_MS)
+  // The pid file is NOT written here. The child claims it itself, once — and only once — it has bound
+  // the control port (see runForeground); that claim is the bind signal waited on below. A spawner
+  // writing it first meant a child that lost the port left a file naming a corpse.
+  const bind = await waitForBind(child.pid ?? -1, () => childExited, BIND_WAIT_MS, launchDeps)
+  if (bind !== 'bound') {
+    const fail = connectFailure(launchDeps.readLogSlice(logOffset), daemonPort())
+    if (bind === 'timeout') { try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ } }
+    const detail = fail?.detail ?? (bind === 'exited' ? 'the daemon exited during startup' : `the daemon did not bind within ${BIND_WAIT_MS / 1000}s`)
+    console.error(`\n✗ ${detail}`)
+    console.error(`  logs   ${tildify(LOG_FILE)}`)
+    process.exit(1)
+  }
+
+  const ready = await waitForReady(logOffset, CONNECT_WAIT_MS, launchDeps)
 
   // DEAUTH (401/403): the saved credential is no longer valid — this computer was removed from the machine
   // (or the token is stale). Wipe it, stop the daemon, and signal the caller to ask for a fresh token.
   if (ready.state === 'deauth') {
     try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    rmSync(PID_FILE, { force: true })
+    removePidFileIf(child.pid)
     clearAuthSession()
     return
   }
@@ -4308,7 +4376,7 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
   // failure, not a retry loop). The user stops the other machine first, then runs `harness start` here.
   if (ready.state === 'busy') {
     try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    rmSync(PID_FILE, { force: true })
+    removePidFileIf(child.pid)
     console.log('\n  ℹ This machine is already connected from another computer.')
     console.log('    Only one machine per machine — stop the adapter on that machine first,')
     console.log('    then run `harness start` here again.')
@@ -4319,7 +4387,7 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
   // to fix. (Not 401/403 — those are handled as deauth above.)
   if (ready.state === 'fatal') {
     try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    rmSync(PID_FILE, { force: true })
+    removePidFileIf(child.pid)
     // A hook-port clash isn't a backend problem — it's a duplicate/leftover adapter. Report it as such.
     if (ready.detail?.startsWith('hook port')) {
       console.error(`\n✗ ${ready.detail}`)
@@ -4358,20 +4426,6 @@ async function launch(foreground: boolean, repair: boolean = false): Promise<voi
   process.exit(0)
 }
 
-async function stopDaemonProcess(): Promise<{ pid: number | null; stopped: boolean }> {
-  const pid = readPid()
-  if (!pid || !isAlive(pid)) {
-    rmSync(PID_FILE, { force: true })
-    return { pid: null, stopped: false }
-  }
-  try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
-  const deadline = Date.now() + 3000
-  while (Date.now() < deadline && isAlive(pid)) await new Promise((r) => setTimeout(r, 150))
-  if (isAlive(pid)) { try { process.kill(pid, 'SIGKILL') } catch { /* ignore */ } }
-  rmSync(PID_FILE, { force: true })
-  return { pid, stopped: true }
-}
-
 /** `harness stop` — SIGTERM the background adapter, SIGKILL if it lingers. */
 async function stop(): Promise<void> {
   const r = await stopDaemonProcess()
@@ -4390,6 +4444,7 @@ function clearAdapterState(): void {
     for (const name of [
       'token',
       'adapter.pid',
+      'adapter.spawn.lock',
       'harness.log',
       'machine.log', // pre-rename names — still cleared so a reset leaves nothing behind
       'adapter.log',
@@ -5017,6 +5072,9 @@ if (cmd === 'version' || cmd === '--version' || cmd === '-v') { console.log(VERS
 
 const onError = (err: unknown): never => {
   console.error('Failed to start adapter:', err)
+  // A daemon that claimed the pid file (port bound) and then failed to finish starting must not leave
+  // that file naming a corpse — the next `harness start` would refuse on it. Only ours, though.
+  removePidFileIf(process.pid)
   process.exit(1)
 }
 
