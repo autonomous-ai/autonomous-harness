@@ -28,6 +28,25 @@ native module to compile — the same `cli.js` runs everywhere.
 
 Windows is not supported.
 
+## Remote media previews
+
+Harness Desktop can download an agent's image/video and open it on the viewing
+computer. The CLI advertises `features.mediaPreview` in `terminal_capabilities`.
+The existing encrypted `agent_read_file` RPC accepts a media-only variant:
+`{agentId, path, media: true, offset, revision?}`. Replies carry `media`, `filename`,
+`totalBytes`, `offset`, `revision`, and `contentBase64`. Chunks are 128 KiB; every
+chunk after the first must supply its revision. The maximum file size is 512 MiB.
+
+Absolute paths, home-relative paths and file URLs resolve on the owning machine;
+relative paths (including symlink targets) stay inside the agent's working folder.
+Media suffixes and file signatures are checked. The original text-reading rules
+remain unchanged. Reads are stateless, close their handles after each request,
+and reject file changes during transfer. Paths and contents are omitted from frame
+logs. This reuses the existing E2EE request/reply types and needs no backend release.
+
+`scripts/smoke-media-peer.ts` is an opt-in fixture for Desktop's A/B smoke test;
+it uses temporary identities and loopback sockets, never live machine state.
+
 ## Install & run (`harness`)
 
 Prerequisite: **Node ≥ 20**. Install the CLI, then sign in once with the same SSO account used by

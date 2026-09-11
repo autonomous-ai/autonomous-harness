@@ -5,6 +5,7 @@ import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHis
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { decodeTerminalLocal, TerminalBinaryKind } from './lib/terminalBinary.js'
 import { registry, type RegisteredSession } from './lib/registry.js'
+import * as mediaPreview from './lib/mediaPreview.js'
 
 const wsMock = vi.hoisted(() => {
   const instances: MockWebSocket[] = []
@@ -210,6 +211,51 @@ describe('BackendSocket outbound queue', () => {
     await vi.waitFor(() => {
       expect(wrapReply).toHaveBeenCalledWith('web-1', 'usage_read_result', 'usage-1', { providers: readings })
     })
+    await socket.stop()
+  })
+
+  it('serves media only to the requesting encrypted connection', async () => {
+    vi.spyOn(registry, 'resolve').mockReturnValue({ cwd: '/remote/workspace' } as RegisteredSession)
+    const media = { media: true as const, filename: 'preview.png', offset: 0, totalBytes: 3,
+      revision: 'a'.repeat(64), contentBase64: 'AQID' }
+    const read = vi.spyOn(mediaPreview, 'readMediaPreviewChunk').mockResolvedValue(media)
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    vi.spyOn(socket.e2ee, 'unwrapDown').mockReturnValue({ type: 'agent_read_file', payload: {
+      requestId: 'media-1', agentId: 'agent-b', path: '/tmp/preview.png', media: true, offset: 0,
+    } })
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    const wrap = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'agent_read_file_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-media' } },
+    })
+    ws.message({ t: 'down', connId: 'viewer-a', frame: {
+      type: 'agent_read_file', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-request' } },
+    } })
+    await vi.waitFor(() => expect(wrap).toHaveBeenCalledWith('viewer-a', 'agent_read_file_result', 'media-1', media))
+    expect(read).toHaveBeenCalledWith('/remote/workspace', '/tmp/preview.png', 0, undefined)
+    const sent = parseSent(ws)
+    expect(sent).toContainEqual(expect.objectContaining({ targetConnId: 'viewer-a', frame: {
+      type: 'agent_read_file_result', payload: { __e2e: { v: 1, k: 'p', n: 1, ct: 'encrypted-media' } },
+    } }))
+    expect(JSON.stringify(sent)).not.toContain('AQID')
+    await socket.stop()
+  })
+
+  it('refuses a plaintext media request before reading any file', async () => {
+    const read = vi.spyOn(mediaPreview, 'readMediaPreviewChunk')
+    const socket = new BackendSocket('token')
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'unpaired-viewer', frame: {
+      type: 'agent_read_file', payload: { requestId: 'media-unsafe', agentId: 'agent-b', path: '/tmp/preview.png', media: true, offset: 0 },
+    } })
+    await vi.waitFor(() => expect(parseSent(ws)).toContainEqual(expect.objectContaining({
+      targetConnId: 'unpaired-viewer', frame: expect.objectContaining({ payload: { requestId: 'media-unsafe', error: 'E2EE_REQUIRED' } }),
+    })))
+    expect(read).not.toHaveBeenCalled()
     await socket.stop()
   })
 

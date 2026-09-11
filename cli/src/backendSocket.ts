@@ -34,6 +34,7 @@ import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
 import { listFileTree, readProjectFile } from './lib/files.js'
+import { MediaPreviewError, readMediaPreviewChunk } from './lib/mediaPreview.js'
 import { codexMessagesToEvents, windowCodexLines } from './engines/codex/normalizer.js'
 import { cursorMessagesToEvents, windowCursorLines } from './engines/cursor/normalizer.js'
 import { loadCursorReplayTaskLinks } from './engines/cursor/subagent.js'
@@ -963,7 +964,7 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && type !== 'agent_read_file') logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
@@ -1037,7 +1038,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_')) {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && type !== 'agent_read_file') {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1669,12 +1670,21 @@ export class BackendSocket {
         }
 
         case 'agent_read_file': {
-          // View one file — ≤5MB, text-only (mirror the hosted runtime’s guard).
+          // Text reads keep their ≤5 MB guard; media uses bounded binary chunks.
           const projectId = payload.agentId as string | undefined
           const path = payload.path as string | undefined
           if (!projectId || !path) { reply(type, requestId, { error: 'MISSING_AGENT_OR_PATH' }); return }
           const s = registry.resolve(projectId)
           if (!s?.cwd) { reply(type, requestId, { error: 'AGENT_NOT_FOUND' }); return }
+          if (payload.media === true) {
+            if (typeof path !== 'string') { reply(type, requestId, { error: 'MEDIA_INVALID_REQUEST' }); return }
+            try {
+              reply(type, requestId, { ...await readMediaPreviewChunk(s.cwd, path, payload.offset, payload.revision) })
+            } catch (error) {
+              reply(type, requestId, { error: error instanceof MediaPreviewError ? error.message : 'MEDIA_READ_FAILED' })
+            }
+            return
+          }
           try { reply(type, requestId, { path, content: readProjectFile(s.cwd, path) }) }
           catch (e) { reply(type, requestId, { error: e instanceof Error ? e.message : 'NOT_FOUND' }) }
           return
