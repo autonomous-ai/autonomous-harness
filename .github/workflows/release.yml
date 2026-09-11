@@ -105,8 +105,8 @@ jobs:
           echo "metadata_path=$meta" >> "$GITHUB_OUTPUT"
           echo "Publishing **$ver** to \`$meta\`" >> "$GITHUB_STEP_SUMMARY"
 
-  # Proving the credential now means a broken one costs seconds instead of a whole test run. Runs
-  # beside `version` and `tests`, so it is free in wall clock.
+  # Proving the credential now means a broken one costs seconds instead of a whole bundle+upload.
+  # Runs beside `version`, so it is free in wall clock.
   preflight:
     runs-on: ubuntu-latest
     env:
@@ -149,13 +149,16 @@ jobs:
           echo "$GITHUB_RUN_ID" | gcloud storage cp - "$probe"
           gcloud storage rm "$probe"
 
-  tests:
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-
+  # No vitest gate here. The full suite (ci.yml) runs on pull requests — but NOTE that ci.yml has no
+  # `push` trigger and main also takes direct pushes, so a tagged commit has NOT necessarily been
+  # through it. What stands between a tag and the fleet is exactly what `publish` runs itself:
+  # `tsc --noEmit` below (esbuild only strips types, it never checks them) and upload-cli.sh's own
+  # bundle/version checks. The vitest run was dropped on 2026-09-11 after v0.2.16_cli was held up
+  # by a slow test on a cold runner rather than by a bug; typecheck stays because it is ~15s and is
+  # the one thing cheap enough to keep in front of a publish that every daemon installs within a
+  # minute and that cannot be undone.
   publish:
-    needs: [version, tests, preflight]
+    needs: [version, preflight]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -170,12 +173,18 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # The Node the suite just ran on, not a second opinion about which Node is current.
-          node-version: ${{ needs.tests.outputs.node-version }}
+          # THE runtime pin — the managed Node the shipped CLI actually executes on (see the same
+          # pin and its full rationale in ci.yml's `pin` step). Bump the two together, never one.
+          node-version: 22.23.2
           cache: npm
           cache-dependency-path: cli/package-lock.json
 
       - run: npm ci
+        working-directory: cli
+
+      # Typecheck only — see the note above `publish` for why this one check stays and vitest does
+      # not. Before auth on purpose: a type error should fail the release without ever touching GCP.
+      - run: npx tsc --noEmit
         working-directory: cli
 
       # Same two-step auth as `preflight` above, and the same cutover note applies: delete the key
