@@ -2,6 +2,10 @@ node_modules/
 dist/
 .tsbuildinfo
 .DS_Store
+# IDE state. workspace.xml records local paths, run configs and sometimes datasource
+# credentials — none of it belongs in a public repo.
+.idea/
+.vscode/
 .codegraph
 
 # Per-deployment state, never source:

@@ -1,5 +1,22 @@
 name: Docker production backend build
 
+# Builds backend/Dockerfile.k8s and pushes it to gcr.io/autonomous-ecm/autonomous-code-be, on a
+# pushed `v*_api` tag. The `_api` suffix is what keeps this trigger and release.yml's `v*_cli` one
+# from firing on each other now that the CLI and the backend share a repo.
+#
+# The build itself lives in autonomous-ai/github-templates. This repo is the only caller of the `-v2`
+# template: a clone of docker-build-and-push.yaml with workload identity federation, SHA-pinned
+# actions, no caller value spliced into a shell, and deploy secrets as BuildKit mounts rather than
+# build args. The original is untouched and still serves autonomous-code, ecm-web and the standalone
+# harness backend, so nothing here can break their builds — they migrate when they choose.
+#
+# `@main` is a MOVING reference: whoever can push to that repo decides what runs here with GCP push
+# credentials attached. Pin it to a commit SHA and bump it deliberately — that matters more from a
+# public repo than a private one.
+#
+# Nothing here is reachable from a pull request: the only trigger is a tag push, which only a
+# maintainer with write access can make. A fork's PR cannot run this job and cannot see its secrets.
+
 on:
   push:
     tags:
@@ -7,7 +24,14 @@ on:
 
 jobs:
   build-autonomous-code-be-production:
-    uses: autonomous-ai/github-templates/.github/workflows/docker-build-and-push.yaml@main
+    uses: autonomous-ai/github-templates/.github/workflows/docker-build-and-push-v2.yaml@main
+    # Permissions belong to the CALLER: a called workflow can never hold more than it was granted, so
+    # the template deliberately declares none of its own. `contents: read` because the template's
+    # actions/checkout is the only token use; `id-token: write` to mint the OIDC token the federated
+    # auth step exchanges for a short-lived GCP credential.
+    permissions:
+      contents: read
+      id-token: write
     with:
       DOCKER_IMAGE_NAME: autonomous-code-be
       DOCKER_CONTEXT: backend
@@ -15,4 +39,20 @@ jobs:
       CONCURRENCY_GROUP: docker_build_web_production
       RUNNER_TAG: ubuntu-latest
     secrets:
+      # NOTE THE `_GCR` SUFFIX. The registry and the CLI release bucket live in DIFFERENT GCP
+      # projects, so they need different service accounts — this one in the registry's project,
+      # release.yml's plain GCP_SERVICE_ACCOUNT in the bucket's.
+      #
+      # The PROVIDER is shared, though. A pool in one project can be granted impersonation on a
+      # service account in another (the project number inside the pool's resource name is the pool's,
+      # never the service account's), so one pool and one provider serve both.
+      #
+      # Set all of them with scripts/setup-gcp-wif.sh in autonomous-ai/github-templates — run it
+      # once per service account.
+      # While they are unset these pass through as empty strings and the template falls back to the
+      # key below, so this file is correct before and after the migration.
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT_GCR }}
+      # The legacy path. Delete this line once a tag build has gone green on federation, then delete
+      # the key itself in GCP — an unused key that still authenticates is still a liability.
       GCLOUD_DEV_SERVICE_ACCOUNT_JSON: ${{ secrets.GCLOUD_DEV_SERVICE_ACCOUNT_JSON }}

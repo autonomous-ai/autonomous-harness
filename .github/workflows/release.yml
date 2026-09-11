@@ -15,8 +15,9 @@ name: Release
 #
 # Shape borrowed from autonomous-harness-desktop's release.yml, minus the parts that do not apply:
 #
-#   * SAME bucket, SAME `GCP_SA_KEY` service account, SAME preflight, SAME "the tag is the version"
-#     rule, SAME annotated-tag release notes, SAME `metadata_path` dry run.
+#   * SAME bucket, SAME preflight, SAME "the tag is the version" rule, SAME annotated-tag release
+#     notes, SAME `metadata_path` dry run. NOT the same credential: this one authenticates with
+#     workload identity federation instead of a long-lived service-account key (see below).
 #   * NO scratch-manifest merge. The desktop fans out to three build jobs that each own a manifest
 #     key, so it points each at its own scratch file and merges once at the end. The CLI is ONE
 #     platform-independent bundle under ONE key, published by ONE job — the race the desktop
@@ -56,7 +57,11 @@ on:
 
 permissions:
   contents: read
-  id-token: write   # only used by the Workload Identity Federation variant of the auth steps below
+  # Mints the OIDC token the auth steps exchange for a short-lived GCP credential. It is a
+  # capability, not a secret: what it can reach is decided entirely by the pool's
+  # attribute-condition and the service account's IAM bindings, both set by
+  # autonomous-ai/github-templates: scripts/setup-gcp-wif.sh (runbook: WORKLOAD-IDENTITY.md).
+  id-token: write
 
 concurrency:
   # Two releases overlapping would interleave their manifest writes, and the loser's version would
@@ -104,17 +109,45 @@ jobs:
   # beside `version` and `tests`, so it is free in wall clock.
   preflight:
     runs-on: ubuntu-latest
+    env:
+      # The `secrets` context cannot be read from a step-level `if:`, so reduce it to a boolean here
+      # — job-level `env:` can see it. Holds "true"/"false", never the value itself.
+      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:
-      - uses: google-github-actions/auth@v2
+      # GCP auth, WITHOUT a long-lived key wherever possible.
+      #
+      # A service-account JSON key is a bearer credential with no expiry: it is only as safe as every
+      # place it has ever been copied to — a laptop, a password manager, a paste into chat, a CI log
+      # somebody widened. Workload Identity Federation replaces it with a short-lived token minted
+      # from this job's own OIDC identity, so there is nothing to leak and nothing to rotate. The GCP
+      # side is one script, in autonomous-ai/github-templates: scripts/setup-gcp-wif.sh.
+      #
+      # Two steps, not one, only for the duration of the cutover: WIF the moment the
+      # GCP_WORKLOAD_IDENTITY_PROVIDER secret exists, the key until then, so provisioning GCP and
+      # switching CI are not the same deploy.
+      # DELETE the second step (and the GCP_SA_KEY secret, and the key itself) once a release has
+      # gone green on the first — see docs/cicd.md.
+      - name: Authenticate to GCP (workload identity federation)
+        if: env.HAS_WIF == 'true'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Authenticate to GCP (service-account key — legacy fallback)
+        if: env.HAS_WIF != 'true'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
       - name: Verify GCS write access
         run: |
           set -euo pipefail
           probe="gs://${GCS_BUCKET}/harness/cli/.ci-preflight/${GITHUB_RUN_ID}"
-          echo "$GITHUB_RUN_ID" | gsutil cp - "$probe"
-          gsutil rm "$probe"
+          # `gcloud storage`, not `gsutil`: gsutil is a standalone Python tool that reads gcloud's
+          # credential store, and it does not handle the external-account (federated) credential WIF
+          # produces. `gcloud storage` is the same gcloud binary that did the token exchange.
+          echo "$GITHUB_RUN_ID" | gcloud storage cp - "$probe"
+          gcloud storage rm "$probe"
 
   tests:
     uses: ./.github/workflows/ci.yml
@@ -130,6 +163,8 @@ jobs:
       # dry run it is the scratch manifest nothing polls.
       METADATA_PATH: ${{ needs.version.outputs.metadata_path }}
       VERSION: ${{ needs.version.outputs.version }}
+      # See `preflight` above: `secrets` is unreadable from a step `if:`, so it becomes a boolean.
+      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -143,10 +178,20 @@ jobs:
       - run: npm ci
         working-directory: cli
 
-      - uses: google-github-actions/auth@v2
+      # Same two-step auth as `preflight` above, and the same cutover note applies: delete the key
+      # fallback once a release has gone green on federation.
+      - name: Authenticate to GCP (workload identity federation)
+        if: env.HAS_WIF == 'true'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Authenticate to GCP (service-account key — legacy fallback)
+        if: env.HAS_WIF != 'true'
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       # From the repo root, the way `make upload-cli` calls it. The script bundles with
       # ADAPTER_VERSION="$VERSION" baked in, refuses to upload if `node dist/cli.js version` does
@@ -289,6 +334,8 @@ jobs:
           EOF
           echo "::group::RELEASE_NOTES.md"; cat RELEASE_NOTES.md; echo "::endgroup::"
 
-      - uses: softprops/action-gh-release@v2
+      # Pinned to a commit, not a tag: this step runs with `contents: write` and a moving tag on a
+      # third-party action means whoever can move it can run code against that token.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           body_path: RELEASE_NOTES.md
