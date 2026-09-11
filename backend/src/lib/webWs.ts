@@ -122,18 +122,19 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
   try { ws.send(JSON.stringify({ type: 'connected', payload: { userId: user.sub } })) } catch { /* ignore */ }
 
   // Daily presence: mark today online now, and re-check on the existing 30s re-seed tick / on
-  // disconnect so a connection spanning UTC midnight gets counted for the new day too.
-  let lastPresenceDayKey: string | null = utcDayKey(new Date())
-  touchUserOnlineDay(user.sub, new Date(), { isNewConnection: true })
-    .catch((err) => logger.warn('presence tracking failed', { userId: user.sub, error: String(err) }))
-  const touchPresenceIfDayChanged = (): void => {
+  // disconnect so a connection spanning UTC midnight gets counted for the new day too. The guard
+  // only advances on a SUCCESSFUL write, so a transient DB failure gets retried on the next tick
+  // instead of being silently skipped for the rest of the day.
+  let lastPresenceDayKey: string | null = null
+  const touchPresence = (isNewConnection: boolean): void => {
     const now = new Date()
     const dayKey = utcDayKey(now)
-    if (dayKey === lastPresenceDayKey) return
-    lastPresenceDayKey = dayKey
-    touchUserOnlineDay(user.sub, now, { isNewConnection: false })
+    if (!isNewConnection && dayKey === lastPresenceDayKey) return
+    touchUserOnlineDay(user.sub, now, { isNewConnection })
+      .then(() => { lastPresenceDayKey = dayKey })
       .catch((err) => logger.warn('presence tracking failed', { userId: user.sub, error: String(err) }))
   }
+  touchPresence(true)
 
   // An unattached socket (user parked on the Machines page, no agent selected) holds no hub client, so a
   // registry-driven sweep can't see it — it would be killed by LB idle timeouts, or never reaped when
@@ -216,7 +217,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     if (!deviceSeedTimer) {
       deviceSeedTimer = setInterval(() => {
         void seedDeviceStatuses().catch(() => { /* ignore */ })
-        touchPresenceIfDayChanged()
+        touchPresence(false)
       }, DEVICE_RESEED_MS)
     }
     await seedDeviceStatuses()
@@ -464,7 +465,7 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     if (deviceStatusUnsub) { deviceStatusUnsub(); deviceStatusUnsub = null }
     if (machineListUnsub) { machineListUnsub(); machineListUnsub = null }
     if (deviceE2eePairUnsub) { deviceE2eePairUnsub(); deviceE2eePairUnsub = null }
-    touchPresenceIfDayChanged()
+    touchPresence(false)
     logger.info('web user disconnected', { userId: user.sub, machineId: currentAgentId ?? undefined })
   }
   ws.on('close', cleanup)

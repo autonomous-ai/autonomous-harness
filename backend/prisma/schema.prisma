@@ -456,3 +456,22 @@ model UserDailyRemoteUsage {
   @@index([userId, dayUtc])
   @@map("user_daily_remote_usage")
 }
+
+/// Per-day record of whether a user's device was connected to the device-ws relay
+/// (src/lib/deviceWs.ts). One row per (user, device, UTC day); a connection spanning
+/// midnight produces a row for each day it touches.
+model UserDailyDevicePresence {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String
+  deviceId    String
+  dayUtc      DateTime
+  connections Int      @default(0)
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, deviceId, dayUtc])
+  @@index([userId, dayUtc])
+  @@map("user_daily_device_presence")
+}

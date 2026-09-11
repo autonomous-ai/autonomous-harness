@@ -25,6 +25,8 @@ import type { Frame } from './tunnel.js'
 import { transcribe, MAX_PCM, normalizeLang } from './stt.js'
 import { prisma } from './prisma.js'
 import { deviceService } from '../services/index.js'
+import { touchDeviceOnlineDay } from './dailyTracking.js'
+import { utcDayKey } from '../types/analytics.js'
 import { agentLimit, recordCreatedAgent } from './agentTracker.js'
 import { env } from '../config/env.js'
 import { logger } from '../utils/logger.js'
@@ -451,13 +453,31 @@ function relay(device: WebSocket, opts: RelayOpts): void {
   let presenceDeviceId: string | null = null
   let controlUnsub: (() => void) | null = null
   let machineListUnsub: (() => void) | null = null
+  // Daily device presence: mark today online on first presence start for this connection, and
+  // re-check on the existing 15s refresh tick / on close so a connection spanning UTC midnight
+  // gets counted for the new day too (mirrors webWs.ts's touchUserOnlineDay/touchPresence). The
+  // guard only advances on a SUCCESSFUL write, so a transient DB failure gets retried on the next
+  // tick instead of being silently skipped for the rest of the day.
+  let lastDevicePresenceDayKey: string | null = null
+  const touchDevicePresence = (id: string, isNewConnection: boolean): void => {
+    const now = new Date()
+    const dayKey = utcDayKey(now)
+    if (!isNewConnection && dayKey === lastDevicePresenceDayKey) return
+    touchDeviceOnlineDay(userId, id, now, { isNewConnection })
+      .then(() => { lastDevicePresenceDayKey = dayKey })
+      .catch((err) => logger.warn('device presence tracking failed', { userId, deviceId: id, error: String(err) }))
+  }
   const startPresence = (id: string): void => {
     if (closed || presenceDeviceId === id) return
     presenceDeviceId = id
     void setDevicePresence(id, connToken)
     void publishDeviceStatus(userId, { deviceId: id, online: true })
+    touchDevicePresence(id, true)
     if (presenceTimer) clearInterval(presenceTimer)
-    presenceTimer = setInterval(() => { void setDevicePresence(id, connToken) }, DEVICE_PRESENCE_REFRESH_MS)
+    presenceTimer = setInterval(() => {
+      void setDevicePresence(id, connToken)
+      touchDevicePresence(id, false)
+    }, DEVICE_PRESENCE_REFRESH_MS)
     // Control channel: a revoke must reach the device even when it's parked on the machine PICKER
     // (no hub attach → the machine-targeted pushDeviceRevoked can't reach it). Deliver the frame the
     // firmware already handles (wipe token + reboot to pair screen), then close the socket so a
@@ -821,6 +841,7 @@ function relay(device: WebSocket, opts: RelayOpts): void {
         if (gone) void publishDeviceStatus(userId, { deviceId: id, online: false, lastSeenAt: seenAt.toISOString() })
       })
       void prisma.deviceBinding.update({ where: { deviceId: id }, data: { lastSeenAt: seenAt } }).catch(() => { /* best effort */ })
+      touchDevicePresence(id, false)
     }
     for (const [, unsub] of statusSubs) unsub()
     statusSubs.clear()
