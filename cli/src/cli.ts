@@ -3036,6 +3036,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // that is alive and answering on another machine. sendTurn is the fork that already knows the
     // difference (local → the same door the web and the hooks use, remote → the fleet), and it is the
     // one the dial has been using for every voice turn.
+    // A window that connects after the dial did has missed the `dial_status` that announced it.
+    dialStatus: () => cableHostRef?.currentDialStatus() ?? { attached: false },
     onRouteSend: (agentId, text) => {
       const sent = cableHostRef?.sendTurn(agentId, text) ?? { ok: false as const, machine: '', reason: 'no agent list yet' }
       console.log(`[route] ⌘K → ${sid(agentId)} · bytes=${Buffer.byteLength(text, 'utf8')}`
@@ -4048,6 +4050,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     focused: (machineId, agentId) =>
       backend.sendLocal({ type: 'dial_focus', payload: { machineId, agentId } }),
     scrolled: (phase, dy, velocity) => backend.sendLocal({ type: 'dial_scroll', payload: { phase, dy, velocity } }),
+    // Local-only like the three above: which desk has a dial on it is a fact about THIS computer.
+    dialStatus: (status) => backend.sendLocal({ type: 'dial_status', payload: status }),
     // Words spoken on the overview belong to whichever agent the window's palette picks.
     routeInWindow: (text, cmd) => windowRouter.ask(text, cmd),
     log: (line) => console.log(`[cable] ${line}`),

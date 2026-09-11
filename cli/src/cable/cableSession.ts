@@ -262,7 +262,21 @@ export interface CableHost {
    */
   onDialAttached?(): void
   onDialGone?(): void
+  /**
+   * The dial as a window would draw it: there or not, on which firmware, and whether an update is
+   * going over the cable right now. Fired on every change and never on a keepalive — the window
+   * shows this in its rail, and a rail that redraws four times a minute to say "still here" is a rail
+   * nobody can afford. What is NOT here: anything a hand did (that is `focused`/`opened`/`scrolled`).
+   */
+  onDialStatus?(status: DialStatus): void
   log(line: string): void
+}
+
+/** What a window needs to draw the device row. `updating` names the version on its way over. */
+export interface DialStatus {
+  attached: boolean
+  fw?: string
+  updating?: string
 }
 
 interface Message {
@@ -458,6 +472,14 @@ export class CableSession {
 
   private openAt = 0
   private opening = false
+  /**
+   * The version an OTA is moving TO, or '' when none is in flight.
+   *
+   * Read by the device row the window draws — see onDialStatus. A dial that is
+   * taking an update is neither simply present nor absent, and the row says so.
+   */
+  private offeringTo = ''
+
   private lastPing = 0
 
   /**
@@ -555,6 +577,7 @@ export class CableSession {
   private onClosed(why: string): void {
     this.host.log(`cable: closed (${why})`)
     this.host.onDialGone?.()
+    this.host.onDialStatus?.({ attached: false })
     this.link = null
     this.greetedMac = null
     this.greetedFw = null
@@ -652,6 +675,7 @@ export class CableSession {
           this.greetedMac = mac
           this.greetedFw = fw
           this.host.log(`cable: dial ${mac} ${returning ? 'back ' : ''}on fw ${fw} proto ${msg.proto}`)
+          this.host.onDialStatus?.({ attached: true, fw })
           // BEFORE the state push, not after: the push reads the selected machine, and for a remote one
           // that means an RPC over a lane this is what re-opens.
           this.host.onDialAttached?.()
@@ -797,6 +821,9 @@ export class CableSession {
         return
       case 'fw.accept':
         // The dial has erased its slot and is expecting bytes. Nothing was sent before this.
+        // The window is told NOW rather than at the offer: an offer the dial refuses is nothing to
+        // show, and the minute that matters — do not unplug it — starts here.
+        this.host.onDialStatus?.({ attached: true, fw: this.greetedFw ?? undefined, updating: this.offeringTo })
         await this.transfer?.pump()
         return
       case 'fw.progress':
@@ -804,12 +831,23 @@ export class CableSession {
         if (typeof msg.written === 'number') await this.transfer?.onProgress(msg.written)
         return
       case 'fw.done':
+        // WHETHER AN UPDATE LANDS is not something the release process can see:
+        // a version is published, and after that the only evidence is the next
+        // `hello` from a dial that may never have taken it.
         this.transfer?.finish('installed — the dial is rebooting')
         this.transfer = null
+        this.offeringTo = ''
+        // Still attached from the window's side: the reboot re-greets within seconds and the fw
+        // field corrects itself then. Clearing `updating` is what matters.
+        this.host.onDialStatus?.({ attached: true, fw: this.greetedFw ?? undefined })
         return
       case 'fw.error':
+        // The outcome is `refused`, not the dial's message: that string is the
+        // firmware's own text and this stream carries short codes.
         this.transfer?.finish(`refused: ${str('message') ?? 'no reason given'}`)
         this.transfer = null
+        this.offeringTo = ''
+        this.host.onDialStatus?.({ attached: true, fw: this.greetedFw ?? undefined })
         return
       default:
         this.host.log(`cable: unhandled message '${msg.t}'`)
@@ -862,6 +900,7 @@ export class CableSession {
     this.offered.add(offerKey)
 
     this.host.log(`cable: offering firmware ${candidate.version} (${candidate.image.length} B)`)
+    this.offeringTo = candidate.version
     this.transfer = new FirmwareTransfer(
       candidate.image,
       candidate.version,

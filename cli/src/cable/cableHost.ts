@@ -17,11 +17,12 @@ import { fetchRelease, loadImage, shouldOffer } from './fwPush.js'
 import { routeVoiceTask, type RouterAgent, type RouterContinuity } from '../lib/voiceRouter.js'
 import { env } from '../config/env.js'
 
-import type { CableAgent, CableHost, CableMachine, CableMachineSource, RouteDecision } from './cableSession.js'
+import type { CableAgent, CableHost, CableMachine, CableMachineSource, DialStatus, RouteDecision } from './cableSession.js'
 import type { WindowRoute } from './windowRoute.js'
 import { FleetError, type FleetMachine, type MachineFleet } from './machineFleet.js'
 
 /** One completed turn's recap, as the mirror keeps them. */
+
 export interface RecentTurn {
   recap?: string
   text?: string
@@ -54,6 +55,8 @@ export interface CableHostWiring {
   opened?: (machineId: string, agentId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
   scrolled?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => void
+  /** The dial came, went, or started taking an update — see CableSession's onDialStatus. */
+  dialStatus?: (status: DialStatus) => void
   /** Offer a spoken task to the desktop window's palette. Omitted when there is no window plumbing. */
   routeInWindow?: (text: string, cmd?: string) => Promise<WindowRoute>
   log: (line: string) => void
@@ -239,6 +242,21 @@ export class DaemonCableHost implements CableHost {
    */
   onDialGone(): void {
     this.fleet?.release(true)
+  }
+
+  /**
+   * The last status the session reported, kept so a window that connects AFTER the dial was plugged
+   * in can be told at once. Without this the row would say "no device" until the next unplug.
+   */
+  private dialStatusNow: DialStatus = { attached: false }
+
+  onDialStatus(status: DialStatus): void {
+    this.dialStatusNow = status
+    this.wiring.dialStatus?.(status)
+  }
+
+  currentDialStatus(): DialStatus {
+    return this.dialStatusNow
   }
 
   machineName(): string {

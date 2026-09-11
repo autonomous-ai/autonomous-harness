@@ -149,6 +149,23 @@ describe('cable session', () => {
     await session.stop()
   })
 
+  it('tells the host the dial is there, on which firmware, and when it leaves — never on a keepalive', async () => {
+    // What a window draws in its rail. Attach and detach are the two facts; a repeat greeting is
+    // neither, and a rail that redraws four times a minute to say "still here" is noise.
+    const seen: unknown[] = []
+    const { session, port } = await connect(makeHost({ onDialStatus: (status) => seen.push(status) }))
+    port.say({ t: 'hello', product: 'harness', fw: '0.0.58', proto: 1, mac: 'aa:bb' })
+    await vi.waitFor(() => expect(seen).toEqual([{ attached: true, fw: '0.0.58' }]))
+
+    port.say({ t: 'hello', product: 'harness', fw: '0.0.58', proto: 1, mac: 'aa:bb' })
+    await settle()
+    expect(seen).toHaveLength(1)
+
+    await port.close('unplugged')
+    await vi.waitFor(() => expect(seen.at(-1)).toEqual({ attached: false }))
+    await session.stop()
+  })
+
   it('re-attaches for a DIFFERENT dial', async () => {
     const { session, port } = await connect()
     port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
