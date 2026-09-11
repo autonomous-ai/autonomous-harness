@@ -230,10 +230,6 @@ const envSchema = z.object({
     .default(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'devin', 'config.json')),
   // Where the tmux-session registry and daemon-local state are persisted.
   ADAPTER_DATA_DIR: z.string().default(adapterDataDir),
-  // Turns the DIAL's behaviour stream off from this side. The user's own switch
-  // is the desktop app's analytics.json (see lib/product/collector.ts); this is
-  // for a machine that never runs the app, and for tests.
-  PRODUCT_ANALYTICS_DISABLED: z.coerce.boolean().default(false),
   // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
   // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on
   // every boot would otherwise look like a NEW computer each time and collect a machine per start.

@@ -18,7 +18,6 @@ import { routeVoiceTask, type RouterAgent, type RouterContinuity } from '../lib/
 import { env } from '../config/env.js'
 
 import type { CableAgent, CableHost, CableMachine, CableMachineSource, RouteDecision } from './cableSession.js'
-import type { ProductEvent } from '../lib/product/events.js'
 import type { WindowRoute } from './windowRoute.js'
 import { FleetError, type FleetMachine, type MachineFleet } from './machineFleet.js'
 
@@ -33,11 +32,6 @@ export interface RecentTurn {
 export interface CableHostWiring {
   /** The person's own last questions to a LOCAL agent, newest first. */
   recentAsks: (agentId: string) => string[]
-  /**
-   * Report what somebody did on the dial. Optional — a host wired without it
-   * behaves identically, which is what every test in this package relies on.
-   */
-  trackDial?: (event: ProductEvent) => void
   machineName: () => string
   /** This computer's machineId, or '' when the daemon has never resolved one (signed out). */
   machineId: () => string
@@ -636,10 +630,6 @@ export class DaemonCableHost implements CableHost {
    * a turn ended without one. Folding them together is what left the newest question — the one that
    * says where the next one belongs — off the end.
    */
-  trackDial(event: ProductEvent): void {
-    this.wiring.trackDial?.(event)
-  }
-
   async recentAsks(agentId: string): Promise<string[]> {
     const raw = this.isLocalAgent(agentId)
       ? this.wiring.recentAsks(agentId)
