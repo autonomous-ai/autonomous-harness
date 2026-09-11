@@ -100,6 +100,36 @@ export function mcpServersConfig(mcpUrl: string, keyVar: string): string {
 }
 
 /**
+ * Claude Code's own `WebSearch`, taken off every Claude agent launched onto a grid.
+ *
+ * It is the one web tool Claude Code does not run itself. Invoking it sends a second Messages request
+ * carrying the `web_search_20250305` SERVER tool, which Anthropic's API executes and nothing else
+ * does — and a grid is not Anthropic's API. The grid refuses it outright (autonomous-grid's CLI seat
+ * rejects every typed tool on the Anthropic wire, `_reject_server_tools` in `shared/agent/cli_seat.py`)
+ * and the pane prints `API Error: 400 Unsupported tool type: web_search_20250305`. The cost is not the
+ * one failed call: the model reaches for its built-in search FIRST, spends turns on the refusal, then
+ * scrapes pages with `WebFetch` — while `mcp__grid-web__web_search`, the search the grid actually
+ * serves, sits unused in the same tool list.
+ *
+ * On every grid launch, not only one carrying an MCP url: the refusal does not depend on whether web
+ * tools were wired, and a tool that can only fail is a trap either way. Moving the agent back to its
+ * own login rebuilds its argv without this, so the built-in search returns with the login it works
+ * against. A bare tool name here REMOVES the tool from what the model is offered rather than refusing
+ * the call, which is the point — a call-time refusal would still let the model reach for it first.
+ * `WebFetch` is left alone: it fetches from this machine and is not a server tool.
+ *
+ * ⚠️ **The `=` is load-bearing.** The flag is VARIADIC, so the two-token form swallows every argument
+ * after it up to the next flag. Nothing positional follows a grid's args today —
+ * `buildEngineCommandArgv` appends them last — but that is an ordering this should not depend on.
+ *
+ * Measured 2026-09-11 against a Messages listener on loopback, Claude Code 2.1.268: the main request
+ * offered 21 tools with `WebSearch` among them, and 20 with this flag — `WebSearch` gone, `WebFetch`
+ * still there, the prompt after the flag intact. The two-token form read that same prompt as a second
+ * tool name ("Permission deny rule … matches no known tool") and sent no Messages request at all.
+ */
+export const CLAUDE_DISALLOW_WEB_SEARCH_ARG = '--disallowedTools=WebSearch'
+
+/**
  * The same server as Codex `-c` overrides, which is how its provider is configured too — so this
  * needs no config file either. Values are quoted as JSON because a `-c` value is parsed as TOML.
  *
