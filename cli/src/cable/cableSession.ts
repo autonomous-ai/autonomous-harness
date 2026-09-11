@@ -34,6 +34,18 @@ const PING_EVERY_MS = 5_000
 /** No bytes of any kind for this long → the handle is dead. Longer than the dial's own 15 s window, so a
  *  single late message cannot trip both sides at once and have each conclude the other left. */
 const SILENCE_MS = 20_000
+
+/** How often an attached dial reports that it is still there, and how busy. */
+const HEARTBEAT_EVERY_MS = 5 * 60_000
+
+/**
+ * Corrupt frames in one beat that make a wire worth reporting.
+ *
+ * Not one: a single bad checkcode is the normal cost of a cable being moved, and
+ * an event for each would drown the stream. Ten in five minutes is a link that
+ * is not working.
+ */
+const CORRUPT_FRAMES_FAULT = 10
 const REOPEN_EVERY_MS = 2_000
 // How long one attempt at opening the port may take before it is abandoned.
 //
@@ -173,6 +185,7 @@ export type CableMachineSource = 'backend' | 'local' | 'signed-out'
 
 export type { WindowRoute } from './windowRoute.js'
 import type { WindowRoute } from './windowRoute.js'
+import { dialEvents, type ProductEvent } from '../lib/product/events.js'
 
 export interface RouteDecision {
   agentId: string
@@ -244,6 +257,14 @@ export interface CableHost {
    * Optional: a host with no window to ask simply omits it, and voice behaves exactly as it always has.
    */
   routeInWindow?(text: string, cmd?: string): Promise<WindowRoute>
+  /**
+   * Report what somebody did on the dial.
+   *
+   * Optional, and never awaited: the session must behave identically with no
+   * collector wired, which is what every test here relies on and what keeps an
+   * analytics fault from ever reaching the path that carries a person's words.
+   */
+  trackDial?(event: ProductEvent): void
   /** The runtime model/effort catalog for one agent, as opaque profile ids the dial groups and shows. */
   listModels(agentId: string): Promise<string[]>
   /** One agent's last turn summaries, newest first — what a reattached dial needs to redraw its tiles. */
@@ -300,11 +321,36 @@ export class CableSession {
   private timer: NodeJS.Timeout | null = null
   private greetedMac: string | null = null
   private greetedFw: string | null = null
+  /** What an in-flight OTA is moving between, for `dial_fw_update`. */
+  private offeringFrom = ''
+  private offeringTo = ''
+
+  /** Frames since the dial greeted — see the note in onMessage. */
+  private dialFrames = 0
+  /** When the current dial attached, for `dial_detached` and the heartbeat. */
+  private dialSince = 0
+  /** Frames already reported, so a heartbeat counts the interval and not the run. */
+  private dialFramesReported = 0
+
   private lastRx = 0
   private stopped = false
 
   /** What the dial was last told the agent list is. Empty = it has been told nothing. */
   private lastAgentsKey = ''
+
+  /**
+   * Which engine each agent runs, for the events below.
+   *
+   * Filled from the list the dial is sent, which is the only place the whole set
+   * passes through this class. A lookup rather than an RPC: reporting an event
+   * must never be a round trip on the path that carries a person's turn.
+   */
+  private engineById = new Map<string, string>()
+
+  /** The engine, or '' when this session has not been told about that agent. */
+  private engineOf(agentId: string): string {
+    return this.engineById.get(agentId) ?? ''
+  }
   /** Bytes and frames seen since this port opened — the evidence for the foreign-dial verdict. */
   private bytesSinceOpen = 0
   private framesSinceOpen = 0
@@ -427,6 +473,16 @@ export class CableSession {
     }
     // Rule 2. The read never fails on a dead handle, so silence is the only symptom there is.
     if (Date.now() - this.lastRx > SILENCE_MS) {
+      // A DIAL THAT STOPPED ANSWERING while it was still plugged in. This is the
+      // one shape of the freeze bug this side can see without guessing: the
+      // firmware greets every 15s, so twenty seconds of nothing from an attached
+      // dial is the device having stopped, not a person having walked away.
+      //
+      // Deliberately NOT the detector this was first designed with — "frames
+      // arriving but no interaction for N minutes". People do not touch a dial
+      // continuously, so that would have reported a fault every lunch break and
+      // buried the real ones.
+      if (this.dialSince > 0) this.host.trackDial?.(dialEvents.fault('silence'))
       this.host.log('cable: silent, reopening the port')
       // close() runs onClosed, which is where onDialGone fires — one path for "the dial is not there",
       // whether the cable was pulled or the far end simply stopped answering.
@@ -436,6 +492,33 @@ export class CableSession {
     }
     // The cadence is the contract: the dial reads a gap as absence, and the tick that watches for that
     // gap runs far more often than the ping that prevents it.
+    // One heartbeat every five minutes while a dial is attached.
+    //
+    // Not per gesture and not per frame: the question is "how long is this thing
+    // used for", and the answer is an interval count. `frames` is reported as the
+    // DIFFERENCE since the last beat, so each event describes its own five
+    // minutes rather than the whole session — which is what makes them summable.
+    if (this.dialSince > 0 && Date.now() - this.lastHeartbeat >= HEARTBEAT_EVERY_MS) {
+      this.lastHeartbeat = Date.now()
+      // A WIRE THAT IS MANGLING FRAMES, reported at most once per beat.
+      //
+      // The decoder counts these already and nothing has ever read the counter.
+      // A handful over a session is a cable being jostled; a rate that climbs is
+      // a fault, and it is invisible from the dial's side because the frames it
+      // sends look fine leaving.
+      const corrupt = this.decoder.corruptFrames - this.corruptReported
+      if (corrupt >= CORRUPT_FRAMES_FAULT) {
+        this.corruptReported = this.decoder.corruptFrames
+        this.host.trackDial?.(dialEvents.fault('corrupt_frames'))
+      }
+      this.host.trackDial?.(
+        dialEvents.heartbeat(
+          HEARTBEAT_EVERY_MS / 60_000,
+          this.dialFrames - this.dialFramesReported,
+        ),
+      )
+      this.dialFramesReported = this.dialFrames
+    }
     if (Date.now() - this.lastPing >= PING_EVERY_MS) {
       this.lastPing = Date.now()
       await this.send({ t: 'ping' })
@@ -459,6 +542,8 @@ export class CableSession {
   private openAt = 0
   private opening = false
   private lastPing = 0
+  private lastHeartbeat = 0
+  private corruptReported = 0
 
   /**
    * Open the dial's port, at most ONE attempt at a time.
@@ -606,6 +691,12 @@ export class CableSession {
     const str = (key: string): string | undefined =>
       typeof msg[key] === 'string' ? (msg[key] as string) : undefined
 
+    // EVERY DIAL FRAME PASSES HERE, which is why the counting is done in one
+    // place rather than sprinkled through the cases below. `frames` is what
+    // separates a dial being driven from one powered on at the back of a desk;
+    // the two are identical in attach/detach alone.
+    this.dialFrames++
+
     switch (msg.t) {
       case 'hello': {
         // ⚠️ A POSITIVE MATCH, AND ABSENCE MEANS NO. The framing magic already stops the sibling product's
@@ -628,6 +719,15 @@ export class CableSession {
           return
         }
         const mac = str('mac') ?? ''
+        // ATTACHED, once per dial rather than once per greeting — hello arrives
+        // every 15s, and a stream with four events a minute per device saying
+        // "still plugged in" is a stream nobody can afford to keep.
+        if (this.dialSince === 0) {
+          this.dialSince = Date.now()
+          this.dialFrames = 0
+          this.dialFramesReported = 0
+          this.host.trackDial?.(dialEvents.attached(str('fw') ?? '?', CABLE_PROTO_VERSION))
+        }
         // Rule 1: every greeting is answered, but only an unfamiliar dial gets the full state.
         await this.send({
           t: 'welcome',
@@ -675,6 +775,9 @@ export class CableSession {
         await this.syncMachines(true)
         return
       case 'machine.select':
+        // No machine id in the event: WHICH machine is a name, and this stream
+        // carries counts. Whether the wheel is used at all is the question.
+        this.host.trackDial?.(dialEvents.machineSelected())
         await this.selectMachine(str('machineId') ?? '')
         return
       case 'models.list': {
@@ -735,6 +838,10 @@ export class CableSession {
         }
         return
       case 'agent.open':
+        // `dial` because this arrived FROM the device. The app-led case reports
+        // itself in followApp — which of the two screens leads is the question
+        // the pair answers, and it needs both halves to mean anything.
+        this.host.trackDial?.(dialEvents.agentOpened('dial'))
         if (str('agentId')) this.host.openAgent(str('agentId')!)
         return
       case 'scroll': {
@@ -745,10 +852,20 @@ export class CableSession {
         if (phase !== 'down' && phase !== 'move' && phase !== 'up') return
         const dy = typeof msg.dy === 'number' ? msg.dy : 0
         const v = typeof msg.v === 'number' ? msg.v : 0
+        // ONE EVENT PER STROKE, not per frame. A `move` arrives every few
+        // milliseconds while a finger is down; counting those would drown every
+        // other event in this stream several times over and say nothing that
+        // the completed gesture does not.
+        if (phase === 'up') this.host.trackDial?.(dialEvents.navigated('scroll', 0))
         this.host.scrolled(phase, dy, v)
         return
       }
       case 'turn.send':
+        // The ENGINE and nothing else. Not the text, not its length — a length
+        // is a fingerprint of what somebody wrote.
+        if (str('agentId')) {
+          this.host.trackDial?.(dialEvents.turnSent(this.engineOf(str('agentId')!), 'type'))
+        }
         if (str('agentId') && str('text')) this.host.sendTurn(str('agentId')!, str('text')!)
         return
       case 'turn.stop':
@@ -766,11 +883,18 @@ export class CableSession {
           for (const [k, v] of Object.entries(answers as Record<string, unknown>)) {
             if (typeof v === 'string') flat[k] = v
           }
+          // The outcome, never the answer: an option's key is the wording of
+          // a question this daemon has no business carrying.
+          this.host.trackDial?.(dialEvents.answer('answered'))
           this.host.answer(agentId, requestId, flat)
         }
         return
       }
       case 'agent.update':
+        // WHICH setting, not what it was set to: a model name is a choice worth
+        // counting, and it is already counted on the app's side.
+        if (str('model')) this.host.trackDial?.(dialEvents.settingChanged('model'))
+        if (str('effort')) this.host.trackDial?.(dialEvents.settingChanged('effort'))
         if (str('agentId')) this.host.updateAgent(str('agentId')!, str('model'), str('effort'))
         return
       case 'voice.begin':
@@ -862,6 +986,8 @@ export class CableSession {
     this.offered.add(offerKey)
 
     this.host.log(`cable: offering firmware ${candidate.version} (${candidate.image.length} B)`)
+    this.offeringFrom = this.greetedFw ?? '?'
+    this.offeringTo = candidate.version
     this.transfer = new FirmwareTransfer(
       candidate.image,
       candidate.version,
@@ -919,9 +1045,24 @@ export class CableSession {
       //
       // The window DELIVERS what it picks, so there is nothing left to send here: a `sent` outcome is
       // already on its way to an agent, and calling sendTurn on it would deliver the sentence twice.
+      // ONE EVENT PER CAPTURE, wherever it ends up, reported from here because
+      // this is the only place that sees both the outcome and which router
+      // produced it. `routed` is the measurement the window-route change was
+      // made without: whether the palette actually takes these, or whether the
+      // fallback is doing the work.
       const inWindow = this.host.routeInWindow
         ? await this.host.routeInWindow(transcript, turn.cmd)
         : ({ t: 'unavailable' } as const)
+      // `seconds` is the AUDIO's length, computed above — the length of what was
+      // said rather than how long the round trip took, which is the honest
+      // reading and does not move with the network.
+      this.host.trackDial?.(
+        dialEvents.voice(
+          inWindow.t === 'sent' ? 'sent' : inWindow.t,
+          seconds,
+          inWindow.t === 'unavailable' ? 'host' : 'window',
+        ),
+      )
       if (inWindow.t === 'sent') {
         this.host.log(`cable: the window routed the spoken task → ${inWindow.agentId.slice(0, 8)}`)
         await this.send({
@@ -1014,6 +1155,7 @@ export class CableSession {
     const key = CableSession.agentsKey(agents)
     if (!force && key === this.lastAgentsKey) return
     this.lastAgentsKey = key
+    this.engineById = new Map(agents.map((a) => [a.id, a.engine ?? '']))
     // Every push, and only pushes. The dial showing a different number from the daemon is a question this
     // line answers in one look: either the daemon never said it, or it said it and the dial disagreed.
     this.host.log(`cable: agents → ${agents.length}${force ? ' (attach)' : ''}`)
@@ -1226,6 +1368,12 @@ export class CableSession {
   async followApp(machineId: string, agentId: string): Promise<void> {
     if (!this.link?.isOpen || this.greetedMac === null) return
     if (!agentId) return
+
+    // The OTHER half of `dial_agent_opened`. On its own, "the dial opened an
+    // agent" cannot tell a person driving the device from a device trailing the
+    // window — and which of the two screens leads is the whole question about
+    // what the dial is for.
+    this.host.trackDial?.(dialEvents.agentOpened('app_follow'))
 
     const generation = ++this.appFocusGeneration
     const task = this.appFocusTail.then(async () => {

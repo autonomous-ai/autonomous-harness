@@ -101,6 +101,7 @@ import { createWindowRouter } from './cable/windowRoute.js'
 import { RemoteRelayPool } from './lib/remoteRelay.js'
 import { TERMINAL_BINARY_VERSION } from './lib/terminalBinary.js'
 import { foldTranscript, lastTurnTextFromRawLines, lineToEvents, newTurnState, type LiveEvent, type TurnState } from './lib/normalize.js'
+import { ProductCollector } from './lib/product/collector.js'
 import { AnalyticsCollector } from './lib/analytics/collector.js'
 import { runAnalyticsCommand } from './lib/analytics/command.js'
 import { AskQuestionController, pollsQuestions, QuestionWatcher } from './lib/askQuestion.js'
@@ -1378,6 +1379,15 @@ async function runForeground(session: AuthSession): Promise<void> {
    * That hold is what lets the CLI be on by default while running headless, where there is no screen
    * to show a preview on.
    */
+  // The DIAL's behaviour stream — a different thing from the AnalyticsCollector
+  // below, which counts agent work. See lib/product/events.ts for why the two
+  // live apart.
+  const product = new ProductCollector({
+    computerId: () => computerId(),
+    log: (line) => console.log(line),
+  })
+  product.start()
+
   const analytics = new AnalyticsCollector({
     token: () => readAuthSession()?.accessToken ?? null,
     enginesPresent: () => [...new Set(registry.list().map((entry) => entry.engine))],
@@ -4029,6 +4039,10 @@ async function runForeground(session: AuthSession): Promise<void> {
     answer: (agentId, requestId, answers) => backend.onQuestionAnswer?.({ agentId, requestId, answers }),
     recent: (id, n) => mirror.recent(registry.resolve(id)?.sessionId || id, n),
     recentAsks: (id) => mirror.recentAsks(registry.resolve(id)?.sessionId || id),
+    // Never awaited, and the collector itself never throws: an analytics detail
+    // sits directly under the path that carries a person's words and must not be
+    // able to cost them a turn.
+    trackDial: (event) => product.track(event),
     runtimeProfile: (session) => runtimeProfiles.selectedModel(session),
     updateAgent: (agentId, model, effort) => {
       const s = registry.resolve(agentId)
