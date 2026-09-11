@@ -43,6 +43,22 @@ describe('direct Autonomous device endpoint selection', () => {
     await expect(f.direct.pair(f.row.id, 'CODE12')).rejects.toThrow('session did not authenticate')
     expect(f.direct.connected()).toBe(0)
   })
+  it('terminates a silent link and reconnects, while a pinged link stays open', async () => {
+    const f = await fixture(); await f.direct.pair(f.row.id, 'CODE12'); f.direct.stop()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const sockets: import('ws').WebSocket[] = []
+    f.wss.removeAllListeners('connection'); f.wss.on('connection', ws => sockets.push(ws))
+    const quiet = new AutonomousDeviceDirect(f.host, f.dir, f.discovery, 100); clean.unshift(() => quiet.stop()); quiet.start()
+    await vi.waitFor(() => expect(sockets).toHaveLength(1))
+    await vi.waitFor(() => expect(sockets[0].readyState).toBe(sockets[0].CLOSED), { timeout: 1000 })
+    expect(quiet.connected()).toBe(0)
+    ;(quiet as unknown as { reconnect: () => Promise<void> }).reconnect()
+    await vi.waitFor(() => expect(sockets).toHaveLength(2))
+    const ping = setInterval(() => { for (const ws of sockets) if (ws.readyState === ws.OPEN) ws.ping() }, 30); clean.push(() => clearInterval(ping))
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(sockets[1].readyState).toBe(sockets[1].OPEN)
+    expect(quiet.connected()).toBe(1)
+  })
   it('refuses a reconnect identity different from the saved discovered association', async () => {
     const f = await fixture(); await f.direct.pair(f.row.id, 'CODE12'); f.direct.stop()
     await new Promise(resolve => setTimeout(resolve, 20)); f.receive.mockClear()
