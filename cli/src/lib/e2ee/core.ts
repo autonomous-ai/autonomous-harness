@@ -354,6 +354,9 @@ export const ENCRYPTED_RPC_RESULT_TYPES = new Set<string>([
   'fs_list_dir_result',
   // Same reasoning as fs_list_dir_result: reveals Codex profile folder names/paths on this machine.
   'codex_profiles_list_result', 'codex_profile_link_result',
+  // This machine's Claude/Codex rate limits and a key naming the account — what the person is
+  // spending, and on whose subscription. The relay has no business reading either.
+  'usage_read_result',
 ])
 /** Client→adapter frames that carry or can trigger adapter-local user data. */
 export const ENCRYPTED_DOWN_TYPES = new Set<string>([
@@ -366,6 +369,11 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   'agents_list', 'sessions_list', 'session_get', 'models_list',
   'agent_create', 'agent_delete', 'agent_restart', 'agent_recent', 'agent_update', 'agent_files', 'agent_read_file',
   'fs_list_dir', 'codex_profiles_list', 'codex_profile_link',
+  // Asks this machine to read its own agent accounts' usage (lib/accountUsage.ts). ⚠️ Missing here it
+  // would not fail loudly — the same trap `question_response` once fell into: the payload would stay
+  // an {__e2e} envelope, requestId would read back undefined, and the requester would wait out its
+  // timeout on a reply that was never going to be sent.
+  'usage_read',
   'device_e2ee_pair', 'e2ee_pairings_list', 'e2ee_pairing_unpair',
   'e2ee_pairings_unpair_all', 'e2ee_browser_link_create',
   // Remote terminal control is always pairwise E2EE. The relay may route by outer type/connId but must
