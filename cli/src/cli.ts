@@ -303,6 +303,7 @@ every future connect, until you change or clear it:
   harness remote-password status   show whether one is set, and its fingerprint
   harness remote-password clear   remove this machine's remote password
   harness link connect <id>    join a machine using ITS remote password (fully automatic)
+                               (--name=<label> names the machine in messages instead of its id)
   harness link list            list machines this one has linked
   harness link unlink <id>     remove a linked machine's trust
   (both \`remote-password set\` and \`link connect\` prompt for the password interactively, or read one
@@ -4746,35 +4747,37 @@ async function remotePasswordStatusCommand(json: boolean): Promise<void> {
  *  `messages` map above, extended to handle the two codes that carry extra data (`RATE_LIMITED`'s
  *  `retryAt`, `CONNECTION_CLOSED:<code>`'s embedded close code). Every branch, including the fallback,
  *  sentence-wraps the code — a bare code must never reach the terminal. */
-function humanizeLinkError(error: string, machineId: string, retryAt?: number): string {
+/** `machine` is how the caller refers to the target — its display name when the caller knows one
+ *  (`--name=`), else the raw id, which is all a terminal user has. */
+function humanizeLinkError(error: string, machine: string, retryAt?: number): string {
   if (error === 'RATE_LIMITED') {
     if (typeof retryAt === 'number') {
       const minutes = Math.ceil((retryAt - Date.now()) / 60_000)
       return minutes > 0
-        ? `Too many wrong attempts on ${machineId}. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`
-        : `Too many wrong attempts on ${machineId}. Try again now.`
+        ? `Too many wrong attempts on ${machine}. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`
+        : `Too many wrong attempts on ${machine}. Try again now.`
     }
-    return `Too many wrong attempts on ${machineId}. Wait a few minutes and try again.`
+    return `Too many wrong attempts on ${machine}. Wait a few minutes and try again.`
   }
   if (error.startsWith('CONNECTION_CLOSED:')) {
     return `The connection closed unexpectedly (code ${error.slice('CONNECTION_CLOSED:'.length)}) before linking finished. Try again.`
   }
   const messages: Record<string, string> = {
-    NO_REMOTE_PASSWORD: `Machine ${machineId} has no remote password set. Ask its operator to run \`harness remote-password set\` there first.`,
+    NO_REMOTE_PASSWORD: `Machine ${machine} has no remote password set. Ask its operator to run \`harness remote-password set\` there first.`,
     BAD_INTENT: 'The connection request was malformed — this usually means a version mismatch. Update harness on both machines and try again.',
     WRONG_PASSWORD: 'That password is wrong. Check it against the other machine and try again.',
-    TIMEOUT: `Machine ${machineId} didn't respond in time. Make sure it's running \`harness start\` and reachable, then try again.`,
+    TIMEOUT: `Machine ${machine} didn't respond in time. Make sure it's running \`harness start\` and reachable, then try again.`,
     SEND_FAILED: 'Could not reach the relay to start linking. Check your network connection and try again.',
     DERIVE_FAILED: 'Could not process the password locally. Try again; if it persists, restart harness and retry.',
-    SELECT_FAILED: `Could not find machine ${machineId}, or it isn't reachable right now. Check the id and that it has run \`harness start\`.`,
-    PAIR_FAILED: `Linking failed on ${machineId}'s side. Try again; if it persists, check its status there with \`harness status\`.`,
+    SELECT_FAILED: `Could not find machine ${machine}, or it isn't reachable right now. Check the id and that it has run \`harness start\`.`,
+    PAIR_FAILED: `Linking failed on ${machine}'s side. Try again; if it persists, check its status there with \`harness status\`.`,
     PROTOCOL_ERROR: 'Something unexpected happened during the handshake. Try again; if it persists, update harness on both machines.',
     CONNECTION_ERROR: 'Could not reach the relay. Check your network connection and try again.',
   }
   return messages[error] ?? `Linking failed (${error}). Try again; if it persists, check both machines are on the latest harness version.`
 }
 
-async function linkConnectCommand(machineId: string | undefined, stdin: boolean, json: boolean): Promise<void> {
+async function linkConnectCommand(machineId: string | undefined, stdin: boolean, json: boolean, displayName?: string): Promise<void> {
   if (!machineId) {
     if (json) console.log(JSON.stringify({ ok: false, error: 'MISSING_MACHINE_ID' }))
     else console.error('Usage: harness link connect <machineId>   (the remote password is set on that machine via harness remote-password set)')
@@ -4827,7 +4830,7 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
     onProgress: json ? (stage) => console.log(JSON.stringify({ stage })) : undefined,
   })
   if (!result.ok) {
-    const message = humanizeLinkError(result.error, machineId, result.retryAt)
+    const message = humanizeLinkError(result.error, displayName || machineId, result.retryAt)
     if (json) {
       console.log(JSON.stringify({ ok: false, error: result.error, message, ...(result.retryAt !== undefined ? { retryAt: result.retryAt } : {}) }))
     } else {
@@ -5095,7 +5098,12 @@ switch (cmd) {
     } else { console.error(`Unknown command: machines ${args[0]}`); usage(1) }
     break
   case 'link':
-    if (args[0] === 'connect') linkConnectCommand(args[1], flags.includes('--stdin'), flags.includes('--json')).catch(onError)
+    // `--name=<label>` as one token: the argv split above would take a space-separated value for
+    // the positional machine id, and a machine's display name routinely contains spaces.
+    if (args[0] === 'connect') {
+      const displayName = flags.find((flag) => flag.startsWith('--name='))?.slice('--name='.length)
+      linkConnectCommand(args[1], flags.includes('--stdin'), flags.includes('--json'), displayName).catch(onError)
+    }
     else if (args[0] === 'list') linkListCommand().catch(onError)
     else if (args[0] === 'unlink') linkUnlinkCommand(args[1]).catch(onError)
     else { console.error(`Unknown command: link ${args[0] ?? ''}`); usage(1) }
