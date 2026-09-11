@@ -4827,10 +4827,11 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
     onProgress: json ? (stage) => console.log(JSON.stringify({ stage })) : undefined,
   })
   if (!result.ok) {
+    const message = humanizeLinkError(result.error, machineId, result.retryAt)
     if (json) {
-      console.log(JSON.stringify({ ok: false, error: result.error, ...(result.retryAt !== undefined ? { retryAt: result.retryAt } : {}) }))
+      console.log(JSON.stringify({ ok: false, error: result.error, message, ...(result.retryAt !== undefined ? { retryAt: result.retryAt } : {}) }))
     } else {
-      console.error(`\n  ✗ ${humanizeLinkError(result.error, machineId, result.retryAt)}\n`)
+      console.error(`\n  ✗ ${message}\n`)
     }
     process.exit(1)
     return
