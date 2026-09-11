@@ -31,7 +31,8 @@ export class AutonomousDeviceDirect {
   private stopping = false
   private pairing = false
   private readonly file: string
-  constructor(private readonly host: DirectDeviceHost, private readonly dataDir: string, private readonly discovery = discoverDevices) {
+  /** The device pings every 15s; a link that hears nothing for this long is dead (Mac slept, network blackout) and must be torn down so reconnect() can replace it. */
+  constructor(private readonly host: DirectDeviceHost, private readonly dataDir: string, private readonly discovery = discoverDevices, private readonly idleMs = 60000) {
     secureStateDirectory(dataDir); this.file = join(dataDir, 'autonomous-device-connections.json')
     if (hardenPrivateStateFileIfPresent(this.file, 65536)) {
       const value: unknown = JSON.parse(readPrivateStateFile(this.file, 65536))
@@ -99,7 +100,12 @@ export class AutonomousDeviceDirect {
     const ws = new WebSocket(url, { maxPayload: 65536, handshakeTimeout: 10000 }), connId = `autonomous-direct:${randomUUID()}`
     const expected = pairingAllowed ? undefined : this.associations.find(a => a.discoveryId === candidate.id)?.fingerprint
     const authTimer = setTimeout(() => { if (!this.host.authenticatedFingerprint(connId)) ws.terminate() }, 20000)
-    ws.once('close', () => clearTimeout(authTimer))
+    // Half-open guard: macOS keeps a dead TCP socket ESTABLISHED indefinitely (keepalive off, no client ping),
+    // so without this the link never emits 'close' and reconnect() skips the device forever.
+    let idleTimer = setTimeout(() => ws.terminate(), this.idleMs)
+    const alive = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => ws.terminate(), this.idleMs) }
+    ws.on('ping', alive); ws.on('pong', alive); ws.on('message', alive)
+    ws.once('close', () => { clearTimeout(authTimer); clearTimeout(idleTimer) })
     const ready = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { ws.terminate(); reject(new Error('Device connection timed out')) }, 10000)
       ws.once('open', () => {
