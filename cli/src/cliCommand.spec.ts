@@ -47,6 +47,13 @@ describe('CLI login/start command contract', () => {
     expect(result.stderr).toContain('`harness login`, then `harness start`')
   })
 
+  it('no longer has an analytics command (usage metering upload was removed)', () => {
+    const result = run('analytics')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Unknown command: analytics')
+  })
+
   it('returns a nonzero status for an unknown command', () => {
     const result = run('not-a-command')
 

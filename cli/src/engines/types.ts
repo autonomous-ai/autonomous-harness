@@ -4,9 +4,9 @@ import type { RegisteredSession } from '../lib/registry.js'
 /**
  * Every engine this CLI integrates, as a value.
  *
- * `AgentEngine` alone cannot be iterated, and analytics has to report exactly what it instruments —
- * so the list lives here once and both forms are derived from it. A new engine added to the union
- * without being added here fails to compile.
+ * `AgentEngine` alone cannot be iterated, and several places (discovery, hooks, probes) need to walk
+ * every engine — so the list lives here once and both forms are derived from it. A new engine added
+ * to the union without being added here fails to compile.
  */
 export const ENGINES = [
   'claude', 'codex', 'cursor', 'opencode', 'pi', 'hermes',

@@ -471,8 +471,7 @@ export class BackendSocket {
     this.testToken = auth ? undefined : machineId
     // `?label=<hostname>` lets the backend record which machine connected (shown on the machine card);
     // `?computer=<stable id>` enforces one-computer-per-computer (a 2nd computer is rejected with HTTP 409);
-    // `?v=<VERSION>` is our own version, which the backend stores on the machine at every connect (the
-    // analytics report also carries it, but that path is opt-in, so this is the reliable one).
+    // `?v=<VERSION>` is our own version, which the backend stores on the machine at every connect.
     const base = `${env.BACKEND_WS_URL.replace(/\/$/, '')}/api/adapter-ws?label=${encodeURIComponent(hostname())}&v=${encodeURIComponent(VERSION)}&autonomousEnv=${encodeURIComponent(autonomousEnv)}`
     // `?machine=<id>` is the machine this daemon still believes it is. The backend uses it to tell a
     // REVOKED daemon — one whose machine was deleted while it was offline — apart from a first-time
