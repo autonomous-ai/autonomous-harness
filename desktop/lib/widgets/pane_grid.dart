@@ -36,9 +36,16 @@ import 'terminal_panel.dart';
 /// position is remembered per pane count (see [PaneSplits]) — which is the part
 /// of a split tree people actually reach for, without the tree.
 class PaneGrid extends StatelessWidget {
-  const PaneGrid({super.key, required this.notifier});
+  const PaneGrid({
+    super.key,
+    required this.notifier,
+    this.swarmMode = false,
+    this.empty,
+  });
 
   final AppNotifier notifier;
+  final bool swarmMode;
+  final Widget? empty;
 
   @override
   Widget build(BuildContext context) {
@@ -46,49 +53,21 @@ class PaneGrid extends StatelessWidget {
       valueListenable: agentDrag,
       builder: (context, dragging, _) {
         final panes = notifier.panes;
-        if (panes.isEmpty) {
-          return _DropZone(
-            notifier: notifier,
-            paneId: null,
-            dragging: dragging,
-            child: _EmptyGrid(notifier: notifier),
-          );
-        }
-        // ZOOM SHORT-CIRCUITS THE SHAPE, it does not add one.
-        //
-        // tmux's `prefix z` is not a layout — it is the same pane list with one
-        // of them taking the room. Building it as a seventh arrangement would
-        // have meant every shape below learning about it; returning early means
-        // none of them do, and the grid comes back exactly as it was because it
-        // was never rearranged.
-        //
-        // The cell keeps its `cellKey`, so the terminal inside is the SAME
-        // widget — no detach, no reflow of the pty, no scrollback lost. A
-        // zoomed pane is one that moved, not one that was rebuilt.
         final zoomed = notifier.zoomedPaneId;
-        if (zoomed != null && panes.length > 1) {
-          for (final pane in panes) {
-            if (pane.id != zoomed) continue;
-            return _PaneCell(
-              key: pane.cellKey,
-              notifier: notifier,
-              pane: pane,
-              dragging: dragging,
-            );
-          }
-        }
+        final visible = zoomed == null
+            ? panes
+            : panes.where((p) => p.id == zoomed).toList();
+        Widget cell(TerminalPane pane, {bool visible = true}) => _PaneCell(
+          key: pane.cellKey,
+          notifier: notifier,
+          pane: pane,
+          dragging: dragging,
+          visible: visible,
+          swarmMode: swarmMode,
+        );
         final cells = <Widget>[
-          for (final pane in panes)
-            _PaneCell(
-              key: pane.cellKey,
-
-              notifier: notifier,
-              pane: pane,
-              dragging: dragging,
-            ),
-          // Revealed only mid-drag: a permanent "add a tile" cell would halve a
-          // single terminal for the whole session to advertise itself.
-          if (dragging != null && notifier.canAddPane)
+          for (final pane in visible) cell(pane),
+          if (!swarmMode && dragging != null && notifier.canAddPane)
             _DropZone(
               notifier: notifier,
               paneId: null,
@@ -96,19 +75,39 @@ class PaneGrid extends StatelessWidget {
               child: const _AddSlot(),
             ),
         ];
-        // WRAPPED HERE, not inside one of the shapes.
-        //
-        // It was in the >4 branch, which is one of six: _arrange returns a
-        // different tree for one tile, two, three, four, five-with-a-main, and
-        // the lattice beyond that. The gaps come from _Axis and so appeared in
-        // all six; the field and the outer margin came from that one branch and
-        // so appeared in one. Two tiles — the common case — showed gaps the
-        // exact colour of the tiles either side of them, which is no gap at all.
-        // JUST THE TILES. The field behind them and the margin around them belong to the content row
-        // now (see home_screen), because the rail is a card on that same field — a gradient that
-        // started where the rail ended would be two backgrounds meeting at a seam, which is the thing
-        // being fixed.
-        return _arrange(cells);
+        final canvas = panes.isEmpty
+            ? empty ?? _EmptyGrid(notifier: notifier)
+            : _arrange(cells);
+        if (!swarmMode) return canvas;
+        // A shared agent is mounted exactly once, including across tab changes.
+        // Offstage keeps its renderer/selection/scroll position; the fixed old
+        // size and disabled auto-resize keep hidden geometry off the wire.
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(child: canvas),
+            for (final pane in notifier.allPanes)
+              if (!visible.contains(pane) && pane.lastViewSize != null)
+                Positioned.fill(
+                  child: Offstage(
+                    offstage: true,
+                    child: TickerMode(
+                      enabled: false,
+                      child: ExcludeFocus(
+                        child: OverflowBox(
+                          alignment: Alignment.topLeft,
+                          minWidth: pane.lastViewSize!.width,
+                          maxWidth: pane.lastViewSize!.width,
+                          minHeight: pane.lastViewSize!.height,
+                          maxHeight: pane.lastViewSize!.height,
+                          child: cell(pane, visible: false),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+          ],
+        );
       },
     );
   }
@@ -514,18 +513,29 @@ class _PaneCell extends StatelessWidget {
     required this.notifier,
     required this.pane,
     required this.dragging,
+    this.visible = true,
+    this.swarmMode = false,
   });
 
   final AppNotifier notifier;
   final TerminalPane pane;
   final AgentDragRef? dragging;
+  final bool visible;
+  final bool swarmMode;
 
   bool get _single => notifier.panes.length == 1;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (visible) pane.lastViewSize = constraints.biggest;
+      return _build(context);
+    },
+  );
+
+  Widget _build(BuildContext context) {
     grid.AppTheme.watch(context);
-    final focused = notifier.isPaneFocused(pane.id);
+    final focused = visible && notifier.isPaneFocused(pane.id);
     final agentId = pane.agentId;
     final blocked =
         agentId != null &&
@@ -617,6 +627,8 @@ class _PaneCell extends StatelessWidget {
                       notifier: notifier,
                       pane: pane,
                       single: _single,
+                      visible: visible,
+                      swarmMode: swarmMode,
                     ),
                   ),
                 ),
@@ -634,11 +646,15 @@ class _PaneContent extends StatelessWidget {
     required this.notifier,
     required this.pane,
     required this.single,
+    required this.visible,
+    required this.swarmMode,
   });
 
   final AppNotifier notifier;
   final TerminalPane pane;
   final bool single;
+  final bool visible;
+  final bool swarmMode;
 
   @override
   Widget build(BuildContext context) {
@@ -654,7 +670,7 @@ class _PaneContent extends StatelessWidget {
         title: wantedAgentId ?? pane.machineId,
         icon: Icons.hourglass_empty,
         message: 'Waiting for this machine to answer…',
-        onClose: single ? null : close,
+        onClose: single && !swarmMode ? null : close,
         busy: true,
       );
     }
@@ -677,7 +693,7 @@ class _PaneContent extends StatelessWidget {
         icon: Icons.link_off,
         message:
             '${machine.machine.displayName} is not linked to this computer yet.',
-        onClose: single ? null : close,
+        onClose: single && !swarmMode ? null : close,
       );
     }
 
@@ -686,7 +702,7 @@ class _PaneContent extends StatelessWidget {
         (machine.isLocalMachine && !machine.usesLocalTransport);
     if (offline) {
       return _Guide(
-        single: single,
+        single: single && !swarmMode,
         onClose: close,
         title: agentName ?? machine.machine.displayName,
         compactMessage: machine.isLocalMachine
@@ -722,13 +738,19 @@ class _PaneContent extends StatelessWidget {
       );
     }
 
+    if (agent != null && !agent.terminalAvailable) {
+      return _PaneStatus(title: agentName, icon: Icons.terminal,
+        message: agent.terminalUnavailableReason ?? 'This agent has no available terminal.',
+        onClose: close);
+    }
+
     final session = pane.session;
     if (session == null) {
       return _PaneStatus(
         title: agentName,
         icon: Icons.hourglass_empty,
         message: 'Attaching…',
-        onClose: single ? null : close,
+        onClose: single && !swarmMode ? null : close,
         busy: true,
       );
     }
@@ -744,14 +766,16 @@ class _PaneContent extends StatelessWidget {
         final terminal = TerminalPanel(
           notifier: notifier,
           session: session,
-          focused: notifier.isPaneFocused(pane.id),
+          focused: visible && notifier.isPaneFocused(pane.id),
+          visible: visible,
+          compactHeader: swarmMode,
           composerVisible: !launchFailed && pane.composerVisible,
           readOnly: launchFailed,
           onToggleComposer: launchFailed
               ? null
               : () => notifier.toggleComposer(pane.id),
-          onClose: single ? null : close,
-          pinned: pane.isPinned,
+          onClose: single && !swarmMode ? null : close,
+          pinned: notifier.isPanePinned(pane),
           onTogglePin: single ? null : () => notifier.togglePinPane(pane.id),
           onRendererFocus: () => notifier.focusPane(pane.id),
           paneDrag: single

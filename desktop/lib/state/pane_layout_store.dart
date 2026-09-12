@@ -4,6 +4,7 @@ import '../core/harness_file_store.dart';
 import '../core/local_key_value_store.dart';
 import 'pane_preset.dart';
 import 'terminal_pane.dart';
+import 'swarm.dart';
 
 /// Remembers which agents were on screen, so reopening the app returns to the
 /// desk it was left on rather than to whatever happens to load first.
@@ -42,6 +43,7 @@ class PaneLayoutStore {
   static const maxPanes = 9;
 
   final LocalKeyValueStore _storage;
+  LocalKeyValueStore get storage => _storage;
 
   /// Failure is silent and lands on an empty layout, which is exactly the
   /// first-run state. A corrupt state file is a reason to open the app the way
@@ -112,6 +114,41 @@ class PaneLayoutStore {
       );
     } catch (_) {
       // Kept in memory for this run; see above.
+    }
+  }
+
+  Future<Map<String, dynamic>?> loadSwarms() async {
+    try {
+      final value = await _storage.read('swarm_layout_v1');
+      if (value == null) return null;
+      final decoded = jsonDecode(value);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['version'] != 1 ||
+          decoded['swarms'] is! List)
+        return null;
+      return decoded;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveSwarms(
+    List<Swarm> swarms,
+    String activeId,
+    int nextWallpaper,
+  ) async {
+    try {
+      await _storage.write(
+        'swarm_layout_v1',
+        jsonEncode({
+          'version': 1,
+          'activeId': activeId,
+          'nextWallpaper': nextWallpaper,
+          'swarms': swarms.map((s) => s.toJson()).toList(),
+        }),
+      );
+    } catch (_) {
+      // Keep the current desk usable when storage is unavailable.
     }
   }
 

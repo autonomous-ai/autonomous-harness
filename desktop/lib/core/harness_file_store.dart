@@ -11,9 +11,8 @@ import 'local_key_value_store.dart';
 /// POSIX platforms. Values are never logged.
 class HarnessFileStore implements LocalKeyValueStore {
   static const schemaVersion = 1;
-  // Keep this legacy namespace stable across the product rename so existing
-  // credentials and E2EE pairing state remain available after upgrading.
-  static const directoryName = 'desktop-app';
+  // Separate from production; the CLI still owns shared authentication and links.
+  static const directoryName = 'desktop-app-v2';
   static const fileName = 'state.json';
   static const lockFileName = 'state.lock';
 

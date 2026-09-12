@@ -19,6 +19,7 @@
  */
 
 import { stat } from 'node:fs/promises'
+import { agentProject, type AgentProject } from './agentProject.js'
 import type { GridAssignment } from './gridAssignment.js'
 import { projectDisplayName, type RegisteredSession } from './registry.js'
 
@@ -43,6 +44,7 @@ export type AgentFrame = {
   selectedModel: string | null
   grid: GridAssignment | null
   codexHome: string | null
+  project: AgentProject | null
 }
 
 /** What the caller knows and this module deliberately does not look up for itself. */
@@ -87,5 +89,6 @@ export async function agentFrame(
     // engine's own login. Codex only; null is a real answer ("uses ~/.codex") for the same reason
     // `grid: null` is above.
     codexHome: s.codexHome ?? null,
+    project: await agentProject(s.cwd),
   }
 }

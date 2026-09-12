@@ -89,7 +89,7 @@ void main() {
   });
 
   test(
-    'an agent with no tile takes the focused one, replacing nothing at an edge',
+    'a dial-selected agent adds a view without replacing swarm membership',
     () async {
       // The carousel cannot reach this agent any more, but the pull-down switcher still names it and the
       // window is still told. What happens then is ordinary selection — the focused tile becomes it —
@@ -203,12 +203,12 @@ void main() {
     });
 
     expect(app.focusedPane?.agentId, 'a1');
-    expect(_desk(app), ['a2', 'a3', 'a1']);
+    expect(_desk(app), ['a2', 'a3', 'a4', 'a1']);
     app.dispose();
   });
 
   test(
-    'a dial_open frame opens a tile, where dial_focus would replace one',
+    'dial_open and dial_focus retain the other agent views',
     () async {
       // The two verbs side by side, driven through the app's own handler: the same
       // agent, one frame each, and the grid ends up a different size.
@@ -225,19 +225,19 @@ void main() {
         'a1',
         'a2',
         'a5',
-      ], reason: 'focus replaces, open adds');
+      ], reason: 'neither event removes a view');
       app.dispose();
     },
   );
 
   test(
-    'a focus replaces the FOCUSED tile, which is what a rail click does',
+    'a dial focus adds a missing view while preserving existing members',
     () async {
       final app = await _withTiles(['a1', 'a2', 'a3']);
       app.focusPane(app.panes[1].id);
       await app.selectAgentFromDial('m1', 'a4');
 
-      expect(_desk(app), ['a1', 'a4', 'a3']);
+      expect(_desk(app), ['a1', 'a2', 'a3', 'a4']);
       app.dispose();
     },
   );

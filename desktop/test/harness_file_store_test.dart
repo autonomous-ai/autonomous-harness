@@ -26,7 +26,7 @@ void main() {
       environment: {'HOME': '/Users/tester'},
     );
 
-    expect(path, '/Users/tester/.harness/desktop-app');
+    expect(path, '/Users/tester/.harness/desktop-app-v2');
   }, skip: Platform.isWindows);
 
   test(

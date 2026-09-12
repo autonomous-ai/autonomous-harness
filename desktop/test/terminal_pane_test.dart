@@ -80,7 +80,7 @@ void main() {
 
     await app.selectAgent('m1', 'a');
     await app.selectAgent('m1', 'b');
-    expect(app.panes.length, 1, reason: 'a click replaces, it does not add');
+    expect(app.panes.length, 2, reason: 'selecting adds a view without replacing the existing one');
 
     await app.assignAgentToPane(null, 'm1', 'a');
     expect(app.panes.length, 2);
@@ -206,7 +206,8 @@ void main() {
     // Let the fire-and-forget writes land.
     await Future<void>.delayed(Duration.zero);
 
-    final saved = jsonDecode(storage.values['terminal_pane_layout']!) as List;
+    final layout = jsonDecode(storage.values['swarm_layout_v1']!);
+    final saved = layout['swarms'][0]['panes'] as List;
     expect(saved.length, 2, reason: 'the prompt tile is a moment, not a desk');
     expect(saved.map((e) => e['agentId']), ['a', 'b']);
     app.dispose();
@@ -264,7 +265,7 @@ void main() {
   );
 
   test(
-    'a pane keeps its identity when reassigned, so the grid cell survives',
+    'replacing a view gives the new session its own controller identity',
     () async {
       final app = _notifier();
       _machine(app, 'm1', ['a', 'b']);
@@ -272,7 +273,7 @@ void main() {
       final id = app.panes.single.id;
 
       await app.assignAgentToPane(id, 'm1', 'b');
-      expect(app.panes.single.id, id);
+      expect(app.panes.single.id, isNot(id));
       expect(app.panes.single.agentId, 'b');
       app.dispose();
     },
@@ -402,8 +403,8 @@ void main() {
     expect(app.panes.single.composerVisible, isTrue);
     await Future<void>.delayed(Duration.zero);
 
-    final restored = await PaneLayoutStore(storage: storage).load();
-    expect(restored.single.composerVisible, isTrue);
+    final restored = await PaneLayoutStore(storage: storage).loadSwarms();
+    expect(restored!['swarms'][0]['panes'][0]['composerVisible'], isTrue);
     app.dispose();
   });
 

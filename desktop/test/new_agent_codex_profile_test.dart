@@ -97,6 +97,7 @@ class _Notifier extends AppNotifier {
     required String folder,
     bool bypassPermission = false,
     String? codexHome,
+    String? swarmId,
   }) async {
     calls.add({'engine': engine, 'codexHome': codexHome, 'folder': folder});
     return null;

@@ -1372,7 +1372,7 @@ fi''';
     List<String> linuxPackages = const [],
   }) async {
     final directory = Directory(
-      '${harnessHome.path}/desktop-app/setup-runs/${DateTime.now().millisecondsSinceEpoch}',
+      '${harnessHome.path}/desktop-app-v2/setup-runs/${DateTime.now().millisecondsSinceEpoch}',
     );
     await directory.create(recursive: true);
     await _run('/bin/chmod', ['700', directory.path]);

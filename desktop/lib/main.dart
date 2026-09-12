@@ -7,7 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'analytics/analytics_lifecycle.dart';
 import 'core/crash_log.dart';
 import 'core/desktop_window.dart';
-import 'screens/home_screen.dart';
+import 'screens/swarm_screen.dart';
 import 'screens/login_screen.dart';
 import 'state/app_state.dart';
 import 'shared/theme/app_theme.dart' as grid;
@@ -76,7 +76,8 @@ class DesktopApp extends StatelessWidget {
       codeSize: grid.AppFont.codeSize,
     );
     return MaterialApp(
-      title: 'Harness',
+      title: 'Harness V2',
+      debugShowCheckedModeBanner: false,
       // The design system's own `buildAppTheme` — see the note where a second,
       // hand-written `ThemeData` used to shadow it, in `lib/theme/app_theme.dart`.
       // Harness Desktop is dark-only: one theme, no `darkTheme`/`themeMode` to
@@ -216,7 +217,7 @@ class _RootShellState extends ConsumerState<RootShell> {
           case AppStatus.unauthenticated:
             screen = LoginScreen(notifier: app);
           case AppStatus.authenticated:
-            screen = HomeScreen(notifier: app);
+            screen = SwarmScreen(notifier: app);
         }
         // Only the home shell carries its own drag handle and traffic-light
         // clearance (the rail's head). Every other screen fills the window

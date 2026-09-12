@@ -13,6 +13,7 @@ import '../auth/cli_link.dart';
 import '../auth/cli_login.dart';
 import '../bootstrap/environment_provisioner.dart';
 import '../core/config.dart';
+import '../core/build_identity.dart';
 import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/models.dart';
@@ -26,6 +27,7 @@ import '../core/harness_file_store.dart';
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
+import 'swarm.dart';
 import '../terminal/terminal_binary.dart';
 import '../update/desktop_updater.dart';
 import '../update/manual_update_check.dart';
@@ -330,8 +332,129 @@ class AppNotifier extends ChangeNotifier {
   final Set<String> expandedMachines = {};
   String? selectedMachineId;
 
-  /// The grid, in reading order. At most [maxPanes].
-  final List<TerminalPane> panes = [];
+  /// Swarms own arrangements; a shared pane owns one live terminal controller.
+  final List<Swarm> swarms = [Swarm(id: 'swarm-1')];
+  String _activeSwarmId = 'swarm-1';
+  int _nextSwarmId = 2;
+  int _nextWallpaper = 1;
+  static const maxSwarms = 24;
+  Swarm get activeSwarm => swarms.firstWhere(
+    (s) => s.id == _activeSwarmId,
+    orElse: () => swarms.first,
+  );
+  List<TerminalPane> get panes => activeSwarm.panes;
+  Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
+  String get activeSwarmId => activeSwarm.id;
+
+  void newSwarm({String name = 'New swarm'}) {
+    if (swarms.length >= maxSwarms) return;
+    while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
+      _nextSwarmId++;
+    }
+    final swarm = Swarm(
+      id: 'swarm-${_nextSwarmId++}',
+      name: name,
+      wallpaper: _nextWallpaper++ % swarmWallpapers.length,
+    );
+    swarms.add(swarm);
+    selectSwarm(swarm.id);
+  }
+
+  void selectSwarm(String id) {
+    if (!swarms.any((s) => s.id == id)) return;
+    _activeSwarmId = id;
+    railFocused = false;
+    final pane = focusedPane;
+    selectedMachineId = pane?.machineId;
+    _persistLayout();
+    _announceFocusToDial();
+    for (final machine in machineStates.values) {
+      _attachPendingPanes(machine);
+    }
+    notifyListeners();
+  }
+
+  void stepSwarm(int delta) {
+    final index = swarms.indexOf(activeSwarm);
+    selectSwarm(swarms[(index + delta) % swarms.length].id);
+  }
+
+  void renameSwarm(String id, String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) return;
+    final swarm = swarms.where((s) => s.id == id).firstOrNull;
+    if (swarm == null) return;
+    swarm.name = clean.length > 80 ? clean.substring(0, 80) : clean;
+    _persistLayout();
+    notifyListeners();
+  }
+
+  void reorderSwarm(String id, int destination) {
+    final index = swarms.indexWhere((s) => s.id == id);
+    if (index < 0) return;
+    final swarm = swarms.removeAt(index);
+    swarms.insert(destination.clamp(0, swarms.length), swarm);
+    _persistLayout();
+    notifyListeners();
+  }
+
+  void nextSwarmWallpaper() {
+    activeSwarm.wallpaper =
+        (activeSwarm.wallpaper + 1) % swarmWallpapers.length;
+    _persistLayout();
+    notifyListeners();
+  }
+
+  Future<void> closeSwarm(String id) async {
+    final index = swarms.indexWhere((s) => s.id == id);
+    if (index < 0) return;
+    final removed = swarms.removeAt(index);
+    if (swarms.isEmpty) {
+      swarms.add(
+        Swarm(
+          id: 'swarm-${_nextSwarmId++}',
+          wallpaper: _nextWallpaper++ % swarmWallpapers.length,
+        ),
+      );
+    }
+    if (_activeSwarmId == id) {
+      _activeSwarmId = swarms[index.clamp(0, swarms.length - 1)].id;
+    }
+    _persistLayout();
+    notifyListeners();
+    selectedMachineId = focusedPane?.machineId;
+    _announceFocusToDial();
+    for (final machine in machineStates.values) {
+      _attachPendingPanes(machine);
+    }
+    for (final pane in removed.panes) {
+      if (!allPanes.contains(pane)) await _detachSession(pane, sendClose: true);
+    }
+  }
+
+  /// Capture the destination before any network wait or tab change.
+  Future<void> addAgentToSwarm(
+    String machineId,
+    String agentId, {
+    String? swarmId,
+  }) => assignAgentToPane(null, machineId, agentId, swarmId: swarmId);
+
+  Future<void> seedSwarm(
+    String name,
+    List<({String machineId, String agentId})> agents,
+  ) async {
+    final target = activeSwarm;
+    renameSwarm(target.id, name);
+    // Each call records membership synchronously, before its attachment waits.
+    // A slow/offline host must not hold back the other panes or retarget a tab.
+    final attachments = <Future<void>>[];
+    for (final agent in agents) {
+      attachments.add(
+        addAgentToSwarm(agent.machineId, agent.agentId, swarmId: target.id),
+      );
+    }
+    await Future.wait(attachments);
+  }
 
   /// Which tile the keyboard, the dial and the rail's highlight all mean.
   ///
@@ -340,10 +463,11 @@ class AppNotifier extends ChangeNotifier {
   /// AppKit routes keys there without asking. This is for everything that has
   /// no pointer behind it: the dial's scroll and focus frames, and which agent
   /// the rail draws as current.
-  int? focusedPaneId;
+  int? get focusedPaneId => activeSwarm.focusedPaneId;
+  set focusedPaneId(int? value) => activeSwarm.focusedPaneId = value;
 
   /// The chosen shape for a grid of this size, or the shipped one.
-  final Map<int, PanePreset> panePresets = {};
+  Map<int, PanePreset> get panePresets => activeSwarm.presets;
 
   PanePreset? presetFor(int paneCount) =>
       panePresets[paneCount] ?? PanePreset.defaultFor(paneCount);
@@ -360,12 +484,12 @@ class AppNotifier extends ChangeNotifier {
     if (presetFor(paneCount) == preset) return;
     panePresets[paneCount] = preset;
     notifyListeners();
-    unawaited(_paneLayout?.savePresets(panePresets));
+    _persistLayout();
   }
 
   int _nextPaneId = 1;
 
-  static const maxPanes = PaneLayoutStore.maxPanes;
+  static const maxPanes = 64;
   // Set only while `harness login --force --json` is waiting for the user to finish SSO in their system
   // browser. It arrives PART WAY THROUGH the flow — the CLI has to start before it can hand one
   // over — so it says "the browser is open", not "a sign-in is running". Use [signingIn] for the
@@ -402,7 +526,7 @@ class AppNotifier extends ChangeNotifier {
        // layout is remembered: with a layout store there is a state file, and
        // without one (the tests) nothing is written anywhere.
        dial = DialState(
-         paneLayoutStore == null ? null : HarnessFileStore.shared,
+         paneLayoutStore?.storage,
        ),
        session = authSession,
        _store = configStore,
@@ -470,7 +594,7 @@ class AppNotifier extends ChangeNotifier {
   bool get canAddPane => panes.length < maxPanes;
 
   Iterable<TerminalPane> panesFor(String machineId) =>
-      panes.where((pane) => pane.machineId == machineId);
+      allPanes.where((pane) => pane.machineId == machineId);
 
   TerminalPane? paneOfAgent(String machineId, String agentId) {
     for (final pane in panes) {
@@ -636,13 +760,16 @@ class AppNotifier extends ChangeNotifier {
 
   void focusPane(int paneId) {
     if (!panes.any((pane) => pane.id == paneId)) return;
-    final moved = focusedPaneId != paneId;
+    final moved = focusedPaneId != paneId || railFocused;
+    railFocused = false;
     // Remembered only on a REAL move. Re-focusing the tile you are already on
     // happens constantly — see the note below about why it is announced anyway
     // — and recording it would make ⌘; a key that returns you to where you
     // already are, which is the same as a key that does nothing.
     if (moved) _previousPaneId = focusedPaneId;
     focusedPaneId = paneId;
+    selectedMachineId = focusedPane?.machineId;
+    if (zoomedPaneId != null) zoomedPaneId = paneId;
     // Announced even when this tile was ALREADY focused.
     //
     // The dial can be turned by hand, and then the two disagree with nobody
@@ -661,7 +788,10 @@ class AppNotifier extends ChangeNotifier {
     // only side that can judge, because only it knows where the dial is.
     _announceFocusToDial();
     // Only a real move is worth a rebuild.
-    if (moved) notifyListeners();
+    if (moved) {
+      _persistLayout();
+      notifyListeners();
+    }
   }
 
   /// Tell the local daemon which agent this window is looking at, so the dial follows it.
@@ -1420,6 +1550,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _startUpdateChecking() {
+    if (isHarnessV2 && desktopUpdater == null) return;
     _updateCheckTimer ??= (desktopUpdater ?? DesktopUpdater()).startChecking(
       onUpdateAvailable: _handleBackgroundUpdate,
     );
@@ -1437,6 +1568,7 @@ class AppNotifier extends ChangeNotifier {
   /// A manual check deliberately returns a skipped version too, so the user
   /// can choose to install it from the account menu after changing their mind.
   Future<ManualUpdateCheck> checkForUpdates() async {
+    if (isHarnessV2 && desktopUpdater == null) return const ManualUpdateCheck();
     if (isCheckingForUpdate) {
       return ManualUpdateCheck(update: availableUpdate);
     }
@@ -1920,6 +2052,10 @@ class AppNotifier extends ChangeNotifier {
           prev.engineIconHint != agent.engineIconHint ||
           prev.codexHome != agent.codexHome ||
           prev.parentAgentId != agent.parentAgentId ||
+          prev.project != agent.project ||
+          prev.launchState != agent.launchState ||
+          prev.launchError != agent.launchError ||
+          prev.launchDetail != agent.launchDetail ||
           prev.status != agent.status ||
           prev.terminalAvailable != agent.terminalAvailable ||
           prev.terminalUnavailableReason != agent.terminalUnavailableReason) {
@@ -2364,29 +2500,10 @@ class AppNotifier extends ChangeNotifier {
   /// load and guarded, rather than wired to one specific load, because which
   /// machine answers first is not something this side decides.
   void _autoPickFirstAgent() {
-    if (_autoPickedAgent || panes.isNotEmpty) return;
-
-    // This computer first. A remote machine may well answer sooner, and
-    // opening a terminal on someone else's box because its list arrived first
-    // is a surprise, not a convenience.
-    MachineState? target;
-    for (final state in machineStates.values) {
-      if (state.isLocalMachine) {
-        target = state;
-        break;
-      }
-    }
-    target ??= machineStates.length == 1 ? machineStates.values.first : null;
-    if (target == null) return;
-    if (target.nodeOnline == false) return;
-    if (!target.terminalCapabilityAvailable) return;
-
-    for (final agent in target.agents) {
-      if (!agent.terminalAvailable) continue;
-      _autoPickedAgent = true;
-      unawaited(selectAgent(target.machine.machineId, agent.id));
-      return;
-    }
+    if (_autoPickedAgent) return;
+    // V2 opens on the welcome screen; discovering an agent is not a request
+    // to attach its terminal. Keep the startup gate settled for this run.
+    _autoPickedAgent = true;
   }
 
   /// Ask a machine which engines it has.
@@ -2569,12 +2686,11 @@ class AppNotifier extends ChangeNotifier {
     // `terminal_close`, which would be addressed to an agent the machine has
     // already destroyed.
     final machineId = machine.machine.machineId;
-    for (final pane in panes.toList()) {
+    for (final pane in allPanes.toList()) {
       if (pane.machineId != machineId || pane.agentId != agentId) continue;
       await _detachSession(pane, sendClose: false);
-      panes.remove(pane);
-      if (focusedPaneId == pane.id) {
-        focusedPaneId = panes.isEmpty ? null : panes.first.id;
+      for (final swarm in swarms) {
+        swarm.remove(pane);
       }
     }
     _persistLayout();
@@ -2791,35 +2907,53 @@ class AppNotifier extends ChangeNotifier {
     String? revision,
   }) async {
     final machine = machineStates[machineId];
-    if (machine == null || machine.needsLink || machine.nodeOnline == false ||
+    if (machine == null ||
+        machine.needsLink ||
+        machine.nodeOnline == false ||
         machine.connectionStatus != ConnectionStatus.connected) {
-      throw const RemoteMediaException('This machine is disconnected. Reconnect and try opening the preview again.');
+      throw const RemoteMediaException(
+        'This machine is disconnected. Reconnect and try opening the preview again.',
+      );
     }
     if (!machine.mediaPreviewAvailable) {
-      throw const RemoteMediaException('Update the Harness CLI on this remote machine to open image and video previews.');
+      throw const RemoteMediaException(
+        'Update the Harness CLI on this remote machine to open image and video previews.',
+      );
     }
     final connection = _conn(machineId);
     if (!connection.isReady) {
-      throw const RemoteMediaException('This machine is disconnected. Reconnect and try opening the preview again.');
+      throw const RemoteMediaException(
+        'This machine is disconnected. Reconnect and try opening the preview again.',
+      );
     }
     try {
-      return await connection.request('agent_read_file', payload: {
-        'agentId': agentId, 'path': target, 'media': true, 'offset': offset,
-        'revision': ?revision,
-      }, timeout: const Duration(seconds: 15));
+      return await connection.request(
+        'agent_read_file',
+        payload: {
+          'agentId': agentId,
+          'path': target,
+          'media': true,
+          'offset': offset,
+          'revision': ?revision,
+        },
+        timeout: const Duration(seconds: 15),
+      );
     } on WsRequestFailure catch (error) {
       throw RemoteMediaException(switch (error.code) {
         'MEDIA_NOT_FOUND' || 'NOT_FOUND' => 'This file is no longer available on the remote machine. It may have moved or been deleted.',
         'MEDIA_TOO_LARGE' => 'Remote previews support files up to 512 MB. Use a smaller export or transfer this file separately.',
         'MEDIA_CHANGED' => 'The file changed while downloading. Wait for it to finish generating and try again.',
         'MEDIA_UNSUPPORTED' => 'This file is not a supported image or video.',
-        'MEDIA_INVALID_REQUEST' => 'Use a full path or a path inside this agent’s working folder.',
+        'MEDIA_INVALID_REQUEST' =>
+          'Use a full path or a path inside this agent’s working folder.',
         'AGENT_NOT_FOUND' => 'This agent is no longer available. Reconnect to the agent and try again.',
         'NOT_TEXT' || 'FILE_TOO_LARGE' => 'Update the Harness CLI on this remote machine to open media previews.',
         _ => 'The remote machine could not read this file. Check that it is accessible and try again.',
       });
     } catch (_) {
-      throw const RemoteMediaException('The media download was interrupted. Check the connection and try again.');
+      throw const RemoteMediaException(
+        'The media download was interrupted. Check the connection and try again.',
+      );
     }
   }
 
@@ -2889,7 +3023,13 @@ class AppNotifier extends ChangeNotifier {
     required String folder,
     bool bypassPermission = false,
     String? codexHome,
+    String? swarmId,
   }) async {
+    final targetId = swarmId ?? activeSwarmId;
+    if (!swarms.any((s) => s.id == targetId)) return 'This swarm was closed';
+    final target = swarms.firstWhere((s) => s.id == targetId);
+    if (target.panes.length >= maxPanes)
+      return 'This swarm is full. Open a new swarm to create an agent.';
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     if (codexHome != null) {
@@ -2935,7 +3075,7 @@ class AppNotifier extends ChangeNotifier {
     // count of what this app launched.
     harnessStats.onAgentSpawned();
     notifyListeners();
-    await selectAgent(machineId, agent.id);
+    await addAgentToSwarm(machineId, agent.id, swarmId: targetId);
     return null;
   }
 
@@ -2973,8 +3113,12 @@ class AppNotifier extends ChangeNotifier {
     // Any tile still showing this machine would otherwise sit forever in the "waiting to answer"
     // busy state, since the machine can never be found again after this.
     for (final pane in panesFor(machineId).toList()) {
-      await closePane(pane.id, persist: false);
+      for (final swarm in swarms) {
+        swarm.remove(pane);
+      }
+      await _detachSession(pane, sendClose: true);
     }
+    _persistLayout();
     _stopAgentSyncTimer(machineId);
     machineStates.remove(machineId);
     machines.removeWhere((m) => m.machineId == machineId);
@@ -3255,7 +3399,7 @@ class AppNotifier extends ChangeNotifier {
       }
       return;
     }
-    await assignAgentToPane(focusedPane?.id, machineId, agentId);
+    await addAgentToSwarm(machineId, agentId);
   }
 
   /// Show a MACHINE in the grid, for the states that belong to the machine
@@ -3295,19 +3439,7 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!canAddPane) {
-      // Full grid: reuse the focused tile rather than refusing. Someone who
-      // clicked "link required" asked to see it, and a click that did nothing
-      // at all would read as a broken row.
-      if (target != null) {
-        unawaited(_detachSession(target, sendClose: true));
-        target.machineId = machineId;
-        target.agentId = null;
-        _persistLayout();
-        notifyListeners();
-      }
-      return;
-    }
+    if (!canAddPane) return;
     final pane = TerminalPane(id: _nextPaneId++, machineId: machineId);
     panes.add(pane);
     focusedPaneId = pane.id;
@@ -3319,8 +3451,14 @@ class AppNotifier extends ChangeNotifier {
   Future<void> assignAgentToPane(
     int? paneId,
     String machineId,
-    String agentId,
-  ) async {
+    String agentId, {
+    String? swarmId,
+  }) async {
+    final target = swarms
+        .where((s) => s.id == (swarmId ?? activeSwarmId))
+        .firstOrNull;
+    if (target == null || _disposed) return;
+    final targetPanes = target.panes;
     final machine = machineStates[machineId];
     if (machine == null) return;
 
@@ -3331,41 +3469,49 @@ class AppNotifier extends ChangeNotifier {
         break;
       }
     }
-    if (agent == null || !agent.terminalAvailable) return;
+    if (agent == null) return;
 
-    // Moving an agent that is already somewhere else must not leave a copy
-    // behind, for the takeover reason above. Dropping a row onto a second tile
-    // is a MOVE.
-    final duplicate = paneOfAgent(machineId, agentId);
-    if (duplicate != null && duplicate.id != paneId) {
-      await closePane(duplicate.id, persist: false);
+    final shared = allPanes
+        .where((p) => p.machineId == machineId && p.agentId == agentId)
+        .firstOrNull;
+    final existing = targetPanes
+        .where((p) => p.machineId == machineId && p.agentId == agentId)
+        .firstOrNull;
+    if (paneId == null && existing != null) {
+      if (target == activeSwarm) focusPane(existing.id);
+      return;
+    }
+    final replaced = targetPanes.where((p) => p.id == paneId).firstOrNull;
+    if (replaced == shared && shared != null) {
+      if (target == activeSwarm) focusPane(shared.id);
+      return;
+    }
+    if (replaced == null &&
+        existing == null &&
+        targetPanes.length >= maxPanes) {
+      _lastError =
+          'This swarm holds $maxPanes agents. Open another swarm to add more.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return;
+    }
+    final insertion = replaced == null
+        ? targetPanes.length
+        : targetPanes.indexOf(replaced);
+    if (existing != null) target.remove(existing);
+    if (replaced != null) target.remove(replaced);
+    final pane =
+        shared ??
+        TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
+    targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
+    if (replaced != null && !allPanes.contains(replaced)) {
+      // Release just the desktop stream. The CLI agent process keeps running.
+      unawaited(_detachSession(replaced, sendClose: true));
     }
 
-    TerminalPane? pane;
-    if (paneId != null) {
-      for (final candidate in panes) {
-        if (candidate.id == paneId) {
-          pane = candidate;
-          break;
-        }
-      }
-    }
-    if (pane == null) {
-      if (!canAddPane) return;
-      pane = TerminalPane(
-        id: _nextPaneId++,
-        machineId: machineId,
-        agentId: agentId,
-      );
-      panes.add(pane);
-    } else {
-      await _detachSession(pane, sendClose: true);
-      pane.machineId = machineId;
-      pane.agentId = agentId;
-    }
-
-    focusedPaneId = pane.id;
-    selectedMachineId = machineId;
+    target.focusedPaneId = pane.id;
+    target.zoomedPaneId = null;
+    if (target == activeSwarm) selectedMachineId = machineId;
     _dismissedLinkPrompts.remove(machineId);
     machine.activeAgentId = agentId;
     _persistLayout();
@@ -3382,7 +3528,7 @@ class AppNotifier extends ChangeNotifier {
     // After _persistLayout, so the daemon has the new tile roster before it is told to move onto it. A
     // duplicate with the inferred one is free: the daemon drops the second against where the dial
     // already is.
-    _announceFocusToDial();
+    if (target == activeSwarm) _announceFocusToDial();
 
     if (machine.nodeOnline == false) {
       machine.pendingOfflineAgentId = agentId;
@@ -3394,7 +3540,7 @@ class AppNotifier extends ChangeNotifier {
     machine.pendingOfflineAgentId = null;
     _stopOfflineRetry(machineId);
     notifyListeners();
-    await _attachSession(pane);
+    if (target == activeSwarm || pane.session != null) await _attachSession(pane);
   }
 
   /// Open the stream for a tile that already knows what it wants.
@@ -3403,7 +3549,7 @@ class AppNotifier extends ChangeNotifier {
   /// on its own, later, when its machine finally answers — the intent was
   /// settled at launch, and nothing about the selection should move again then.
   Future<void> _attachSession(TerminalPane pane) async {
-    if (pane.session != null) return;
+    if (_disposed || !allPanes.contains(pane) || pane.session != null) return;
     final wantedAgentId = pane.agentId;
     if (wantedAgentId == null) return;
     final machine = machineStates[pane.machineId];
@@ -3484,8 +3630,8 @@ class AppNotifier extends ChangeNotifier {
     // saying "here now", and a pinned tile displaced by another drag was still
     // put there deliberately — bouncing either back would make the drag look
     // broken while the state was in fact correct.
-    if (panes[to].isPinned) panes[to].pinnedSlot = to;
-    if (panes[from].isPinned) panes[from].pinnedSlot = from;
+    if (isPanePinned(panes[to])) _setPin(panes[to], to);
+    if (isPanePinned(panes[from])) _setPin(panes[from], from);
     _persistLayout();
     notifyListeners();
   }
@@ -3495,7 +3641,10 @@ class AppNotifier extends ChangeNotifier {
   /// Only `auto` needs telling: it measures the window, so it is the one shape
   /// whose columns are not in its own description. Reported by the grid as it
   /// builds; null until then, and then the shape's own guess stands.
-  int? gridColumns;
+  int? get gridColumns => activeSwarm.gridColumns;
+  set gridColumns(int? value) => activeSwarm.gridColumns = value;
+
+  bool hasNavigationRail = true;
 
   /// Focus the tile above or below the focused one — ⌘↑ / ⌘↓.
   ///
@@ -3579,7 +3728,7 @@ class AppNotifier extends ChangeNotifier {
       focusPane(panes[to].id);
       return;
     }
-    focusRail();
+    if (hasNavigationRail) focusRail();
     // An EMPTY rail is not a seat, so the ring skips it rather than stopping on
     // it. focusRail refuses when there is nothing to put a cursor on — no
     // machines yet, or a list that has not loaded — and without this the key
@@ -3656,7 +3805,8 @@ class AppNotifier extends ChangeNotifier {
   /// agents at a time is the shape most work actually has: a thing being built
   /// and a thing being watched. Walking a list to get back to the other one is
   /// the wrong motion, and it gets longer as the grid fills.
-  int? _previousPaneId;
+  int? get _previousPaneId => activeSwarm.previousPaneId;
+  set _previousPaneId(int? value) => activeSwarm.previousPaneId = value;
 
   void focusLastPane() {
     final back = _previousPaneId;
@@ -3676,12 +3826,14 @@ class AppNotifier extends ChangeNotifier {
   /// usually breaks this: focus moving. Zoomed on tile 3 and then jumping to
   /// tile 5 shows tile 5 zoomed, which is what tmux does and what the eye
   /// expects; a boolean would have shown tile 3 while the focus was elsewhere.
-  int? zoomedPaneId;
+  int? get zoomedPaneId => activeSwarm.zoomedPaneId;
+  set zoomedPaneId(int? value) => activeSwarm.zoomedPaneId = value;
 
   void toggleZoomPane() {
     final id = focusedPaneId;
     if (id == null || panes.length < 2) return;
     zoomedPaneId = zoomedPaneId == id ? null : id;
+    _persistLayout();
     notifyListeners();
   }
 
@@ -3728,11 +3880,25 @@ class AppNotifier extends ChangeNotifier {
   /// Pinning records the CURRENT slot rather than asking for one: the tile the
   /// user is looking at is the answer they mean, and a dialog asking "which
   /// number?" would be arithmetic about a thing they can already see.
+  int? pinnedSlotFor(TerminalPane pane) =>
+      hasNavigationRail ? pane.pinnedSlot : activeSwarm.pinnedSlots[pane.id];
+
+  bool isPanePinned(TerminalPane pane) => pinnedSlotFor(pane) != null;
+
+  void _setPin(TerminalPane pane, int? slot) {
+    if (slot == null) {
+      activeSwarm.pinnedSlots.remove(pane.id);
+    } else {
+      activeSwarm.pinnedSlots[pane.id] = slot;
+    }
+    if (hasNavigationRail) pane.pinnedSlot = slot;
+  }
+
   void togglePinPane(int paneId) {
     final index = panes.indexWhere((pane) => pane.id == paneId);
     if (index == -1) return;
     final pane = panes[index];
-    pane.pinnedSlot = pane.isPinned ? null : index;
+    _setPin(pane, isPanePinned(pane) ? null : index);
     _persistLayout();
     notifyListeners();
   }
@@ -3749,10 +3915,10 @@ class AppNotifier extends ChangeNotifier {
   /// closed can come back, and forgetting the pin the moment the grid got small
   /// would quietly undo a choice the user never revisited.
   void _settlePins() {
-    final pinned = panes.where((pane) => pane.isPinned).toList()
-      ..sort((a, b) => a.pinnedSlot!.compareTo(b.pinnedSlot!));
+    final pinned = panes.where(isPanePinned).toList()
+      ..sort((a, b) => pinnedSlotFor(a)!.compareTo(pinnedSlotFor(b)!));
     for (final pane in pinned) {
-      final want = pane.pinnedSlot!;
+      final want = pinnedSlotFor(pane)!;
       if (want >= panes.length) continue;
       final at = panes.indexOf(pane);
       if (at == want) continue;
@@ -3762,58 +3928,36 @@ class AppNotifier extends ChangeNotifier {
   }
 
   Future<void> closePane(int paneId, {bool persist = true}) async {
-    final index = panes.indexWhere((pane) => pane.id == paneId);
-    if (index == -1) return;
-    final pane = panes.removeAt(index);
-    // A zoom belongs to a tile, so closing that tile ends it. Left set, the grid
-    // would try to fill itself with a pane that is no longer in the list and
-    // draw nothing at all.
-    if (zoomedPaneId == paneId) zoomedPaneId = null;
-    if (_previousPaneId == paneId) _previousPaneId = null;
+    final pane = panes.where((p) => p.id == paneId).firstOrNull;
+    if (pane == null) return;
+    activeSwarm.remove(pane);
     _settlePins();
-    await _detachSession(pane, sendClose: true);
-    if (focusedPaneId == paneId) {
-      focusedPaneId = panes.isEmpty
-          ? null
-          : panes[index.clamp(0, panes.length - 1)].id;
-    }
     if (persist) _persistLayout();
+    selectedMachineId = focusedPane?.machineId;
+    _announceFocusToDial();
     notifyListeners();
+    if (!allPanes.contains(pane)) await _detachSession(pane, sendClose: true);
   }
 
   Future<void> _closeAllPanes({bool persist = true}) async {
-    final open = panes.toList();
-    panes.clear();
-    focusedPaneId = null;
+    final open = allPanes.toList();
+    for (final swarm in swarms) {
+      swarm.panes.clear();
+      swarm.focusedPaneId = null;
+      swarm.zoomedPaneId = null;
+    }
     for (final pane in open) {
       await _detachSession(pane, sendClose: true);
     }
     if (persist) _persistLayout();
   }
 
+  int _layoutRevision = 0;
+
   void _persistLayout() {
-    // The roster and the saved layout describe the same fact — which agents are
-    // on the grid — so they are announced and written from the same place.
-    // Before the early return below: a window with no layout store still has
-    // tiles, and the dial still has to know about them.
+    _layoutRevision++;
     _announceOpenPanesToDial();
-    final store = _paneLayout;
-    if (store == null) return;
-    unawaited(
-      store.save([
-        for (final pane in panes)
-          // Machine tiles are deliberately not remembered: they are a prompt
-          // about a machine's state right now ("link required"), and reopening
-          // to a wall of prompts the user already answered would be noise.
-          if (pane.agentId case final agentId?)
-            PaneLayoutEntry(
-              machineId: pane.machineId,
-              agentId: agentId,
-              composerVisible: pane.composerVisible,
-              pinnedSlot: pane.pinnedSlot,
-            ),
-      ]),
-    );
+    unawaited(_paneLayout?.saveSwarms(swarms, activeSwarmId, _nextWallpaper));
   }
 
   /// Rebuild the grid from disk as INTENT only — the tiles appear immediately,
@@ -3826,11 +3970,102 @@ class AppNotifier extends ChangeNotifier {
   Future<void> _restorePaneLayout() async {
     final store = _paneLayout;
     if (store == null) return;
+    final initialSwarm = activeSwarm;
+    final revision = _layoutRevision;
+    final saved = await store.loadSwarms();
+    if (_disposed || revision != _layoutRevision) return;
+    if (saved != null &&
+        allPanes.isEmpty &&
+        swarms.length == 1 &&
+        activeSwarm == initialSwarm) {
+      final restored = <Swarm>[];
+      final pool = <String, TerminalPane>{};
+      for (final raw in (saved['swarms'] as List).take(maxSwarms)) {
+        if (raw is! Map || raw['id'] is! String || raw['panes'] is! List)
+          continue;
+        final id = raw['id'] as String;
+        if (id.isEmpty || restored.any((s) => s.id == id)) continue;
+        final swarm = Swarm(
+          id: id,
+          name:
+              raw['name'] is String && (raw['name'] as String).trim().isNotEmpty
+              ? (raw['name'] as String).substring(
+                  0,
+                  (raw['name'] as String).length.clamp(0, 80),
+                )
+              : 'New swarm',
+          wallpaper: raw['wallpaper'] is int
+              ? (raw['wallpaper'] as int) % swarmWallpapers.length
+              : 0,
+        );
+        for (final item in (raw['panes'] as List).take(maxPanes)) {
+          final entry = PaneLayoutEntry.fromJson(item);
+          if (entry == null) continue;
+          final key = '${entry.machineId}\u0000${entry.agentId}';
+          final pane = pool.putIfAbsent(
+            key,
+            () =>
+                TerminalPane(
+                    id: _nextPaneId++,
+                    machineId: entry.machineId,
+                    agentId: entry.agentId,
+                  )
+                  ..composerVisible = entry.composerVisible
+                  ..pinnedSlot = entry.pinnedSlot,
+          );
+          if (!swarm.panes.contains(pane)) {
+            swarm.panes.add(pane);
+            if (entry.pinnedSlot != null) swarm.pinnedSlots[pane.id] = entry.pinnedSlot!;
+          }
+        }
+        int? paneAt(Object? index) =>
+            index is int && index >= 0 && index < swarm.panes.length
+            ? swarm.panes[index].id
+            : null;
+        swarm.focusedPaneId =
+            paneAt(raw['focus']) ?? swarm.panes.firstOrNull?.id;
+        swarm.zoomedPaneId = paneAt(raw['zoom']);
+        if (raw['presets'] case final Map presets) {
+          for (final e in presets.entries) {
+            final count = int.tryParse(e.key.toString());
+            final preset = PanePreset.byId(e.value?.toString());
+            if (count != null &&
+                count >= 2 &&
+                count <= maxPanes &&
+                preset != null &&
+                PanePreset.forCount(count).contains(preset)) {
+              swarm.presets[count] = preset;
+            }
+          }
+        }
+        restored.add(swarm);
+      }
+      if (restored.isNotEmpty) {
+        swarms
+          ..clear()
+          ..addAll(restored);
+        _activeSwarmId = restored.any((s) => s.id == saved['activeId'])
+            ? saved['activeId'] as String
+            : restored.first.id;
+        while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
+          _nextSwarmId++;
+        }
+        _nextWallpaper = saved['nextWallpaper'] is int
+            ? saved['nextWallpaper'] as int
+            : swarms.length;
+        _autoPickedAgent = true;
+        notifyListeners();
+        return;
+      }
+    }
     // Read before the guards below: the dividers are remembered even for a
     // grid this run has not restored any agents into, so a window that opens
     // empty and is then filled by hand still comes up the shape it was left.
     panePresets.addAll(await store.loadPresets());
-    if (panes.isNotEmpty) return;
+    if (allPanes.isNotEmpty ||
+        swarms.length != 1 ||
+        activeSwarm != initialSwarm)
+      return;
     final entries = await store.load();
     if (entries.isEmpty) {
       if (panePresets.isNotEmpty) notifyListeners();
@@ -3867,7 +4102,8 @@ class AppNotifier extends ChangeNotifier {
   /// to re-arrive at them.
   void _attachPendingPanes(MachineState machine) {
     final machineId = machine.machine.machineId;
-    for (final pane in panes.toList()) {
+    for (final pane in allPanes.toList()) {
+      if (!panes.contains(pane) && pane.session == null) continue;
       if (pane.machineId != machineId) continue;
       if (!_paneNeedsAttach(pane)) continue;
       // Covers a tile that never attached AND one holding a stream the machine
@@ -4194,6 +4430,9 @@ class AppNotifier extends ChangeNotifier {
   /// socket to arrive on — what they exercise is the bookkeeping either side of
   /// that, which is exactly what a live socket makes hard to reach.
   @visibleForTesting
+  Future<void> restorePaneLayoutForTest() => _restorePaneLayout();
+
+  @visibleForTesting
   Future<void> handleMachineEventForTest(
     String machineId,
     Map<String, dynamic> event,
@@ -4240,11 +4479,13 @@ class AppNotifier extends ChangeNotifier {
     _stopAllLinkRetries();
     _stopAllAgentSyncTimers();
     _clearAllTurnActivity();
-    for (final pane in panes) {
+    for (final pane in allPanes) {
       pane.session?.removeListener(notifyListeners);
       pane.session?.dispose();
     }
-    panes.clear();
+    for (final swarm in swarms) {
+      swarm.panes.clear();
+    }
     unawaited(_spokenTasks.close());
     super.dispose();
   }

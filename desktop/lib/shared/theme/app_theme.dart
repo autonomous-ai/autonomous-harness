@@ -176,6 +176,11 @@ class _FontScope extends InheritedNotifier<FontNotifier> {
 /// Centralized so every pane reads the same surfaces/accents instead of re-typing
 /// hex literals, and resolves per [AppTheme.brightness].
 abstract final class AppPalette {
+  // Approved Swarms canvas and native tab-strip palette.
+  static Color get swarmField => const Color(0xff463746);
+  static Color get swarmTabBar => const Color(0xff332936);
+  static Color get swarmAccent => const Color(0xffd8cce1);
+
   // the conversation / content area — pure white in light, like Codex.
   //
   // Dark is a charcoal page rather than the near-black it was (#0A0A0A). That

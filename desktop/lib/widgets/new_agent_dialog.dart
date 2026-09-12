@@ -39,6 +39,8 @@ Future<void> showNewAgentDialog(
   AppNotifier notifier,
   String machineId, {
   required String source,
+  String? initialFolder,
+  String? swarmId,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -46,16 +48,27 @@ Future<void> showNewAgentDialog(
   analytics.newAgentOpened(source: source);
   return showAppDialog<void>(
     context: context,
-    builder: (context) =>
-        _NewAgentDialog(notifier: notifier, machineId: machineId),
+    builder: (context) => _NewAgentDialog(
+      notifier: notifier,
+      machineId: machineId,
+      initialFolder: initialFolder,
+      swarmId: swarmId ?? notifier.activeSwarmId,
+    ),
   );
 }
 
 class _NewAgentDialog extends StatefulWidget {
   final AppNotifier notifier;
   final String machineId;
+  final String? initialFolder;
+  final String swarmId;
 
-  const _NewAgentDialog({required this.notifier, required this.machineId});
+  const _NewAgentDialog({
+    required this.notifier,
+    required this.machineId,
+    this.initialFolder,
+    required this.swarmId,
+  });
 
   @override
   State<_NewAgentDialog> createState() => _NewAgentDialogState();
@@ -63,7 +76,8 @@ class _NewAgentDialog extends StatefulWidget {
 
 class _NewAgentDialogState extends State<_NewAgentDialog> {
   late String _engine = allEngines.first.id;
-  String? _folder;
+  late String _machineId = widget.machineId;
+  late String? _folder = widget.initialFolder;
   LocalCodexProfile? _codexProfile;
   bool _codexProfilesBusy = true;
   bool _bypassPermission = false;
@@ -90,7 +104,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // a deliberate user action) and the stored rows keep rendering until the new
     // answer lands, so nothing blanks.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(widget.notifier.probeEngines(widget.machineId, force: true));
+      unawaited(widget.notifier.probeEngines(_machineId, force: true));
     });
   }
 
@@ -102,7 +116,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// engine is absent on no evidence would send someone to install one they
   /// already have.
   EngineAvailability? _availability(String engine) {
-    final machine = widget.notifier.stateOf(widget.machineId);
+    final machine = widget.notifier.stateOf(_machineId);
     if (machine == null || !machine.engines.loaded) return null;
     return machine.engines[engine];
   }
@@ -151,7 +165,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// and until it is rendered the panel says "Ready to launch" over an engine
   /// nobody checked for, which the create then fails on at the far end.
   bool get _engineCheckFailed {
-    final machine = widget.notifier.stateOf(widget.machineId);
+    final machine = widget.notifier.stateOf(_machineId);
     if (machine == null) return false;
     return !machine.engines.loaded && machine.engines.error != null;
   }
@@ -194,7 +208,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// Read per build rather than cached: `localOnly`/`localEndpoint` are settled
   /// by `_refreshMachines`, which can land while this dialog is open.
   bool get _machineIsThisComputer =>
-      widget.notifier.stateOf(widget.machineId)?.isLocalMachine ?? false;
+      widget.notifier.stateOf(_machineId)?.isLocalMachine ?? false;
 
   /// Create waits while the Codex profile list is still loading on a machine
   /// that can launch into one, so a click cannot land before the choice does.
@@ -206,7 +220,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// [Machine.displayName], not `name` — the latter is nullable and a machine
   /// that never got one would title the dialog "New agent on null".
   String get _machineName =>
-      widget.notifier.stateOf(widget.machineId)?.machine.displayName ??
+      widget.notifier.stateOf(_machineId)?.machine.displayName ??
       'this machine';
 
   Future<void> _browse() async {
@@ -228,19 +242,20 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // themselves select. That case keeps the in-app browser, which walks the
     // remote filesystem over the `fs_list_dir` RPC.
     setState(() => _picking = true);
+    final pickingMachine = _machineId;
     try {
       final picked = _machineIsThisComputer
           ? await getDirectoryPath(initialDirectory: _folder)
           : await showRemoteFolderPicker(
               context,
               notifier: widget.notifier,
-              machineId: widget.machineId,
+              machineId: _machineId,
               initialPath: _folder,
             );
       if (!mounted) return;
       setState(() {
         _picking = false;
-        if (picked != null) _folder = picked;
+        if (picked != null && pickingMachine == _machineId) _folder = picked;
       });
     } catch (error) {
       if (!mounted) return;
@@ -263,9 +278,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       _error = null;
     });
     final error = await widget.notifier.createAgent(
-      widget.machineId,
+      _machineId,
       engine: engine,
       folder: folder,
+      swarmId: widget.swarmId,
       bypassPermission: bypassPermission,
       // Keep the explicit choice even if machine discovery changes mid-submit.
       // The notifier must reject a now-remote target, never use its default login.
@@ -369,6 +385,36 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const FieldLabel('Machine'),
+        AppSelectField<String>(
+          key: const Key('new-agent-machine-field'),
+          value: _machineId,
+          options: [
+            for (final machine in widget.notifier.machineStates.values)
+              SelectOption(
+                value: machine.machine.machineId,
+                label: machine.isLocalMachine
+                    ? 'Local'
+                    : machine.machine.displayName,
+                note: machine.nodeOnline == false
+                    ? 'Offline'
+                    : machine.needsLink
+                    ? 'Link required'
+                    : null,
+              ),
+          ],
+          onChanged: (id) {
+            setState(() {
+              _machineId = id;
+              _folder = null;
+              _codexProfile = null;
+              _codexProfilesBusy = true;
+              _error = null;
+            });
+            unawaited(widget.notifier.probeEngines(id, force: true));
+          },
+        ),
+        const SizedBox(height: _gapField),
         const FieldLabel('Engine'),
         // The app's own picker, not `DropdownButtonFormField`.
         //
@@ -475,12 +521,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
               if (_availability('codex')?.supportsCodexHome == true)
                 CodexProfileField(
                   notifier: widget.notifier,
-                  machineId: widget.machineId,
+                  machineId: _machineId,
                   machineIsThisComputer: _machineIsThisComputer,
                   value: _codexProfile,
                   observedPaths: {
                     for (final agent
-                        in widget.notifier.stateOf(widget.machineId)!.agents)
+                        in widget.notifier.stateOf(_machineId)!.agents)
                       if (agent.engine == 'codex' && agent.codexHome != null)
                         agent.codexHome!,
                   },

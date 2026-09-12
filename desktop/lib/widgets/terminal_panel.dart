@@ -47,6 +47,8 @@ class TerminalPanel extends StatefulWidget {
 
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
+  final bool visible;
+  final bool compactHeader;
 
   /// Whether this tile's composer textbox is showing. Only consulted for a remote machine.
   final bool composerVisible;
@@ -68,6 +70,8 @@ class TerminalPanel extends StatefulWidget {
     required this.notifier,
     required this.session,
     required this.focused,
+    this.visible = true,
+    this.compactHeader = false,
     this.composerVisible = false,
     this.readOnly = false,
     this.onToggleComposer,
@@ -157,6 +161,11 @@ class _TerminalPanelState extends State<TerminalPanel>
       _cursorBlinkVisible = true;
       widget.session.setCursorBlinkPhase(true);
       _afterTerminalMounted();
+    }
+    if (oldWidget.visible && !widget.visible) {
+      _focusNode.unfocus();
+      _composerFocus.unfocus();
+      _cancelDialInertia();
     }
     if (!oldWidget.focused && widget.focused) {
       _claimFocusAfterFrame();
@@ -304,7 +313,8 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _advanceCursorBlink() {
     if (!mounted) return;
-    final shouldBlink = _focusNode.hasFocus && widget.session.acceptsInput;
+    final shouldBlink =
+        widget.visible && _focusNode.hasFocus && widget.session.acceptsInput;
     final next = shouldBlink ? !_cursorBlinkVisible : true;
     if (next == _cursorBlinkVisible) return;
     _cursorBlinkVisible = next;
@@ -345,7 +355,7 @@ class _TerminalPanelState extends State<TerminalPanel>
 
   void _afterTerminalMounted({bool clearSelection = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !widget.visible) return;
       if (clearSelection) _controller.clearSelection();
       final view = _laidOutTerminalView();
       if (view == null) return;
@@ -658,6 +668,7 @@ class _TerminalPanelState extends State<TerminalPanel>
           _TerminalHeader(
             notifier: widget.notifier,
             session: session,
+            compact: widget.compactHeader,
             onClose: widget.onClose,
             pinned: widget.pinned,
             onTogglePin: widget.onTogglePin,
@@ -681,6 +692,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                         session.terminal,
                         key: _terminalViewKey,
                         controller: _controller,
+                        autoResize: widget.visible,
                         scrollController: _scrollController,
                         focusNode: _focusNode,
                         autofocus: widget.focused && !showComposer,
@@ -778,7 +790,9 @@ class _TerminalPanelState extends State<TerminalPanel>
             ),
           ),
           // The grip is shown whether or not the box is: collapsed, it is the only way back.
-          if (remote && widget.onToggleComposer != null)
+          if (!widget.compactHeader &&
+              remote &&
+              widget.onToggleComposer != null)
             ComposerGrip(
               expanded: widget.composerVisible,
               onPressed: widget.onToggleComposer!,
@@ -796,6 +810,7 @@ class _TerminalHeader extends StatelessWidget {
   final TerminalSession session;
   final VoidCallback? onClose;
   final bool pinned;
+  final bool compact;
   final VoidCallback? onTogglePin;
 
   /// This strip's drag gesture, or null when there is nothing to drag.
@@ -813,6 +828,7 @@ class _TerminalHeader extends StatelessWidget {
     required this.session,
     this.onClose,
     this.pinned = false,
+    this.compact = false,
     this.onTogglePin,
     this.paneDrag,
   });
@@ -857,8 +873,17 @@ class _TerminalHeader extends StatelessWidget {
         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       ),
     };
+    final machine = notifier.stateOf(session.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == session.agentId)
+        .firstOrNull;
+    final project = agent?.project;
+    final contextLabel = [
+      if (project != null) project.name,
+      if (project?.branch != null) project!.branch!,
+    ].join(' / ');
     final strip = SizedBox(
-      height: 46,
+      height: compact ? 38 : 46,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: _stripPadding),
         child: Row(
@@ -905,10 +930,42 @@ class _TerminalHeader extends StatelessWidget {
                 ),
               ),
             ),
+            if (compact && project != null) ...[
+              const SizedBox(width: 12),
+              Flexible(
+                child: Tooltip(
+                  message:
+                      '${project.cwd}\n${project.remote ?? project.root ?? ""}',
+                  child: Text(
+                    contextLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: AppColors.textSoft),
+                  ),
+                ),
+              ),
+            ],
+            if (compact) ...[
+              const SizedBox(width: 12),
+              Flexible(
+                child: Tooltip(
+                  message: machine?.machine.displayName ?? session.machineId,
+                  child: Text(
+                    machine?.machine.displayName ?? session.machineId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.mutedStrong,
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(width: 6),
-            if (session.status == TerminalSessionStatus.controlling)
+            if (!compact && session.status == TerminalSessionStatus.controlling)
               Padding(padding: const EdgeInsets.all(4), child: statusMark)
-            else
+            else if (session.status != TerminalSessionStatus.controlling)
               Tooltip(
                 message: statusLabel,
                 child: Padding(
@@ -923,16 +980,16 @@ class _TerminalHeader extends StatelessWidget {
             // the CLI sends 'turn' (it is a TURN allocation) but both middle and last are relays to
             // a reader, so they read as "relay" and "ws". 'relay' on the wire kept its original
             // meaning — the backend WebSocket — so an older CLI is never mislabelled.
-            if (session.linkMode case final mode?)
+            if (!compact && session.linkMode != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: _LinkModeMark(mode: mode),
+                child: _LinkModeMark(mode: session.linkMode!),
               ),
             // Before the close button: pinning is the rarer act, and a control
             // that appears to the LEFT of the one people aim for by muscle
             // memory cannot shift it under their pointer.
-            if (onTogglePin case final toggle?)
-              PanePinButton(pinned: pinned, onPressed: toggle),
+            if (!compact && onTogglePin != null)
+              PanePinButton(pinned: pinned, onPressed: onTogglePin!),
             if (onClose != null) PaneCloseButton(onPressed: onClose!),
           ],
         ),

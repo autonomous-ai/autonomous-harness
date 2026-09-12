@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = Harness
+PRODUCT_NAME = Harness V2
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = ai.autonomous.harness
+PRODUCT_BUNDLE_IDENTIFIER = ai.autonomous.harness.v2
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 autonomous.ai. All rights reserved.

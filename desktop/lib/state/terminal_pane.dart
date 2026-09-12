@@ -32,6 +32,9 @@ class TerminalPane {
 
   TerminalSession? session;
 
+  /// Last visible geometry, retained while this controller is parked off screen.
+  Size? lastViewSize;
+
   /// The grid cell's widget key — a GlobalKey, and measured to be necessary.
   ///
   /// The layout puts cells in DIFFERENT parents depending on how many there

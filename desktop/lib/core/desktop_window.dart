@@ -2,6 +2,9 @@ import 'dart:io' show Platform;
 import 'dart:ui' show Size;
 
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter/services.dart';
+
+import 'build_identity.dart';
 
 /// Puts the window into the same shape Grid's uses, before the first frame.
 ///
@@ -18,13 +21,14 @@ Future<void> configureDesktopWindow() async {
   final options = WindowOptions(
     size: const Size(1280, 800),
     minimumSize: const Size(880, 560),
-    title: 'Harness',
+    title: desktopAppName,
     center: true,
-    titleBarStyle: Platform.isMacOS
-        ? TitleBarStyle.hidden
-        : TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.normal,
   );
   await windowManager.waitUntilReadyToShow(options, () async {
+    if (Platform.isMacOS) {
+      await const MethodChannel('harness/swarm_tabs').invokeMethod('configure');
+    }
     await windowManager.show();
     await windowManager.focus();
   });

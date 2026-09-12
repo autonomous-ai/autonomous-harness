@@ -40,7 +40,7 @@ Future<void> _pump(WidgetTester tester, int n, Size size) async {
 }
 
 void main() {
-  test('the ceiling is nine, which is as far as ⌘1–⌘9 reaches', () {
+  test('machine starters can contain more than nine agents', () {
     expect(PaneLayoutStore.maxPanes, 9);
     expect(AppNotifier.maxPanes, PaneLayoutStore.maxPanes);
   });

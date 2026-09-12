@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../logging/app_log.dart';
 import 'harness_file_store.dart';
+import 'test_run.dart';
 
 /// Where a released build writes the errors nobody would otherwise see.
 ///
@@ -18,7 +19,11 @@ import 'harness_file_store.dart';
 class CrashLog {
   static const _maxBytes = 256 * 1024;
 
+  @visibleForTesting
+  static File? testFile;
+
   static File get _file =>
+      testFile ??
       File('${HarnessFileStore.defaultDirectoryPath()}/errors.log');
 
   static void record(Object error, StackTrace? stackTrace, {String? context}) {
@@ -36,6 +41,7 @@ class CrashLog {
       error: error,
       stackTrace: stackTrace,
     );
+    if (kUnderTest && testFile == null) return;
     try {
       final file = _file;
       // The directory may not exist yet, and the first run is exactly when this

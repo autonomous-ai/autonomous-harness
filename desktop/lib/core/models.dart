@@ -124,6 +124,7 @@ class Agent {
   final String? engineIconHint;
   final String? codexHome;
   final String? parentAgentId;
+  final AgentProject? project;
   final String status;
   final String launchState;
   final String? launchError;
@@ -140,6 +141,7 @@ class Agent {
     this.engineIconHint,
     this.codexHome,
     this.parentAgentId,
+    this.project,
     this.status = 'active',
     this.launchState = 'ready',
     this.launchError,
@@ -181,6 +183,7 @@ class Agent {
       engineIconHint: _safeLabel(j['engineIconHint']),
       codexHome: j['engine'] == 'codex' ? _safeCodexHome(j['codexHome']) : null,
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
+      project: AgentProject.fromJson(j['project']),
       status: (j['status'] as String?) ?? 'active',
       launchState: launchState,
       launchError: launchState == 'failed' ? _safeLabel(launch['error']) : null,
@@ -204,6 +207,7 @@ class Agent {
     engineIconHint: engineIconHint,
     codexHome: codexHome,
     parentAgentId: parentAgentId,
+    project: project,
     status: status,
     launchState: launchState,
     launchError: launchError,
@@ -365,3 +369,52 @@ class RouteCandidate {
 }
 
 String _str(Object? value) => value is String ? value : '';
+
+/// Context reported by the owning daemon. Missing on older daemons.
+class AgentProject {
+  const AgentProject({
+    required this.name,
+    required this.cwd,
+    this.root,
+    this.remote,
+    this.branch,
+  });
+  final String name;
+  final String cwd;
+  final String? root;
+  final String? remote;
+  final String? branch;
+
+  String identity(String machineId) =>
+      remote != null ? 'repo:$remote' : 'folder:$machineId:${root ?? cwd}';
+
+  @override
+  bool operator ==(Object other) => other is AgentProject && name == other.name &&
+      cwd == other.cwd && root == other.root && remote == other.remote && branch == other.branch;
+  @override
+  int get hashCode => Object.hash(name, cwd, root, remote, branch);
+
+  static AgentProject? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    String? field(String key, [int max = 4096]) {
+      final v = raw[key];
+      return v is String &&
+              v.isNotEmpty &&
+              v.length <= max &&
+              !RegExp(r'[\x00-\x1f\x7f]').hasMatch(v)
+          ? v
+          : null;
+    }
+
+    final name = field('name', 256);
+    final cwd = field('cwd');
+    if (name == null || cwd == null) return null;
+    return AgentProject(
+      name: name,
+      cwd: cwd,
+      root: field('root'),
+      remote: field('remote'),
+      branch: field('branch', 256),
+    );
+  }
+}

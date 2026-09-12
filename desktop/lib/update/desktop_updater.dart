@@ -175,7 +175,7 @@ class DesktopUpdater {
            ),
        _launchDetached = launchDetached ?? _defaultLaunchDetached,
        _metadataUrlForInstance = metadataUrl ?? _metadataUrl,
-       _releaseMode = releaseMode ?? kReleaseMode,
+       _releaseMode = releaseMode ?? false,
        _isLinux = isLinux ?? Platform.isLinux,
        _architecture = architecture ?? _currentArchitecture();
 

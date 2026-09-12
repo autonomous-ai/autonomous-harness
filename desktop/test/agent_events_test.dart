@@ -59,6 +59,7 @@ class FakeCreateAgentNotifier extends AppNotifier {
     required String folder,
     bool bypassPermission = false,
     String? codexHome,
+    String? swarmId,
   }) async => null;
 }
 

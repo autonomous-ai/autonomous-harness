@@ -56,7 +56,7 @@ class AnalyticsConfig {
 
   /// Stamped on every event, so this app's stream stays separable from Grid's
   /// and the website's inside the shared project. Grid sends `grid-app`.
-  static const String category = 'harness-desktop';
+  static const String category = 'harness-desktop-v2';
 
   /// Env var / `--dart-define` names. The URL and key overrides are dev-only so
   /// a shipped build always reports to production; [disableEnvKey] is honoured
