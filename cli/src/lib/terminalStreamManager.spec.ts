@@ -157,6 +157,17 @@ describe('TerminalStreamManager', () => {
     })
     expect(stream.writes).toHaveLength(1)
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_INPUT_INVALID')
+    // …and says which seq it is still waiting for, so a client that skipped a number can realign
+    // instead of having every later keystroke refused.
+    expect(sent.at(-1)?.payload).toMatchObject({ reason: 'seq', expectedSeq: 1, streamId })
+
+    // An oversized frame is refused the same way, with the counter untouched: the next accepted
+    // seq is still 1.
+    await manager.handleBinary('web-1', {
+      kind: TerminalBinaryKind.input, streamId, seq: 1, compressed: false, bytes: Buffer.alloc(64 * 1024 + 1, 0x61),
+    })
+    expect(stream.writes).toHaveLength(1)
+    expect(sent.at(-1)?.payload).toMatchObject({ code: 'TERMINAL_INPUT_INVALID', reason: 'size', expectedSeq: 1 })
 
     const mouse = Buffer.from('\u001b[<0;12;8M')
     await manager.handleBinary('web-1', {

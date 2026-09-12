@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -666,6 +667,210 @@ void main() {
       expect(session.terminal.buffer.getText(), startsWith('new screen'));
       expect(session.cols, 90);
       expect(session.rows, 28);
+    },
+  );
+
+  test('a keystroke dropped while resyncing does not leave a hole in the input seq', () async {
+    // The daemon counts input frames and never re-syncs that counter. A frame this side drops
+    // — the session went `resyncing` while an earlier send was still in flight — used to take
+    // its number with it, so the first keystroke after recovery arrived one ahead and was
+    // refused: TERMINAL_INPUT_INVALID, and a frozen pane over a perfectly good tmux.
+    final gate = Completer<void>();
+    final frames = <TerminalBinaryFrame>[];
+    final blocking = TerminalSession(
+      machineId: 'machine-1',
+      agentId: 'agent-1',
+      agentName: 'backend-api',
+      engineId: 'codex',
+      send: (type, payload) async {
+        sent.add((type: type, payload: Map<String, dynamic>.from(payload)));
+        return true;
+      },
+      sendBinary: (frame) async {
+        frames.add(frame);
+        if (frames.length == 1) await gate.future; // the first send stalls
+        return true;
+      },
+    );
+    addTearDown(blocking.dispose);
+    await blocking.open(initialCols: 100, initialRows: 30);
+    await blocking.handleFrame('terminal_ready', {
+      'requestId': sent.single.payload['requestId'],
+      'protocolVersion': 3,
+      'streamId': streamId,
+      'agentId': 'agent-1',
+    });
+    await blocking.handleBinary(
+      output(0, utf8.encode('prompt> '), keyframe: true, cols: 80, rows: 24),
+    );
+
+    blocking.terminal.onOutput?.call('a'); // seq 0, send stalls on the gate
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+    blocking.terminal.onOutput?.call('b'); // queued behind it
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+    expect(frames, hasLength(1));
+
+    // The output stream skips a number: resync, same stream.
+    await blocking.handleBinary(output(5, utf8.encode('gap')));
+    expect(blocking.status, TerminalSessionStatus.resyncing);
+    gate.complete(); // 'a' goes out; 'b' reaches the tail while resyncing and is dropped
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+
+    await blocking.handleBinary(
+      output(9, utf8.encode('fresh'), keyframe: true, cols: 80, rows: 24),
+    );
+    expect(blocking.status, TerminalSessionStatus.controlling);
+    blocking.terminal.onOutput?.call('c');
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+
+    final inputs = frames.where((f) => f.kind == TerminalBinaryKind.input);
+    expect(inputs.map((f) => utf8.decode(f.bytes)), ['a', 'c']);
+    // Contiguous: the dropped 'b' did not spend a number.
+    expect(inputs.map((f) => f.seq), [0, 1]);
+  });
+
+  test(
+    'TERMINAL_INPUT_INVALID with expectedSeq realigns in place, nothing frozen',
+    () async {
+      await ready();
+      await session.handleBinary(
+        output(0, utf8.encode('prompt> '), keyframe: true, cols: 80, rows: 24),
+      );
+      session.terminal.onOutput?.call('a');
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      session.terminal.onOutput?.call('b');
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      expect(binarySent.map((f) => f.seq), [0, 1]);
+
+      // The daemon only ever saw seq 0 — say it is still waiting for 1.
+      await session.handleFrame('terminal_error', {
+        'streamId': streamId,
+        'code': 'TERMINAL_INPUT_INVALID',
+        'reason': 'seq',
+        'expectedSeq': 1,
+      });
+      expect(session.status, TerminalSessionStatus.controlling);
+      expect(session.errorCode, isNull);
+      expect(sent.where((f) => f.type == 'terminal_close'), isEmpty);
+      expect(sent.where((f) => f.type == 'terminal_open'), hasLength(1));
+
+      session.terminal.onOutput?.call('c');
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      expect(binarySent.last.seq, 1);
+      expect(utf8.decode(binarySent.last.bytes), 'c');
+    },
+  );
+
+  test('a stale duplicate TERMINAL_INPUT_INVALID does not rewind a counter that moved on', () async {
+    // The daemon refuses every in-flight frame it cannot take, each naming
+    // the same expected seq. By the time the second refusal lands, the
+    // first has already realigned us and frames under the new numbers have
+    // been accepted — rewinding again would reuse them.
+    await ready();
+    await session.handleBinary(
+      output(0, utf8.encode('prompt> '), keyframe: true, cols: 80, rows: 24),
+    );
+    session.terminal.onOutput?.call('a');
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+    session.terminal.onOutput?.call('b');
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+    session.terminal.onOutput?.call('c');
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+    expect(binarySent.map((f) => f.seq), [0, 1, 2]);
+
+    // Both 'b' (1) and 'c' (2) were refused: the daemon still wants 1.
+    final refusal = {
+      'streamId': streamId,
+      'code': 'TERMINAL_INPUT_INVALID',
+      'reason': 'seq',
+      'expectedSeq': 1,
+    };
+    await session.handleFrame('terminal_error', refusal);
+    session.terminal.onOutput?.call('d'); // goes out as 1, accepted
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+    await session.handleFrame('terminal_error', refusal); // the stale one
+    session.terminal.onOutput?.call('e');
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+
+    final after = binarySent.skip(3).toList();
+    expect(after.map((f) => utf8.decode(f.bytes)), ['d', 'e']);
+    expect(after.map((f) => f.seq), [1, 2]);
+    expect(session.status, TerminalSessionStatus.controlling);
+
+    // A genuinely new gap names a larger seq and is honoured.
+    await session.handleFrame('terminal_error', {...refusal, 'expectedSeq': 2});
+    session.terminal.onOutput?.call('f');
+    await Future<void>.delayed(const Duration(milliseconds: 12));
+    expect(binarySent.last.seq, 2);
+  });
+
+  test(
+    'TERMINAL_INPUT_INVALID from an older daemon reopens instead of freezing',
+    () async {
+      await ready();
+      await session.handleBinary(
+        output(0, utf8.encode('prompt> '), keyframe: true, cols: 80, rows: 24),
+      );
+      session.terminal.onOutput?.call('a');
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+
+      // No expectedSeq: a daemon from before it said. The only way back in step is a new stream.
+      await session.handleFrame('terminal_error', {
+        'streamId': streamId,
+        'code': 'TERMINAL_INPUT_INVALID',
+      });
+      expect(session.status, isNot(TerminalSessionStatus.error));
+      expect(sent.where((f) => f.type == 'terminal_close'), hasLength(1));
+      final opens = sent.where((f) => f.type == 'terminal_open').toList();
+      expect(opens, hasLength(2));
+
+      const newStream = 'ffeeddcc-bbaa-9988-7766-554433221100';
+      await session.handleFrame('terminal_ready', {
+        'requestId': opens.last.payload['requestId'],
+        'protocolVersion': 3,
+        'streamId': newStream,
+        'agentId': 'agent-1',
+      });
+      await session.handleBinary(
+        TerminalBinaryFrame(
+          kind: TerminalBinaryKind.keyframe,
+          streamId: newStream,
+          seq: 0,
+          bytes: Uint8List.fromList(utf8.encode('prompt> ')),
+          compressed: false,
+          cols: 80,
+          rows: 24,
+        ),
+      );
+      expect(session.status, TerminalSessionStatus.controlling);
+      session.terminal.onOutput?.call('b');
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      expect(binarySent.last.streamId, newStream);
+      expect(binarySent.last.seq, 0);
+    },
+  );
+
+  test(
+    'input larger than the daemon accepts is split, never refused',
+    () async {
+      await ready();
+      await session.handleBinary(
+        output(0, utf8.encode('prompt> '), keyframe: true, cols: 80, rows: 24),
+      );
+      // Bypass the 8 KiB chunker's boundaries: one contiguous burst of 70,000 bytes.
+      session.terminal.onOutput?.call('x' * 70000);
+      await Future<void>.delayed(const Duration(milliseconds: 12));
+      final inputs = binarySent
+          .where((f) => f.kind == TerminalBinaryKind.input)
+          .toList();
+      expect(
+        inputs.every(
+          (f) => f.bytes.length <= TerminalSession.kInputFrameMaxBytes,
+        ),
+        isTrue,
+      );
+      expect(inputs.map((f) => f.seq), List.generate(inputs.length, (i) => i));
+      expect(inputs.fold<int>(0, (n, f) => n + f.bytes.length), 70000);
     },
   );
 
