@@ -33,4 +33,4 @@ Rapid navigation also coalesces pending arrangement writes. While the first writ
 
 ## Native follow-up
 
-The optimized real-data app builds and runs locally. Measure release input-to-display and tab-switch latency in the unlocked native window before making latency claims. The screen was locked during this pass, so native drag, overflow and visual inspection remain in the development handoff.
+The optimized real-data app builds and runs locally. A separate windowless AppKit check covers tab overflow geometry, resizing, accessibility order and disabled actions (`bash tool/check_swarm_titlebar.sh`, with an optional Flutter SDK path). Measure release input-to-display and tab-switch latency in the unlocked native window before making latency claims. The screen was locked during this pass, so native end-to-end drag and visual inspection remain in the development handoff.

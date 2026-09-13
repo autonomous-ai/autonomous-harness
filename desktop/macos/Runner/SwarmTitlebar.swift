@@ -142,6 +142,7 @@ private final class SwarmTabStrip: NSView {
     let rows = state["tabs"] as? [[String: Any]] ?? []
     activeId = state["activeId"] as? String ?? ""
     let ids = rows.compactMap { $0["id"] as? String }
+    let previousOrder = tabs.map(\.swarmId)
     for tab in tabs where !ids.contains(tab.swarmId) { tab.removeFromSuperview() }
     let previous = Dictionary(uniqueKeysWithValues: tabs.map { ($0.swarmId, $0) })
     tabs = rows.compactMap { row in
@@ -156,6 +157,8 @@ private final class SwarmTabStrip: NSView {
       tab.needsDisplay = true
       return tab
     }
+    // Moving frames alone leaves AppKit's child traversal in insertion order.
+    document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
     notifications.isEnabled = actionsEnabled
     settings.isEnabled = actionsEnabled
@@ -166,6 +169,9 @@ private final class SwarmTabStrip: NSView {
     notifications.setAccessibilityLabel(notifications.toolTip)
     needsLayout = true
     layoutSubtreeIfNeeded()
+    if ids != previousOrder {
+      NSAccessibility.post(element: document, notification: .layoutChanged)
+    }
   }
 
   override func layout() {

@@ -89,6 +89,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention; Swift sends new/select/close/rename/reorder/navigation/settings/notifications.
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
 - Accessibility names/selection update with state, including overflowed tabs that have never painted. Tab context menus obey modal-disabled state. Layout reveals the selected tab after window resize.
+- Accessibility child order follows the displayed order after a reorder; AppKit receives a layout-change notification when tabs are added, moved or closed. A windowless check compiles the production Swift source and exercises these native controls directly, without booting Flutter or reading saved account/layout data.
 - Native Swarm menu includes new/close/rename, previous/next, Add agent, close agent view, Settings.
 - Real tabs alongside traffic lights were visually verified. Native selection, new tabs, modal-disabled controls, and independently accessible select/close buttons were checked. Drag/reorder, overflow, and a wider keyboard/accessibility audit remain.
 
@@ -144,6 +145,7 @@ Swarm shortcuts, help, and tooltips now read the same catalog in `shortcuts/app_
 | CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
 | Flutter analyzer | **0 errors, 0 warnings, 12 existing vendored xterm infos**; passes with `--no-fatal-infos`. |
 | Headless performance | 3 explicit benchmarks passed: 2,000-agent catalog and 16/48 retained terminals. Reproducible command and limits in `docs/harness-v2-performance.md`. |
+| AppKit components | **151 assertions passed** for overflow, selected-tab visibility after resize, pre-paint labels, accessible order after reorder, retained tab controls, capacity and modal-disabled actions. No window opened. This complements the pending native end-to-end visual audit. |
 | Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and end-to-end latency measurements remain. |
 
 Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing again explains a partial estimate as a lower bound. Small offline panes avoid overflowing the full connection guide. No remaining full-suite failures are being dismissed as baseline.
@@ -162,6 +164,7 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-retained-tests.log`: 27 terminal/menu/layout checks.
 - `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
 - `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
+- `harness-v2-native-titlebar-tests.log`: windowless checks against the actual AppKit tab source.
 
 Earlier logs contain superseded failures. Temporary logs and toolchains are local conveniences, not committed artifacts.
 
@@ -193,6 +196,15 @@ open -n 'build/macos/Build/Products/Debug/Harness V2.app'
 ```
 
 Use online `pub get` if packages are not cached. Enable SPM before pub get; do not accept CocoaPods fallback rewriting the project. Do not commit generated build/ephemeral files or caches. Use `--no-fatal-infos` for the existing vendored xterm infos; do not modify vendored style merely to erase them.
+
+Native component checks can run while the desktop is locked. They require Xcode and Flutter's already-cached macOS release engine. The SDK path is read from the generated Flutter config, or can be passed explicitly:
+
+```bash
+cd /Users/ab/code/autonomous-harness/desktop
+bash tool/check_swarm_titlebar.sh /private/tmp/harness-v2-flutter
+```
+
+The script appends same-file assertions to the actual `SwarmTitlebar.swift` in a disposable temporary directory. It uses AppKit with activation prohibited, creates no windows, and does not launch the app, an engine, or any account/transport code.
 
 ```bash
 cd /Users/ab/code/autonomous-harness/cli
