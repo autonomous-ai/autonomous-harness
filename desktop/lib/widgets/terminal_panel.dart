@@ -89,6 +89,7 @@ class TerminalPanel extends StatefulWidget {
 }
 
 class _TerminalPanelState extends State<TerminalPanel>
+    with WidgetsBindingObserver
     implements TerminalViewport {
   static const _dialScale = 2.5;
   static const _dialStopVelocity = 40.0;
@@ -102,6 +103,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   late GlobalKey<TerminalViewState> _terminalViewKey;
   Timer? _dialInertiaTimer;
   Timer? _cursorBlinkTimer;
+  ValueListenable<TickerModeData>? _tickerMode;
   double _dialVelocity = 0;
   bool _cursorBlinkVisible = true;
   double _alternateScrollRemainder = 0;
@@ -112,6 +114,7 @@ class _TerminalPanelState extends State<TerminalPanel>
   String? _pressedLink;
   bool _openingLink = false;
   bool _linkRefreshPending = false;
+  bool _observingLinkModifiers = false;
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
   RemoteMediaProgress? _previewProgress;
@@ -127,18 +130,45 @@ class _TerminalPanelState extends State<TerminalPanel>
     _terminalViewKey = GlobalKey<TerminalViewState>();
     _linkOpener = widget.linkOpener ?? TerminalLinkOpener();
     _mediaDownloader = widget.mediaDownloader ?? RemoteMediaDownloader();
-    HardwareKeyboard.instance.addHandler(_onLinkModifierChanged);
     _focusNode.addListener(_handleFocusChange);
     _composerFocus.addListener(_handleComposerFocusChange);
-    _cursorBlinkTimer = Timer.periodic(
-      const Duration(milliseconds: 500),
-      (_) => _advanceCursorBlink(),
-    );
+    WidgetsBinding.instance.addObserver(this);
     widget.session.attachViewport(this);
     widget.session.addListener(_onSessionChanged);
     terminalFontStore.addListener(_onFontChanged);
     _afterTerminalMounted();
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateTickerMode();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _updateTickerMode();
+  }
+
+  @override
+  void deactivate() {
+    _stopCursorBlink();
+    super.deactivate();
+  }
+
+  void _updateTickerMode() {
+    final mode = TickerMode.getValuesNotifier(context);
+    if (!identical(mode, _tickerMode)) {
+      _tickerMode?.removeListener(_syncCursorBlink);
+      _tickerMode = mode..addListener(_syncCursorBlink);
+    }
+    _syncCursorBlink();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) =>
+      _syncCursorBlink();
 
   @override
   void didUpdateWidget(TerminalPanel oldWidget) {
@@ -159,6 +189,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       _viewTerminal.addListener(_scheduleLinkRefresh);
       _pressedLink = null;
       _hoveredLink = null;
+      _observeLinkModifiers(false);
       _terminalViewKey = GlobalKey<TerminalViewState>();
       _cursorBlinkVisible = true;
       widget.session.setCursorBlinkPhase(true);
@@ -168,6 +199,10 @@ class _TerminalPanelState extends State<TerminalPanel>
       _focusNode.unfocus();
       _composerFocus.unfocus();
       _cancelDialInertia();
+      _linkPointerPosition = null;
+      _hoveredLink = null;
+      _pressedLink = null;
+      _observeLinkModifiers(false);
     }
     if (!oldWidget.focused && widget.focused) {
       _claimFocusAfterFrame();
@@ -177,14 +212,17 @@ class _TerminalPanelState extends State<TerminalPanel>
     if (oldWidget.composerVisible != widget.composerVisible) {
       _afterTerminalMounted();
     }
+    _syncCursorBlink();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _tickerMode?.removeListener(_syncCursorBlink);
     _previewCancellation?.cancel();
     _viewTerminal.removeListener(_scheduleLinkRefresh);
     _scrollController.removeListener(_scheduleLinkRefresh);
-    HardwareKeyboard.instance.removeHandler(_onLinkModifierChanged);
+    _observeLinkModifiers(false);
     widget.session.setCursorBlinkPhase(true);
     widget.session.removeListener(_onSessionChanged);
     widget.session.detachViewport(this);
@@ -224,7 +262,9 @@ class _TerminalPanelState extends State<TerminalPanel>
   bool _composerFocusPending = false;
 
   void _onSessionChanged() {
-    if (!mounted || !_composerFocusPending) return;
+    if (!mounted) return;
+    _syncCursorBlink();
+    if (!_composerFocusPending) return;
     if (!widget.focused || !_showsComposer) {
       _composerFocusPending = false;
       return;
@@ -259,6 +299,7 @@ class _TerminalPanelState extends State<TerminalPanel>
     _viewTerminal.addListener(_scheduleLinkRefresh);
     _pressedLink = null;
     _hoveredLink = null;
+    _observeLinkModifiers(false);
     _terminalViewKey = GlobalKey<TerminalViewState>();
     _cancelDialInertia();
     _alternateScrollRemainder = 0;
@@ -273,13 +314,10 @@ class _TerminalPanelState extends State<TerminalPanel>
   }
 
   void _handleFocusChange() {
+    _syncCursorBlink();
     if (_focusNode.hasFocus) {
       widget.onRendererFocus?.call();
-      return;
     }
-    _cursorBlinkVisible = true;
-    widget.session.setCursorBlinkPhase(true);
-    _repaintTerminalCursor();
   }
 
   /// Re-establishes the native text-input connection after a rail selection.
@@ -313,14 +351,39 @@ class _TerminalPanelState extends State<TerminalPanel>
     });
   }
 
-  void _advanceCursorBlink() {
-    if (!mounted) return;
-    final shouldBlink =
-        widget.visible && _focusNode.hasFocus && widget.session.acceptsInput;
-    final next = shouldBlink ? !_cursorBlinkVisible : true;
-    if (next == _cursorBlinkVisible) return;
-    _cursorBlinkVisible = next;
-    widget.session.setCursorBlinkPhase(next);
+  /// Retaining a renderer must not retain a polling loop. Only the focused,
+  /// interactive terminal in the active window needs a cursor clock. Observe
+  /// ticker mode without rebuilding the subtree when a route covers it.
+  void _syncCursorBlink() {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final enabled =
+        mounted &&
+        widget.visible &&
+        !widget.readOnly &&
+        _focusNode.hasFocus &&
+        widget.session.acceptsInput &&
+        (_tickerMode?.value.enabled ?? false) &&
+        (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    if (!enabled) {
+      _stopCursorBlink();
+      return;
+    }
+    _cursorBlinkTimer ??= Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) => _setCursorBlinkVisible(!_cursorBlinkVisible),
+    );
+  }
+
+  void _stopCursorBlink() {
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkTimer = null;
+    _setCursorBlinkVisible(true);
+  }
+
+  void _setCursorBlinkVisible(bool visible) {
+    if (visible == _cursorBlinkVisible) return;
+    _cursorBlinkVisible = visible;
+    widget.session.setCursorBlinkPhase(visible);
     _repaintTerminalCursor();
   }
 
@@ -376,6 +439,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       // Never over the composer: a rebuild that re-focuses this tile while someone is typing into
       // the box would pull the caret out from under them mid-sentence.
       _claimFocus(view);
+      if (_linkPointerPosition != null) _hoverLink(_linkPointerPosition);
     });
   }
 
@@ -555,12 +619,29 @@ class _TerminalPanelState extends State<TerminalPanel>
     return false; // Modifier observation never consumes a terminal key.
   }
 
+  /// Modifier keys only change the pointer over a link. Do not fan every key
+  /// out to the retained terminal pool when no pointer feedback can change.
+  void _observeLinkModifiers(bool enabled) {
+    if (_observingLinkModifiers == enabled) return;
+    _observingLinkModifiers = enabled;
+    final keyboard = HardwareKeyboard.instance;
+    if (enabled) {
+      keyboard.addHandler(_onLinkModifierChanged);
+    } else {
+      keyboard.removeHandler(_onLinkModifierChanged);
+    }
+  }
+
   void _scheduleLinkRefresh() {
-    if (_linkPointerPosition == null || _linkRefreshPending) return;
+    if (!widget.visible ||
+        _linkPointerPosition == null ||
+        _linkRefreshPending) {
+      return;
+    }
     _linkRefreshPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _linkRefreshPending = false;
-      if (mounted) _hoverLink(_linkPointerPosition);
+      if (mounted && widget.visible) _hoverLink(_linkPointerPosition);
     });
   }
 
@@ -574,10 +655,11 @@ class _TerminalPanelState extends State<TerminalPanel>
   }
 
   void _hoverLink(Offset? globalPosition) {
-    _linkPointerPosition = globalPosition;
-    final target = globalPosition == null
+    _linkPointerPosition = widget.visible ? globalPosition : null;
+    final target = _linkPointerPosition == null
         ? null
-        : _linkAtPointer(globalPosition);
+        : _linkAtPointer(_linkPointerPosition!);
+    _observeLinkModifiers(target != null);
     if (target != _hoveredLink) setState(() => _hoveredLink = target);
   }
 

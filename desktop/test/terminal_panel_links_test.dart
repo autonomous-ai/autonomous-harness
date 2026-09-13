@@ -355,6 +355,62 @@ void main() {
     expect(view.controller!.selection, isNotNull);
   });
   testOnPlatform(
+    'a stationary link pointer follows session replacement and modifier release',
+    (tester) async {
+      await mount(tester);
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(point(tester));
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.pump();
+      final previous = tester.widget<TerminalPanel>(find.byType(TerminalPanel));
+      final replacement =
+          TerminalSession(
+              machineId: 'm1',
+              agentId: 'a2',
+              agentName: 'a2',
+              engineId: 'codex',
+              send: (_, _) async => true,
+              sendBinary: (_) async => true,
+            )
+            ..status = TerminalSessionStatus.controlling
+            ..streamId = 'stream-a2';
+      replacement.terminal.write('/tmp/replacement.png');
+      addTearDown(replacement.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TerminalPanel(
+              notifier: notifier,
+              session: replacement,
+              focused: true,
+              linkOpener: previous.linkOpener,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.widget<TerminalView>(find.byType(TerminalView)).mouseCursor,
+        SystemMouseCursors.click,
+      );
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.pump();
+      expect(
+        tester.widget<TerminalView>(find.byType(TerminalView)).mouseCursor,
+        SystemMouseCursors.text,
+      );
+      await mouse.removePointer();
+      await tester.pump(const Duration(milliseconds: 350));
+    },
+  );
+  testOnPlatform(
     'hover shows the shortcut and refreshes after streamed output changes',
     (tester) async {
       await mount(tester);

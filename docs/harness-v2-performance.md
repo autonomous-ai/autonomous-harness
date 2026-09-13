@@ -1,6 +1,6 @@
 # Harness V2 performance checks
 
-Measured on 2026-09-12, with a retained-canvas continuation on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
+Measured on 2026-09-12, with retained-canvas and idle-work continuations on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
 
 The explicit benchmark runs in the headless Flutter test runner with isolated synthetic sessions. It never opens a sample-data app or connects to a real agent. Run it from `desktop/`:
 
@@ -57,6 +57,31 @@ Rapid navigation also coalesces pending arrangement writes. While the first writ
 Incoming binary data now skips unrelated sessions before awaiting the matching renderer queue. This removes one async scheduling turn per unrelated view from each frame's dispatch, while retaining socket FIFO, current stream identity and machine isolation. This change is verified by routing tests; the CPU table above does not measure network delivery.
 
 Settings route and section fades are removed: the former opening/closing durations were 170/120 ms for the route and 200/90 ms for the section switcher. Both now present their destination immediately. Existing Settings, modal and route checks pass; this change removes configured animation time, not all possible input or rendering cost.
+
+## Idle cursor and keyboard work
+
+Every mounted terminal previously started a 500 ms periodic cursor timer, including retained hidden views. Its callback checked focus and visibility after waking, and the focused terminal continued blinking when the native window was inactive.
+
+The cursor clock now exists only while the terminal is visible, focused, accepting input, writable, in an enabled ticker subtree, and in the active application. Focus, session status, route visibility and application lifecycle events start/stop it directly. Stopping restores the local bright cursor phase while preserving the remote program's cursor visibility. The ticker-mode listener updates the clock without rebuilding the retained subtree.
+
+The paired isolated measurement counts actual periodic timer creation and callbacks through a delegated Dart zone. Each observation advances the widget runner's fake clock by five seconds:
+
+| Retained terminals | View/window | Active timers before → after | Callbacks in 5 s before → after |
+| ---: | --- | ---: | ---: |
+| 16 | Four visible panes, one focused | 16 → 1 | 160 → 10 |
+| 48 | Four visible panes, one focused | 48 → 1 | 480 → 10 |
+| 16 | Inactive window | 16 → 0 | 160 → 0 |
+| 48 | Inactive window | 48 → 0 | 480 → 0 |
+| 16 | Empty New swarm | 17 → 1 | 170 → 10 |
+| 48 | Empty New swarm | 49 → 1 | 490 → 10 |
+
+The empty Swarm's remaining timer belongs to its focused search field caret. These synthetic sessions start in controlling state without network heartbeats, so the table measures UI timer activity rather than total process wakeups, CPU usage, battery life or display latency. Real session heartbeats and output delivery continue independently. Baseline and final-source logs: `/private/tmp/harness-v2-idle-before.log` and `/private/tmp/harness-v2-idle-measured.log`.
+
+```bash
+flutter test test/benchmarks/terminal_idle_benchmark.dart --no-pub --reporter expanded
+```
+
+Global link-modifier handlers are now registered only while a visible link is under the pointer, removing the per-retained-terminal listener from ordinary keyboard input. Hidden views clear hover state and skip link refresh callbacks. Tests cover focus/tab/zoom changes, covered routes, window inactivity and resumption, session replacement, read-only/connection ownership, and a stationary link pointer across session replacement and modifier release. The complete Flutter suite passes with 1,010 tests and one skip.
 
 ## Terminal output allocations
 
