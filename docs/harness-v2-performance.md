@@ -31,6 +31,8 @@ With 16 retained terminals, one switch went from **2,480 to 1,491 widget rebuild
 
 Rapid navigation also coalesces pending arrangement writes. While the first write is in flight, only the latest subsequent snapshot is retained. Tests with 100 rapid tab changes verify that the first and final snapshots are written, including recovery after the first write fails. Normal quit waits for the final snapshot with a one-second bound for stalled storage.
 
+Incoming binary data now skips unrelated sessions before awaiting the matching renderer queue. This removes one async scheduling turn per unrelated view from each frame's dispatch, while retaining socket FIFO, current stream identity and machine isolation. This change is verified by routing tests; the CPU table above does not measure network delivery.
+
 ## Native follow-up
 
 The optimized real-data app builds and runs locally. A separate windowless AppKit check covers tab overflow geometry, resizing, accessibility order and disabled actions (`bash tool/check_swarm_titlebar.sh`, with an optional Flutter SDK path). Measure release input-to-display and tab-switch latency in the unlocked native window before making latency claims. The screen was locked during this pass, so native end-to-end drag and visual inspection remain in the development handoff.

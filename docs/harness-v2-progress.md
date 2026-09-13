@@ -66,6 +66,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - `TerminalPane.lastViewSize` retains geometry. Hidden `TerminalPanel` views stop auto-resizing/reporting viewport and release input focus.
 - Compact headers remove routine transport/status/pin clutter, retaining exceptional states and offline/unavailable placeholders.
 - Existing terminal sessions/transports/renderer and patched `third_party/xterm` are retained. One regression verifies renderer identity, hidden geometry during window resize, and input going only to the active view.
+- Binary dispatch reads current session stream IDs and skips unrelated sessions before awaiting them, avoiding a scheduling turn per unrelated view. No duplicate stream registry is maintained. Socket FIFO remains in `WsConn`; regressions additionally exercise direct concurrent dispatch during tab reorder, hidden shared views, machine isolation, unknown streams and corrupt-frame recovery.
 - Compact remote panes expose a Show/Hide message composer button in their header. Closing the final visible pane restores keyboard focus even when its shared terminal remains parked in another Swarm.
 
 ### Shell and dialogs
@@ -138,7 +139,7 @@ Swarm shortcuts, help, and tooltips now read the same catalog in `shortcuts/app_
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
 | macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. The screen remains locked, so final native visual review is pending. |
-| Full Flutter suite | **977 passed, 1 skipped** after persistence, modal menus and retained-terminal performance changes. |
+| Full Flutter suite | **980 passed, 1 skipped** after persistence, modal menus, retained-terminal performance and stream-dispatch changes. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
 | Local CLI discovery | 25 passed, including older-daemon folder parsing and continuous snapshots without spawning/reconnecting. |
 | CLI typecheck | `npm run typecheck` passed. |
@@ -154,7 +155,7 @@ Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing ag
 
 Evidence on this Mac under `/private/tmp`:
 
-- `harness-v2-final-tests.log`: full 977-test pass.
+- `harness-v2-final-tests.log`: full 980-test pass.
 - `harness-v2-final-analyze.log`: latest diagnostics.
 - `harness-v2-final-build.log`: real-entry debug build.
 - `harness-v2-release-build.log`: optimized local build.
@@ -165,6 +166,7 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
 - `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
 - `harness-v2-native-titlebar-tests.log`: windowless checks against the actual AppKit tab source.
+- `harness-v2-routing-tests.log`: 68 stream-routing, binary protocol and terminal session checks.
 
 Earlier logs contain superseded failures. Temporary logs and toolchains are local conveniences, not committed artifacts.
 

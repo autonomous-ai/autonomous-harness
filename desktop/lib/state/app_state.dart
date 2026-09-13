@@ -2379,11 +2379,10 @@ class AppNotifier extends ChangeNotifier {
 
   /// Bulk terminal data for a machine, which may now be feeding several tiles.
   ///
-  /// Offered to EVERY tile on that machine rather than routed by this side:
-  /// each session already drops a frame whose `streamId` is not its own, and
-  /// that check is the authority on which stream a frame belongs to. Choosing
-  /// here instead would mean keeping a second copy of that mapping in sync with
-  /// the first, and the copy that drifts is the one nobody is looking at.
+  /// Read the live session identity instead of maintaining a second registry.
+  /// Skip unrelated sessions before awaiting: every ignored async call adds a
+  /// scheduling turn to the socket's incoming queue. Matching frames enter the
+  /// session's ordered renderer queue synchronously, regardless of tab order.
   Future<void> _handleTerminalBinary(String machineId, Uint8List raw) async {
     final targets = panesFor(machineId)
         .map((pane) => pane.session)
@@ -2400,7 +2399,9 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     for (final terminal in targets) {
-      await terminal.handleBinary(clear);
+      if (terminal.streamId == clear.streamId) {
+        await terminal.handleBinary(clear);
+      }
     }
   }
 
@@ -4450,6 +4451,10 @@ class AppNotifier extends ChangeNotifier {
     String machineId,
     Map<String, dynamic> event,
   ) => _handleEvent(machineId, event);
+
+  @visibleForTesting
+  Future<void> handleTerminalBinaryForTest(String machineId, Uint8List frame) =>
+      _handleTerminalBinary(machineId, frame);
 
   /// Put an already-built session on the grid.
   ///
