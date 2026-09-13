@@ -32,34 +32,29 @@ class Swarm {
     if (previousPaneId == pane.id) previousPaneId = null;
   }
 
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'name': name,
-    'wallpaper': wallpaper,
-    'focus': panes
+  Map<String, Object?> toJson() {
+    final agents = panes
         .where((p) => p.agentId != null)
-        .toList()
-        .indexWhere((p) => p.id == focusedPaneId),
-    'previousFocus': panes
-        .where((p) => p.agentId != null)
-        .toList()
-        .indexWhere((p) => p.id == previousPaneId),
-    'zoom': panes
-        .where((p) => p.agentId != null)
-        .toList()
-        .indexWhere((p) => p.id == zoomedPaneId),
-    'presets': {for (final e in presets.entries) '${e.key}': e.value.id},
-    'panes': [
-      for (final p in panes)
-        if (p.agentId != null)
+        .toList(growable: false);
+    return {
+      'id': id,
+      'name': name,
+      'wallpaper': wallpaper,
+      'focus': agents.indexWhere((p) => p.id == focusedPaneId),
+      'previousFocus': agents.indexWhere((p) => p.id == previousPaneId),
+      'zoom': agents.indexWhere((p) => p.id == zoomedPaneId),
+      'presets': {for (final e in presets.entries) '${e.key}': e.value.id},
+      'panes': [
+        for (final p in agents)
           PaneLayoutEntry(
             machineId: p.machineId,
             agentId: p.agentId!,
             composerVisible: p.composerVisible,
             pinnedSlot: pinnedSlots[p.id],
           ).toJson(),
-    ],
-  };
+      ],
+    };
+  }
 }
 
 const swarmWallpapers = [

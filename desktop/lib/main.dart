@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -148,39 +149,73 @@ class RootShell extends ConsumerStatefulWidget {
   ConsumerState<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends ConsumerState<RootShell> {
+class _RootShellState extends ConsumerState<RootShell>
+    with WidgetsBindingObserver {
+  bool _menuDialogOpen = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _appMenuChannel.setMethodCallHandler(_onAppMenu);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _appMenuChannel.setMethodCallHandler(null);
     super.dispose();
   }
 
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    // Save the final arrangement, with a bound so an unavailable disk cannot
+    // trap the user in the app. Input and tab switching never wait for disk.
+    await ref
+        .read(appStateProvider)
+        .flushPaneLayout()
+        .timeout(const Duration(seconds: 1), onTimeout: () {});
+    return AppExitResponse.exit;
+  }
+
   Future<void> _onAppMenu(MethodCall call) async {
+    if (!mounted) return;
     switch (call.method) {
       case 'checkForUpdates':
         final app = ref.read(appStateProvider);
         if (!app.desktopUpdatesEnabled) return;
-        final result = await app.checkForUpdates();
-        if (!mounted) return;
-        await showUpdateCheckDialog(context, app, result);
+        await _menuDialog(() async {
+          final result = await app.checkForUpdates();
+          if (!mounted) return;
+          await showUpdateCheckDialog(context, app, result);
+        });
       case 'flashFirmware':
-        await showFlashFirmwareDialog(context);
+        await _menuDialog(() => showFlashFirmwareDialog(context));
       case 'showLayout':
-        await showLayoutPalette(context, ref.read(appStateProvider));
+        if (advanceLayoutPalette()) return;
+        await _menuDialog(
+          () => showLayoutPalette(context, ref.read(appStateProvider)),
+        );
       case 'showShortcuts':
-        await showShortcutsSheet(context);
+        await _menuDialog(() => showShortcutsSheet(context));
       case 'increaseTerminalFontSize':
         await terminalFontStore.increaseSize();
       case 'decreaseTerminalFontSize':
         await terminalFontStore.decreaseSize();
       case 'resetTerminalFontSize':
         await terminalFontStore.reset();
+    }
+  }
+
+  Future<void> _menuDialog(Future<void> Function() action) async {
+    if (_menuDialogOpen || ModalRoute.isCurrentOf(context) == false) return;
+    // Reserve before the first frame too: held menu shortcuts can arrive
+    // before the new dialog has changed the route's current state.
+    _menuDialogOpen = true;
+    try {
+      await action();
+    } finally {
+      _menuDialogOpen = false;
     }
   }
 

@@ -226,6 +226,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await opening;
     expect(updates.last['enabled'], isTrue);
+    // Root app-menu dialogs enter outside SwarmScreen's own dialog helper.
+    final external = showDialog<void>(
+      context: tester.element(find.byType(SwarmScreen)),
+      builder: (_) => const AlertDialog(title: Text('External menu dialog')),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(updates.last['enabled'], isFalse);
+    await native('new');
+    expect(app.swarms.single.id, 'swarm-1');
+    Navigator.of(tester.element(find.byType(AlertDialog))).pop();
+    await tester.pump(const Duration(milliseconds: 300));
+    await external;
+    expect(updates.last['enabled'], isTrue);
     await tester.pumpWidget(const SizedBox());
     projects.dispose();
     app.dispose();

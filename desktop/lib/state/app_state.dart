@@ -3956,6 +3956,9 @@ class AppNotifier extends ChangeNotifier {
 
   int _layoutRevision = 0;
 
+  Future<void> flushPaneLayout() =>
+      _paneLayout?.flushSwarms() ?? Future<void>.value();
+
   void _persistLayout() {
     _layoutRevision++;
     _announceOpenPanesToDial();

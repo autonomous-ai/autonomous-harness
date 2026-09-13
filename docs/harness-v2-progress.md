@@ -54,6 +54,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Seeding records membership synchronously before awaiting attachments. Agent creation captures its destination before the RPC completes, so tab switching cannot redirect results.
 - Limits: 24 swarms, 64 panes per swarm. Add, seed, and dial paths report capacity explicitly without silently evicting a view; legacy migration retains the nine-pane storage limit.
 - `PaneLayoutStore` writes `swarm_layout_v1`: tab order/selection/names, wallpaper, pane intent, focus/zoom, presets, per-swarm pins, composer visibility.
+- Pending writes coalesce to the latest snapshot during rapid navigation. Normal quit waits for the final arrangement with a one-second limit if storage stalls. Snapshot encoding reuses one filtered pane list per Swarm.
 - Restore pools shared pane identity, keeps disconnected memberships, and defers initial attachment of inactive panes until shown. Previous focus is persisted; grid columns remain measured runtime geometry. Revision guards cover every asynchronous legacy restore read.
 - Focus follows zoom and wraps without an invisible sidebar. Legacy `HomeScreen`/rail code remains but is no longer the authenticated V2 shell.
 - Agent comparison considers project and launch-state metadata so polling can refresh those details.
@@ -61,6 +62,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 ### Retained terminal views
 
 - `PaneGrid` swarm mode parks previously displayed inactive terminal widgets under Offstage with ticking/focus disabled and their last visible dimensions preserved.
+- Parked panes retain their widget configuration while hidden, so tab changes do not rebuild unrelated terminal headers and controls. A replaced session still updates its parked view; returning to a tab uses current metadata. The 16-terminal benchmark dropped from 2,480 to 1,491 widget rebuilds per switch; see `docs/harness-v2-performance.md` for measurements and limits.
 - `TerminalPane.lastViewSize` retains geometry. Hidden `TerminalPanel` views stop auto-resizing/reporting viewport and release input focus.
 - Compact headers remove routine transport/status/pin clutter, retaining exceptional states and offline/unavailable placeholders.
 - Existing terminal sessions/transports/renderer and patched `third_party/xterm` are retained. One regression verifies renderer identity, hidden geometry during window resize, and input going only to the active view.
@@ -86,6 +88,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - `NSTitlebarAccessoryViewController` with native scrollable tabs, new button, notification bell, settings. Automatic native window tabbing disabled; Flutter content begins below title bar.
 - Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention; Swift sends new/select/close/rename/reorder/navigation/settings/notifications.
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
+- Accessibility names/selection update with state, including overflowed tabs that have never painted. Tab context menus obey modal-disabled state. Layout reveals the selected tab after window resize.
 - Native Swarm menu includes new/close/rename, previous/next, Add agent, close agent view, Settings.
 - Real tabs alongside traffic lights were visually verified. Native selection, new tabs, modal-disabled controls, and independently accessible select/close buttons were checked. Drag/reorder, overflow, and a wider keyboard/accessibility audit remain.
 
@@ -126,21 +129,22 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 | Settings / shortcut sheet | Cmd+, / Cmd+/ |
 | Close agent view | Cmd+Shift+W |
 
-Swarm shortcuts, help, and tooltips now read the same catalog in `shortcuts/app_shortcuts.dart`. The retained legacy HomeScreen explicitly opts into its old bindings. Native Swarm actions and controls are blocked while Swarm dialogs or Settings are open. Clipboard/select-all and shell/TUI keys remain owned by the terminal. Do not add AppKit menu equivalents that intercept Cmd+H/J before Flutter.
+Swarm shortcuts, help, and tooltips now read the same catalog in `shortcuts/app_shortcuts.dart`. The retained legacy HomeScreen explicitly opts into its old bindings. Native Swarm actions and controls are blocked whenever another route is above the shell, including root app-menu dialogs. Held Layout/Shortcuts/Firmware menu commands cannot stack dialogs; repeated Cmd+S still cycles the visible Layout palette. Clipboard/select-all and shell/TUI keys remain owned by the terminal. Do not add AppKit menu equivalents that intercept Cmd+H/J before Flutter.
 
 ## Verification and limits
 
 | Check | Result |
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
-| macOS optimized local build | Passed with ad hoc signing and the real entry point. The distribution Developer ID certificate is unavailable; nothing was uploaded. The Mac locked before visual review, and the running debug app declined a normal quit request, so it was left running. |
-| Full Flutter suite | **968 passed, 1 skipped** after live-project discovery, keyboard navigation, and multi-machine folder-race fixes. |
+| macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. The screen remains locked, so final native visual review is pending. |
+| Full Flutter suite | **977 passed, 1 skipped** after persistence, modal menus and retained-terminal performance changes. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
 | Local CLI discovery | 25 passed, including older-daemon folder parsing and continuous snapshots without spawning/reconnecting. |
 | CLI typecheck | `npm run typecheck` passed. |
 | CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
 | Flutter analyzer | **0 errors, 0 warnings, 12 existing vendored xterm infos**; passes with `--no-fatal-infos`. |
-| Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and latency measurements remain. |
+| Headless performance | 3 explicit benchmarks passed: 2,000-agent catalog and 16/48 retained terminals. Reproducible command and limits in `docs/harness-v2-performance.md`. |
+| Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and end-to-end latency measurements remain. |
 
 Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing again explains a partial estimate as a lower bound. Small offline panes avoid overflowing the full connection guide. No remaining full-suite failures are being dismissed as baseline.
 
@@ -148,22 +152,25 @@ Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing ag
 
 Evidence on this Mac under `/private/tmp`:
 
-- `harness-v2-final-tests.log`: full 968-test pass.
+- `harness-v2-final-tests.log`: full 977-test pass.
 - `harness-v2-final-analyze.log`: latest diagnostics.
 - `harness-v2-final-build.log`: real-entry debug build.
 - `harness-v2-release-build.log`: optimized local build.
 - `harness-v2-final-cli-check.log`, `harness-v2-final-cli-tests.log`: final metadata checks.
 - `harness-v2-resume-cli-tests.log`: 135-test CLI pass.
 - `harness-v2-keyboard-tests.log`, `harness-v2-local-project-tests.log`: focused interaction/discovery checks.
+- `harness-v2-retained-tests.log`: 27 terminal/menu/layout checks.
+- `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
+- `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
 
 Earlier logs contain superseded failures. Temporary logs and toolchains are local conveniences, not committed artifacts.
 
 ## Remaining work
 
-1. Launch the completed optimized real-data build after the Mac is unlocked; verify actual local project starters and keyboard navigation in the native shell.
+1. Review the running optimized real-data build after the Mac is unlocked; verify actual local project starters and keyboard navigation in the native shell.
 2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
-3. Measure terminal input and tab-switch responsiveness before making latency claims. Preserve the existing immediate first-input flush and shared retained renderers.
-4. Audit app-menu modal interactions (the older `harness/app_menu` path also opens Layout/Shortcuts/Firmware dialogs).
+3. Measure native terminal input and tab-switch responsiveness before making end-to-end latency claims. Headless CPU benchmarks are now recorded. Preserve the existing immediate first-input flush and shared retained renderers.
+4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
 6. Continue the agreed goal autonomously. The user has stepped away; lack of immediate replies is not a reason to stop independent implementation, checks, or app-v2 publishing.
 

@@ -89,18 +89,22 @@ class PaneGrid extends StatelessWidget {
             for (final pane in notifier.allPanes)
               if (!visible.contains(pane) && pane.lastViewSize != null)
                 Positioned.fill(
-                  child: Offstage(
-                    offstage: true,
-                    child: TickerMode(
-                      enabled: false,
-                      child: ExcludeFocus(
-                        child: OverflowBox(
-                          alignment: Alignment.topLeft,
-                          minWidth: pane.lastViewSize!.width,
-                          maxWidth: pane.lastViewSize!.width,
-                          minHeight: pane.lastViewSize!.height,
-                          maxHeight: pane.lastViewSize!.height,
-                          child: cell(pane, visible: false),
+                  key: ValueKey(pane.id),
+                  child: _ParkedPane(
+                    session: pane.session,
+                    child: Offstage(
+                      offstage: true,
+                      child: TickerMode(
+                        enabled: false,
+                        child: ExcludeFocus(
+                          child: OverflowBox(
+                            alignment: Alignment.topLeft,
+                            minWidth: pane.lastViewSize!.width,
+                            maxWidth: pane.lastViewSize!.width,
+                            minHeight: pane.lastViewSize!.height,
+                            maxHeight: pane.lastViewSize!.height,
+                            child: cell(pane, visible: false),
+                          ),
                         ),
                       ),
                     ),
@@ -228,6 +232,34 @@ class PaneGrid extends StatelessWidget {
         );
     }
   }
+}
+
+/// A tab switch does not change terminals that stay hidden. Keep their widget
+/// configuration as well as their renderer; rebuilding their headers, menus,
+/// and gestures makes switching cost grow with every previously visited tab.
+/// Session replacement still reaches the parked view. When shown, the cell's
+/// GlobalKey moves it into the active layout with current agent metadata.
+class _ParkedPane extends StatefulWidget {
+  const _ParkedPane({required this.session, required this.child});
+
+  final TerminalSession? session;
+  final Widget child;
+
+  @override
+  State<_ParkedPane> createState() => _ParkedPaneState();
+}
+
+class _ParkedPaneState extends State<_ParkedPane> {
+  late Widget _child = widget.child;
+
+  @override
+  void didUpdateWidget(_ParkedPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session)) _child = widget.child;
+  }
+
+  @override
+  Widget build(BuildContext context) => _child;
 }
 
 /// Five or more tiles: a grid, sized by what a terminal actually needs.

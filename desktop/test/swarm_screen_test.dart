@@ -198,6 +198,94 @@ void main() {
   );
 
   testWidgets(
+    'parked terminals keep output, selection, scroll and fresh metadata on return',
+    (tester) async {
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      final session = terminal('a0', []);
+      session.terminal.write(
+        List.generate(200, (i) => 'saved line $i\r\n').join(),
+      );
+      app.adoptSessionForTest(session);
+      final first = app.activeSwarmId;
+      await mount(tester, app);
+      final renderer = tester.state(find.byType(TerminalView));
+      final view = tester.widget<TerminalView>(find.byType(TerminalView));
+      view.scrollController!.jumpTo(100);
+      view.controller!.setSelection(
+        session.terminal.buffer.createAnchor(0, 3),
+        session.terminal.buffer.createAnchor(5, 3),
+      );
+      await tester.pump();
+      final selection = session.terminal.buffer.getText(
+        view.controller!.selection,
+      );
+      final scroll = view.scrollController!.offset;
+      app.newSwarm();
+      await tester.pump();
+      // A second switch leaves the first terminal parked in the same slot.
+      app.newSwarm();
+      session.terminal.write('arrived while hidden\r\n');
+      await app.handleEventForTest('m', {
+        'type': 'agent_renamed',
+        'payload': {'agentId': 'a0', 'name': 'Renamed while hidden'},
+      });
+      await tester.pump();
+      expect(find.byType(TerminalView), findsNothing);
+      expect(view.scrollController!.offset, scroll);
+      app.selectSwarm(first);
+      await tester.pump();
+      expect(tester.state(find.byType(TerminalView)), same(renderer));
+      expect(find.text('Renamed while hidden'), findsOneWidget);
+      expect(
+        session.terminal.buffer.getText(),
+        contains('arrived while hidden'),
+      );
+      expect(
+        session.terminal.buffer.getText(view.controller!.selection),
+        selection,
+      );
+      expect(view.scrollController!.offset, scroll);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  testWidgets(
+    'a replacement session reaches its parked view before the tab is shown',
+    (tester) async {
+      final app = createApp();
+      app.machineStates['m']!.nodeOnline = true;
+      final original = terminal('a0', []);
+      final pane = app.adoptSessionForTest(original);
+      final first = app.activeSwarmId;
+      await mount(tester, app);
+      app.newSwarm();
+      await tester.pump();
+      final replacement = terminal('a0', [])
+        ..terminal.write('replacement stream');
+      pane.session = replacement;
+      app.newSwarm();
+      await tester.pump();
+      final parked = tester.widget<TerminalPanel>(
+        find.byType(TerminalPanel, skipOffstage: false),
+      );
+      expect(parked.session, same(replacement));
+      expect(parked.visible, isFalse);
+      original.removeListener(app.notifyListeners);
+      original.dispose();
+      app.selectSwarm(first);
+      await tester.pump();
+      expect(
+        tester.widget<TerminalPanel>(find.byType(TerminalPanel)).session,
+        same(replacement),
+      );
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
+
+  testWidgets(
     'notifications show only current questions and navigate to their originating swarm',
     (tester) async {
       final app = createApp();

@@ -166,7 +166,6 @@ private final class SwarmTabStrip: NSView {
     notifications.setAccessibilityLabel(notifications.toolTip)
     needsLayout = true
     layoutSubtreeIfNeeded()
-    if let active = tabs.first(where: { $0.swarmId == activeId }) { document.scrollToVisible(active.frame) }
   }
 
   override func layout() {
@@ -182,6 +181,9 @@ private final class SwarmTabStrip: NSView {
     newButton.frame = NSRect(x: occupied + 3, y: 4, width: 30, height: 30)
     notifications.frame = NSRect(x: bounds.width - 69, y: 4, width: 30, height: 30)
     settings.frame = NSRect(x: bounds.width - 35, y: 4, width: 30, height: 30)
+    if let active = tabs.first(where: { $0.swarmId == activeId }) {
+      document.scrollToVisible(active.frame)
+    }
   }
   override func mouseDown(with event: NSEvent) {
     if event.clickCount == 2 { window?.performZoom(nil) }
@@ -203,10 +205,10 @@ private final class SwarmTabStrip: NSView {
   }
 }
 
-private final class SwarmTabButton: NSView, NSDraggingSource {
+private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidation {
   let swarmId: String
-  var name = "New swarm"
-  var selected = false
+  var name = "New swarm" { didSet { updateAccessibility() } }
+  var selected = false { didSet { updateAccessibility() } }
   var attention = false
   var emit: ((String, Any?) -> Void)?
   private let closeButton = NSButton()
@@ -246,6 +248,7 @@ private final class SwarmTabButton: NSView, NSDraggingSource {
       menu.addItem(item)
     }
     self.menu = menu
+    updateAccessibility()
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func layout() {
@@ -267,12 +270,17 @@ private final class SwarmTabButton: NSView, NSDraggingSource {
       NSColor.systemOrange.setFill()
       NSBezierPath(ovalIn: NSRect(x: 4, y: 16, width: 4, height: 4)).fill()
     }
+  }
+  // Overflowed tabs might not be drawn. Their names and selection still need
+  // to be available to VoiceOver and automation before they scroll into view.
+  private func updateAccessibility() {
     setAccessibilityLabel(name)
     selectButton.setAccessibilityLabel("Select \(name)")
     selectButton.setAccessibilityValue(selected ? "Selected" : "")
     toolTip = "\(name) — double-click to rename"
     closeButton.setAccessibilityLabel("Close \(name)")
   }
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { actionsEnabled }
   override func mouseDown(with event: NSEvent) {
     guard actionsEnabled else { return }
     downPoint = event.locationInWindow

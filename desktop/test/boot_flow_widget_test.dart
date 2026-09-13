@@ -798,7 +798,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Settings'));
+    await tester.tap(find.byTooltip(RegExp(r'^Settings')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();

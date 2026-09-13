@@ -50,6 +50,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
   final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
+  bool _routeIsCurrent = true;
   String? _linkDialogMachineId;
   String? _nativeState;
   AppNotifier get app => widget.notifier;
@@ -67,6 +68,15 @@ class _SwarmScreenState extends State<SwarmScreen> {
       app.addListener(_syncNative);
       _syncNative();
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final current = ModalRoute.isCurrentOf(context) ?? true;
+    if (_routeIsCurrent == current) return;
+    _routeIsCurrent = current;
+    if (_native) _syncNative();
   }
 
   @override
@@ -106,7 +116,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   void _syncNative() {
     final payload = {
-      'enabled': !_dialogOpen && !_spokenPaletteOpen,
+      'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
       'attention': _attention,
       'tabs': [
@@ -693,7 +703,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ),
         ),
         IconButton(
-          tooltip: 'Settings',
+          tooltip: withShortcutHint('Settings', ShortcutAction.showSettings),
           onPressed: _settings,
           icon: const Icon(Icons.settings_outlined, size: 18),
         ),

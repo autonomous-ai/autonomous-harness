@@ -29,12 +29,13 @@ import '../theme/app_theme.dart';
 /// Enter takes it. That is how every cycling chord on this OS behaves, and it
 /// means the shape can be chosen without the hand leaving the chord it arrived
 /// on.
-void Function()? _layoutPaletteAdvance;
+bool Function()? _layoutPaletteAdvance;
+
+/// Advance the visible palette without opening another route behind a dialog.
+bool advanceLayoutPalette() => _layoutPaletteAdvance?.call() ?? false;
 
 Future<void> showLayoutPalette(BuildContext context, AppNotifier notifier) {
-  final open = _layoutPaletteAdvance;
-  if (open != null) {
-    open();
+  if (advanceLayoutPalette()) {
     return Future<void>.value();
   }
   return showAppDialog<void>(
@@ -133,14 +134,16 @@ class _LayoutPaletteState extends State<_LayoutPalette> {
   /// a direction: running off the end of a strip you can see the ends of reads
   /// as a mis-key. A repeated chord is a CYCLE — nobody holding ⌘S means "stop
   /// at the last one", they mean "show me the next".
-  void _advance() {
+  bool _advance() {
+    if (!mounted || ModalRoute.isCurrentOf(context) == false) return false;
     final count = widget.notifier.panes.length;
     final choices = PanePreset.forCount(count);
-    if (choices.isEmpty) return;
+    if (choices.isEmpty) return true;
     // presetFor is keyed on the PANE COUNT, not on how many shapes that count
     // offers — the two are different numbers and only one of them is a key.
     final at = _cursorIn(choices, widget.notifier.presetFor(count));
     setState(() => _cursor = (at + 1) % choices.length);
+    return true;
   }
 
   /// Which shape the arrow keys are resting on, which is NOT the same as the

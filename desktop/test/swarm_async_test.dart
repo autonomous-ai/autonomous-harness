@@ -1,8 +1,13 @@
 import 'dart:async';
 
 import 'dart:convert';
+import 'dart:ui' show AppExitResponse;
 
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness/main.dart';
+import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/ws/ws_conn.dart';
 
@@ -55,7 +60,91 @@ class _DelayedStore extends MemoryStore {
   }
 }
 
+class _PendingWriteStore extends MemoryStore {
+  final release = Completer<void>();
+  final snapshots = <String>[];
+  bool failFirst = false;
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == 'swarm_layout_v1') {
+      snapshots.add(value);
+      if (snapshots.length == 1) {
+        await release.future;
+        if (failFirst) throw StateError('Busy fixture disk');
+      }
+    }
+    await super.write(key, value);
+  }
+}
+
 void main() {
+  for (final failFirst in [false, true]) {
+    test(
+      'rapid tab changes save only the final queued layout after ${failFirst ? 'a failed' : 'a slow'} write',
+      () async {
+        final storage = _PendingWriteStore()..failFirst = failFirst;
+        final app = createApp(store: storage);
+        addTearDown(app.dispose);
+        app.newSwarm();
+        for (var i = 0; i < 100; i++) {
+          app.stepSwarm(1);
+        }
+        app.renameSwarm(app.activeSwarmId, 'Final arrangement');
+        expect(storage.snapshots, hasLength(1));
+        final saving = app.flushPaneLayout();
+        storage.release.complete();
+        await saving;
+        expect(storage.snapshots, hasLength(2));
+        final saved = jsonDecode(storage.values['swarm_layout_v1']!) as Map;
+        expect(saved['activeId'], app.activeSwarmId);
+        expect((saved['swarms'] as List).last['name'], 'Final arrangement');
+        app.renameSwarm(app.activeSwarmId, 'After completion');
+        await app.flushPaneLayout();
+        expect(storage.snapshots, hasLength(3));
+        expect(storage.snapshots.last, contains('After completion'));
+      },
+    );
+  }
+
+  for (final timedOut in [false, true]) {
+    testWidgets(
+      'quit ${timedOut ? 'stays available with a stalled disk' : 'waits for the latest saved arrangement'}',
+      (tester) async {
+        final storage = _PendingWriteStore();
+        final app = createApp(store: storage)..status = AppStatus.authenticated;
+        app.newSwarm();
+        app.renameSwarm(app.activeSwarmId, 'Before quit');
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [appStateProvider.overrideWithValue(app)],
+            child: const DesktopApp(),
+          ),
+        );
+        await tester.pump();
+        final observer =
+            tester.state(find.byType(RootShell)) as WidgetsBindingObserver;
+        var completed = false;
+        final quitting = observer.didRequestAppExit().then((result) {
+          completed = true;
+          return result;
+        });
+        await tester.pump();
+        expect(completed, isFalse);
+        if (timedOut) {
+          await tester.pump(const Duration(seconds: 1));
+          expect(completed, isTrue);
+        }
+        storage.release.complete();
+        await tester.pump();
+        expect(await quitting, AppExitResponse.exit);
+        await app.flushPaneLayout();
+        expect(storage.values['swarm_layout_v1'], contains('Before quit'));
+        await tester.pumpWidget(const SizedBox());
+        app.dispose();
+      },
+    );
+  }
+
   for (final change in ['switch', 'close', 'dispose']) {
     test(
       'an agent launch stays with its destination after $change during the RPC',

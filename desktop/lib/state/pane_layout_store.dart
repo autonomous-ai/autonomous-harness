@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../core/harness_file_store.dart';
@@ -44,6 +45,10 @@ class PaneLayoutStore {
 
   final LocalKeyValueStore _storage;
   LocalKeyValueStore get storage => _storage;
+  String? _pendingSwarmSnapshot;
+  Completer<void>? _swarmSave;
+
+  Future<void> flushSwarms() => _swarmSave?.future ?? Future<void>.value();
 
   /// Failure is silent and lands on an empty layout, which is exactly the
   /// first-run state. A corrupt state file is a reason to open the app the way
@@ -137,20 +142,43 @@ class PaneLayoutStore {
     List<Swarm> swarms,
     String activeId,
     int nextWallpaper,
-  ) async {
+  ) {
+    // Capture each request before yielding, but keep only the latest snapshot
+    // while a write is pending. Holding a navigation key must not queue a full
+    // state-file rewrite for every intermediate focus or tab selection.
     try {
-      await _storage.write(
-        'swarm_layout_v1',
-        jsonEncode({
-          'version': 1,
-          'activeId': activeId,
-          'nextWallpaper': nextWallpaper,
-          'swarms': swarms.map((s) => s.toJson()).toList(),
-        }),
-      );
+      _pendingSwarmSnapshot = jsonEncode({
+        'version': 1,
+        'activeId': activeId,
+        'nextWallpaper': nextWallpaper,
+        'swarms': swarms.map((s) => s.toJson()).toList(),
+      });
     } catch (_) {
-      // Keep the current desk usable when storage is unavailable.
+      return Future<void>.value();
     }
+    final active = _swarmSave;
+    if (active != null) return active.future;
+    final completion = Completer<void>();
+    _swarmSave = completion;
+    unawaited(_drainSwarmSnapshots(completion));
+    return completion.future;
+  }
+
+  Future<void> _drainSwarmSnapshots(Completer<void> completion) async {
+    while (_pendingSwarmSnapshot != null) {
+      final snapshot = _pendingSwarmSnapshot!;
+      _pendingSwarmSnapshot = null;
+      try {
+        await _storage.write('swarm_layout_v1', snapshot);
+      } catch (_) {
+        // Keep the current desk usable when storage is unavailable. A newer
+        // queued snapshot still gets its own attempt.
+      }
+    }
+    // Clear synchronously before completing: a save requested by a completion
+    // listener must start a fresh drain rather than join an already-ended one.
+    _swarmSave = null;
+    completion.complete();
   }
 
   Future<void> save(List<PaneLayoutEntry> entries) async {
