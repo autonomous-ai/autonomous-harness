@@ -47,6 +47,7 @@ import '../logging/debug_surface.dart';
 enum ShortcutAction {
   newSwarm,
   closeSwarm,
+  reopenClosedSwarm,
   renameSwarm,
   nextSwarm,
   previousSwarm,
@@ -447,6 +448,16 @@ const kSwarmShortcuts = [
     action: ShortcutAction.newSwarm,
     activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
     label: 'New swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.reopenClosedSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyT,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Reopen closed swarm',
     group: ShortcutGroup.navigate,
   ),
   AppShortcut(

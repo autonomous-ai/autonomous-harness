@@ -49,6 +49,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - New `desktop/lib/state/swarm.dart`: tab ID/name/wallpaper, memberships, focus/zoom, presets, measured grid columns, pins.
 - `AppNotifier`: swarm list/active swarm; `panes` is active membership, `allPanes` is the deduplicated session pool. Transport event fan-out uses all unique sessions.
 - New/select/rename/reorder/close tabs, wallpaper cycling, add-to-swarm, and machine/project seeding.
+- Cmd+Shift+T and the native Reopen Closed Swarm command restore the most recently closed arrangement at its original position, including focus, zoom, wallpaper, presets and pins. Recovery reuses agents still open in other swarms and preserves newer shared-view edits. History holds only lightweight intent for the last 24 closes, clears on account changes or app exit, and retains no terminal controllers or buffers. Reopening replaces the automatic empty welcome only while it is untouched; holding Cmd+W there cannot evict useful history.
 - Replacing membership creates/reuses a different pane identity instead of mutating a pane shared with another swarm.
 - Session detachment waits until the final membership closes. Sends terminal-close, never agent-delete.
 - Seeding records membership synchronously before awaiting attachments. Agent creation captures its destination before the RPC completes, so tab switching cannot redirect results.
@@ -87,11 +88,11 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 
 - `desktop/macos/Runner/SwarmTitlebar.swift`, registered in Xcode and owned by `MainFlutterWindow`.
 - `NSTitlebarAccessoryViewController` with native scrollable tabs, new button, notification bell, settings. Automatic native window tabbing disabled; Flutter content begins below title bar.
-- Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention; Swift sends new/select/close/rename/reorder/navigation/settings/notifications.
+- Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention and recovery availability; Swift sends new/reopen/select/close/rename/reorder/navigation/settings/notifications.
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
 - Accessibility names/selection update with state, including overflowed tabs that have never painted. Tab context menus obey modal-disabled state. Layout reveals the selected tab after window resize.
 - Accessibility child order follows the displayed order after a reorder; AppKit receives a layout-change notification when tabs are added, moved or closed. A windowless check compiles the production Swift source and exercises these native controls directly, without booting Flutter or reading saved account/layout data.
-- Native Swarm menu includes new/close/rename, previous/next, Add agent and close agent view. Settings activates the former disabled Preferences placeholder in the application menu, giving Cmd+, one native owner. It follows the same modal-disabled state as the titlebar controls.
+- Native Swarm menu includes new/reopen/close/rename, previous/next, Add agent and close agent view. Reopen disables when history is empty or the open-tab limit is reached. Settings activates the former disabled Preferences placeholder in the application menu, giving Cmd+, one native owner. It follows the same modal-disabled state as the titlebar controls.
 - Real tabs alongside traffic lights were visually verified. Native selection, new tabs, modal-disabled controls, and independently accessible select/close buttons were checked. Drag/reorder, overflow, and a wider keyboard/accessibility audit remain.
 
 ### CLI project metadata
@@ -118,6 +119,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 | Action | Binding |
 | --- | --- |
 | New / close swarm | Cmd+T / Cmd+W |
+| Reopen closed swarm | Cmd+Shift+T |
 | Rename swarm | Cmd+Shift+R |
 | Previous / next swarm | Cmd+Shift+[ / ], Ctrl+Shift+Tab / Ctrl+Tab |
 | Add agent picker / New agent | Cmd+Shift+F or Cmd+P / Cmd+N |
@@ -133,14 +135,17 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 
 Swarm shortcuts, help, and tooltips now read the same catalog in `shortcuts/app_shortcuts.dart`. The retained legacy HomeScreen explicitly opts into its old bindings. Native Swarm actions and controls are blocked whenever another route is above the shell, including root app-menu dialogs. Held Layout/Shortcuts/Firmware menu commands cannot stack dialogs; repeated Cmd+S still cycles the visible Layout palette. Clipboard/select-all and shell/TUI keys remain owned by the terminal. Do not add AppKit menu equivalents that intercept Cmd+H/J before Flutter.
 
+The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](https://support.apple.com/guide/safari/keyboard-shortcuts-and-gestures-cpsh003/mac) and [Chrome](https://support.google.com/a/users/answer/13293027?hl=en). Those references inform familiar navigation; the approved Swarm product contract remains the design scope.
+
 ## Verification and limits
 
 | Check | Result |
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
 | macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. The screen remains locked, so final native visual review is pending. |
-| Full Flutter suite | **980 passed, 1 skipped** after persistence, modal menus, retained-terminal performance and stream-dispatch changes. |
+| Full Flutter suite | **987 passed, 1 skipped** after persistence, modal menus, retained-terminal performance, stream dispatch and closed-Swarm recovery. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
+| Closed-Swarm recovery | 7 passed: arrangement and shared-view restoration, untouched welcome replacement, rapid close/reopen with delayed cleanup, capacity, bounded history, sign-out isolation and the keyboard command. Native command availability and modal behavior also pass in the interaction suite. |
 | Local CLI discovery | 25 passed, including older-daemon folder parsing and continuous snapshots without spawning/reconnecting. |
 | CLI typecheck | `npm run typecheck` passed. |
 | CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
@@ -155,7 +160,7 @@ Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing ag
 
 Evidence on this Mac under `/private/tmp`:
 
-- `harness-v2-final-tests.log`: full 980-test pass.
+- `harness-v2-final-tests.log`: full 987-test pass.
 - `harness-v2-final-analyze.log`: latest diagnostics.
 - `harness-v2-final-build.log`: real-entry debug build.
 - `harness-v2-release-build.log`: optimized local build.
@@ -167,6 +172,7 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
 - `harness-v2-native-titlebar-tests.log`: windowless checks against the actual AppKit tab source.
 - `harness-v2-routing-tests.log`: 68 stream-routing, binary protocol and terminal session checks.
+- `harness-v2-reopen-tests.log`: 23 Swarm recovery, state and interaction checks.
 
 Earlier logs contain superseded failures. Temporary logs and toolchains are local conveniences, not committed artifacts.
 
@@ -232,7 +238,7 @@ npx vitest run src/lib/agentFrame.spec.ts src/lib/agentProject.spec.ts
 
 Some tests require permission to bind disposable loopback sockets. Inject memory/temp stores, skip real credential/usage pollers using `kUnderTest`, and never treat a real Harness home as a fixture. Keep patched `desktop/third_party/xterm`, not pub.dev xterm.
 
-The real review app is now built in `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Debug/Harness V2.app`, with the separate V2 bundle identity and saved V2 state. An optimized ad hoc signed local build is ready in the sibling `Release/` directory. It has not been launched yet: the Mac is locked and the running debug app declined a normal quit request. No process was force-terminated. Production Harness remains a separate running app. Never automatically take over its terminals or use a real Harness home as a test fixture.
+The real review app uses `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Release/Harness V2.app`, with the separate V2 bundle identity and saved V2 state. Its optimized local build has been launched and verified running. The earlier debug build remains in the sibling `Debug/` directory. Production Harness remains separate. Never automatically take over its terminals or use a real Harness home as a test fixture.
 
 ## Publishing boundaries
 

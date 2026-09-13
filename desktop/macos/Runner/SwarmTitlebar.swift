@@ -11,6 +11,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private var observers: [NSObjectProtocol] = []
   private var configured = false
   private var actionsEnabled = false
+  private var canReopen = false
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
@@ -26,6 +27,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
       case "update":
         let state = call.arguments as? [String: Any] ?? [:]
         self.actionsEnabled = state["enabled"] as? Bool == true
+        self.canReopen = state["canReopen"] as? Bool == true
         self.strip.update(state)
         result(nil)
       default: result(FlutterMethodNotImplemented)
@@ -88,6 +90,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
       menu.addItem(item)
     }
     add("New Swarm", "t", "new")
+    add("Reopen Closed Swarm", "t", "reopen", [.command, .shift])
     add("Close Swarm", "w", "closeActive")
     add("Rename Swarm…", "r", "renameActive", [.command, .shift])
     menu.addItem(.separator())
@@ -102,10 +105,12 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     main.insertItem(item, at: min(2, main.numberOfItems))
   }
 
-  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { actionsEnabled }
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    actionsEnabled && (menuItem.representedObject as? String != "reopen" || canReopen)
+  }
 
   @objc private func menuAction(_ sender: NSMenuItem) {
-    guard actionsEnabled, let action = sender.representedObject as? String else { return }
+    guard validateMenuItem(sender), let action = sender.representedObject as? String else { return }
     channel.invokeMethod(action, arguments: nil)
   }
 }

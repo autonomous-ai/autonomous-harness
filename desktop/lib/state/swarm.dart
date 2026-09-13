@@ -57,6 +57,56 @@ class Swarm {
   }
 }
 
+/// Session-free history for an accidental tab close. Terminal buffers and
+/// controllers are released normally; a reopened view reuses any live peer.
+class ClosedSwarm {
+  ClosedSwarm(Swarm swarm, {required this.index, Swarm? replacement})
+    : id = swarm.id,
+      name = swarm.name,
+      wallpaper = swarm.wallpaper,
+      gridColumns = swarm.gridColumns,
+      focus = swarm.panes.indexWhere((p) => p.id == swarm.focusedPaneId),
+      previousFocus = swarm.panes.indexWhere(
+        (p) => p.id == swarm.previousPaneId,
+      ),
+      zoom = swarm.panes.indexWhere((p) => p.id == swarm.zoomedPaneId),
+      presets = Map.unmodifiable(swarm.presets),
+      panes = List.unmodifiable([
+        for (final pane in swarm.panes)
+          (
+            machineId: pane.machineId,
+            agentId: pane.agentId,
+            composerVisible: pane.composerVisible,
+            pinnedSlot: swarm.pinnedSlots[pane.id],
+          ),
+      ]),
+      replacementId = replacement?.id,
+      replacementWallpaper = replacement?.wallpaper;
+
+  final String id;
+  final String name;
+  final int index;
+  final int wallpaper;
+  final int? gridColumns;
+  final int focus;
+  final int previousFocus;
+  final int zoom;
+  final Map<int, PanePreset> presets;
+  final List<
+    ({String machineId, String? agentId, bool composerVisible, int? pinnedSlot})
+  >
+  panes;
+  final String? replacementId;
+  final int? replacementWallpaper;
+
+  bool replacesUntouchedWelcome(Swarm swarm) =>
+      swarm.id == replacementId &&
+      swarm.name == 'New swarm' &&
+      swarm.wallpaper == replacementWallpaper &&
+      swarm.panes.isEmpty &&
+      swarm.presets.isEmpty;
+}
+
 const swarmWallpapers = [
   'dusk',
   'abstract',

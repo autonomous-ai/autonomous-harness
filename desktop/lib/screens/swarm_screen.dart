@@ -118,6 +118,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
+      'canReopen': app.canReopenClosedSwarm,
       'attention': _attention,
       'tabs': [
         for (final swarm in app.swarms)
@@ -151,6 +152,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     switch (call.method) {
       case 'new':
         app.newSwarm();
+      case 'reopen':
+        app.reopenClosedSwarm();
       case 'select':
         if (args['id'] is String) app.selectSwarm(args['id']);
       case 'close':
@@ -456,6 +459,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ...buildShortcutBindings(
             handlers: {
               ShortcutAction.newSwarm: app.newSwarm,
+              ShortcutAction.reopenClosedSwarm: app.reopenClosedSwarm,
               ShortcutAction.closeSwarm: () =>
                   app.closeSwarm(app.activeSwarmId),
               ShortcutAction.renameSwarm: () => _rename(app.activeSwarmId),

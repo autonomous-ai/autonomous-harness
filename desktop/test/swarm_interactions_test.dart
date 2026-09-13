@@ -226,6 +226,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await opening;
     expect(updates.last['enabled'], isTrue);
+    app.renameSwarm(app.activeSwarmId, 'Recover me');
+    await app.closeSwarm(app.activeSwarmId);
+    await tester.pump();
+    final beforeExternal = app.activeSwarmId;
+    expect(updates.last['canReopen'], isTrue);
     // Root app-menu dialogs enter outside SwarmScreen's own dialog helper.
     final external = showDialog<void>(
       context: tester.element(find.byType(SwarmScreen)),
@@ -234,11 +239,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(updates.last['enabled'], isFalse);
     await native('new');
-    expect(app.swarms.single.id, 'swarm-1');
+    await native('reopen');
+    expect(app.swarms.single.id, beforeExternal);
     Navigator.of(tester.element(find.byType(AlertDialog))).pop();
     await tester.pump(const Duration(milliseconds: 300));
     await external;
     expect(updates.last['enabled'], isTrue);
+    await native('reopen');
+    await tester.pump();
+    expect(app.swarms.single.name, 'Recover me');
+    expect(updates.last['canReopen'], isFalse);
     await tester.pumpWidget(const SizedBox());
     projects.dispose();
     app.dispose();
