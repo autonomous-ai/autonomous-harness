@@ -292,6 +292,8 @@ void main() {
       expect(chordsFor(ShortcutAction.zoomPane), contains('⌘⏎'));
       expect(chordsFor(ShortcutAction.lastPane), contains('⌘;'));
       expect(chordsFor(ShortcutAction.switchAgent), contains('⌘P'));
+      expect(chordsFor(ShortcutAction.switchAgent), isNot(contains('⇧⌘F')));
+      expect(chordsFor(ShortcutAction.addAgent), ['⇧⌘F']);
     });
 
     test(

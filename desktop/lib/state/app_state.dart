@@ -368,7 +368,7 @@ class AppNotifier extends ChangeNotifier {
     selectSwarm(swarm.id);
   }
 
-  void selectSwarm(String id) {
+  void selectSwarm(String id, {bool attachPending = true}) {
     if (!swarms.any((s) => s.id == id)) return;
     _activeSwarmId = id;
     railFocused = false;
@@ -376,10 +376,52 @@ class AppNotifier extends ChangeNotifier {
     selectedMachineId = pane?.machineId;
     _persistLayout();
     _announceFocusToDial();
-    for (final machine in machineStates.values) {
-      _attachPendingPanes(machine);
+    if (attachPending) {
+      for (final machine in machineStates.values) {
+        _attachPendingPanes(machine);
+      }
     }
     notifyListeners();
+  }
+
+  /// Navigate to an existing view without opening, retrying or taking control
+  /// of a terminal. A shared view prefers the current Swarm, then the requested
+  /// owner. Publish the destination and its focus together, preserving layout.
+  bool revealAgentView(
+    String machineId,
+    String agentId, {
+    String? preferredSwarmId,
+  }) {
+    if (_disposed) return false;
+    bool contains(Swarm swarm) => swarm.panes.any(
+      (p) => p.machineId == machineId && p.agentId == agentId,
+    );
+    final owner = contains(activeSwarm)
+        ? activeSwarm
+        : swarms
+                  .where((s) => s.id == preferredSwarmId && contains(s))
+                  .firstOrNull ??
+              swarms.where(contains).firstOrNull;
+    if (owner == null) return false;
+    final pane = owner.panes.firstWhere(
+      (p) => p.machineId == machineId && p.agentId == agentId,
+    );
+    if (owner == activeSwarm) {
+      focusPane(pane.id);
+      return true;
+    }
+    if (owner.focusedPaneId != pane.id) {
+      owner.previousPaneId = owner.focusedPaneId;
+      owner.focusedPaneId = pane.id;
+    }
+    if (owner.zoomedPaneId != null) owner.zoomedPaneId = pane.id;
+    _activeSwarmId = owner.id;
+    railFocused = false;
+    selectedMachineId = machineId;
+    _persistLayout();
+    _announceFocusToDial();
+    notifyListeners();
+    return true;
   }
 
   void stepSwarm(int delta) {

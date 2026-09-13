@@ -55,6 +55,7 @@ Future<T?> showAppDialog<T>({
   String barrierLabel = 'Dismiss',
   Color veilTint = kDialogVeilTint,
   double veilBlur = kDialogVeilBlur,
+  Duration transitionDuration = const Duration(milliseconds: 140),
 }) => showGeneralDialog<T>(
   context: context,
   // The route's own barrier draws nothing: the veil below is the barrier.
@@ -64,9 +65,7 @@ Future<T?> showAppDialog<T>({
   // over a barrier it believes is there, including a tap on the dialog.
   barrierDismissible: false,
   barrierLabel: barrierLabel,
-  // Long enough to read as a fade rather than a cut, short enough that a
-  // keyboard-driven panel does not feel like it is waiting on an animation.
-  transitionDuration: const Duration(milliseconds: 140),
+  transitionDuration: transitionDuration,
   pageBuilder: (context, _, _) => _AppDialogVeil(
     tint: veilTint,
     blur: veilBlur,
@@ -105,10 +104,12 @@ class _AppDialogVeil extends StatelessWidget {
             // otherwise get the click that was meant to close the panel.
             behavior: HitTestBehavior.opaque,
             onTap: dismissible ? () => Navigator.of(context).maybePop() : null,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-              child: ColoredBox(color: tint),
-            ),
+            child: blur == 0
+                ? ColoredBox(color: tint)
+                : BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                    child: ColoredBox(color: tint),
+                  ),
           ),
         ),
         // ⚠️ The dialog is NOT inside the GestureDetector above: nested in it,

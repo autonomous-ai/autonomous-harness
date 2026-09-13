@@ -67,7 +67,7 @@ void main() {
     (tester) async {
       final app = createApp();
       await mount(tester, app);
-      await chord(tester, LogicalKeyboardKey.keyP);
+      await chord(tester, LogicalKeyboardKey.keyF, shift: true);
       await tester.pump(const Duration(milliseconds: 200));
       for (var i = 0; i < 12; i++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);

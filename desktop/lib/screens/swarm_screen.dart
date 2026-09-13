@@ -15,6 +15,7 @@ import '../shared/widgets/app_dialog.dart';
 import '../shortcuts/app_shortcuts.dart';
 import '../state/app_state.dart';
 import '../state/swarm_catalog.dart';
+import '../state/swarm_navigation.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/link_machine_screen.dart';
@@ -22,6 +23,7 @@ import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
+import '../widgets/swarm_switcher.dart';
 import '../widgets/swarm_wallpaper.dart';
 import '../widgets/swarm_welcome.dart';
 import '../widgets/task_palette.dart';
@@ -49,6 +51,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       SwarmProjectStore(storage: kUnderTest ? null : HarnessFileStore.shared);
   StreamSubscription<SpokenTaskRequest>? _spokenTasks;
   final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
+  final _navigation = SwarmNavigationHistory();
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
   bool _routeIsCurrent = true;
@@ -61,6 +64,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     super.initState();
     app.hasNavigationRail = false;
     app.railFocused = false;
+    _recordNavigation();
+    app.addListener(_recordNavigation);
     FocusManager.instance.addListener(_restoreEmptyFocus);
     unawaited(_projects.load());
     _spokenTasks = app.spokenTasks.listen(_openSpokenTask);
@@ -82,6 +87,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   @override
   void dispose() {
+    app.removeListener(_recordNavigation);
     FocusManager.instance.removeListener(_restoreEmptyFocus);
     _shellFocus.dispose();
     unawaited(_spokenTasks?.cancel());
@@ -95,6 +101,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (widget.projectStore == null) _projects.dispose();
     super.dispose();
   }
+
+  void _recordNavigation() => _navigation.record(app);
 
   int get _attention =>
       app.machineStates.values.fold(0, (n, m) => n + m.blockedAgents.length);
@@ -229,6 +237,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
       swarmId: swarmId,
     );
   });
+  Future<void> _jump() async {
+    final target = app.activeSwarmId;
+    SwarmDestination? selected;
+    await _dialog(() async {
+      selected = await showSwarmSwitcher(context, app, _navigation);
+    });
+    if (!mounted || selected == null) return;
+    await activateSwarmDestination(app, selected!, destinationSwarmId: target);
+  }
+
   Future<void> _addAgent() async {
     final target = app.activeSwarmId;
     bool create = false;
@@ -290,17 +308,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   Future<void> _goToAgent(String machineId, String agentId) async {
-    if (app.paneOfAgent(machineId, agentId) == null) {
-      final owner = app.swarms
-          .where(
-            (s) => s.panes.any(
-              (p) => p.machineId == machineId && p.agentId == agentId,
-            ),
-          )
-          .firstOrNull;
-      if (owner != null) app.selectSwarm(owner.id);
-    }
-    await app.selectAgent(machineId, agentId);
+    if (app.revealAgentView(machineId, agentId)) return;
+    await app.addAgentToSwarm(machineId, agentId);
   }
 
   Future<void> _notifications() => _dialog(() async {
@@ -483,7 +492,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ShortcutAction.previousAgent: () => app.focusPaneBy(-1),
               ShortcutAction.lastPane: app.focusLastPane,
               ShortcutAction.zoomPane: app.toggleZoomPane,
-              ShortcutAction.switchAgent: _addAgent,
+              ShortcutAction.switchAgent: _jump,
+              ShortcutAction.addAgent: _addAgent,
               ShortcutAction.closePane: () {
                 if (app.focusedPaneId != null) {
                   app.closePane(app.focusedPaneId!);
@@ -608,7 +618,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: IconButton(
                                     tooltip: withShortcutHint(
                                       'Add agent',
-                                      ShortcutAction.switchAgent,
+                                      ShortcutAction.addAgent,
                                     ),
                                     onPressed: _addAgent,
                                     constraints: const BoxConstraints.tightFor(

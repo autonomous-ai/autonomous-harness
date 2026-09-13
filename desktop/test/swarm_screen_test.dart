@@ -100,7 +100,7 @@ void main() {
       await tester.pump();
       final zoom = app.zoomedPaneId;
       final before = tester.getSize(find.byType(PaneGrid));
-      await tester.tap(find.byTooltip('Add agent  ⌘P'));
+      await tester.tap(find.byTooltip('Add agent  ⇧⌘F'));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Add agent'), findsOneWidget);
       expect(app.panes.length, 2);

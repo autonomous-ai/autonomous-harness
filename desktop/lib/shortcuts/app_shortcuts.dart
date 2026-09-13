@@ -73,6 +73,9 @@ enum ShortcutAction {
   /// Jump to any agent by name, on any machine.
   switchAgent,
 
+  /// Add a view to the current Swarm, independently of navigation.
+  addAgent,
+
   closePane,
   newAgent,
   routeTask,
@@ -515,11 +518,11 @@ const kSwarmShortcuts = [
   AppShortcut(
     action: ShortcutAction.switchAgent,
     activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-    label: 'Add an agent to this swarm',
-    group: ShortcutGroup.actions,
+    label: 'Jump to an agent or swarm',
+    group: ShortcutGroup.navigate,
   ),
   AppShortcut(
-    action: ShortcutAction.switchAgent,
+    action: ShortcutAction.addAgent,
     activator: SingleActivator(
       LogicalKeyboardKey.keyF,
       meta: true,

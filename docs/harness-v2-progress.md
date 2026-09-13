@@ -1,6 +1,6 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-12 after the implementation continuation and live-data review. This is a working preview, not a release.
+Updated 2026-09-13 after the jump-navigation continuation. This is a working preview, not a release.
 
 ## Resume here
 
@@ -13,6 +13,8 @@ Updated 2026-09-12 after the implementation continuation and live-data review. T
 - The desktop is now unlocked and the user is actively reviewing the app. A stale Debug build briefly ran alongside Release and obscured the latest changes. Both previews were quit normally, the stale Debug bundle was unregistered and retained as `/private/tmp/Harness V2.previous-debug-1789267673713820000.disabled`, and only the updated Release preview was relaunched. Preserve the user's current saved arrangement; do not restore an earlier snapshot or launch duplicate V2 instances.
 - Latest design direction: wallpaper fills an empty New swarm only. Populated Swarms use a flat `#463746` canvas matching the selected native tab. Tab hover, spacing and alignment are being compared with the user's Chrome references.
 - The user requested research into expert developers' tools and a smaller feature set. [Developer-tool research and the keep/improve/remove/defer audit](harness-v2-developer-tools-research.md) documents firsthand sources and a proposed three-part focus: durable sessions, instant navigation, and steering agents without losing concentration.
+- Cmd+P now jumps to existing agents and Swarms with fuzzy project/machine context and bounded recent-work history. Cmd+Shift+F remains Add agent. The jump dialog has no transition or backdrop blur; selecting an existing view is focus-only, including terminals controlled elsewhere. The 2,000-agent headless search check measured 1.06 ms median / 1.15 ms p95 CPU time; this is not native display latency.
+- The final Release preview was rebuilt and normally relaunched; PID **19010** was the sole V2 instance at the last check. Revalidate the process before any later restart. CUA now reports `cgWindowNotFound` when selecting that full bundle path, including after a CUA reset and a second normal rebuild/relaunch. The first relaunched process did have a 1280×840 onscreen CoreGraphics window. Bundle-ID selection was also ambiguous with the retained backup under `/Users/ab/code/harness-app-v2`; no backup was altered. Do not claim the new jump interaction was reviewed in the live native window. The actual native titlebar/canvas had been reviewed before this continuation; the new picker was visually inspected in an isolated Flutter render with native font files and engine icons loaded.
 - Continue implementation here. Do not create another repository or fork for V2.
 
 ```bash
@@ -79,12 +81,14 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - `desktop/lib/screens/swarm_screen.dart` is wired into the authenticated case in `main.dart`.
 - `widgets/swarm_welcome.dart`: live search, real machines/projects, New agent. `SwarmWallpaper` fills the empty canvas without an inset or rounded frame. It is absent from populated Swarms and evicts its own decoded image cache entry when replaced or disposed. Wallpaper rotates for a new swarm, stays stable, and supports manual next.
 - `widgets/swarm_dialogs.dart`: fixed-size Add agent picker, rename, Add project, Link machine entry points.
+- `widgets/swarm_switcher.dart` and `state/swarm_navigation.dart`: immediate Cmd+P search across names, projects, branches, folders, machines and Swarms. The catalog is normalized when opened/refreshed and ranked in memory for each query. Arrows/Ctrl-N/P/Return/Escape work; live discovery preserves the highlighted identity and scrolls it into view. Recent destinations hold at most 64 string IDs for the current screen lifetime.
+- Jumping to an existing agent reuses a current/shared membership and publishes the destination Swarm and pane focus together. It preserves arrangement, pinning, zoom, scrollback and controller ownership, and performs no terminal retry. A result without a view explicitly says **Open view** and captures the destination Swarm. Revalidation reuses any intervening view; a vanished existing-view result never becomes Add. Offline retained views remain searchable even when their roster disappears.
 - Add project saves an **existing folder**, via native local picker or existing remote folder browser. It does not clone a GitHub URL.
 - `NewAgentDialog`: machine chooser, initial folder, captured destination swarm; local default when available. Reuses engine probes, Codex profiles, advanced permission behavior, and remote browsing. Profile/folder responses are rejected after a machine switch, including switching away and back. Launch replies are ignored after notifier disposal or machine replacement.
 - `state/swarm_catalog.dart`: search, project grouping, saved folders (`swarm_projects_v1`). Group by canonical remote if supplied, otherwise owning machine and full folder path; matching basenames never establish identity.
 - Project-store load/add operations are serialized, and failures are visible without claiming a project was saved.
 - Search supports arrows, Ctrl-N/P, and Return, reveals the selected row, and retains the highlighted agent across live list changes. Both the welcome and picker immediately focus search; blank Return on welcome does not open an invisible first result.
-- Notifications come from real blocked agents; selecting an existing membership navigates back to its swarm.
+- Notifications come from real blocked agents; selecting an existing membership uses the same focus-only navigation without implicitly retrying the terminal.
 - Spoken-task subscription/reporting/window reveal and existing linking dialogs are retained. Settings is in the title bar, with Account/sign-out restored inside Settings.
 - Non-macOS/tests use a Flutter reorderable tab-strip fallback. Linux/Windows have not been built or visually reviewed.
 
@@ -127,7 +131,8 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 | Reopen closed swarm | Cmd+Shift+T |
 | Rename swarm | Cmd+Shift+R |
 | Previous / next swarm | Cmd+Shift+[ / ], Ctrl+Shift+Tab / Ctrl+Tab |
-| Add agent picker / New agent | Cmd+Shift+F or Cmd+P / Cmd+N |
+| Jump to agent or swarm | Cmd+P |
+| Add agent picker / New agent | Cmd+Shift+F / Cmd+N |
 | Focus neighboring pane | Cmd+H/J/K/L or Cmd+arrow |
 | Move pane | Cmd+Shift+H/J/K/L or Cmd+Shift+arrow |
 | Previous / next agent view | Cmd+[ / ] |
@@ -148,7 +153,9 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
 | macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. Unlocked native review confirmed the taller tab container, edge-to-edge empty wallpaper, and the flat populated canvas joining the selected tab. The native hover rendering was also inspected in a local image. |
-| Full Flutter suite | **987 passed, 1 skipped** after persistence, modal menus, retained-terminal performance, stream dispatch, closed-Swarm recovery and output decoding changes. |
+| Full Flutter suite | **1,000 passed, 1 skipped** after the jump navigation changes, including terminal, modal, persistence and shortcut regressions. |
+| Jump navigation | 13 new state/widget checks cover fuzzy context, shared/offline views, focus-only navigation, preserved layout and terminal state, bounded recents, stale results, captured destinations, immediate focus, keyboard scrolling, live discovery and Add separation. The three widget checks also pass after adding assertions that the first terminal key reaches only the destination session. |
+| Jump visual review | Isolated render inspected with SF font files and engine icons; selected-result text now stays white on a quiet highlight. Four checks (the three widget cases plus the temporary visual fixture) passed after this contrast adjustment. Final Release build passed. Live CUA review remains unavailable with `cgWindowNotFound`. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
 | Closed-Swarm recovery | 7 passed: arrangement and shared-view restoration, untouched welcome replacement, rapid close/reopen with delayed cleanup, capacity, bounded history, sign-out isolation and the keyboard command. Native command availability and modal behavior also pass in the interaction suite. |
 | Local CLI discovery | 25 passed, including older-daemon folder parsing and continuous snapshots without spawning/reconnecting. |
@@ -165,8 +172,11 @@ Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing ag
 
 Evidence on this Mac under `/private/tmp`:
 
-- `harness-v2-final-tests.log`: full 987-test pass.
-- `harness-v2-final-analyze.log`: latest diagnostics.
+- `harness-v2-jump-full-tests.log`: full 1,000-test pass.
+- `harness-v2-jump-tests.log`: 60 focused navigation/shortcut/interaction checks.
+- `harness-v2-jump-focus-tests.log`: three widget checks including first-key destination ownership.
+- `harness-v2-jump-visual-tests.log` and `harness-jump-review.png`: final focused checks and isolated visual fixture (not the real-data app). Temporary renderer source is `/private/tmp/harness-jump-render.dart`; no mock data or capture tooling was added to the application.
+- `harness-v2-jump-analyze.log`: latest diagnostics.
 - `harness-v2-final-build.log`: real-entry debug build.
 - `harness-v2-release-build.log`: optimized local build.
 - `harness-v2-final-cli-check.log`, `harness-v2-final-cli-tests.log`: final metadata checks.
@@ -176,6 +186,7 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
 - `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
 - `harness-v2-benchmark-polish.log`: subsequent five-case pass after native/canvas polish; identical retained rebuild counts, higher debug timings across workloads. Both runs and the comparison limits are recorded in the performance notes.
+- `harness-v2-benchmark-jump.log`: five-case pass after navigation changes, including the new catalog-build/query measurements; retained rebuild counts remain 1,491 / 1,625.
 - `harness-v2-output-before.log`, `harness-v2-output-after.log`: paired production terminal decode-and-parse CPU measurements.
 - `harness-v2-native-titlebar-tests.log`: windowless checks against the actual AppKit tab source.
 - `harness-v2-native-titlebar-layout.log`: 170 component/native-container checks.
@@ -186,7 +197,7 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 
 ## Remaining work
 
-1. Continue the unlocked native review of actual project starters and keyboard navigation. The user is actively changing window size and Swarms; re-read UI state before actions and preserve their arrangement.
+1. Restore CUA access to the current Release preview and review the new jump workflow, actual project starters and keyboard navigation. The tool currently reports `cgWindowNotFound`; the process is running. The user can change window size and Swarms; re-read UI state before actions and preserve their arrangement.
 2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
 3. Measure native terminal input and tab-switch responsiveness before making end-to-end latency claims. Headless CPU benchmarks are now recorded. Preserve the existing immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.

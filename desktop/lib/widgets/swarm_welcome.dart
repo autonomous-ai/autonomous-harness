@@ -269,11 +269,13 @@ class SwarmSearchField extends StatefulWidget {
     this.onSubmitted,
     this.onMove,
     this.autofocus = false,
+    this.hintText = 'Find an agent…',
   });
   final ValueChanged<String> onChanged;
   final VoidCallback? onSubmitted;
   final ValueChanged<int>? onMove;
   final bool autofocus;
+  final String hintText;
   @override
   State<SwarmSearchField> createState() => _SwarmSearchFieldState();
 }
@@ -327,7 +329,7 @@ class _SwarmSearchFieldState extends State<SwarmSearchField> {
         onSubmitted: (_) => onSubmitted?.call(),
         style: const TextStyle(fontSize: 13),
         decoration: InputDecoration(
-          hintText: 'Find an agent…',
+          hintText: widget.hintText,
           prefixIcon: const Icon(Icons.search, size: 18),
           filled: true,
           fillColor: const Color(0xa6111521),

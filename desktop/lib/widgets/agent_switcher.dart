@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/models.dart';
+import '../core/fuzzy_match.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../state/app_state.dart';
 import 'engine_identity.dart';
+
+export '../core/fuzzy_match.dart' show subsequenceSpread;
 
 /// ⌘P — go to an agent by name, on any machine.
 ///
@@ -66,28 +69,6 @@ class SwitcherEntry {
   /// What the filter reads — the agent's name and its machine's, so a query can
   /// name either.
   String get haystack => '${agent.name} $machineName'.toLowerCase();
-}
-
-/// Subsequence match, fzf-style: every character of [query] appears in [text]
-/// in order, not necessarily together.
-///
-/// Returns the match's SPREAD — the distance from the first matched character
-/// to the last — or null when it does not match. Spread is the ranking signal
-/// because a tight run is what a person meant: `auth` against "Auth" scores 3
-/// and against "a...u...t...h" scores forty, and the first is the one they were
-/// typing at.
-int? subsequenceSpread(String text, String query) {
-  if (query.isEmpty) return 0;
-  var at = -1;
-  var first = -1;
-  for (final rune in query.runes) {
-    final ch = String.fromCharCode(rune);
-    final found = text.indexOf(ch, at + 1);
-    if (found < 0) return null;
-    if (first < 0) first = found;
-    at = found;
-  }
-  return at - first;
 }
 
 /// The agents this window can reach, ranked against [query].

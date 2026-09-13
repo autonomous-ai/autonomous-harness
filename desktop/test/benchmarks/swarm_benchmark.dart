@@ -9,6 +9,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
+import 'package:harness/state/swarm_navigation.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/terminal_panel.dart';
@@ -112,6 +113,7 @@ void main() {
                   id: 'agent-$agent',
                   name: 'Agent $agent',
                   engine: 'codex',
+                  terminalAvailable: true,
                   project: AgentProject(
                     name: 'Project ${agent % 50}',
                     cwd: '/work/project-${agent % 50}',
@@ -123,6 +125,15 @@ void main() {
     }
     expect(swarmAgents(app), hasLength(2000));
     expect(swarmProjects(app, const []), hasLength(50));
+    final navigation = swarmDestinations(app);
+    expect(navigation, hasLength(2001));
+    debugPrint(
+      'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'jump_catalog', 'agents': 2000, 'build': measure(() {
+        swarmDestinations(app);
+      }), 'query': measure(() {
+        rankSwarmDestinations(navigation, 'agent 12 machine 3');
+      })})}',
+    );
     debugPrint(
       'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'agents': 2000, 'machines': 8, 'search': measure(() {
         swarmAgents(app, 'Agent 12 Project 12');
