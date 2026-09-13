@@ -138,6 +138,7 @@ void main() {
     () async {
       final url = await serveMetadataAndZip(manifestVersion: newVersion);
       final updater = DesktopUpdater(
+        enabled: true,
         dio: Dio(),
         isLinux: false,
         metadataUrl: url,
@@ -155,6 +156,7 @@ void main() {
     final url = await serveMetadataAndZip(manifestVersion: newVersion);
     // No releaseMode override — defaults to kReleaseMode, which is false under `flutter test`.
     final updater = DesktopUpdater(
+      enabled: true,
       dio: Dio(),
       isLinux: false,
       metadataUrl: url,
@@ -162,6 +164,7 @@ void main() {
     expect(await updater.checkOnce(currentVersion: '1.0.0'), isNull);
 
     final explicitlyOff = DesktopUpdater(
+      enabled: true,
       dio: Dio(),
       isLinux: false,
       metadataUrl: url,
@@ -170,9 +173,36 @@ void main() {
     expect(await explicitlyOff.checkOnce(currentVersion: '1.0.0'), isNull);
   });
 
+  test(
+    'V2 disables checks, downloads and applying even in release mode',
+    () async {
+      final updater = DesktopUpdater(releaseMode: true);
+      const info = UpdateInfo(
+        version: '9.9.9',
+        url: 'https://fixture.invalid/update.zip',
+        sha256: 'unused',
+        size: 1,
+      );
+      expect(await updater.checkOnce(currentVersion: '1.0.0'), isNull);
+      expect(await updater.downloadAndStage(info), isNull);
+      expect(
+        await updater.applyStaged(
+          const StagedUpdate(
+            version: '9.9.9',
+            bundlePath: '/nonexistent/fixture.app',
+            stagingDirPath: '/nonexistent',
+          ),
+          selfPid: 1,
+        ),
+        isFalse,
+      );
+    },
+  );
+
   test('checkOnce returns null when the running version is already current or newer', () async {
     final url = await serveMetadataAndZip(manifestVersion: '1.0.0');
     final updater = DesktopUpdater(
+      enabled: true,
       dio: Dio(),
       isLinux: false,
       metadataUrl: url,
@@ -186,6 +216,7 @@ void main() {
     'checkOnce returns null (not an error) when the manifest is unreachable',
     () async {
       final updater = DesktopUpdater(
+        enabled: true,
         dio: Dio(),
         isLinux: false,
         metadataUrl: 'http://127.0.0.1:1/metadata.json', // nothing listens here
@@ -197,6 +228,7 @@ void main() {
 
   test('checkOnce also treats unavailable package metadata as no update', () async {
     final updater = DesktopUpdater(
+      enabled: true,
       dio: Dio(),
       isLinux: false,
       metadataUrl: 'http://127.0.0.1:1/metadata.json',
@@ -223,6 +255,7 @@ void main() {
       final noUpdates = <UpdateInfo>[];
       final t1 =
           DesktopUpdater(
+            enabled: true,
             dio: Dio(),
             isLinux: false,
             metadataUrl: urlUpToDate,
@@ -242,6 +275,7 @@ void main() {
       final found = <UpdateInfo>[];
       final t2 =
           DesktopUpdater(
+            enabled: true,
             dio: Dio(),
             isLinux: false,
             metadataUrl: urlNewer,
@@ -262,7 +296,7 @@ void main() {
     'downloadAndStage verifies sha256 before trusting the download',
     () async {
       await serveMetadataAndZip(manifestVersion: newVersion);
-      final updater = DesktopUpdater(dio: Dio(), isLinux: false);
+      final updater = DesktopUpdater(enabled: true, dio: Dio(), isLinux: false);
       final badInfo = UpdateInfo(
         version: newVersion,
         url: 'http://127.0.0.1:${server!.port}/Harness-macos.zip',
@@ -276,7 +310,7 @@ void main() {
 
   test('downloadAndStage unpacks and confirms the staged bundle really carries the advertised version', () async {
     await serveMetadataAndZip(manifestVersion: newVersion);
-    final updater = DesktopUpdater(dio: Dio(), isLinux: false);
+    final updater = DesktopUpdater(enabled: true, dio: Dio(), isLinux: false);
     final info = UpdateInfo(
       version: newVersion,
       url: 'http://127.0.0.1:${server!.port}/Harness-macos.zip',
@@ -292,7 +326,7 @@ void main() {
 
   test('downloadAndStage rejects a bundle whose Info.plist does not match the advertised version', () async {
     await serveMetadataAndZip(manifestVersion: newVersion);
-    final updater = DesktopUpdater(dio: Dio(), isLinux: false);
+    final updater = DesktopUpdater(enabled: true, dio: Dio(), isLinux: false);
     // Real zip on disk is stamped $newVersion — advertise a different one.
     final mismatched = UpdateInfo(
       version: '1.2.3',
@@ -307,6 +341,7 @@ void main() {
   test('applyStaged spawns a detached command and never launches a real process', () async {
     final calls = <String>[];
     final updater = DesktopUpdater(
+      enabled: true,
       // The macOS relaunch, asked for by name rather than inherited from the
       // host — the Linux one is the group at the bottom of this file, and both
       // deserve to run wherever the suite does.
@@ -337,6 +372,7 @@ void main() {
     () async {
       var called = false;
       final updater = DesktopUpdater(
+        enabled: true,
         // Same as above: the macOS "not inside a .app" branch. On Linux every
         // executable has a parent directory, so the host's own answer would
         // never be the null this is about.
@@ -426,6 +462,7 @@ void main() {
       Map<String, String> versions,
     ) async {
       final updater = DesktopUpdater(
+        enabled: true,
         dio: Dio(),
         metadataUrl: await serveMacManifest(versions),
         releaseMode: true,
@@ -526,6 +563,7 @@ void main() {
         manifestVersion: newVersion,
       );
       final updater = DesktopUpdater(
+        enabled: true,
         dio: Dio(),
         metadataUrl: url,
         releaseMode: true,
@@ -544,6 +582,7 @@ void main() {
         architecture: 'arm64',
       );
       final updater = DesktopUpdater(
+        enabled: true,
         dio: Dio(),
         metadataUrl: url,
         releaseMode: true,
@@ -561,6 +600,7 @@ void main() {
       () async {
         await serveLinuxMetadataAndAppImage(manifestVersion: newVersion);
         final updater = DesktopUpdater(
+          enabled: true,
           dio: Dio(),
           isLinux: true,
           architecture: 'x64',
@@ -587,6 +627,7 @@ void main() {
       () async {
         await serveLinuxMetadataAndAppImage(manifestVersion: newVersion);
         final updater = DesktopUpdater(
+          enabled: true,
           dio: Dio(),
           isLinux: true,
           architecture: 'x64',
@@ -605,6 +646,7 @@ void main() {
     test('applyStaged on Linux execs the swapped AppImage file directly instead of `open -n`', () async {
       final calls = <String>[];
       final updater = DesktopUpdater(
+        enabled: true,
         isLinux: true,
         architecture: 'x64',
         launchDetached: (command) async => calls.add(command),

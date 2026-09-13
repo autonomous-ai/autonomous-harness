@@ -1,5 +1,4 @@
 import 'dart:io' show Platform;
-import 'dart:ui' show Size;
 
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter/services.dart';

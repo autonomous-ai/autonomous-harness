@@ -164,7 +164,7 @@ static void my_application_activate(GApplication* application) {
         gtk_box_pack_start(GTK_BOX(title), icon, FALSE, FALSE, 0);
       }
     }
-    GtkWidget* label = gtk_label_new("Harness");
+    GtkWidget* label = gtk_label_new("Harness V2");
     gtk_box_pack_start(GTK_BOX(title), label, FALSE, FALSE, 0);
     gtk_widget_show_all(title);
     gtk_header_bar_set_custom_title(header_bar, title);
@@ -173,7 +173,7 @@ static void my_application_activate(GApplication* application) {
   }
   // Keep the native window metadata correct even when a custom header is
   // drawn. Window managers use it for non-GNOME captions and accessibility.
-  gtk_window_set_title(window, "Harness");
+  gtk_window_set_title(window, "Harness V2");
 
   gtk_window_set_default_size(window, 1280, 720);
 

@@ -28,8 +28,9 @@ on:
   # It is also the escape hatch for a verdict on any branch without opening a PR:
   # Actions -> CI -> Run workflow.
   workflow_dispatch:
-  # release.yml calls this. It also hands the release the Node this suite actually ran on (see
-  # below), so a published bundle can never be built on a runtime the tests did not use.
+  # Callable as a reusable workflow. release.yml used to gate on this and take the Node pin from
+  # its output; it no longer does (see the note above `publish` there) and pins the same version
+  # itself, so the output below is kept only for any future caller.
   workflow_call:
     outputs:
       node-version:
@@ -60,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # THE runtime pin for the whole repo — CI and the release bundle read this one line.
+      # THE runtime pin — release.yml's `publish` job carries the same value; bump them together.
       #
       # It is not a taste in Node versions: it is the version of the MANAGED runtime the shipped CLI
       # actually executes on. `harness/runtime/metadata.json` in the release bucket serves

@@ -77,6 +77,7 @@ class _NewAgentDialog extends StatefulWidget {
 class _NewAgentDialogState extends State<_NewAgentDialog> {
   late String _engine = allEngines.first.id;
   late String _machineId = widget.machineId;
+  int _machineRevision = 0;
   late String? _folder = widget.initialFolder;
   LocalCodexProfile? _codexProfile;
   bool _codexProfilesBusy = true;
@@ -104,7 +105,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // a deliberate user action) and the stored rows keep rendering until the new
     // answer lands, so nothing blanks.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(widget.notifier.probeEngines(_machineId, force: true));
+      if (mounted) {
+        unawaited(widget.notifier.probeEngines(_machineId, force: true));
+      }
     });
   }
 
@@ -242,7 +245,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     // themselves select. That case keeps the in-app browser, which walks the
     // remote filesystem over the `fs_list_dir` RPC.
     setState(() => _picking = true);
-    final pickingMachine = _machineId;
+    final pickingRevision = _machineRevision;
     try {
       final picked = _machineIsThisComputer
           ? await getDirectoryPath(initialDirectory: _folder)
@@ -255,13 +258,17 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       if (!mounted) return;
       setState(() {
         _picking = false;
-        if (picked != null && pickingMachine == _machineId) _folder = picked;
+        if (picked != null && pickingRevision == _machineRevision) {
+          _folder = picked;
+        }
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _picking = false;
-        _error = 'Could not open the folder picker: $error';
+        if (pickingRevision == _machineRevision) {
+          _error = 'Could not open the folder picker: $error';
+        }
       });
     }
   }
@@ -405,6 +412,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           ],
           onChanged: (id) {
             setState(() {
+              _machineRevision++;
               _machineId = id;
               _folder = null;
               _codexProfile = null;

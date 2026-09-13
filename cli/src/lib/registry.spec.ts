@@ -1131,3 +1131,178 @@ describe('agent identity: the process owns the agent, the session is bound to it
     expect(saved[0]).not.toHaveProperty('launcherId')
   })
 })
+
+describe('registry across a reboot and pane loss', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    dataDir = mkdtempSync(join(tmpdir(), 'adapter-registry-reboot-'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    rmSync(dataDir, { recursive: true, force: true })
+    delete process.env.ADAPTER_DATA_DIR
+    delete process.env.CLAUDE_PROJECTS_DIR
+    delete process.env.CODEX_HOME
+    delete process.env.CURSOR_HOME
+  })
+
+  /** A row as `agent_create` + a SessionStart hook leave it: bound, with a live-looking process. */
+  function persistedRow(transcriptPath: string, overrides: Record<string, unknown> = {}) {
+    return {
+      schemaVersion: 2,
+      active: true,
+      launch: { state: 'ready' },
+      agentId: 'agent-a',
+      sessionId: 'session-a',
+      boundAt: 1,
+      engine: 'claude',
+      gateway: null,
+      grid: null,
+      codexHome: null,
+      bypassPermission: true,
+      transcriptPath,
+      projectDir: 'demo',
+      cwd: '/tmp/demo',
+      runtimes: [{ backend: 'tmux', paneId: '%3' }],
+      primaryRuntimeKey: 'tmux\u0000%3',
+      tmuxPane: '%3',
+      source: null,
+      title: null,
+      model: null,
+      cliVersion: null,
+      processIdentity: processIdentity(4242),
+      registeredAt: 1,
+      updatedAt: 1,
+      lastHookAt: 1,
+      lastTranscriptAt: 1,
+      ...overrides,
+    }
+  }
+
+  it('keeps every agent after a reboot, clearing only what a reboot actually kills', async () => {
+    const transcriptPath = join(dataDir, 'session-a.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    chmodSync(dataDir, 0o755)
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([persistedRow(transcriptPath, { codexHome: '/tmp/codex-work' })]))
+    // A boot marker from the distant past: whichever way the platform identifies a boot, this is not it.
+    writeLegacyStateFile(join(dataDir, 'registry-boot'), 'time:1')
+
+    const { registry } = await loadRegistryModule()
+    registry.load()
+
+    expect(registry.rebootedSinceLastRun).toBe(true)
+    expect(registry.byAgent('agent-a')).toMatchObject({
+      agentId: 'agent-a',
+      sessionId: 'session-a',
+      engine: 'claude',
+      cwd: '/tmp/demo',
+      codexHome: '/tmp/codex-work',
+      bypassPermission: true,
+      runtimes: [{ backend: 'tmux', paneId: '%3' }],
+      active: false,
+      processIdentity: null,
+    })
+    // The cleared snapshot is on disk immediately: the boot marker was already refreshed, so a crash
+    // before this save would otherwise leave the dead pid behind with no second reboot to notice it.
+    const saved = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8')) as Array<Record<string, unknown>>
+    expect(saved[0]).toMatchObject({ agentId: 'agent-a', processIdentity: null, codexHome: '/tmp/codex-work', bypassPermission: true })
+
+    // The next start on the SAME boot is not a reboot, and finds the row as the previous save left it.
+    const again = await loadRegistryModule()
+    again.registry.load()
+    expect(again.registry.rebootedSinceLastRun).toBe(false)
+    expect(again.registry.byAgent('agent-a')).toMatchObject({ processIdentity: null, bypassPermission: true })
+  })
+
+  it('leaves the process identity alone when the machine did not reboot', async () => {
+    const transcriptPath = join(dataDir, 'session-a.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    chmodSync(dataDir, 0o755)
+    writeLegacyStateFile(join(dataDir, 'registry.json'), JSON.stringify([persistedRow(transcriptPath)]))
+
+    const { registry } = await loadRegistryModule()
+    registry.load()
+
+    expect(registry.rebootedSinceLastRun).toBe(false)
+    expect(registry.byAgent('agent-a')?.processIdentity).toEqual(processIdentity(4242))
+    expect(registry.byProcess('claude', processIdentity(4242))?.agentId).toBe('agent-a')
+  })
+
+  it('carries bypassPermission from agent_create through the first hook bind', async () => {
+    const transcriptPath = join(dataDir, 'session-b.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+
+    const pending = registry.openPendingAgent({
+      engine: 'claude',
+      runtimes: [{ backend: 'tmux', paneId: '%9' }],
+      cwd: '/tmp/demo',
+      bypassPermission: true,
+    })
+    expect(pending?.bypassPermission).toBe(true)
+
+    const bound = registry.register({ sessionId: 'session-b', transcriptPath, tmuxPane: '%9', cwd: '/tmp/demo' })
+    expect(bound?.entry.agentId).toBe(pending!.agentId)
+    expect(bound?.entry.bypassPermission).toBe(true)
+
+    expect(registry.setBypassPermission(pending!.agentId, false)).toBe(true)
+    expect(registry.byAgent(pending!.agentId)).not.toHaveProperty('bypassPermission')
+    const saved = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8')) as Array<Record<string, unknown>>
+    expect(saved[0]).not.toHaveProperty('bypassPermission')
+  })
+
+  it('clearProcessIdentity forgets the pid everywhere it is indexed', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openProcessAgent({ engine: 'claude', tmuxPane: '%5', processIdentity: processIdentity(77) })
+    const agentId = opened!.entry.agentId
+    expect(registry.byProcess('claude', processIdentity(77))?.agentId).toBe(agentId)
+
+    expect(registry.clearProcessIdentity(agentId)).toBe(true)
+    expect(registry.byAgent(agentId)?.processIdentity).toBeNull()
+    expect(registry.byProcess('claude', processIdentity(77))).toBeUndefined()
+    expect(registry.clearProcessIdentity(agentId)).toBe(true) // idempotent
+    expect(registry.clearProcessIdentity('nobody')).toBe(false)
+  })
+
+  it('survives two restored panes swapping ids when done inside one transaction', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const a = registry.openProcessAgent({ engine: 'claude', tmuxPane: '%1', processIdentity: processIdentity(11) })!.entry.agentId
+    const b = registry.openProcessAgent({ engine: 'claude', tmuxPane: '%2', processIdentity: processIdentity(12) })!.entry.agentId
+
+    // A new tmux server hands out %1/%2 again, in the other order. Saved between the two updates, A
+    // would claim %2 while B still lists it, and the save's route dedupe evicts one of them.
+    await registry.transaction(() => {
+      registry.updateRuntimes(a, [{ backend: 'tmux', paneId: '%2' }], 'tmux\u0000%2')
+      registry.updateRuntimes(b, [{ backend: 'tmux', paneId: '%1' }], 'tmux\u0000%1')
+    })
+
+    expect(registry.byAgent(a)?.tmuxPane).toBe('%2')
+    expect(registry.byAgent(b)?.tmuxPane).toBe('%1')
+    const saved = JSON.parse(readFileSync(join(dataDir, 'registry.json'), 'utf-8')) as Array<Record<string, unknown>>
+    expect(saved.map((row) => row.agentId).sort()).toEqual([a, b].sort())
+  })
+
+  it('adopts a new process into an agent whose identity was cleared, keeping its id and session', async () => {
+    const transcriptPath = join(dataDir, 'session-c.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const bound = registerProcess(registry, { sessionId: 'session-c', transcriptPath, tmuxPane: '%4', cwd: '/tmp/demo' })
+    const agentId = bound!.entry.agentId
+
+    // What restore does: forget the dead pid, point the row at the recreated pane, launch pending.
+    registry.clearProcessIdentity(agentId)
+    registry.updateRuntimes(agentId, [{ backend: 'tmux', paneId: '%0' }], 'tmux\u0000%0')
+    registry.setLaunch(agentId, { state: 'starting' })
+
+    const adopted = registry.openProcessAgent({ engine: 'claude', tmuxPane: '%0', processIdentity: processIdentity(500) })
+    expect(adopted).toMatchObject({ isNew: false, evicted: null })
+    expect(adopted?.entry.agentId).toBe(agentId)
+    expect(adopted?.entry.sessionId).toBe('session-c')
+    expect(registry.list()).toHaveLength(1)
+  })
+})

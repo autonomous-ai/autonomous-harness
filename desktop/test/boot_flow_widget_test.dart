@@ -16,7 +16,6 @@ import 'package:harness/update/manual_update_check.dart';
 import 'package:harness/widgets/update_notice.dart';
 import 'package:harness/widgets/bootstrapping_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -29,6 +28,7 @@ AppNotifier makeNotifier(AppStatus status) {
     config: AppConfig.dev,
     authSession: AuthSession(),
     configStore: null,
+    cliLogin: _FakeCliLogin(),
   );
   app.status = status;
   app.currentUser = const CurrentUserProfile(
@@ -44,6 +44,9 @@ AppNotifier makeNotifier(AppStatus status) {
 class _FakeCliLogin extends CliLogin {
   final bool loggedIn;
   _FakeCliLogin({this.loggedIn = false});
+
+  @override
+  Future<void> logout() async {}
 
   @override
   Future<CliAuthStatus> checkStatus() async =>
@@ -760,7 +763,7 @@ void main() {
   });
 
   testWidgets(
-    'authenticated with no machines shows terminal rail + empty terminal',
+    'authenticated with no machines opens Swarm welcome and linking',
     (tester) async {
       final app = makeNotifier(AppStatus.authenticated);
       await tester.pumpWidget(
@@ -770,44 +773,21 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-
-      expect(
-        find.text('Select an agent, or drag one in from the left.'),
-        findsOneWidget,
-      );
-      expect(find.text('diego@autonomous.ai'), findsOneWidget);
-      expect(find.byKey(const Key('account-menu-button')), findsOneWidget);
-      expect(find.byIcon(LucideIcons.logOut300), findsNothing);
-      // The rail is present. Not asserted on the filter field, which lives
-      // behind the rail's search toggle, nor on the "Machines" heading it used
-      // to check — a machine is a caption over its own agents now, so a caption
-      // over the captions would be two headings deep. This case is "no
-      // machines", and the rail's own answer to that is the thing to look for.
-      expect(find.text('no remote machines'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('account-menu-button')));
+      expect(find.text('Start a swarm'), findsOneWidget);
+      expect(find.text('New agent'), findsOneWidget);
+      expect(find.text('Add project'), findsOneWidget);
+      await tester.tap(find.text('Link machine'));
       await tester.pumpAndSettle();
-
-      expect(find.text('Diego'), findsOneWidget);
-      expect(find.text('Sign out'), findsOneWidget);
-      expect(find.byIcon(LucideIcons.logOut300), findsOneWidget);
-      expect(find.text('Remote into another machine…'), findsOneWidget);
-
-      // The running version is no longer a row in this menu: it moved to
-      // Settings ▸ About when Settings became a screen, and
-      // settings_screen_test is where it is asserted now. What this menu still
-      // owes is the order — what you can add, then the way out.
-      final linkY = tester
-          .getTopLeft(find.byKey(const Key('link-a-machine-menu-item')))
-          .dy;
-      final signOutY = tester
-          .getTopLeft(find.byKey(const Key('sign-out-menu-item')))
-          .dy;
-      expect(linkY, lessThan(signOutY));
+      expect(find.text('harness login\nharness start'), findsOneWidget);
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(app.panes, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
     },
   );
 
-  testWidgets('Settings sits directly above Sign out in the account menu', (
+  testWidgets('Settings exposes the signed-in account and sign-out', (
     tester,
   ) async {
     final app = makeNotifier(AppStatus.authenticated);
@@ -818,23 +798,20 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('account-menu-button')));
+    await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();
-
-    expect(find.text('Settings'), findsOneWidget);
-
-    final linkY = tester
-        .getTopLeft(find.byKey(const Key('link-a-machine-menu-item')))
-        .dy;
-    final settingsY = tester
-        .getTopLeft(find.byKey(const Key('settings-menu-item')))
-        .dy;
-    final signOutY = tester
-        .getTopLeft(find.byKey(const Key('sign-out-menu-item')))
-        .dy;
-    expect(linkY, lessThan(settingsY));
-    expect(settingsY, lessThan(signOutY));
+    await tester.tap(find.text('Account'));
+    await tester.pumpAndSettle();
+    expect(find.text('Diego'), findsOneWidget);
+    expect(find.text('diego@autonomous.ai'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('settings-sign-out-button')));
+    // The login relay diagram keeps animating after sign-out.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.status, AppStatus.unauthenticated);
+    expect(find.text('Account'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
   });
 
   testWidgets('available update is shown above the login screen', (
@@ -895,53 +872,57 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('offline selected agent shows the Harness join guide', (
-    tester,
-  ) async {
-    final app = makeNotifier(AppStatus.authenticated);
-    const machine = Machine(
-      machineId: 'offline-machine',
-      apiKey: '',
-      authMode: MachineAuthMode.remote,
-      name: 'offline-mac',
-      status: 'offline',
-    );
-    final state = MachineState(machine)
-      ..localOnly = true
-      ..nodeOnline = false
-      ..activeAgentId = 'offline-agent'
-      ..pendingOfflineAgentId = 'offline-agent'
-      ..agentLoadStatus = AgentLoadStatus.loaded
-      ..agents = [
-        Agent.fromJson({
-          'id': 'offline-agent',
-          'name': 'claude-session',
-          'engine': 'claude',
-          'terminal': {
-            'runtimes': [
-              {'backend': 'tmux', 'paneId': '%1'},
-            ],
-          },
-        }),
-      ];
-    app.machines = [machine];
-    app.machineStates[machine.machineId] = state;
-    app.expandedMachines.add(machine.machineId);
-    app.selectedMachineId = machine.machineId;
-    await app.selectAgent(machine.machineId, 'offline-agent');
+  testWidgets(
+    'offline selected agent retains its Swarm view with an offline message',
+    (tester) async {
+      final app = makeNotifier(AppStatus.authenticated);
+      const machine = Machine(
+        machineId: 'offline-machine',
+        apiKey: '',
+        authMode: MachineAuthMode.remote,
+        name: 'offline-mac',
+        status: 'offline',
+      );
+      final state = MachineState(machine)
+        ..localOnly = true
+        ..nodeOnline = false
+        ..activeAgentId = 'offline-agent'
+        ..pendingOfflineAgentId = 'offline-agent'
+        ..agentLoadStatus = AgentLoadStatus.loaded
+        ..agents = [
+          Agent.fromJson({
+            'id': 'offline-agent',
+            'name': 'claude-session',
+            'engine': 'claude',
+            'terminal': {
+              'runtimes': [
+                {'backend': 'tmux', 'paneId': '%1'},
+              ],
+            },
+          }),
+        ];
+      app.machines = [machine];
+      app.machineStates[machine.machineId] = state;
+      app.expandedMachines.add(machine.machineId);
+      app.selectedMachineId = machine.machineId;
+      await app.selectAgent(machine.machineId, 'offline-agent');
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [appStateProvider.overrideWithValue(app)],
-        child: const DesktopApp(),
-      ),
-    );
-    await tester.pump();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [appStateProvider.overrideWithValue(app)],
+          child: const DesktopApp(),
+        ),
+      );
+      await tester.pump();
 
-    expect(find.text('Harness is offline'), findsOneWidget);
-    expect(find.text('harness start'), findsOneWidget);
-    app.dispose();
-  });
+      expect(
+        find.text('Harness is not running on this computer.'),
+        findsOneWidget,
+      );
+      expect(app.panes.single.agentId, 'offline-agent');
+      app.dispose();
+    },
+  );
 
   testWidgets('unlinked remote with a pending agent shows the link form', (
     tester,
@@ -1043,7 +1024,7 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('link-required')));
+    await tester.tap(find.text('link-mac'));
     // Same popup-transition reasoning as above.
     await tester.pumpAndSettle();
 
@@ -1108,6 +1089,8 @@ void main() {
     app.panes.add(otherPane);
     app.focusedPaneId = otherPane.id;
     app.selectedMachineId = otherMachine.machineId;
+    final originalSwarm = app.activeSwarm;
+    app.newSwarm();
 
     await tester.pumpWidget(
       ProviderScope(
@@ -1118,13 +1101,15 @@ void main() {
     await tester.pump();
     expect(find.text('Link this machine'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('link-required')));
+    await tester.tap(find.text('link-mac'));
     await tester.pumpAndSettle();
 
     expect(find.text('Link this machine'), findsOneWidget);
     // No second pane was opened for the popup — just the one terminal pane that was
     // already there.
-    expect(app.panes, hasLength(1));
+    expect(app.allPanes, hasLength(1));
+    expect(originalSwarm.panes.single, same(otherPane));
+    expect(app.panes, isEmpty);
     expect(
       find.text('link-mac is not linked to this computer yet.'),
       findsNothing,

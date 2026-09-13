@@ -213,6 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _maybeShowLinkDialog(notifier);
         return CallbackShortcuts(
           bindings: buildShortcutBindings(
+            swarmMode: false,
             handlers: {
               ShortcutAction.toggleRail: () =>
                   setState(() => _collapsed = !_collapsed),

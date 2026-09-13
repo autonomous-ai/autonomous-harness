@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/app_version.dart';
+import '../core/build_identity.dart';
 
 /// Published by `scripts/upload-desktop.sh` (`make upload-desktop`) — see
 /// `RELEASE.md` for the full publish-side design this mirrors.
@@ -145,10 +146,12 @@ class DesktopUpdater {
   final Future<void> Function(String command) _launchDetached;
   final String _metadataUrlForInstance;
   final bool _releaseMode;
+  final bool _enabled;
   final bool _isLinux;
   final String _architecture;
 
   DesktopUpdater({
+    this._enabled = !isHarnessV2,
     Dio? dio,
     Future<void> Function(String command)? launchDetached,
     // Defaults to the real manifest (or the --dart-define build-time override — see RELEASE.md's
@@ -175,7 +178,7 @@ class DesktopUpdater {
            ),
        _launchDetached = launchDetached ?? _defaultLaunchDetached,
        _metadataUrlForInstance = metadataUrl ?? _metadataUrl,
-       _releaseMode = releaseMode ?? false,
+       _releaseMode = releaseMode ?? kReleaseMode,
        _isLinux = isLinux ?? Platform.isLinux,
        _architecture = architecture ?? _currentArchitecture();
 
@@ -197,7 +200,7 @@ class DesktopUpdater {
   /// bundle for a downloaded release build and relaunching, see [applyStaged]) makes no sense for a
   /// local dev build and would silently clobber it mid-session.
   Future<UpdateInfo?> checkOnce({String? currentVersion}) async {
-    if (!_releaseMode) return null;
+    if (!_enabled || !_releaseMode) return null;
     try {
       final running = currentVersion ?? await runningAppVersion();
       final response = await _dio.get<Map<String, dynamic>>(
@@ -274,6 +277,7 @@ class DesktopUpdater {
   /// executable and staged as-is, with nothing to unpack or recheck.
   /// Returns null (and cleans up anything partially written) on any verification failure.
   Future<StagedUpdate?> downloadAndStage(UpdateInfo info) async {
+    if (!_enabled) return null;
     Directory? stagingDir;
     try {
       final response = await _dio.get<List<int>>(
@@ -379,6 +383,7 @@ class DesktopUpdater {
     required int selfPid,
     String? runningBundlePath,
   }) async {
+    if (!_enabled) return false;
     final bundlePath =
         runningBundlePath ?? currentBundlePath(isLinux: _isLinux);
     if (bundlePath == null) {

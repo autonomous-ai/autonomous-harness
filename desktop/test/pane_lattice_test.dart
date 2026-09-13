@@ -42,7 +42,7 @@ Future<void> _pump(WidgetTester tester, int n, Size size) async {
 void main() {
   test('machine starters can contain more than nine agents', () {
     expect(PaneLayoutStore.maxPanes, 9);
-    expect(AppNotifier.maxPanes, PaneLayoutStore.maxPanes);
+    expect(AppNotifier.maxPanes, greaterThan(PaneLayoutStore.maxPanes));
   });
 
   for (final n in [5, 6, 7, 8, 9]) {

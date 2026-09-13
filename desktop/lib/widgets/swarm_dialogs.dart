@@ -11,6 +11,7 @@ import 'link_machine_dialog.dart';
 import 'link_machine_screen.dart';
 import 'remote_folder_picker.dart';
 import 'swarm_welcome.dart';
+import 'swarm_agent_selection.dart';
 
 Future<SwarmAgentRef?> showSwarmAgentPicker(
   BuildContext context,
@@ -31,62 +32,80 @@ class _AgentPicker extends StatefulWidget {
 
 class _AgentPickerState extends State<_AgentPicker> {
   String query = '';
+  final _selection = SwarmAgentSelection();
   @override
-  Widget build(BuildContext context) => Dialog(
-    child: SizedBox(
-      width: 620,
-      height: 520,
-      child: Padding(
-        padding: const EdgeInsets.all(22),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.notifier,
+    builder: (context, _) {
+      final rows = swarmAgents(widget.notifier, query);
+      return Dialog(
+        child: SizedBox(
+          width: 620,
+          height: 520,
+          child: Padding(
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Add agent',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
+                Row(
+                  children: [
+                    const Text(
+                      'Add agent',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: () {
+                        widget.onNew();
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('New agent'),
+                    ),
+                    IconButton(
+                      tooltip: 'Close agent picker',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, size: 18),
+                    ),
+                  ],
                 ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () {
-                    widget.onNew();
-                    Navigator.pop(context);
+                const SizedBox(height: 16),
+                SwarmSearchField(
+                  autofocus: true,
+                  onChanged: (value) => setState(() {
+                    query = value;
+                    _selection.reset();
+                  }),
+                  onMove: (delta) =>
+                      setState(() => _selection.move(rows, delta)),
+                  onSubmitted: () {
+                    final selected = _selection.selected(rows);
+                    if (selected != null) Navigator.pop(context, selected);
                   },
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('New agent'),
                 ),
-                IconButton(
-                  tooltip: 'Close agent picker',
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close, size: 18),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: SwarmAgentRows(
+                    notifier: widget.notifier,
+                    agents: rows,
+                    selectedIndex: _selection.index(rows),
+                    onAgent: (agent) => Navigator.pop(context, agent),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  '↑↓ or ⌃N ⌃P to choose · Return to add · Esc to cancel',
+                  style: TextStyle(fontSize: 11, color: Colors.white60),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            SwarmSearchField(
-              autofocus: true,
-              onChanged: (value) => setState(() => query = value),
-              onSubmitted: (_) {
-                final rows = swarmAgents(widget.notifier, query);
-                if (rows.isNotEmpty) Navigator.pop(context, rows.first);
-              },
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: ListenableBuilder(
-                listenable: widget.notifier,
-                builder: (_, _) => SwarmAgentRows(
-                  notifier: widget.notifier,
-                  agents: swarmAgents(widget.notifier, query),
-                  onAgent: (agent) => Navigator.pop(context, agent),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-    ),
+      );
+    },
   );
 }
 
@@ -153,6 +172,7 @@ class _ProjectDialogState extends State<_ProjectDialog> {
   String? path;
   String? error;
   bool picking = false;
+  int _machineRevision = 0;
   @override
   void dispose() {
     name.dispose();
@@ -162,6 +182,7 @@ class _ProjectDialogState extends State<_ProjectDialog> {
   Future<void> browse() async {
     final id = machineId;
     if (id == null || picking) return;
+    final revision = _machineRevision;
     setState(() {
       picking = true;
       error = null;
@@ -175,18 +196,28 @@ class _ProjectDialogState extends State<_ProjectDialog> {
               machineId: id,
               initialPath: path,
             );
-      if (!mounted || machineId != id) return;
+      if (!mounted || revision != _machineRevision) return;
       setState(() {
         path = folder ?? path;
-        if (folder != null && name.text.trim().isEmpty)
-          name.text = folder.split('/').where((s) => s.isNotEmpty).last;
+        if (folder != null && name.text.trim().isEmpty) {
+          name.text =
+              (folder
+                          .split(RegExp(r'[/\\]'))
+                          .where((s) => s.isNotEmpty)
+                          .lastOrNull ??
+                      folder)
+                  .characters
+                  .take(80)
+                  .join();
+        }
       });
     } catch (_) {
-      if (mounted)
+      if (mounted && revision == _machineRevision) {
         setState(
           () =>
               error = 'Could not browse this machine. Reconnect and try again.',
         );
+      }
     } finally {
       if (mounted) setState(() => picking = false);
     }
@@ -219,8 +250,11 @@ class _ProjectDialogState extends State<_ProjectDialog> {
                   ),
               ],
               onChanged: (value) => setState(() {
+                if (machineId == value) return;
+                _machineRevision++;
                 machineId = value;
                 path = null;
+                error = null;
               }),
             ),
           const SizedBox(height: 16),

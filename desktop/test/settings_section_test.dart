@@ -35,6 +35,7 @@ void main() {
       // there is nothing here for a shipped build to hide.
       SettingsSection.usage,
       SettingsSection.devices,
+      SettingsSection.account,
       SettingsSection.shortcuts,
       SettingsSection.about,
     ]);

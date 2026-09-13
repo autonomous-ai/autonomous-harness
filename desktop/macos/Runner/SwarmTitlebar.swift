@@ -3,17 +3,19 @@ import FlutterMacOS
 
 /// Real AppKit controls in the title bar, beside the system traffic lights.
 /// https://developer.apple.com/documentation/appkit/nstitlebaraccessoryviewcontroller/layoutattribute
-final class SwarmTitlebar {
+final class SwarmTitlebar: NSObject, NSMenuItemValidation {
   private weak var window: NSWindow?
   private let channel: FlutterMethodChannel
   private let accessory = NSTitlebarAccessoryViewController()
   private let strip = SwarmTabStrip(frame: NSRect(x: 0, y: 0, width: 900, height: 40))
   private var observers: [NSObjectProtocol] = []
   private var configured = false
+  private var actionsEnabled = false
 
   init(window: NSWindow, messenger: FlutterBinaryMessenger) {
     self.window = window
     channel = FlutterMethodChannel(name: "harness/swarm_tabs", binaryMessenger: messenger)
+    super.init()
     strip.emit = { [weak self] method, args in self?.channel.invokeMethod(method, arguments: args) }
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result(nil); return }
@@ -22,7 +24,9 @@ final class SwarmTitlebar {
         self.configure()
         result(true)
       case "update":
-        self.strip.update(call.arguments as? [String: Any] ?? [:])
+        let state = call.arguments as? [String: Any] ?? [:]
+        self.actionsEnabled = state["enabled"] as? Bool == true
+        self.strip.update(state)
         result(nil)
       default: result(FlutterMethodNotImplemented)
       }
@@ -86,8 +90,10 @@ final class SwarmTitlebar {
     main.insertItem(item, at: min(2, main.numberOfItems))
   }
 
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { actionsEnabled }
+
   @objc private func menuAction(_ sender: NSMenuItem) {
-    guard let action = sender.representedObject as? String else { return }
+    guard actionsEnabled, let action = sender.representedObject as? String else { return }
     channel.invokeMethod(action, arguments: nil)
   }
 }
@@ -103,6 +109,7 @@ private final class SwarmTabStrip: NSView {
   private let settings = NSButton()
   private var tabs: [SwarmTabButton] = []
   private var activeId = ""
+  private var actionsEnabled = false
   override var mouseDownCanMoveWindow: Bool { true }
 
   override init(frame: NSRect) {
@@ -131,6 +138,7 @@ private final class SwarmTabStrip: NSView {
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   func update(_ state: [String: Any]) {
+    actionsEnabled = state["enabled"] as? Bool == true
     let rows = state["tabs"] as? [[String: Any]] ?? []
     activeId = state["activeId"] as? String ?? ""
     let ids = rows.compactMap { $0["id"] as? String }
@@ -141,13 +149,16 @@ private final class SwarmTabStrip: NSView {
       let tab = previous[id] ?? SwarmTabButton(id: id)
       tab.name = row["name"] as? String ?? "New swarm"
       tab.selected = id == activeId
+      tab.actionsEnabled = actionsEnabled
       tab.attention = (row["attention"] as? Int ?? 0) > 0
       tab.emit = { [weak self] method, args in self?.emit?(method, args) }
       if tab.superview == nil { document.addSubview(tab) }
       tab.needsDisplay = true
       return tab
     }
-    newButton.isEnabled = state["enabled"] as? Bool == true && tabs.count < 24
+    newButton.isEnabled = actionsEnabled && tabs.count < 24
+    notifications.isEnabled = actionsEnabled
+    settings.isEnabled = actionsEnabled
     let count = state["attention"] as? Int ?? 0
     notifications.image = NSImage(systemSymbolName: count > 0 ? "bell.badge" : "bell",
       accessibilityDescription: count > 0 ? "\(count) agents need input" : "Notifications")
@@ -179,10 +190,10 @@ private final class SwarmTabStrip: NSView {
   @objc private func newSwarm() { emit?("new", nil) }
   @objc private func showNotifications() { emit?("notifications", nil) }
   @objc private func showSettings() { emit?("settings", nil) }
-  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .move }
-  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { .move }
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { actionsEnabled ? .move : [] }
   override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-    guard let id = sender.draggingPasteboard.string(forType: swarmPasteboardType),
+    guard actionsEnabled, let id = sender.draggingPasteboard.string(forType: swarmPasteboardType),
           tabs.contains(where: { $0.swarmId == id }) else { return false }
     let point = document.convert(sender.draggingLocation, from: nil)
     let index = tabs.firstIndex(where: { point.x < $0.frame.midX }) ?? tabs.count
@@ -192,13 +203,20 @@ private final class SwarmTabStrip: NSView {
   }
 }
 
-private final class SwarmTabButton: NSButton, NSDraggingSource {
+private final class SwarmTabButton: NSView, NSDraggingSource {
   let swarmId: String
   var name = "New swarm"
   var selected = false
   var attention = false
   var emit: ((String, Any?) -> Void)?
   private let closeButton = NSButton()
+  private let selectButton = SwarmSelectButton()
+  var actionsEnabled = true {
+    didSet {
+      closeButton.isEnabled = actionsEnabled
+      selectButton.isEnabled = actionsEnabled
+    }
+  }
   private var downPoint = NSPoint.zero
   override var acceptsFirstResponder: Bool { false }
   override var mouseDownCanMoveWindow: Bool { false }
@@ -206,7 +224,14 @@ private final class SwarmTabButton: NSButton, NSDraggingSource {
   init(id: String) {
     swarmId = id
     super.init(frame: .zero)
-    isBordered = false
+    setAccessibilityElement(true)
+    setAccessibilityRole(.group)
+    selectButton.owner = self
+    selectButton.title = ""
+    selectButton.isBordered = false
+    selectButton.target = self
+    selectButton.action = #selector(selectSwarm)
+    addSubview(selectButton)
     closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close swarm")
     closeButton.imageScaling = .scaleProportionallyDown
     closeButton.isBordered = false
@@ -225,6 +250,7 @@ private final class SwarmTabButton: NSButton, NSDraggingSource {
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func layout() {
     super.layout()
+    selectButton.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 29), height: bounds.height)
     closeButton.frame = NSRect(x: bounds.width - 27, y: 9, width: 18, height: 18)
   }
   override func draw(_ dirtyRect: NSRect) {
@@ -242,16 +268,19 @@ private final class SwarmTabButton: NSButton, NSDraggingSource {
       NSBezierPath(ovalIn: NSRect(x: 4, y: 16, width: 4, height: 4)).fill()
     }
     setAccessibilityLabel(name)
-    setAccessibilityValue(selected ? "Selected" : "")
+    selectButton.setAccessibilityLabel("Select \(name)")
+    selectButton.setAccessibilityValue(selected ? "Selected" : "")
     toolTip = "\(name) — double-click to rename"
     closeButton.setAccessibilityLabel("Close \(name)")
   }
   override func mouseDown(with event: NSEvent) {
+    guard actionsEnabled else { return }
     downPoint = event.locationInWindow
     if event.clickCount == 2 { renameSwarm() }
     else { emit?("select", ["id": swarmId]) }
   }
   override func mouseDragged(with event: NSEvent) {
+    guard actionsEnabled else { return }
     if hypot(event.locationInWindow.x - downPoint.x, event.locationInWindow.y - downPoint.y) < 5 { return }
     let item = NSPasteboardItem()
     item.setString(swarmId, forType: swarmPasteboardType)
@@ -264,7 +293,22 @@ private final class SwarmTabButton: NSButton, NSDraggingSource {
     beginDraggingSession(with: [dragging], event: event, source: self)
   }
   func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
-  override func accessibilityPerformPress() -> Bool { emit?("select", ["id": swarmId]); return true }
-  @objc private func closeSwarm() { emit?("close", ["id": swarmId]) }
-  @objc private func renameSwarm() { emit?("rename", ["id": swarmId]) }
+  override func accessibilityChildren() -> [Any]? { [selectButton, closeButton] }
+  @objc private func selectSwarm() { if actionsEnabled { emit?("select", ["id": swarmId]) } }
+  @objc private func closeSwarm() { if actionsEnabled { emit?("close", ["id": swarmId]) } }
+  @objc private func renameSwarm() { if actionsEnabled { emit?("rename", ["id": swarmId]) } }
+}
+
+/// Selection and closing are sibling accessibility buttons, so VoiceOver and
+/// UI automation can reach the close action without treating the tab as a leaf.
+private final class SwarmSelectButton: NSButton {
+  weak var owner: SwarmTabButton?
+  override func mouseDown(with event: NSEvent) {
+    guard isEnabled else { return }
+    owner?.mouseDown(with: event)
+  }
+  override func mouseDragged(with event: NSEvent) {
+    guard isEnabled else { return }
+    owner?.mouseDragged(with: event)
+  }
 }

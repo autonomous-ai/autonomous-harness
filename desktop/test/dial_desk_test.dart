@@ -97,7 +97,7 @@ void main() {
       final app = await _withTiles(['a1', 'a2']);
       await app.selectAgentFromDial('m1', 'a3');
 
-      expect(app.panes.length, 2);
+      expect(_desk(app), ['a1', 'a2', 'a3']);
       expect(app.focusedPane?.agentId, 'a3');
       app.dispose();
     },
@@ -126,34 +126,25 @@ void main() {
     app.dispose();
   });
 
-  test('at the ceiling it reuses the LAST tile rather than refusing', () async {
-    // Refusing would make the notification a liar: it says there is something to
-    // see and then does nothing when pressed. The last tile is already the place
-    // the desk treats as where things arrive — it is what the dial's own right
-    // edge replaces.
-    final app = _notifier();
-    _machine(app, 'm1', [
-      for (var i = 0; i < AppNotifier.maxPanes + 1; i++) 'a$i',
-    ]);
-    for (var i = 0; i < AppNotifier.maxPanes; i++) {
-      await app.assignAgentToPane(null, 'm1', 'a$i');
-    }
-    expect(app.canAddPane, isFalse);
-    final untouched = [
-      for (final p in app.panes.take(app.panes.length - 1)) p.agentId,
-    ];
-
-    await app.openAgentFromDial('m1', 'a${AppNotifier.maxPanes}');
-
-    expect(app.panes.length, AppNotifier.maxPanes, reason: 'the grid holds');
-    expect(app.panes.last.agentId, 'a${AppNotifier.maxPanes}');
-    expect(
-      [for (final p in app.panes.take(app.panes.length - 1)) p.agentId],
-      untouched,
-      reason: 'every other tile is where it was',
-    );
-    app.dispose();
-  });
+  test(
+    'at capacity a notification reports the limit without evicting a view',
+    () async {
+      final app = _notifier();
+      _machine(app, 'm1', [
+        for (var i = 0; i <= AppNotifier.maxPanes; i++) 'a$i',
+      ]);
+      for (var i = 0; i < AppNotifier.maxPanes; i++) {
+        await app.assignAgentToPane(null, 'm1', 'a$i');
+      }
+      final before = List.of(app.panes);
+      final focus = app.focusedPaneId;
+      await app.openAgentFromDial('m1', 'a${AppNotifier.maxPanes}');
+      expect(app.panes, before);
+      expect(app.focusedPaneId, focus);
+      expect(app.lastError, contains('Open another swarm'));
+      app.dispose();
+    },
+  );
 
   test('a notification for a tile already open only focuses it', () async {
     final app = await _withTiles(['a1', 'a2', 'a3']);
@@ -207,28 +198,26 @@ void main() {
     app.dispose();
   });
 
-  test(
-    'dial_open and dial_focus retain the other agent views',
-    () async {
-      // The two verbs side by side, driven through the app's own handler: the same
-      // agent, one frame each, and the grid ends up a different size.
-      final app = await _withTiles(['a1', 'a2']);
-      await app.handleEventForTest('m1', {
-        'type': 'dial_open',
-        'payload': {'machineId': 'm1', 'agentId': 'a4'},
-      });
-      expect(_desk(app), ['a1', 'a2', 'a4']);
+  test('dial_open and dial_focus retain the other agent views', () async {
+    // The two verbs side by side, driven through the app's own handler: the same
+    // agent, one frame each, and the grid ends up a different size.
+    final app = await _withTiles(['a1', 'a2']);
+    await app.handleEventForTest('m1', {
+      'type': 'dial_open',
+      'payload': {'machineId': 'm1', 'agentId': 'a4'},
+    });
+    expect(_desk(app), ['a1', 'a2', 'a4']);
 
-      app.focusPane(app.panes.last.id);
-      await dialFocus(app, 'a5');
-      expect(_desk(app), [
-        'a1',
-        'a2',
-        'a5',
-      ], reason: 'neither event removes a view');
-      app.dispose();
-    },
-  );
+    app.focusPane(app.panes.last.id);
+    await dialFocus(app, 'a5');
+    expect(_desk(app), [
+      'a1',
+      'a2',
+      'a4',
+      'a5',
+    ], reason: 'neither event removes a view');
+    app.dispose();
+  });
 
   test(
     'a dial focus adds a missing view while preserving existing members',

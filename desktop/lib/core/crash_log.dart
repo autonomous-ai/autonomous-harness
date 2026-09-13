@@ -23,8 +23,7 @@ class CrashLog {
   static File? testFile;
 
   static File get _file =>
-      testFile ??
-      File('${HarnessFileStore.defaultDirectoryPath()}/errors.log');
+      testFile ?? File('${HarnessFileStore.defaultDirectoryPath()}/errors.log');
 
   static void record(Object error, StackTrace? stackTrace, {String? context}) {
     // Mirrored into the day's app log as well, and the two are not redundant:

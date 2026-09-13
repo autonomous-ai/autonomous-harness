@@ -40,6 +40,10 @@ class Swarm {
         .where((p) => p.agentId != null)
         .toList()
         .indexWhere((p) => p.id == focusedPaneId),
+    'previousFocus': panes
+        .where((p) => p.agentId != null)
+        .toList()
+        .indexWhere((p) => p.id == previousPaneId),
     'zoom': panes
         .where((p) => p.agentId != null)
         .toList()

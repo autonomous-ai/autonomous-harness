@@ -11,6 +11,8 @@ describe('owning-machine project metadata', () => {
   it('canonicalizes transports and strips credentials and URL tokens', () => {
     expect(canonicalRepository('git@github.com:Org/App.git')).toBe('github.com/org/app')
     expect(canonicalRepository('https://user:secret@github.com/Org/App.git?token=secret')).toBe('github.com/org/app')
+    expect(canonicalRepository('ssh://git@github.com:22/Org/App.git')).toBe('github.com/org/app')
+    expect(canonicalRepository('ssh://git@example.com:2222/Org/App.git')).toBe('example.com:2222/Org/App')
     expect(canonicalRepository('/private/checkouts/app')).toBeNull()
     expect(canonicalRepository('file:///private/checkouts/app')).toBeNull()
     expect(canonicalRepository('ssh://git@example.com/CaseSensitive.git')).toBe('example.com/CaseSensitive')

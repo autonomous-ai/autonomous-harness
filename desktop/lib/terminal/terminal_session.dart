@@ -129,6 +129,12 @@ class TerminalSession extends ChangeNotifier {
   int _framesSinceAck = 0;
   int _renderedSinceAckBytes = 0;
   int _inputSeq = 0;
+
+  /// The last `expectedSeq` a TERMINAL_INPUT_INVALID realigned the counter to.
+  /// The daemon refuses every in-flight frame it cannot accept, each naming
+  /// the SAME expected seq; only the first of those may rewind the counter,
+  /// or frames accepted since would be re-sent under numbers already used.
+  int? _lastRealignedTo;
   int _resizeSeq = 0;
   bool _resyncRequested = false;
   int _resyncAttempts = 0;
@@ -202,6 +208,7 @@ class TerminalSession extends ChangeNotifier {
     _framesSinceAck = 0;
     _renderedSinceAckBytes = 0;
     _inputSeq = 0;
+    _lastRealignedTo = null;
     _resizeSeq = 0;
     _utf8Tail = const [];
     _remoteCursorVisible = true;
@@ -412,6 +419,37 @@ class TerminalSession extends ChangeNotifier {
           debugPrint(
             'TerminalSession: paste rejected: ${payload['message'] ?? errorCode}',
           );
+          return true;
+        }
+        // A refused INPUT frame never reached tmux either: the stream is fine, only our counter
+        // disagrees with the daemon's (a frame dropped on this side while resyncing, say). A daemon
+        // that says what it expects gets realigned in place — the refused keystroke is gone either
+        // way, and the person retypes it — and an older one that does not gets a fresh stream. What
+        // it must NOT get is the frozen pane this used to be: every later keystroke was refused too,
+        // and a working terminal read as a dead one.
+        if (errorCode == 'TERMINAL_INPUT_INVALID') {
+          final expected = payload['expectedSeq'];
+          if (expected is int && expected >= 0) {
+            // A stale duplicate: the daemon refused several in-flight frames
+            // at once, each naming this same seq, and the counter has since
+            // moved on from it and been accepted. Rewinding again would put the
+            // next keystroke under a number the daemon has already taken.
+            // Safe because its expectation only ever grows and its errors
+            // arrive in order — a NEW gap always names a larger seq.
+            if (expected == _lastRealignedTo) return true;
+            _lastRealignedTo = expected;
+            _inputSeq = expected;
+            // Bytes still waiting in the coalescer are kept: they are numbered
+            // on the way out, after this, so they go under the right seq.
+            debugPrint(
+              'TerminalSession: input seq realigned to $expected '
+              '(${payload['reason'] ?? payload['message'] ?? 'no reason given'})',
+            );
+            notifyListeners();
+          } else {
+            _inputBytes.clear();
+            unawaited(_recoverByReopen(reason: 'TERMINAL_INPUT_INVALID'));
+          }
           return true;
         }
         // A genuine mid-transfer failure (the daemon couldn't write the clipboard/disk, or the
@@ -905,17 +943,37 @@ class TerminalSession extends ChangeNotifier {
     _lastInputFlushAt = DateTime.now();
     final currentStreamId = streamId;
     if (currentStreamId == null) return;
-    final frame = TerminalBinaryFrame(
-      kind: TerminalBinaryKind.input,
-      streamId: currentStreamId,
-      seq: _inputSeq++,
-      bytes: Uint8List.fromList(bytes),
-      compressed: false,
-    );
     final queued = _inputSendTail.then((_) async {
       if (!acceptsInput || streamId != currentStreamId) return;
-      final sent = await sendBinary(frame);
-      if (!sent) transportLost('Terminal input was not sent');
+      // Numbered HERE, on the tail, not when the flush was asked for. A frame
+      // the guard above drops — the session went `resyncing` while an earlier
+      // send was still in flight — must not consume a seq: the daemon wants
+      // them contiguous and never re-syncs its counter, so one skipped number
+      // had the very next keystroke refused and the whole pane frozen. The
+      // tail runs one closure at a time, which is what keeps the numbers in
+      // order.
+      //
+      // Never larger than the daemon accepts, either — split rather than let
+      // one oversized frame be refused with the counter intact behind it.
+      for (
+        var offset = 0;
+        offset < bytes.length;
+        offset += kInputFrameMaxBytes
+      ) {
+        final end = min(offset + kInputFrameMaxBytes, bytes.length);
+        final frame = TerminalBinaryFrame(
+          kind: TerminalBinaryKind.input,
+          streamId: currentStreamId,
+          seq: _inputSeq++,
+          bytes: Uint8List.fromList(bytes.sublist(offset, end)),
+          compressed: false,
+        );
+        final sent = await sendBinary(frame);
+        if (!sent) {
+          transportLost('Terminal input was not sent');
+          return;
+        }
+      }
     });
     _inputSendTail = queued.catchError((_) {
       transportLost('Terminal input was not sent');
@@ -938,6 +996,10 @@ class TerminalSession extends ChangeNotifier {
   /// charged its full window to every single keystroke and to the start of every drag, which is
   /// latency paid for a batch that mostly never materializes.
   static const _inputCoalesceWindow = Duration(milliseconds: 4);
+
+  /// The daemon's ceiling on one input frame (`INPUT_MAX_BYTES` in
+  /// `cli/src/lib/terminalStreamManager.ts`). Larger is refused, not split.
+  static const kInputFrameMaxBytes = 64 * 1024;
   static const _resizeCoalesceWindow = Duration(milliseconds: 50);
 
   void resize(int width, int height) {
@@ -1107,16 +1169,20 @@ class TerminalSession extends ChangeNotifier {
     });
   }
 
-  Future<void> _recoverByReopen() async {
+  Future<void> _recoverByReopen({
+    String reason = 'TERMINAL_RESYNC_TIMEOUT',
+  }) async {
     final previousStream = streamId;
     if (_autoReopenAttempts >= 1) {
       debugPrint(
         '[terminal-session] recovery_failed agent=$agentId '
-        'stream=$previousStream attempts=$_resyncAttempts',
+        'stream=$previousStream reason=$reason attempts=$_resyncAttempts',
       );
       _fail(
-        'TERMINAL_RESYNC_TIMEOUT',
-        'Terminal did not recover after resync and reopen.',
+        reason,
+        reason == 'TERMINAL_RESYNC_TIMEOUT'
+            ? 'Terminal did not recover after resync and reopen.'
+            : 'Terminal did not recover after reopening the stream.',
       );
       return;
     }

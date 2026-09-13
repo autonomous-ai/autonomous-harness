@@ -22,7 +22,9 @@ export function canonicalRepository(raw: string | null): string | null {
     if (!path || /[\x00-\x20]/.test(path)) return null
     const host = url.hostname.toLowerCase()
     if (host === 'github.com' || host === 'bitbucket.org') path = path.toLowerCase()
-    return `${host}${url.port ? `:${url.port}` : ''}/${path}`
+    const defaultPort = url.protocol === 'ssh:' ? '22' : url.protocol === 'git:' ? '9418' : ''
+    const port = url.port === defaultPort ? '' : url.port
+    return `${host}${port ? `:${port}` : ''}/${path}`
   } catch { return null }
 }
 

@@ -6,6 +6,7 @@ import 'package:harness/auth/cli_login.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/ws/local_cli_discovery.dart';
 
 /// A daemon that answers whatever the test says, with the supervisor's callbacks captured so the
@@ -17,6 +18,7 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
   int ensureCalls = 0;
   int superviseCalls = 0;
   void Function(LocalCliEndpoint endpoint)? onReady;
+  void Function(LocalCliEndpoint endpoint)? onSnapshot;
 
   @override
   Future<LocalCliProbe> ensureRunning({
@@ -38,9 +40,11 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
     Future<bool> Function()? stillSignedIn,
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
+    void Function(LocalCliEndpoint endpoint)? onSnapshot,
   }) {
     superviseCalls++;
     this.onReady = onReady;
+    this.onSnapshot = onSnapshot;
     return Timer(const Duration(days: 1), () {});
   }
 }
@@ -84,6 +88,82 @@ final _endpoint = LocalCliEndpoint(
 );
 
 void main() {
+  test('local folder snapshots refresh projects without leaking to peers or changing membership', () async {
+    final discovery = _ScriptedDiscovery([LocalCliProbe.ready(_endpoint)]);
+    final notifier = _Notifier(discovery);
+    addTearDown(notifier.dispose);
+    const oldAgent = Agent(id: 'shared-id', name: 'Existing agent');
+    const wireProject = AgentProject(
+      name: 'Reported repository',
+      cwd: '/wire',
+      remote: 'host/org/repo',
+    );
+    final local =
+        MachineState(
+            const Machine(
+              machineId: 'local',
+              name: 'Local',
+              authMode: MachineAuthMode.remote,
+            ),
+          )
+          ..localEndpoint = _endpoint
+          ..agents = [
+            oldAgent,
+            const Agent(id: 'native', name: 'New daemon', project: wireProject),
+          ];
+    final peer = MachineState(
+      const Machine(
+        machineId: 'peer',
+        name: 'Peer',
+        authMode: MachineAuthMode.remote,
+      ),
+    )..agents = [oldAgent];
+    notifier.machineStates.addAll({'local': local, 'peer': peer});
+    await notifier.ensureCliDaemonReady();
+    final swarm = notifier.activeSwarm;
+    var notifications = 0;
+    notifier.addListener(() => notifications++);
+    LocalCliEndpoint snapshot(String computerId, String folder) =>
+        LocalCliEndpoint(
+          computerId: computerId,
+          wsUri: _endpoint.wsUri,
+          protocolVersion: 1,
+          terminalProtocolVersion: 3,
+          agentProjects: {
+            'shared-id': AgentProject(name: folder, cwd: '/work/$folder'),
+            'native': const AgentProject(name: 'Fallback', cwd: '/fallback'),
+          },
+        );
+    final current = snapshot(_endpoint.computerId, 'Current project');
+    discovery.onSnapshot!(current);
+    expect(local.projectOf(oldAgent)!.name, 'Current project');
+    expect(peer.projectOf(oldAgent), isNull);
+    expect(local.projectOf(local.agents.last), wireProject);
+    expect(swarmAgents(notifier, 'Current project').map((a) => a.machineId), [
+      'local',
+    ]);
+    expect(
+      swarmProjects(notifier, const [
+        SavedSwarmProject(
+          machineId: 'local',
+          path: '/work/Current project',
+          name: 'Saved folder',
+        ),
+      ]),
+      hasLength(2),
+    );
+    discovery.onSnapshot!(current);
+    discovery.onSnapshot!(snapshot('another-computer', 'Wrong project'));
+    expect(notifications, 1);
+    discovery.onSnapshot!(snapshot(_endpoint.computerId, 'Moved project'));
+    expect(local.projectOf(oldAgent)!.name, 'Moved project');
+    expect(notifications, 2);
+    expect(notifier.activeSwarm, same(swarm));
+    expect(notifier.swarms, hasLength(1));
+    expect(notifier.panes, isEmpty);
+    expect(notifier.refreshes, 0);
+  });
+
   test('a daemon that answers but is still connecting is reported as such, and supervised', () async {
     final discovery = _ScriptedDiscovery([
       const LocalCliProbe.notReady(

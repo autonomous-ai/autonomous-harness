@@ -165,6 +165,7 @@ class _RootShellState extends ConsumerState<RootShell> {
     switch (call.method) {
       case 'checkForUpdates':
         final app = ref.read(appStateProvider);
+        if (!app.desktopUpdatesEnabled) return;
         final result = await app.checkForUpdates();
         if (!mounted) return;
         await showUpdateCheckDialog(context, app, result);

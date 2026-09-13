@@ -1,6 +1,6 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-12. This is a working preview, not a release or a finished implementation.
+Updated 2026-09-12 after the implementation continuation and live-data review. This is a working preview, not a release.
 
 ## Resume here
 
@@ -8,8 +8,9 @@ Updated 2026-09-12. This is a working preview, not a release or a finished imple
 - Branch: `app-v2`, tracking `origin/app-v2` in that repository.
 - Resume folder: `/Users/ab/code/autonomous-harness`.
 - Desktop: `desktop/`. CLI: `cli/`. Backend: `backend/`.
-- The user reviewed the running native app, liked the direction, and requested that all work move into this monorepo branch. After branch creation and documentation, stop so the user can resume in that folder/branch.
-- Continue implementation there. Do not create another repository or fork for V2.
+- The user resumed implementation here, requested real machines/projects after seeing the temporary QA app, and then asked Codex to keep working while away for a couple of hours. The original active goal is a polished, very fast, keyboard-first native app with each tab representing a Swarm.
+- The QA app was closed. Review uses the normal `lib/main.dart` entry point, the existing Harness account, and saved V2 Swarms. Keep sample fixtures out of the foreground review app.
+- Continue implementation here. Do not create another repository or fork for V2.
 
 ```bash
 cd /Users/ab/code/autonomous-harness
@@ -18,7 +19,7 @@ git remote -v
 git log -1 --oneline
 ```
 
-The preview was developed from monorepo commit `9bd8cf1667310def711e8c491c9e6b317cdece78`, then the tip of `internal/monorepo-move`. `app-v2` preserves that history and the current implementation. At migration, `origin/main` was `84a23e5f8d358b78d24ba92ce185b482b5f97ebc`, three commits ahead of this base. Those commits add reboot restoration, change release CI, and fix terminal input sequence recovery; they have **not** been incorporated here. Bring main forward deliberately next session, especially `app_state.dart` and terminal recovery tests. This is already monorepo history, so a later merge requires no repository import.
+The preview was developed from monorepo commit `9bd8cf1667310def711e8c491c9e6b317cdece78`. Current main through `84a23e5f8d358b78d24ba92ce185b482b5f97ebc` is now incorporated into `app-v2`: reboot restoration, release CI changes, and terminal input sequence recovery. Swarm transport fan-out still uses all deduplicated sessions. This does not merge V2 into main or publish a release.
 
 The former preview folder `/Users/ab/code/harness-app-v2` is retained as a backup and contains the already-built app. Its `origin` now also points at the monorepo; the old personal fork remains under remote name `fork`. The old GitHub fork has not been deleted and is no longer the working destination. The existing `/Users/ab/code/autonomous-harness` checkout was clean before switching from `main` to `app-v2`.
 
@@ -51,9 +52,9 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Replacing membership creates/reuses a different pane identity instead of mutating a pane shared with another swarm.
 - Session detachment waits until the final membership closes. Sends terminal-close, never agent-delete.
 - Seeding records membership synchronously before awaiting attachments. Agent creation captures its destination before the RPC completes, so tab switching cannot redirect results.
-- Limits: 24 swarms, 64 panes per swarm. Normal add/seed paths report capacity explicitly; legacy migration retains the nine-pane storage limit. A dial capacity exception remains below.
+- Limits: 24 swarms, 64 panes per swarm. Add, seed, and dial paths report capacity explicitly without silently evicting a view; legacy migration retains the nine-pane storage limit.
 - `PaneLayoutStore` writes `swarm_layout_v1`: tab order/selection/names, wallpaper, pane intent, focus/zoom, presets, per-swarm pins, composer visibility.
-- Restore pools shared pane identity, keeps disconnected memberships, and defers initial attachment of inactive panes until shown. Previous focus and measured grid columns currently live in memory; audit whether they need persistence.
+- Restore pools shared pane identity, keeps disconnected memberships, and defers initial attachment of inactive panes until shown. Previous focus is persisted; grid columns remain measured runtime geometry. Revision guards cover every asynchronous legacy restore read.
 - Focus follows zoom and wraps without an invisible sidebar. Legacy `HomeScreen`/rail code remains but is no longer the authenticated V2 shell.
 - Agent comparison considers project and launch-state metadata so polling can refresh those details.
 
@@ -63,7 +64,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - `TerminalPane.lastViewSize` retains geometry. Hidden `TerminalPanel` views stop auto-resizing/reporting viewport and release input focus.
 - Compact headers remove routine transport/status/pin clutter, retaining exceptional states and offline/unavailable placeholders.
 - Existing terminal sessions/transports/renderer and patched `third_party/xterm` are retained. One regression verifies renderer identity, hidden geometry during window resize, and input going only to the active view.
-- The old composer grip is hidden in compact mode; add a discoverable replacement entry point.
+- Compact remote panes expose a Show/Hide message composer button in their header. Closing the final visible pane restores keyboard focus even when its shared terminal remains parked in another Swarm.
 
 ### Shell and dialogs
 
@@ -71,10 +72,12 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - `widgets/swarm_welcome.dart`: wallpapers, live search, real machines/projects, New agent. Wallpaper rotates for a new swarm, stays stable, and supports manual next.
 - `widgets/swarm_dialogs.dart`: fixed-size Add agent picker, rename, Add project, Link machine entry points.
 - Add project saves an **existing folder**, via native local picker or existing remote folder browser. It does not clone a GitHub URL.
-- `NewAgentDialog`: machine chooser, initial folder, captured destination swarm; local default when available. Reuses engine probes, Codex profiles, advanced permission behavior, and remote browsing.
+- `NewAgentDialog`: machine chooser, initial folder, captured destination swarm; local default when available. Reuses engine probes, Codex profiles, advanced permission behavior, and remote browsing. Profile/folder responses are rejected after a machine switch, including switching away and back. Launch replies are ignored after notifier disposal or machine replacement.
 - `state/swarm_catalog.dart`: search, project grouping, saved folders (`swarm_projects_v1`). Group by canonical remote if supplied, otherwise owning machine and full folder path; matching basenames never establish identity.
+- Project-store load/add operations are serialized, and failures are visible without claiming a project was saved.
+- Search supports arrows, Ctrl-N/P, and Return, reveals the selected row, and retains the highlighted agent across live list changes. Both the welcome and picker immediately focus search; blank Return on welcome does not open an invisible first result.
 - Notifications come from real blocked agents; selecting an existing membership navigates back to its swarm.
-- Spoken-task subscription/reporting/window reveal and existing linking dialogs are retained. Settings is in the title bar.
+- Spoken-task subscription/reporting/window reveal and existing linking dialogs are retained. Settings is in the title bar, with Account/sign-out restored inside Settings.
 - Non-macOS/tests use a Flutter reorderable tab-strip fallback. Linux/Windows have not been built or visually reviewed.
 
 ### Native macOS tabs
@@ -84,15 +87,17 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention; Swift sends new/select/close/rename/reorder/navigation/settings/notifications.
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
 - Native Swarm menu includes new/close/rename, previous/next, Add agent, close agent view, Settings.
-- Real tabs alongside traffic lights were visually verified. Full native keyboard/drag/accessibility testing remains.
+- Real tabs alongside traffic lights were visually verified. Native selection, new tabs, modal-disabled controls, and independently accessible select/close buttons were checked. Drag/reorder, overflow, and a wider keyboard/accessibility audit remain.
 
 ### CLI project metadata
 
 - New `cli/src/lib/agentProject.ts`; `agentFrame.ts` includes its result in the common list/push agent payload.
 - Reads cwd, Git root/origin/symbolic branch using bounded `execFile`, no shell/network/repository mutation. Detached HEAD returns no branch.
 - Four concurrent folder inspections, 256-entry cache, 15-second TTL, subprocess timeout/output limit.
-- Remote normalization strips credentials/transport syntax. Missing/non-Git metadata degrades gracefully; optional Dart `AgentProject` accepts older daemon payloads.
-- Production CLI was **not** installed/restarted to expose these fields. Project/branch detail appears only when a daemon running this code reports it. Older daemons still work.
+- Remote normalization strips credentials/transport syntax and normalizes explicit default SSH/git ports. Missing/non-Git metadata degrades gracefully; optional Dart `AgentProject` accepts older daemon payloads.
+- Production CLI was **not** installed/restarted. Newer daemons report full project/branch metadata across machines.
+- Older local daemons already report real session working folders in `/api/status`. The existing validated loopback discovery probe now carries that snapshot into project grouping, search, and headers, refreshing every ready supervision probe without extra HTTP calls. Home-relative folders are expanded for this computer only. Rich agent metadata takes precedence; local folders cannot be applied to peers or establish cross-machine repository identity.
+- The compatibility path was tested against a running CLI 0.2.17. Remote machines still require their actual existing links and connectivity; no link credentials were fabricated or daemons upgraded.
 
 ### V2 identity and isolation
 
@@ -100,8 +105,8 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Desktop state/log namespace `~/.harness/desktop-app-v2`, including setup logs. CLI transport/login identity remains shared.
 - `core/build_identity.dart` marks V2. Default updater checks disabled in `AppNotifier`/`DesktopUpdater`; injected updater tests retain their test path. Native Check for Updates removed.
 - Analytics category `harness-desktop-v2`; existing opt-out behavior retained.
-- `debugShowCheckedModeBanner` is false in source; first built preview predates this small change.
-- Cross-platform product names, About messaging, and manual updater entry points still need follow-up.
+- `debugShowCheckedModeBanner` is false. About identifies Harness V2 and explicitly describes disabled updates. Check, download/stage, and apply are all blocked by default for V2.
+- Linux/Windows names and binary identity now also use Harness V2 / `harness-v2`; those platforms have not been built on this Mac.
 
 ## Current shortcuts
 
@@ -119,54 +124,48 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 | Layout / pin | Cmd+S / Cmd+Shift+P |
 | Task palette / reload machines | Cmd+B / Cmd+R |
 | Settings / shortcut sheet | Cmd+, / Cmd+/ |
-| Close agent view | Cmd+Shift+W in native macOS menu; Flutter binding still needed |
+| Close agent view | Cmd+Shift+W |
 
-Swarm shortcuts are partly hardcoded in `SwarmScreen`; the old table in `shortcuts/app_shortcuts.dart` still powers help. Consolidate them: help is stale about sidebar, Cmd+W, and Ctrl+Tab. Preserve terminal clipboard/select-all and shell/TUI keys. Do not reintroduce AppKit menu key equivalents that intercept clipboard or Cmd+H/J before Flutter.
+Swarm shortcuts, help, and tooltips now read the same catalog in `shortcuts/app_shortcuts.dart`. The retained legacy HomeScreen explicitly opts into its old bindings. Native Swarm actions and controls are blocked while Swarm dialogs or Settings are open. Clipboard/select-all and shell/TUI keys remain owned by the terminal. Do not add AppKit menu equivalents that intercept Cmd+H/J before Flutter.
 
 ## Verification and limits
 
 | Check | Result |
 | --- | --- |
-| macOS debug build | Passed; `Harness V2.app` launched and visually reviewed. Predates the final small source/test fixes; rebuild next session. |
-| Swarm state tests | 8 passed: shared sessions, replacement/pins, async seeding, capacity, restore, tab IDs/close, focus/zoom, grouping. |
-| Swarm widget tests | 3 passed: welcome/search/cancel, retained renderer and input isolation, real notification navigation. |
-| Crash-log isolation tests | 2 passed. Rechecked with Swarms at migration: **13 passed total**. Widget tap hit-test warning still needs cleanup. |
-| CLI typecheck | `npm run typecheck` passed for metadata changes. |
-| CLI targeted tests | `agentFrame.spec.ts` + `agentProject.spec.ts`: 9 passed in 2 files. |
-| Latest Flutter analyzer | **0 errors, 1 warning, 36 infos**, exits 1. Unused `harness_file_store.dart` import in `app_state.dart`; own brace/import/deprecation cleanup and existing vendored xterm infos. Not a clean pass. |
-| Last full Flutter suite | **919 passed, 1 skipped, 21 failed** before subsequent expectation/isolation fixes. Not rerun in full afterward; do not call it green. |
-| Production E2E / release | Not run. No release, installer, or production CLI update/restart for this preview. |
+| macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
+| macOS optimized local build | Passed with ad hoc signing and the real entry point. The distribution Developer ID certificate is unavailable; nothing was uploaded. The Mac locked before visual review, and the running debug app declined a normal quit request, so it was left running. |
+| Full Flutter suite | **968 passed, 1 skipped** after live-project discovery, keyboard navigation, and multi-machine folder-race fixes. |
+| Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
+| Local CLI discovery | 25 passed, including older-daemon folder parsing and continuous snapshots without spawning/reconnecting. |
+| CLI typecheck | `npm run typecheck` passed. |
+| CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
+| Flutter analyzer | **0 errors, 0 warnings, 12 existing vendored xterm infos**; passes with `--no-fatal-infos`. |
+| Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and latency measurements remain. |
 
-Full-suite failures: old replacement/nine-pane/persistence expectations; five boot-flow tests expecting removed sidebar; four dial expectations; old store/analytics namespace assertions; crash log; two Usage copy assertions; two shortcut-deck assertions. Some updates are in `terminal_pane_test.dart`, `pane_lattice_test.dart`, `dial_desk_test.dart`, and `harness_file_store_test.dart`; review and rerun. Do not call Usage/shortcut failures baseline without checking. The first updated dial test may still have an inconsistent pane-count assertion.
+Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing again explains a partial estimate as a lower bound. Small offline panes avoid overflowing the full connection guide. No remaining full-suite failures are being dismissed as baseline.
 
 **Test isolation incident:** the original upstream crash-log test deleted real default `~/.harness/desktop-app/errors.log` if it existed. The suite ran before discovery, so the previous error log may have been removed; the user was informed. The test now uses a disposable temporary directory, and `CrashLog.record` skips test file I/O unless `CrashLog.testFile` is supplied. Do not rerun the original unisolated test or claim no production file could have been affected. No terminal data, agent processes, or user project files were intentionally modified by tests.
 
 Evidence on this Mac under `/private/tmp`:
 
-- `harness-v2-build.log`: first successful build.
-- `harness-v2-cli-check.log`, `harness-v2-cli-tests.log`: CLI checks.
-- `harness-v2-all-tests.log`: full-suite result above.
-- `harness-v2-migration-analyze.log`: latest analyzer, 37 diagnostics.
-- `harness-v2-migration-tests.log`: latest focused 13-test pass.
-- `harness-v2-branch-migration.json`: SHA-256 inventory of all 45 changed/new files before migration; this handoff is intentionally rewritten afterward.
+- `harness-v2-final-tests.log`: full 968-test pass.
+- `harness-v2-final-analyze.log`: latest diagnostics.
+- `harness-v2-final-build.log`: real-entry debug build.
+- `harness-v2-release-build.log`: optimized local build.
+- `harness-v2-final-cli-check.log`, `harness-v2-final-cli-tests.log`: final metadata checks.
+- `harness-v2-resume-cli-tests.log`: 135-test CLI pass.
+- `harness-v2-keyboard-tests.log`, `harness-v2-local-project-tests.log`: focused interaction/discovery checks.
 
-Older `harness-v2-analyze.log` and `harness-v2-swarm-tests.log` contain failures since fixed. Use migration logs for latest focused results. Temporary logs/toolchain are local conveniences, not committed artifacts.
+Earlier logs contain superseded failures. Temporary logs and toolchains are local conveniences, not committed artifacts.
 
-## Remaining work, in recommended order
+## Remaining work
 
-1. Review/incorporate current main, especially terminal sequence recovery; preserve Swarm fan-out in `app_state.dart`.
-2. Remove unused import; format/lint changed Dart files; change fallback `onReorder` to `onReorderItem` with its already-adjusted index. Leave vendored xterm style alone.
-3. Finish full-suite transition and rerun. Boot-flow tests must exercise Swarm welcome/settings/linking. Fix behavior, not just assertions. Investigate Usage/shortcut failures and widget tap warning.
-4. Known bug: `openAgentFromDial` still replaces the last membership at capacity. Use explicit capacity handling or a deliberate new swarm, no silent eviction.
-5. Centralize Swarm shortcuts/help; add Flutter Cmd+Shift+W; audit native menu conflicts and shortcuts while dialogs/settings are open.
-6. Restore discoverable composer access in compact mode and account/sign-out access in Settings after removal of old sidebar footer.
-7. About must say Harness V2 and accurately describe disabled updates. Audit manual/apply updater paths; finish Linux/Windows identity before testing those builds.
-8. Add meaningful async launch tests for tab switch/close/disposal during RPC and machine change during folder/profile probes. Audit restore revision guard after legacy asynchronous loads, not just initial load.
-9. Handle project-store write errors visibly; audit load/add races. Consider normalizing explicit default Git ports (SSH 22) across transports.
-10. Native QA: drag/reorder, close-last-tab, rename, overflow, shortcuts, accessibility of tab close subbuttons. CUA exposed parent buttons; independently accessible close controls still need checking.
-11. Rebuild/review final source; run justified local-only terminal integration checks with disposable fixtures and separate test identity. Never automatically take over a user's terminal or replace the review app with an integration runner.
-
-Items 4–7 are known gaps; async/persistence/accessibility/cross-platform items include pending audits, not claims each path already failed.
+1. Launch the completed optimized real-data build after the Mac is unlocked; verify actual local project starters and keyboard navigation in the native shell.
+2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
+3. Measure terminal input and tab-switch responsiveness before making latency claims. Preserve the existing immediate first-input flush and shared retained renderers.
+4. Audit app-menu modal interactions (the older `harness/app_menu` path also opens Layout/Shortcuts/Firmware dialogs).
+5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
+6. Continue the agreed goal autonomously. The user has stepped away; lack of immediate replies is not a reason to stop independent implementation, checks, or app-v2 publishing.
 
 ## Toolchain and workflow
 
@@ -186,7 +185,7 @@ export XDG_CONFIG_HOME=/private/tmp/harness-v2-tool-config
 open -n 'build/macos/Build/Products/Debug/Harness V2.app'
 ```
 
-Use online `pub get` if packages are not cached. Enable SPM before pub get; do not accept CocoaPods fallback rewriting the project. Do not commit generated build/ephemeral files or caches. Analyzer currently needs cleanup; `--no-fatal-infos` is useful once warnings are resolved and does not erase remaining infos.
+Use online `pub get` if packages are not cached. Enable SPM before pub get; do not accept CocoaPods fallback rewriting the project. Do not commit generated build/ephemeral files or caches. Use `--no-fatal-infos` for the existing vendored xterm infos; do not modify vendored style merely to erase them.
 
 ```bash
 cd /Users/ab/code/autonomous-harness/cli
@@ -197,7 +196,7 @@ npx vitest run src/lib/agentFrame.spec.ts src/lib/agentProject.spec.ts
 
 Some tests require permission to bind disposable loopback sockets. Inject memory/temp stores, skip real credential/usage pollers using `kUnderTest`, and never treat a real Harness home as a fixture. Keep patched `desktop/third_party/xterm`, not pub.dev xterm.
 
-The app open for review was launched from `/Users/ab/code/harness-app-v2/desktop/build/macos/Build/Products/Debug/Harness V2.app`. It has the separate V2 bundle identity. The user has been interacting with it, opening swarms and saving a project; leave those views alone during migration. Another-app-controls-terminal is a real ownership state, not permission to take over. Building in the new folder does not move the running process; coordinate the next V2 relaunch and preserve saved state.
+The real review app is now built in `/Users/ab/code/autonomous-harness/desktop/build/macos/Build/Products/Debug/Harness V2.app`, with the separate V2 bundle identity and saved V2 state. An optimized ad hoc signed local build is ready in the sibling `Release/` directory. It has not been launched yet: the Mac is locked and the running debug app declined a normal quit request. No process was force-terminated. Production Harness remains a separate running app. Never automatically take over its terminals or use a real Harness home as a test fixture.
 
 ## Publishing boundaries
 

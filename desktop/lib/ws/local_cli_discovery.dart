@@ -8,6 +8,7 @@ import '../core/serial_port_lease.dart';
 import '../core/config.dart';
 import '../core/harness_cli_runner.dart';
 import '../core/harness_file_store.dart';
+import '../core/models.dart';
 
 const localWsProtocolVersion = 1;
 const localTerminalProtocolVersion = 3;
@@ -18,11 +19,16 @@ class LocalCliEndpoint {
   final int protocolVersion;
   final int terminalProtocolVersion;
 
+  /// Older daemons report local working folders in status before they support
+  /// project metadata in agent frames. This snapshot never describes a peer.
+  final Map<String, AgentProject> agentProjects;
+
   const LocalCliEndpoint({
     required this.computerId,
     required this.wsUri,
     required this.protocolVersion,
     required this.terminalProtocolVersion,
+    this.agentProjects = const {},
   });
 }
 
@@ -264,6 +270,7 @@ class LocalCliDiscovery {
   ///
   /// [onReady] fires on every transition INTO ready — the daemon coming back after an update, or
   /// after a spawn — so the app can pick up where it left off without a click.
+  /// [onSnapshot] receives each ready probe, including changing local working folders.
   Timer startSupervising({
     Duration checkInterval = const Duration(seconds: 5),
     Duration graceStep = const Duration(milliseconds: 500),
@@ -274,6 +281,7 @@ class LocalCliDiscovery {
     Future<bool> Function()? stillSignedIn,
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
+    void Function(LocalCliEndpoint endpoint)? onSnapshot,
   }) {
     var backoff = initialBackoff;
     var nextSpawnAllowedAt = DateTime.now();
@@ -293,6 +301,7 @@ class LocalCliDiscovery {
       if (seen.ready) {
         backoff = initialBackoff;
         quietTicks = 0;
+        onSnapshot?.call(seen.endpoint!);
         if (!wasReady) onReady?.call(seen.endpoint!);
         wasReady = true;
         return;
@@ -489,11 +498,66 @@ class LocalCliDiscovery {
             .replace(scheme: base.scheme == 'https' ? 'wss' : 'ws'),
         protocolVersion: protocolVersion as int,
         terminalProtocolVersion: terminalProtocolVersion as int,
+        agentProjects: _localAgentProjects(
+          body['sessions'],
+          identity.environment,
+        ),
       ),
       pid: pid,
       version: version,
     );
   }
+}
+
+Map<String, AgentProject> _localAgentProjects(
+  Object? sessions,
+  Map<String, String> environment,
+) {
+  if (sessions is! List) return const {};
+  final projects = <String, AgentProject>{};
+  final home = environment['HOME'] ?? environment['USERPROFILE'];
+  for (final session in sessions) {
+    if (session is! Map || session['id'] is! String) continue;
+    final id = session['id'] as String;
+    final rawCwd = session['cwd'];
+    if (id.isEmpty ||
+        rawCwd is! String ||
+        rawCwd.isEmpty ||
+        rawCwd.length > 4096 ||
+        RegExp(r'[\x00-\x1f\x7f]').hasMatch(rawCwd)) {
+      continue;
+    }
+    String cwd = rawCwd;
+    if (cwd == '~' ||
+        cwd.startsWith('~/') ||
+        (Platform.isWindows && cwd.startsWith('~\\'))) {
+      if (home == null || home.isEmpty) continue;
+      cwd = '$home${cwd.substring(1)}';
+    }
+    final absolute = Platform.isWindows
+        ? RegExp(r'^[A-Za-z]:[\\/]|^\\\\').hasMatch(cwd)
+        : cwd.startsWith('/');
+    if (!absolute) continue;
+    try {
+      cwd = File(cwd).uri.normalizePath().toFilePath();
+      // Directory paths in the status may carry a trailing separator.
+      final separator = Platform.pathSeparator;
+      while (cwd.length > 1 &&
+          cwd.endsWith(separator) &&
+          !(Platform.isWindows && RegExp(r'^[A-Za-z]:\\$').hasMatch(cwd))) {
+        cwd = cwd.substring(0, cwd.length - 1);
+      }
+      final parts = cwd.split(separator).where((part) => part.isNotEmpty);
+      final project = AgentProject.fromJson({
+        'name': parts.isEmpty ? cwd : parts.last,
+        'cwd': cwd,
+      });
+      if (project != null) projects[id] = project;
+    } on FormatException {
+      // A malformed status row must not prevent discovery of the daemon.
+    }
+  }
+  return Map.unmodifiable(projects);
 }
 
 String? _normalizeComputerId(Object? raw) {

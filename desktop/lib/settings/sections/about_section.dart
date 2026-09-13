@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_version.dart';
+import '../../core/build_identity.dart';
 import '../../shared/theme/app_theme.dart' as grid;
 import '../../shared/widgets/section_scaffold.dart';
 import '../../shared/widgets/skeleton.dart';
@@ -63,7 +64,7 @@ class _AboutSectionState extends State<AboutSection> {
     return SectionScaffold(
       title: 'About',
       subtitle:
-          'Harness Desktop attaches terminals to the agents running on your '
+          '$desktopAppName attaches terminals to the agents running on your '
           'machines.',
       child: SingleChildScrollView(
         child: ConstrainedBox(
@@ -83,8 +84,10 @@ class _AboutSectionState extends State<AboutSection> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Harness checks for a newer build when it starts, and every '
-                'six hours after that.',
+                widget.notifier.desktopUpdatesEnabled
+                    ? 'Harness checks for a newer build when it starts, and every '
+                          'six hours after that.'
+                    : 'Automatic and manual updates are disabled for this V2 preview.',
                 style: TextStyle(
                   color: grid.AppPalette.textFaint,
                   fontSize: 11.5,
@@ -136,8 +139,10 @@ class _AboutCard extends StatelessWidget {
           const SizedBox(height: 18),
           Container(height: 1, color: grid.AppPalette.divider),
           const SizedBox(height: 14),
-          _CheckRow(checking: checking, onCheck: onCheck),
-          const SizedBox(height: 12),
+          if (notifier.desktopUpdatesEnabled) ...[
+            _CheckRow(checking: checking, onCheck: onCheck),
+            const SizedBox(height: 12),
+          ],
           const _FlashRow(),
         ],
       ),
@@ -171,7 +176,7 @@ class _Identity extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Harness Desktop',
+                desktopAppName,
                 style: TextStyle(
                   color: grid.AppPalette.textPrimary,
                   fontSize: 16,
@@ -309,6 +314,12 @@ class _PillState {
   final bool wash;
 
   static _PillState of(AppNotifier notifier, {required bool checking}) {
+    if (!notifier.desktopUpdatesEnabled) {
+      return _PillState(
+        'Preview · updates disabled',
+        grid.AppPalette.textSecondary,
+      );
+    }
     if (notifier.isInstallingUpdate) {
       return _PillState(
         'Installing…',

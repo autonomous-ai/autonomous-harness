@@ -43,6 +43,7 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
   bool _hasChosenProfile = false;
   String? _error;
   int _loadGeneration = 0;
+  int _machineRevision = 0;
 
   @override
   void initState() {
@@ -53,7 +54,17 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
   @override
   void didUpdateWidget(CodexProfileField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!setEquals(oldWidget.observedPaths, widget.observedPaths)) _load();
+    if (oldWidget.machineId != widget.machineId ||
+        oldWidget.machineIsThisComputer != widget.machineIsThisComputer ||
+        oldWidget.notifier != widget.notifier) {
+      _machineRevision++;
+      _profiles = [];
+      _hasChosenProfile = false;
+      _linking = false;
+      _load();
+    } else if (!setEquals(oldWidget.observedPaths, widget.observedPaths)) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -112,6 +123,9 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
 
   Future<void> _link() async {
     if (_linking) return;
+    final machineId = widget.machineId;
+    final revision = _machineRevision;
+    bool current() => mounted && revision == _machineRevision;
     setState(() {
       _linking = true;
       _error = null;
@@ -130,15 +144,12 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
           : await showRemoteFolderPicker(
               context,
               notifier: widget.notifier,
-              machineId: widget.machineId,
+              machineId: machineId,
               initialPath: widget.value?.path,
             );
-      if (path == null || !mounted) return;
-      final result = await widget.notifier.linkCodexProfile(
-        widget.machineId,
-        path,
-      );
-      if (!mounted) return;
+      if (path == null || !current()) return;
+      final result = await widget.notifier.linkCodexProfile(machineId, path);
+      if (!current()) return;
       final error = result['error'];
       if (error is String) {
         setState(
@@ -150,15 +161,15 @@ class _CodexProfileFieldState extends State<CodexProfileField> {
         Map<String, dynamic>.from(result['profile'] as Map),
       );
       await _load();
-      if (mounted) _select(profile);
+      if (current()) _select(profile);
     } catch (_) {
-      if (mounted) {
+      if (current()) {
         setState(
           () => _error = 'Could not link this profile folder. Check that it is accessible.',
         );
       }
     } finally {
-      if (mounted) {
+      if (current()) {
         setState(() => _linking = false);
         _reportBusy();
       }

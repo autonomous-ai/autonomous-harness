@@ -86,14 +86,14 @@ void main() {
       );
     }
 
-    // ⇧⌘] is three caps, not one glyph run.
+    // ⌘] is two caps. Ctrl+Tab switches swarms.
     final next = find.ancestor(
       of: find.text('Next agent'),
       matching: find.byType(Row),
     );
     expect(
       find.descendant(of: next.first, matching: find.byType(KeyCap)),
-      findsNWidgets(3),
+      findsNWidgets(2),
     );
 
     // And the keys the app deliberately leaves alone are named too.

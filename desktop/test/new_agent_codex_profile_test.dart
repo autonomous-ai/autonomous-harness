@@ -179,9 +179,10 @@ void main() {
       'Link a profile folder…',
       '/custom/work-login',
       'Checking whether this computer supports Codex profiles…',
-    ])
+    ]) {
       // ignore: avoid_print
-      print('PROBE $t -> ' + tester.widgetList(find.text(t)).length.toString());
+      print('PROBE $t -> ${tester.widgetList(find.text(t)).length}');
+    }
     return n;
   }
 

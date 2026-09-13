@@ -80,7 +80,11 @@ void main() {
 
     await app.selectAgent('m1', 'a');
     await app.selectAgent('m1', 'b');
-    expect(app.panes.length, 2, reason: 'selecting adds a view without replacing the existing one');
+    expect(
+      app.panes.length,
+      2,
+      reason: 'selecting adds a view without replacing the existing one',
+    );
 
     await app.assignAgentToPane(null, 'm1', 'a');
     expect(app.panes.length, 2);

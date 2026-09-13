@@ -261,7 +261,11 @@ export class TerminalStreamManager {
     })
   }
 
-  private sendError(connId: string, code: string, options: { streamId?: string; requestId?: unknown; message?: string } = {}): void {
+  private sendError(
+    connId: string,
+    code: string,
+    options: { streamId?: string; requestId?: unknown; message?: string; reason?: 'seq' | 'size' | 'empty'; expectedSeq?: number } = {},
+  ): void {
     this.deps.sendTarget(connId, 'terminal_error', {
       protocolVersion: PROTOCOL_VERSION,
       code,
@@ -450,7 +454,21 @@ export class TerminalStreamManager {
 
   private async input(state: ActiveStream, inputSeq: number, bytes: Uint8Array): Promise<void> {
     if (!Number.isSafeInteger(inputSeq) || inputSeq !== state.lastInputSeq + 1 || bytes.length === 0 || bytes.length > INPUT_MAX_BYTES) {
-      this.sendError(state.connId, 'TERMINAL_INPUT_INVALID', { streamId: state.streamId })
+      // Nothing here reached the pty, and `lastInputSeq` is deliberately left where it was. Say what
+      // WOULD have been accepted: a client whose counter has drifted (a frame it dropped on its own
+      // side while resyncing, say) can realign on `expectedSeq` and carry on, instead of having every
+      // later keystroke refused too and treating a fine stream as a dead one.
+      const expectedSeq = state.lastInputSeq + 1
+      // A seq that is not a safe integer at all is an ordering fault too, as far as the client is concerned.
+      const reason = bytes.length === 0 ? 'empty' : bytes.length > INPUT_MAX_BYTES ? 'size' : 'seq'
+      this.sendError(state.connId, 'TERMINAL_INPUT_INVALID', {
+        streamId: state.streamId,
+        reason,
+        expectedSeq,
+        message: reason === 'seq'
+          ? `input seq ${inputSeq} arrived, ${expectedSeq} expected`
+          : reason === 'size' ? `input frame of ${bytes.length} bytes exceeds ${INPUT_MAX_BYTES}` : 'empty input frame',
+      })
       return
     }
     state.lastInputSeq = inputSeq

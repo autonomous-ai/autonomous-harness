@@ -172,6 +172,17 @@ class _UsageSectionState extends State<UsageSection> {
                   UsageEmptyState(onEnable: _enable)
                 else ...[
                   _cards(overview),
+                  if (overview.hasUnpricedModel)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'The cost is a lower bound because some model prices are unavailable.',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: AppPalette.textSecondary,
+                        ),
+                      ),
+                    ),
                   if (overview.hasAnyData) ...[
                     const SizedBox(height: 12),
                     _PanelPair(
@@ -216,6 +227,9 @@ class _UsageSectionState extends State<UsageSection> {
         label: 'Est. cost',
         value: formatCost(overview.costUsd),
         icon: LucideIcons.coins300,
+        footnote: overview.hasUnpricedModel
+            ? 'at least — some models unpriced'
+            : null,
       ),
       UsageStatCard(
         label: 'Active days',

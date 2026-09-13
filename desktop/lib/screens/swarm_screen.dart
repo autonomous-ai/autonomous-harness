@@ -47,6 +47,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       widget.projectStore ??
       SwarmProjectStore(storage: kUnderTest ? null : HarnessFileStore.shared);
   StreamSubscription<SpokenTaskRequest>? _spokenTasks;
+  final _shellFocus = FocusNode(debugLabel: 'Swarm shell');
   bool _spokenPaletteOpen = false;
   bool _dialogOpen = false;
   String? _linkDialogMachineId;
@@ -58,6 +59,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
     super.initState();
     app.hasNavigationRail = false;
     app.railFocused = false;
+    FocusManager.instance.addListener(_restoreEmptyFocus);
     unawaited(_projects.load());
     _spokenTasks = app.spokenTasks.listen(_openSpokenTask);
     if (_native) {
@@ -69,6 +71,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_restoreEmptyFocus);
+    _shellFocus.dispose();
     unawaited(_spokenTasks?.cancel());
     if (_native) {
       app.removeListener(_syncNative);
@@ -83,9 +87,26 @@ class _SwarmScreenState extends State<SwarmScreen> {
 
   int get _attention =>
       app.machineStates.values.fold(0, (n, m) => n + m.blockedAgents.length);
+
+  void _restoreEmptyFocus() {
+    if (!mounted ||
+        app.panes.isNotEmpty ||
+        _dialogOpen ||
+        _spokenPaletteOpen ||
+        ModalRoute.of(context)?.isCurrent == false ||
+        _shellFocus.hasFocus) {
+      return;
+    }
+    // Hiding the final terminal releases focus after its parent has rebuilt.
+    // Only reclaim the route's empty scope, never another field or dialog.
+    if (FocusManager.instance.primaryFocus == _shellFocus.enclosingScope) {
+      _shellFocus.requestFocus();
+    }
+  }
+
   void _syncNative() {
     final payload = {
-      'enabled': true,
+      'enabled': !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
       'attention': _attention,
       'tabs': [
@@ -110,7 +131,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   Future<void> _onNative(MethodCall call) async {
-    if (!mounted) return;
+    if (!mounted ||
+        _dialogOpen ||
+        _spokenPaletteOpen ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      return;
+    }
     final args = call.arguments is Map ? call.arguments as Map : const {};
     switch (call.method) {
       case 'new':
@@ -130,8 +156,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'previous':
         app.stepSwarm(-1);
       case 'reorder':
-        if (args['id'] is String && args['index'] is int)
+        if (args['id'] is String && args['index'] is int) {
           app.reorderSwarm(args['id'], args['index']);
+        }
       case 'addAgent':
         await _addAgent();
       case 'closePane':
@@ -144,12 +171,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   Future<void> _dialog(Future<void> Function() action) async {
-    if (_dialogOpen || !mounted) return;
+    if (_dialogOpen || _spokenPaletteOpen || !mounted) return;
     _dialogOpen = true;
+    if (_native) _syncNative();
     try {
       await action();
     } finally {
       _dialogOpen = false;
+      if (_native && mounted) _syncNative();
     }
   }
 
@@ -293,13 +322,14 @@ class _SwarmScreenState extends State<SwarmScreen> {
                               .expand((m) => m.blockedAgents.values)
                               .toList()
                             ..sort((a, b) => a.since.compareTo(b.since));
-                      if (questions.isEmpty)
+                      if (questions.isEmpty) {
                         return const Center(
                           child: Text(
                             'No agents need your input',
                             style: TextStyle(color: Colors.white60),
                           ),
                         );
+                      }
                       return ListView(
                         children: [
                           for (final q in questions)
@@ -342,8 +372,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
         ),
       ),
     );
-    if (selected != null)
+    if (selected != null) {
       await _goToAgent(selected.machineId, selected.agentId);
+    }
   });
 
   Future<void> _openSpokenTask(SpokenTaskRequest request) async {
@@ -359,6 +390,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       return;
     }
     _spokenPaletteOpen = true;
+    if (_native) _syncNative();
     try {
       await revealWindow();
       if (!mounted) {
@@ -368,6 +400,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       await showTaskPalette(context, app, spoken: spoken);
     } finally {
       _spokenPaletteOpen = false;
+      if (_native && mounted) _syncNative();
       spoken.cancelled();
     }
   }
@@ -379,11 +412,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
         machine.isLocalMachine ||
         _dialogOpen ||
         app.isLinkPromptDismissed(machine.machine.machineId) ||
-        _linkDialogMachineId != null)
+        _linkDialogMachineId != null) {
       return;
+    }
     _linkDialogMachineId = machine.machine.machineId;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (mounted)
+      if (mounted) {
         await _dialog(
           () => showLinkMachineScreenDialog(
             context,
@@ -391,6 +425,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             machine.machine.machineId,
           ),
         );
+      }
       _linkDialogMachineId = null;
     });
   }
@@ -401,10 +436,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
     builder: (context, _) {
       grid.AppTheme.watch(context);
       _maybeLink();
+      if (app.panes.isEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _restoreEmptyFocus(),
+        );
+      }
       return CallbackShortcuts(
         bindings: {
           ...buildShortcutBindings(
             handlers: {
+              ShortcutAction.newSwarm: app.newSwarm,
+              ShortcutAction.closeSwarm: () =>
+                  app.closeSwarm(app.activeSwarmId),
+              ShortcutAction.renameSwarm: () => _rename(app.activeSwarmId),
+              ShortcutAction.nextSwarm: () => app.stepSwarm(1),
+              ShortcutAction.previousSwarm: () => app.stepSwarm(-1),
+              ShortcutAction.showSettings: _settings,
               ShortcutAction.focusPaneLeft: () => app.focusPaneHorizontally(-1),
               ShortcutAction.focusPaneRight: () => app.focusPaneHorizontally(1),
               ShortcutAction.focusPaneAbove: () => app.focusPaneVertically(-1),
@@ -423,8 +470,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ShortcutAction.zoomPane: app.toggleZoomPane,
               ShortcutAction.switchAgent: _addAgent,
               ShortcutAction.closePane: () {
-                if (app.focusedPaneId != null)
+                if (app.focusedPaneId != null) {
                   app.closePane(app.focusedPaneId!);
+                }
               },
               ShortcutAction.newAgent: _newAgent,
               ShortcutAction.routeTask: () =>
@@ -433,8 +481,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
               ShortcutAction.showLayout: () =>
                   _dialog(() => showLayoutPalette(context, app)),
               ShortcutAction.pinPane: () {
-                if (app.focusedPaneId != null)
+                if (app.focusedPaneId != null) {
                   app.togglePinPane(app.focusedPaneId!);
+                }
               },
               ShortcutAction.showShortcuts: () =>
                   _dialog(() => showShortcutsSheet(context)),
@@ -449,52 +498,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
             },
             onSelectPaneIndex: app.focusPaneByIndex,
           ),
-          const SingleActivator(LogicalKeyboardKey.keyT, meta: true):
-              app.newSwarm,
-          const SingleActivator(LogicalKeyboardKey.keyW, meta: true): () =>
-              app.closeSwarm(app.activeSwarmId),
-          const SingleActivator(
-            LogicalKeyboardKey.keyF,
-            meta: true,
-            shift: true,
-          ): _addAgent,
-          const SingleActivator(
-            LogicalKeyboardKey.keyR,
-            meta: true,
-            shift: true,
-          ): () =>
-              _rename(app.activeSwarmId),
-          const SingleActivator(
-            LogicalKeyboardKey.bracketRight,
-            meta: true,
-            shift: true,
-          ): () =>
-              app.stepSwarm(1),
-          const SingleActivator(
-            LogicalKeyboardKey.bracketLeft,
-            meta: true,
-            shift: true,
-          ): () =>
-              app.stepSwarm(-1),
-          const SingleActivator(LogicalKeyboardKey.tab, control: true): () =>
-              app.stepSwarm(1),
-          const SingleActivator(
-            LogicalKeyboardKey.tab,
-            control: true,
-            shift: true,
-          ): () =>
-              app.stepSwarm(-1),
-          const SingleActivator(LogicalKeyboardKey.comma, meta: true):
-              _settings,
         },
         child: Focus(
+          focusNode: _shellFocus,
           autofocus: true,
           child: Scaffold(
             backgroundColor: grid.AppPalette.swarmField,
             body: Column(
               children: [
                 if (!_native) _tabStrip(),
-                if (app.lastError != null)
+                if (_projects.error != null || app.lastError != null)
                   Material(
                     color: grid.AppPalette.panelBg,
                     child: Padding(
@@ -509,19 +522,21 @@ class _SwarmScreenState extends State<SwarmScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              app.lastError!,
+                              _projects.error ?? app.lastError!,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 12),
                             ),
                           ),
-                          if (app.lastErrorRetryable)
+                          if (_projects.error == null && app.lastErrorRetryable)
                             TextButton(
                               onPressed: app.retryMachines,
                               child: const Text('Retry'),
                             ),
                           IconButton(
-                            onPressed: app.dismissError,
+                            onPressed: _projects.error != null
+                                ? _projects.dismissError
+                                : app.dismissError,
                             tooltip: 'Dismiss',
                             icon: const Icon(Icons.close, size: 16),
                           ),
@@ -565,7 +580,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                               elevation: 6,
                               borderRadius: BorderRadius.circular(8),
                               child: IconButton(
-                                tooltip: 'Add agent (⌘⇧F)',
+                                tooltip: withShortcutHint(
+                                  'Add agent',
+                                  ShortcutAction.switchAgent,
+                                ),
                                 onPressed: _addAgent,
                                 constraints: const BoxConstraints.tightFor(
                                   width: 34,
@@ -604,8 +622,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
             shrinkWrap: true,
             buildDefaultDragHandles: false,
             itemCount: app.swarms.length,
-            onReorder: (old, to) =>
-                app.reorderSwarm(app.swarms[old].id, to > old ? to - 1 : to),
+            onReorderItem: (old, to) =>
+                app.reorderSwarm(app.swarms[old].id, to),
             itemBuilder: (context, index) {
               final swarm = app.swarms[index];
               return ReorderableDragStartListener(
@@ -656,7 +674,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           ),
         ),
         IconButton(
-          tooltip: 'New swarm (⌘T)',
+          tooltip: withShortcutHint('New swarm', ShortcutAction.newSwarm),
           onPressed: app.swarms.length < AppNotifier.maxSwarms
               ? app.newSwarm
               : null,

@@ -11,13 +11,14 @@ class SwarmAgentRef {
   final MachineState machine;
   final Agent agent;
   String get machineId => machine.machine.machineId;
+  AgentProject? get project => machine.projectOf(agent);
   String get searchText => [
     agent.name,
     agent.engine,
     machine.machine.displayName,
-    agent.project?.name,
-    agent.project?.branch,
-    agent.project?.cwd,
+    project?.name,
+    project?.branch,
+    project?.cwd,
   ].whereType<String>().join(' ').toLowerCase();
 }
 
@@ -67,7 +68,7 @@ List<SwarmProjectGroup> swarmProjects(
   final groups = <String, SwarmProjectGroup>{};
   final folders = <String, String>{};
   for (final entry in swarmAgents(app)) {
-    final project = entry.agent.project;
+    final project = entry.project;
     if (project == null) continue;
     final id = project.identity(entry.machineId);
     final group = groups.putIfAbsent(
@@ -76,8 +77,9 @@ List<SwarmProjectGroup> swarmProjects(
     );
     group.agents.add(entry);
     folders['${entry.machineId}\u0000${project.cwd}'] = id;
-    if (project.root != null)
+    if (project.root != null) {
       folders['${entry.machineId}\u0000${project.root}'] = id;
+    }
   }
   for (final item in saved) {
     final id = folders[item.id] ?? 'folder:${item.machineId}:${item.path}';
@@ -95,18 +97,30 @@ class SwarmProjectStore extends ChangeNotifier {
   final LocalKeyValueStore? storage;
   final List<SavedSwarmProject> projects = [];
   bool _disposed = false;
-  Future<void> load() async {
+  bool _loaded = false;
+  Future<void>? _loadFuture;
+  Future<void> _writeTail = Future.value();
+  String? error;
+
+  Future<void> load() {
+    if (_loaded || _disposed) return Future.value();
+    return _loadFuture ??= _read().whenComplete(() => _loadFuture = null);
+  }
+
+  Future<void> _read() async {
     try {
       final raw = await storage?.read('swarm_projects_v1');
-      if (raw == null || _disposed) return;
-      final rows = jsonDecode(raw);
-      if (rows is! List) return;
+      if (_disposed) return;
+      final rows = raw == null ? const [] : jsonDecode(raw);
+      if (rows is! List) throw const FormatException('Invalid project catalog');
+      final loaded = <SavedSwarmProject>[];
       for (final row in rows.take(256)) {
         if (row is! Map ||
             row['machineId'] is! String ||
             row['path'] is! String ||
-            row['name'] is! String)
+            row['name'] is! String) {
           continue;
+        }
         final item = SavedSwarmProject(
           machineId: row['machineId'],
           path: row['path'],
@@ -114,24 +128,63 @@ class SwarmProjectStore extends ChangeNotifier {
         );
         if (item.path.isEmpty ||
             item.name.isEmpty ||
-            projects.any((p) => p.id == item.id))
+            loaded.any((p) => p.id == item.id)) {
           continue;
-        projects.add(item);
+        }
+        loaded.add(item);
       }
-      notifyListeners();
+      projects
+        ..clear()
+        ..addAll(loaded);
+      _loaded = true;
+      error = null;
     } catch (_) {
-      /* A damaged catalog does not prevent opening live agents. */
+      if (_disposed) return;
+      error = 'Could not load saved projects. Add the project again to retry.';
     }
+    notifyListeners();
   }
 
-  Future<void> add(SavedSwarmProject project) async {
-    projects.removeWhere((p) => p.id == project.id);
-    projects.add(project);
+  Future<bool> add(SavedSwarmProject project) {
+    final operation = _writeTail.then((_) async {
+      await load();
+      if (_disposed || !_loaded) return false;
+      final next = [
+        for (final item in projects)
+          if (item.id != project.id) item,
+        project,
+      ];
+      if (next.length > 256) {
+        error = 'The project list is full.';
+        notifyListeners();
+        return false;
+      }
+      try {
+        await storage?.write(
+          'swarm_projects_v1',
+          jsonEncode(next.map((p) => p.toJson()).toList()),
+        );
+      } catch (_) {
+        if (_disposed) return false;
+        error = 'Could not save this project. Add it again to retry.';
+        notifyListeners();
+        return false;
+      }
+      if (_disposed) return false;
+      projects
+        ..clear()
+        ..addAll(next);
+      error = null;
+      notifyListeners();
+      return true;
+    });
+    _writeTail = operation.then((_) {});
+    return operation;
+  }
+
+  void dismissError() {
+    error = null;
     notifyListeners();
-    await storage?.write(
-      'swarm_projects_v1',
-      jsonEncode(projects.map((p) => p.toJson()).toList()),
-    );
   }
 
   @override

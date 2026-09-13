@@ -272,6 +272,7 @@ class _MachineRailState extends State<MachineRail> {
                                   tooltip: withShortcutHint(
                                     'Collapse sidebar',
                                     ShortcutAction.toggleRail,
+                                    swarmMode: false,
                                   ),
                                   onPressed: widget.onCollapse!,
                                 ),

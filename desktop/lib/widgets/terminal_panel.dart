@@ -672,6 +672,10 @@ class _TerminalPanelState extends State<TerminalPanel>
             onClose: widget.onClose,
             pinned: widget.pinned,
             onTogglePin: widget.onTogglePin,
+            onToggleComposer: remote && !widget.readOnly
+                ? widget.onToggleComposer
+                : null,
+            composerVisible: widget.composerVisible,
             paneDrag: widget.paneDrag,
           ),
 
@@ -812,6 +816,8 @@ class _TerminalHeader extends StatelessWidget {
   final bool pinned;
   final bool compact;
   final VoidCallback? onTogglePin;
+  final VoidCallback? onToggleComposer;
+  final bool composerVisible;
 
   /// This strip's drag gesture, or null when there is nothing to drag.
   ///
@@ -830,6 +836,8 @@ class _TerminalHeader extends StatelessWidget {
     this.pinned = false,
     this.compact = false,
     this.onTogglePin,
+    this.onToggleComposer,
+    this.composerVisible = false,
     this.paneDrag,
   });
 
@@ -877,7 +885,7 @@ class _TerminalHeader extends StatelessWidget {
     final agent = machine?.agents
         .where((a) => a.id == session.agentId)
         .firstOrNull;
-    final project = agent?.project;
+    final project = agent == null ? null : machine?.projectOf(agent);
     final contextLabel = [
       if (project != null) project.name,
       if (project?.branch != null) project!.branch!,
@@ -990,6 +998,25 @@ class _TerminalHeader extends StatelessWidget {
             // memory cannot shift it under their pointer.
             if (!compact && onTogglePin != null)
               PanePinButton(pinned: pinned, onPressed: onTogglePin!),
+            if (compact && onToggleComposer != null)
+              IconButton(
+                tooltip: composerVisible
+                    ? 'Hide message composer'
+                    : 'Show message composer',
+                onPressed: onToggleComposer,
+                icon: Icon(
+                  Icons.edit_note,
+                  size: 18,
+                  color: composerVisible
+                      ? AppColors.text
+                      : AppColors.mutedStrong,
+                ),
+                constraints: const BoxConstraints.tightFor(
+                  width: 28,
+                  height: 28,
+                ),
+                padding: EdgeInsets.zero,
+              ),
             if (onClose != null) PaneCloseButton(onPressed: onClose!),
           ],
         ),

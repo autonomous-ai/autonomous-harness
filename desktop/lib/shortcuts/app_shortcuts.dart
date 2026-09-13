@@ -45,6 +45,12 @@ import '../logging/debug_surface.dart';
 /// which binds the same four on macOS. Do not put them back.
 
 enum ShortcutAction {
+  newSwarm,
+  closeSwarm,
+  renameSwarm,
+  nextSwarm,
+  previousSwarm,
+  showSettings,
   toggleRail,
   nextAgent,
   previousAgent,
@@ -420,9 +426,113 @@ const AppShortcut kDebugShortcut = AppShortcut(
 /// The one list the bindings, the ⌘/ sheet and the tooltips all read, so a
 /// build cannot bind a key it does not document or document one it does not
 /// bind.
-List<AppShortcut> appShortcuts() => [
-  ...kAppShortcuts,
+List<AppShortcut> appShortcuts({bool swarmMode = true}) => [
+  for (final shortcut in kAppShortcuts)
+    if (!swarmMode ||
+        (!const {
+              ShortcutAction.toggleRail,
+              ShortcutAction.closePane,
+              ShortcutAction.switchAgent,
+            }.contains(shortcut.action) &&
+            !shortcut.activator.control))
+      shortcut,
+  if (swarmMode) ...kSwarmShortcuts,
   if (kDebugSurfaceEnabled) kDebugShortcut,
+];
+
+/// Swarm bindings replace the old workspace navigation in the retained legacy
+/// screen. Live Swarm bindings, tooltips, and help all use this same catalog.
+const kSwarmShortcuts = [
+  AppShortcut(
+    action: ShortcutAction.newSwarm,
+    activator: SingleActivator(LogicalKeyboardKey.keyT, meta: true),
+    label: 'New swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.closeSwarm,
+    activator: SingleActivator(LogicalKeyboardKey.keyW, meta: true),
+    label: 'Close this swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.renameSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyR,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Rename this swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.nextSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.bracketRight,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Next swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.previousSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.bracketLeft,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Previous swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.nextSwarm,
+    activator: SingleActivator(LogicalKeyboardKey.tab, control: true),
+    label: 'Next swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.previousSwarm,
+    activator: SingleActivator(
+      LogicalKeyboardKey.tab,
+      control: true,
+      shift: true,
+    ),
+    label: 'Previous swarm',
+    group: ShortcutGroup.navigate,
+  ),
+  AppShortcut(
+    action: ShortcutAction.switchAgent,
+    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
+    label: 'Add an agent to this swarm',
+    group: ShortcutGroup.actions,
+  ),
+  AppShortcut(
+    action: ShortcutAction.switchAgent,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyF,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Add an agent to this swarm',
+    group: ShortcutGroup.actions,
+  ),
+  AppShortcut(
+    action: ShortcutAction.closePane,
+    activator: SingleActivator(
+      LogicalKeyboardKey.keyW,
+      meta: true,
+      shift: true,
+    ),
+    label: 'Close the focused agent view',
+    group: ShortcutGroup.panes,
+  ),
+  AppShortcut(
+    action: ShortcutAction.showSettings,
+    activator: SingleActivator(LogicalKeyboardKey.comma, meta: true),
+    label: 'Open Settings',
+    group: ShortcutGroup.actions,
+  ),
 ];
 
 /// `⌘1`…`⌘9` jump to the nth TILE on the grid.
@@ -549,9 +659,10 @@ const List<TerminalKey> kTerminalOwnedKeys = [
 Map<ShortcutActivator, VoidCallback> buildShortcutBindings({
   required Map<ShortcutAction, VoidCallback> handlers,
   void Function(int index)? onSelectPaneIndex,
+  bool swarmMode = true,
 }) {
   final bindings = <ShortcutActivator, VoidCallback>{};
-  for (final shortcut in appShortcuts()) {
+  for (final shortcut in appShortcuts(swarmMode: swarmMode)) {
     final handler = handlers[shortcut.action];
     if (handler != null) bindings[shortcut.activator] = handler;
   }
@@ -601,15 +712,19 @@ String _keyLabel(LogicalKeyboardKey key) {
 ///
 /// Tooltips read this instead of spelling the keys out, so a rebinding cannot
 /// leave a button advertising a key that no longer works.
-String? shortcutHintFor(ShortcutAction action) {
-  for (final shortcut in appShortcuts()) {
+String? shortcutHintFor(ShortcutAction action, {bool swarmMode = true}) {
+  for (final shortcut in appShortcuts(swarmMode: swarmMode)) {
     if (shortcut.action == action) return describeShortcut(shortcut.activator);
   }
   return null;
 }
 
 /// "Reload machines  ⌘R"
-String withShortcutHint(String tooltip, ShortcutAction action) {
-  final hint = shortcutHintFor(action);
+String withShortcutHint(
+  String tooltip,
+  ShortcutAction action, {
+  bool swarmMode = true,
+}) {
+  final hint = shortcutHintFor(action, swarmMode: swarmMode);
   return hint == null ? tooltip : '$tooltip  $hint';
 }

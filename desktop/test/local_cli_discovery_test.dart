@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -205,6 +206,89 @@ void main() {
     ),
     identity: LocalMachineIdentity(computerIdFile: identityFile),
     spawnCommand: spawnCommand,
+  );
+
+  test(
+    'reads real working folders from older local status snapshots',
+    () async {
+      const computerId = '0123456789abcdef0123456789abcdef';
+      final identityFile = File('${scratch.path}/computer-id')
+        ..writeAsStringSync(computerId);
+      server = await serveStatus(
+        await freePort(),
+        () => {
+          ...readyStatus(computerId),
+          'sessions': [
+            {'id': 'first', 'cwd': '~/work/project/'},
+            {'id': 'same', 'cwd': '${scratch.path}/work/project'},
+            {'id': 'missing'},
+            {'id': 'relative', 'cwd': 'work/project'},
+            {'id': 'other-user', 'cwd': '~other/work'},
+            {'id': 'control', 'cwd': '/work/\u0000bad'},
+            {'id': '', 'cwd': '/work/ignored'},
+          ],
+        },
+      );
+      final endpoint = await LocalCliDiscovery(
+        config: AppConfig(
+          apiBaseUrl: 'https://fixture.invalid',
+          localCliBaseUrl: 'http://127.0.0.1:${server!.port}',
+        ),
+        identity: LocalMachineIdentity(
+          computerIdFile: identityFile,
+          environment: {'HOME': scratch.path},
+        ),
+      ).discover();
+      final projects = endpoint!.agentProjects;
+      expect(projects.keys, ['first', 'same']);
+      expect(projects['first']!.cwd, '${scratch.path}/work/project');
+      expect(projects['first']!.name, 'project');
+      expect(projects['first'], projects['same']);
+      expect(projects['first']!.remote, isNull);
+      expect(projects['first']!.branch, isNull);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test(
+    'supervision publishes changing folders without reconnecting or spawning',
+    () async {
+      const computerId = '0123456789abcdef0123456789abcdef';
+      final identityFile = File('${scratch.path}/computer-id')
+        ..writeAsStringSync(computerId);
+      var cwd = '${scratch.path}/before';
+      server = await serveStatus(
+        await freePort(),
+        () => {
+          ...readyStatus(computerId),
+          'sessions': [
+            {'id': 'agent', 'cwd': cwd},
+          ],
+        },
+      );
+      var readyCount = 0;
+      final before = Completer<void>();
+      final after = Completer<void>();
+      final discovery = discoveryFor(
+        server!.port,
+        identityFile,
+        spawnCommand: () async => fail('A ready daemon must not be restarted'),
+      );
+      final timer = discovery.startSupervising(
+        checkInterval: const Duration(milliseconds: 20),
+        onReady: (_) => readyCount++,
+        onSnapshot: (endpoint) {
+          final name = endpoint.agentProjects['agent']?.name;
+          if (name == 'before' && !before.isCompleted) before.complete();
+          if (name == 'after' && !after.isCompleted) after.complete();
+        },
+      );
+      addTearDown(timer.cancel);
+      await before.future.timeout(const Duration(seconds: 3));
+      cwd = '${scratch.path}/after';
+      await after.future.timeout(const Duration(seconds: 3));
+      expect(readyCount, 1);
+    },
   );
 
   group('probe', () {

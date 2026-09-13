@@ -389,8 +389,13 @@ class AgentProject {
       remote != null ? 'repo:$remote' : 'folder:$machineId:${root ?? cwd}';
 
   @override
-  bool operator ==(Object other) => other is AgentProject && name == other.name &&
-      cwd == other.cwd && root == other.root && remote == other.remote && branch == other.branch;
+  bool operator ==(Object other) =>
+      other is AgentProject &&
+      name == other.name &&
+      cwd == other.cwd &&
+      root == other.root &&
+      remote == other.remote &&
+      branch == other.branch;
   @override
   int get hashCode => Object.hash(name, cwd, root, remote, branch);
 

@@ -124,8 +124,9 @@ class PaneLayoutStore {
       final decoded = jsonDecode(value);
       if (decoded is! Map<String, dynamic> ||
           decoded['version'] != 1 ||
-          decoded['swarms'] is! List)
+          decoded['swarms'] is! List) {
         return null;
+      }
       return decoded;
     } catch (_) {
       return null;

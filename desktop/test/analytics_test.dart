@@ -104,7 +104,7 @@ void main() {
     expect(params['engine'], 'claude');
     expect(params['bypass_permission'], true);
     // Without this every stream in the shared project looks like one app.
-    expect(params['category'], 'harness-desktop');
+    expect(params['category'], 'harness-desktop-v2');
   });
 
   test('params drop nothing meaningful and carry nothing unbounded', () {
@@ -351,7 +351,7 @@ void main() {
     // The payload, not the params: the gap between what the call site passed
     // and what actually left is the bug this screen is opened to find.
     expect(entry.payload, contains('"event_name": "agent_created"'));
-    expect(entry.payload, contains('harness-desktop'));
+    expect(entry.payload, contains('harness-desktop-v2'));
   });
 
   test('a retry shows as one row with two attempts, not two rows', () async {

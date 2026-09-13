@@ -29,9 +29,11 @@ export interface CreateAgentPaneDeps {
     cwd?: string | null
     grid?: { baseUrl: string; model: string | null } | null
     codexHome?: string | null
+    bypassPermission?: boolean
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
+  bypassPermission?: boolean
   /** Base tmux session name (`-s`). Retries append `-r<attempt>` — see module doc. */
   sessionLabel: string
   argv: string[]
@@ -71,6 +73,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       cwd: deps.cwd,
       grid: deps.grid,
       codexHome: deps.codexHome,
+      bypassPermission: deps.bypassPermission,
     })
     if (pending) return { ok: true, spawned, pending }
     console.warn(`[agent] create ${deps.engine} registration failed · pane ${spawned.runtime.paneId} · `

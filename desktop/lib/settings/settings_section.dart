@@ -9,6 +9,7 @@ import '../logging/debug_surface.dart';
 /// rail, the search filter and the pane all read this list, so a section cannot
 /// be listed without a screen behind it or reachable without a row.
 enum SettingsSection {
+  account(LucideIcons.user300, 'Account'),
   appearance(LucideIcons.sun300, 'Appearance'),
   terminal(LucideIcons.terminal300, 'Terminal'),
   usage(LucideIcons.chartNoAxesColumn300, 'Usage'),
@@ -86,6 +87,7 @@ const _kSettingsGroups = [
     SettingsSection.terminal,
     SettingsSection.usage,
     SettingsSection.devices,
+    SettingsSection.account,
   ]),
   // Debug and Tracking sit between the two things they are most often reached
   // from: the keys that open them, and the version a report has to name. The

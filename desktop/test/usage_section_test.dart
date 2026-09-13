@@ -568,10 +568,7 @@ void main() {
     await controller.load();
     await pumpUsage(tester, controller);
 
-    expect(
-      find.text('Off — nothing on this machine is read.'),
-      findsNWidgets(LedgerProvider.values.length),
-    );
+    expect(find.text('Off'), findsNWidgets(LedgerProvider.values.length));
   });
 
   testWidgets('every provider keeps a row whether it is on or not', (

@@ -1,6 +1,7 @@
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/skeleton.dart';
@@ -8,6 +9,7 @@ import '../state/app_state.dart';
 import '../state/swarm.dart';
 import '../state/swarm_catalog.dart';
 import 'engine_identity.dart';
+import 'swarm_agent_selection.dart';
 
 class SwarmWelcome extends StatefulWidget {
   const SwarmWelcome({
@@ -35,6 +37,7 @@ class SwarmWelcome extends StatefulWidget {
 
 class _SwarmWelcomeState extends State<SwarmWelcome> {
   String _query = '';
+  final _selection = SwarmAgentSelection();
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
@@ -99,10 +102,24 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                           children: [
                             Expanded(
                               child: SwarmSearchField(
-                                onChanged: (v) => setState(() => _query = v),
-                                onSubmitted: (_) {
-                                  if (results.isNotEmpty)
-                                    widget.onAgent(results.first);
+                                autofocus: true,
+                                onChanged: (v) => setState(() {
+                                  _query = v;
+                                  _selection.reset();
+                                }),
+                                onMove: (delta) {
+                                  if (_query.trim().isNotEmpty) {
+                                    setState(
+                                      () => _selection.move(results, delta),
+                                    );
+                                  }
+                                },
+                                onSubmitted: () {
+                                  final selected = _selection.selected(results);
+                                  if (_query.trim().isNotEmpty &&
+                                      selected != null) {
+                                    widget.onAgent(selected);
+                                  }
                                 },
                               ),
                             ),
@@ -127,6 +144,7 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
                                   child: SwarmAgentRows(
                                     notifier: app,
                                     agents: results,
+                                    selectedIndex: _selection.index(results),
                                     onAgent: widget.onAgent,
                                   ),
                                 )
@@ -268,60 +286,161 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
   );
 }
 
-class SwarmSearchField extends StatelessWidget {
+class SwarmSearchField extends StatefulWidget {
   const SwarmSearchField({
     super.key,
     required this.onChanged,
     this.onSubmitted,
+    this.onMove,
     this.autofocus = false,
   });
   final ValueChanged<String> onChanged;
-  final ValueChanged<String>? onSubmitted;
+  final VoidCallback? onSubmitted;
+  final ValueChanged<int>? onMove;
   final bool autofocus;
   @override
-  Widget build(BuildContext context) => TextField(
-    autofocus: autofocus,
-    onChanged: onChanged,
-    onSubmitted: onSubmitted,
-    style: const TextStyle(fontSize: 13),
-    decoration: InputDecoration(
-      hintText: 'Find an agent…',
-      prefixIcon: const Icon(Icons.search, size: 18),
-      filled: true,
-      fillColor: const Color(0xa6111521),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Colors.white24),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
-        borderSide: const BorderSide(color: Colors.white24),
-      ),
-    ),
-  );
+  State<SwarmSearchField> createState() => _SwarmSearchFieldState();
 }
 
-class SwarmAgentRows extends StatelessWidget {
+class _SwarmSearchFieldState extends State<SwarmSearchField> {
+  final _focus = FocusNode(debugLabel: 'Find agent');
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autofocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // The dialog veil also requests fallback focus in this frame. The
+        // search field must win so the first keystroke starts searching.
+        if (mounted && ModalRoute.of(context)?.isCurrent != false) {
+          _focus.requestFocus();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onMove = widget.onMove;
+    final onSubmitted = widget.onSubmitted;
+    return CallbackShortcuts(
+      bindings: {
+        if (onSubmitted != null) ...{
+          const SingleActivator(LogicalKeyboardKey.enter): onSubmitted,
+          const SingleActivator(LogicalKeyboardKey.numpadEnter): onSubmitted,
+        },
+        if (onMove != null) ...{
+          const SingleActivator(LogicalKeyboardKey.arrowDown): () => onMove(1),
+          const SingleActivator(LogicalKeyboardKey.arrowUp): () => onMove(-1),
+          const SingleActivator(LogicalKeyboardKey.keyN, control: true): () =>
+              onMove(1),
+          const SingleActivator(LogicalKeyboardKey.keyP, control: true): () =>
+              onMove(-1),
+        },
+      },
+      child: TextField(
+        focusNode: _focus,
+        autofocus: widget.autofocus,
+        onChanged: widget.onChanged,
+        onSubmitted: (_) => onSubmitted?.call(),
+        style: const TextStyle(fontSize: 13),
+        decoration: InputDecoration(
+          hintText: 'Find an agent…',
+          prefixIcon: const Icon(Icons.search, size: 18),
+          filled: true,
+          fillColor: const Color(0xa6111521),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 14,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Colors.white24),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Colors.white24),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SwarmAgentRows extends StatefulWidget {
   const SwarmAgentRows({
     super.key,
     required this.notifier,
     required this.agents,
     required this.onAgent,
+    this.selectedIndex,
   });
   final AppNotifier notifier;
   final List<SwarmAgentRef> agents;
   final ValueChanged<SwarmAgentRef> onAgent;
+  final int? selectedIndex;
+  @override
+  State<SwarmAgentRows> createState() => _SwarmAgentRowsState();
+}
+
+class _SwarmAgentRowsState extends State<SwarmAgentRows> {
+  final _scroll = ScrollController();
+  double _rowHeight = 64;
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _revealSelection() {
+    final index = widget.selectedIndex;
+    if (!mounted ||
+        index == null ||
+        !_scroll.hasClients ||
+        widget.agents.isEmpty) {
+      return;
+    }
+    final position = _scroll.position;
+    final top = index * _rowHeight;
+    final bottom = top + _rowHeight;
+    final double? target = top < position.pixels
+        ? top
+        : bottom > position.pixels + position.viewportDimension
+        ? bottom - position.viewportDimension
+        : null;
+    if (target != null) {
+      _scroll.jumpTo(target.clamp(0, position.maxScrollExtent));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (agents.isEmpty)
+    final agents = widget.agents;
+    final notifier = widget.notifier;
+    if (agents.isEmpty) {
       return const Center(
         child: Text(
           'No matching agents',
           style: TextStyle(color: Colors.white60),
         ),
       );
+    }
+    final scaler = MediaQuery.textScalerOf(context);
+    _rowHeight = (scaler.scale(13) + scaler.scale(11) + 32).clamp(
+      64,
+      double.infinity,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealSelection());
     return ListView.builder(
+      controller: _scroll,
+      padding: EdgeInsets.zero,
+      itemExtent: _rowHeight,
       itemCount: agents.length,
       itemBuilder: (context, index) {
         final entry = agents[index];
@@ -337,40 +456,56 @@ class SwarmAgentRows extends StatelessWidget {
             : open
             ? 'In this swarm'
             : null;
-        return ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 10,
-            vertical: 3,
-          ),
-          leading: EngineMark(engine: agent.engine, size: 22),
-          title: Text(
+        return Tooltip(
+          message: [
             agent.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13),
+            entry.machine.machine.displayName,
+            entry.project?.cwd,
+          ].whereType<String>().join('\n'),
+          child: Semantics(
+            selected: widget.selectedIndex == index,
+            child: ListTile(
+              key: ValueKey((entry.machineId, agent.id)),
+              selected: widget.selectedIndex == index,
+              selectedTileColor: grid.AppPalette.swarmAccent.withValues(
+                alpha: 0.14,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              minTileHeight: _rowHeight,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+              leading: EngineMark(engine: agent.engine, size: 22),
+              title: Text(
+                agent.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13),
+              ),
+              subtitle: Text(
+                [
+                  entry.machine.machine.displayName,
+                  if (entry.project != null) entry.project!.name,
+                  if (entry.project?.branch != null) entry.project!.branch!,
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+              trailing: status == null
+                  ? const Icon(Icons.add, size: 16, color: Colors.white54)
+                  : Text(
+                      status,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: question == null
+                            ? Colors.white54
+                            : grid.AppPalette.warn,
+                      ),
+                    ),
+              onTap: () => widget.onAgent(entry),
+            ),
           ),
-          subtitle: Text(
-            [
-              entry.machine.machine.displayName,
-              if (agent.project != null) agent.project!.name,
-              if (agent.project?.branch != null) agent.project!.branch!,
-            ].join(' · '),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: Colors.white54),
-          ),
-          trailing: status == null
-              ? const Icon(Icons.add, size: 16, color: Colors.white54)
-              : Text(
-                  status,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: question == null
-                        ? Colors.white54
-                        : grid.AppPalette.warn,
-                  ),
-                ),
-          onTap: () => onAgent(entry),
         );
       },
     );

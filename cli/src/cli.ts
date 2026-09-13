@@ -65,6 +65,7 @@ import { restartAgent, type RestartAgentDeps } from './lib/restartAgent.js'
 import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
+import { restoreAgents } from './lib/restoreAgents.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { basename } from 'node:path'
 import {
@@ -2393,6 +2394,10 @@ async function runForeground(session: AuthSession): Promise<void> {
       const wasLaunching = current.launch?.state !== undefined && current.launch.state !== 'ready'
       registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
       registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
+      // The live argv is the truth about the bypass flag, and this is the one place every running
+      // agent passes through — so a row written before the flag was persisted at all (or by a build
+      // that did not yet) learns it here, before any pane recreation ever needs it.
+      registry.setBypassPermission(current.agentId, bypassPermissionActive(current.engine, observed.args))
       if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
       await bindObservedAgent(observed)
       if (wasDormant || wasLaunching) {
@@ -3196,6 +3201,64 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   watcher.start()
   await cursorDiscovery.start()
+  // Panes that died while the daemon was down (a reboot takes the whole tmux server with it) are
+  // rebuilt BEFORE the first reconcile pass: it would otherwise count them absent, and a second
+  // pass five seconds later would drop the agents for good. Pane creation is awaited so the first
+  // announce already shows every restored agent with a terminal; binding their engine processes
+  // continues in the background, the same way `agent_create` does it.
+  if (tmuxBackend) {
+    const backend = tmuxBackend
+    const summary = await restoreAgents({
+      registry,
+      // "Alive" means the pane still runs THIS row's engine — not merely that tmux knows the id.
+      // A new tmux server hands out `%N` from zero again, so a stale id can name someone's shell;
+      // and a pane that outlived the daemon in a session discovery no longer lists still has its
+      // engine, which a second pane resuming the same session would collide with.
+      liveProcess: (entry, runtime) => resolvePaneEngineProcess(runtime.paneId, entry.engine),
+      buildLaunch: (entry, opts) => {
+        // Mirrors `agent_create`: a Codex profile other than the default needs its hooks and its
+        // CODEX_HOME; the install check runs inside the pane's own shell.
+        if (entry.codexHome && !env.DISABLE_HOOK_INSTALL) installCodexHooks(hookPort, entry.codexHome)
+        const argv = buildEngineLaunchArgv(entry.engine, {
+          ...opts,
+          bypassPermission: entry.bypassPermission === true,
+          installIfMissing: enginePathOverride(entry.engine) ? undefined : engineInstallRecipe(entry.engine),
+          ...(entry.cwd ? { cwd: entry.cwd } : {}),
+        })
+        return { argv, ...(entry.codexHome ? { env: { CODEX_HOME: entry.codexHome } } : {}) }
+      },
+      createPane: async (entry, launch) => {
+        const created = await backend.create({
+          cwd: homedir(),
+          label: buildHarnessSessionLabel(entry.engine),
+          command: launch.argv,
+          ...(launch.env ? { env: launch.env } : {}),
+        })
+        return created.state === 'succeeded'
+          ? { ok: true, runtime: created.runtime }
+          : { ok: false, reason: created.reason }
+      },
+      respawn: async (runtime, launch) => {
+        const result = await backend.respawn(runtime, {
+          command: launch.argv,
+          cwd: homedir(),
+          ...(launch.env ? { env: launch.env } : {}),
+        })
+        return result.state === 'succeeded' ? { ok: true } : { ok: false, reason: result.reason }
+      },
+      probeProcess: (runtime, engine) => resolvePaneEngineProcess(runtime.paneId, engine),
+      paneState: (runtime) => tmuxPaneState(runtime.paneId),
+      clearRemainOnExit: (runtime) => clearPaneRemainOnExit(runtime.paneId),
+      holdRoute: (key, ms) => agentReconciler.holdRoute(key, ms),
+      releaseRoute: (key) => agentReconciler.releaseRoute(key),
+      triggerHint: (runtime, engine) => agentReconciler.triggerHint(runtime, engine),
+      log: (message) => console.log(message),
+    })
+    if (summary.restored.length || summary.failed.length || registry.rebootedSinceLastRun) {
+      console.log(`[restore] restored ${summary.restored.length} · skipped ${summary.skipped.length} · failed ${summary.failed.length}`
+        + (registry.rebootedSinceLastRun ? ' · after reboot' : ''))
+    }
+  }
   await agentReconciler.start(env.TERMINAL_RECONCILE_INTERVAL_MS ?? env.TMUX_REAP_INTERVAL_MS)
   for (const task of await loadCursorPendingTasks(env.ADAPTER_DATA_DIR)) {
     onCursorTaskStart(task.sessionId, task.toolUseId, task.input)
@@ -3435,6 +3498,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       env: gridLaunch?.env ?? (codexHome ? { CODEX_HOME: codexHome } : undefined),
       grid: grid ? { baseUrl: grid.baseUrl, model: grid.model ?? null } : null,
       codexHome,
+      bypassPermission,
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result

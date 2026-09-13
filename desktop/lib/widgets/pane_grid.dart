@@ -739,9 +739,14 @@ class _PaneContent extends StatelessWidget {
     }
 
     if (agent != null && !agent.terminalAvailable) {
-      return _PaneStatus(title: agentName, icon: Icons.terminal,
-        message: agent.terminalUnavailableReason ?? 'This agent has no available terminal.',
-        onClose: close);
+      return _PaneStatus(
+        title: agentName,
+        icon: Icons.terminal,
+        message:
+            agent.terminalUnavailableReason ??
+            'This agent has no available terminal.',
+        onClose: close,
+      );
     }
 
     final session = pane.session;
@@ -1173,7 +1178,8 @@ class _Guide extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final roomForCard =
-            constraints.maxWidth >= 520 && constraints.maxHeight >= 430;
+            constraints.maxWidth >= 520 &&
+            constraints.maxHeight >= (single ? 500 : 546);
         if (roomForCard) {
           if (single) return full;
           return Column(

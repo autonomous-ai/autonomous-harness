@@ -106,6 +106,13 @@ export interface RegisteredSession {
    * to a different grid.
    */
   codexHome?: string | null
+  /**
+   * Whether the engine was launched with its permission prompts bypassed (`--dangerously-skip-permissions`
+   * and friends, `BYPASS_PERMISSION_FLAGS`). Recorded at launch because it is otherwise only readable
+   * off a LIVE process's argv — and a pane that has to be recreated after a reboot has no live process
+   * to read it from. Like `codexHome`, chosen at launch and carried forward, never re-derived.
+   */
+  bypassPermission?: boolean
   /** Legacy launcher-owned snapshots may still contain this field. New records never write it. */
   launcherId?: string
   transcriptPath: string | null
@@ -555,6 +562,12 @@ class Registry {
   private writeBlocked = false
   /** Last committed row bytes, used for a three-way merge with daemon-down hook writes. */
   private persistedBaseline = new Map<string, string>()
+  private rebooted = false
+
+  /** True when the last `load()` found the machine had rebooted since the previous daemon run. */
+  get rebootedSinceLastRun(): boolean {
+    return this.rebooted
+  }
 
   private index(entry: RegisteredSession): void {
     this.agents.set(entry.agentId, entry)
@@ -590,8 +603,10 @@ class Registry {
     entry.lastTranscriptAt = Date.now()
   }
 
-  /** Load persisted process agents. Invalid session bindings are released without dropping their agent;
-   *  a reboot still drops all cached pane identities because no process can survive it. */
+  /** Load persisted process agents. Invalid session bindings are released without dropping their agent.
+   *  A reboot keeps every row but clears its process identity and marks it dormant: no process survives
+   *  a reboot, but the agent — its id, cwd, session and pane placement — is what `restoreAgents` rebuilds
+   *  a pane for. */
   load(): void {
     this.agents.clear()
     this.sessionIndex.clear()
@@ -599,6 +614,7 @@ class Registry {
     this.processIndex.clear()
     this.terminalAvailableAgents.clear()
     this.writeBlocked = false
+    this.rebooted = false
     this.persistedBaseline.clear()
     try {
       secureStateDirectory(env.ADAPTER_DATA_DIR)
@@ -645,12 +661,14 @@ class Registry {
       if (arr.some((row) => row.schemaVersion !== 2)) {
         atomicWriteJson(PRE_V2_BACKUP_FILE, arr, true)
       }
-      if (rebooted) {
-        console.log(`[registry] machine rebooted since last run — dropping ${Array.isArray(arr) ? arr.length : 0} cached tmux session(s) (stale panes)`)
-        this.save() // overwrite the stale on-disk snapshot so a same-boot restart can't reload it
-        return
-      }
       let changed = false
+      if (rebooted) {
+        this.rebooted = true
+        console.log(`[registry] machine rebooted since last run — ${arr.length} agent(s) kept with their process identity cleared (stale panes, restored on start)`)
+        // The boot marker was already refreshed above, so a crash before the save below would leave
+        // pre-reboot pids on disk with no second chance to notice — force the cleared snapshot out.
+        changed = true
+      }
       for (const raw of Array.isArray(arr) ? arr : []) {
         const engine = normalizedAgentEngine(raw?.engine)
         const runtimes = normalizedRuntimes(raw?.runtimes, raw?.tmuxPane)
@@ -705,7 +723,7 @@ class Registry {
         if (!agentId) { changed = true; continue }
         if (agentId !== raw.agentId) changed = true
         const now = Date.now()
-        const active = raw.active !== false
+        const active = !rebooted && raw.active !== false
         const launch = normalizedLaunch(raw.launch)
         const s: RegisteredSession = {
           schemaVersion: 2,
@@ -714,6 +732,10 @@ class Registry {
           agentId,
           boundAt: bound ? (typeof raw.boundAt === 'number' ? raw.boundAt : (raw.registeredAt ?? now)) : null,
           engine,
+          gateway: raw.gateway === 'ori' ? 'ori' : null,
+          grid: normalizedGridAssignment(raw.grid),
+          codexHome: typeof rawCodexHome === 'string' && rawCodexHome ? rawCodexHome : null,
+          ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           transcriptPath,
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
           sessionId: bound ? rawSessionId : '',
@@ -729,7 +751,7 @@ class Registry {
           source: bound && typeof raw.source === 'string' ? raw.source : null,
           cliVersion: typeof raw.cliVersion === 'string' ? raw.cliVersion : null,
           model: modelString(raw.model),
-          processIdentity: validProcessIdentity(raw.processIdentity) ? raw.processIdentity : null,
+          processIdentity: !rebooted && validProcessIdentity(raw.processIdentity) ? raw.processIdentity : null,
           registeredAt: typeof raw.registeredAt === 'number' ? raw.registeredAt : now,
           updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
           lastHookAt: typeof raw.lastHookAt === 'number' ? raw.lastHookAt : (raw.updatedAt ?? now),
@@ -919,6 +941,7 @@ class Registry {
     cwd?: string | null
     grid?: GridAssignment | null
     codexHome?: string | null
+    bypassPermission?: boolean
   }): RegisteredSession | null {
     if (this.writeBlocked) return null
     const runtimes = normalizedRuntimes(input.runtimes)
@@ -937,6 +960,7 @@ class Registry {
       gateway: null,
       grid: input.grid ?? null,
       codexHome: input.codexHome ?? null,
+      ...(input.bypassPermission ? { bypassPermission: true } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
       cwd: input.cwd ?? null,
@@ -1091,6 +1115,7 @@ class Registry {
       // re-reads off the live process on every discovery) — a hook-triggered bind must carry it
       // forward or the very first SessionStart hook would silently wipe the agent's chosen profile.
       codexHome: existing?.codexHome ?? null,
+      ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
       updatedAt: now,
@@ -1237,6 +1262,30 @@ class Registry {
     if (grid !== undefined) session.grid = grid
     session.updatedAt = Date.now()
     this.index(session)
+    this.save()
+    return true
+  }
+
+  /** Forget the process an agent was last seen as — its pane is gone, so the pid is gone with it. */
+  clearProcessIdentity(agentId: string): boolean {
+    const session = this.agents.get(agentId)
+    if (!session) return false
+    if (!session.processIdentity) return true
+    this.drop(session)
+    session.processIdentity = null
+    session.updatedAt = Date.now()
+    this.index(session)
+    this.save()
+    return true
+  }
+
+  setBypassPermission(agentId: string, bypassPermission: boolean): boolean {
+    const session = this.agents.get(agentId)
+    if (!session) return false
+    if ((session.bypassPermission === true) === bypassPermission) return true
+    if (bypassPermission) session.bypassPermission = true
+    else delete session.bypassPermission
+    session.updatedAt = Date.now()
     this.save()
     return true
   }
@@ -1500,4 +1549,12 @@ function titleDisplayName(title: string | null | undefined): string | null {
 function validProcessIdentity(value: unknown): value is ProcessIdentity {
   const p = value as Partial<ProcessIdentity> | null | undefined
   return !!p && Number.isSafeInteger(p.pid) && (p.pid ?? 0) > 0 && typeof p.executable === 'string' && typeof p.startMarker === 'string'
+}
+
+/** A persisted grid assignment. Lenient on `model` on purpose: a row that only knows WHERE it pointed
+ *  must still read as a grid agent, or a restore would relaunch it on the engine's own login. */
+function normalizedGridAssignment(value: unknown): GridAssignment | null {
+  const g = value as Partial<GridAssignment> | null | undefined
+  if (!g || typeof g.baseUrl !== 'string' || !g.baseUrl) return null
+  return { baseUrl: g.baseUrl, model: typeof g.model === 'string' ? g.model : null }
 }
