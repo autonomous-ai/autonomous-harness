@@ -9,6 +9,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
+import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/terminal_panel.dart';
 
@@ -38,6 +39,60 @@ Map<String, num> measure(void Function() operation) {
 }
 
 void main() {
+  for (final sampleText in ['abcd', '界 ']) {
+    test(
+      'terminal output CPU benchmark for ${sampleText == 'abcd' ? 'ASCII' : 'Unicode'}',
+      () async {
+        final session = TerminalSession(
+          machineId: 'isolated-machine',
+          agentId: 'isolated-agent',
+          agentName: 'Benchmark',
+          engineId: 'codex',
+          send: (_, _) async => true,
+          sendBinary: (_) async => true,
+        )..streamId = 'isolated-stream';
+        addTearDown(session.dispose);
+        final content = List.filled(31, sampleText).join();
+        // Repaint one row so scrollback growth does not change the workload.
+        // Each packet is exactly 16 KiB in either case.
+        final bytes = utf8.encode(List.filled(128, '\r$content\x1b[K').join());
+        var sequence = 0;
+        Future<void> output({bool keyframe = false}) => session.handleBinary(
+          TerminalBinaryFrame(
+            kind: keyframe
+                ? TerminalBinaryKind.keyframe
+                : TerminalBinaryKind.output,
+            streamId: 'isolated-stream',
+            seq: sequence++,
+            bytes: bytes,
+            cols: keyframe ? 160 : null,
+            rows: keyframe ? 24 : null,
+            compressed: false,
+          ),
+        );
+        expect(bytes, hasLength(16 * 1024));
+        await output(keyframe: true);
+        for (var warmup = 0; warmup < 20; warmup++) {
+          await output();
+        }
+        final times = <int>[];
+        for (var sample = 0; sample < 100; sample++) {
+          final watch = Stopwatch()..start();
+          await output();
+          times.add(watch.elapsedMicroseconds);
+        }
+        expect(session.status, TerminalSessionStatus.controlling);
+        expect(
+          session.terminal.buffer.getText(),
+          startsWith(content.trimRight()),
+        );
+        debugPrint(
+          'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'operation': 'terminal_output_decode_and_parse', 'content': sampleText == 'abcd' ? 'ASCII' : 'Unicode', 'bytesPerFrame': bytes.length, 'decodeAndParse': distribution(times)})}',
+        );
+      },
+    );
+  }
+
   test('large live catalog CPU benchmark', () {
     final app = AppNotifier(config: AppConfig.dev, authSession: AuthSession());
     addTearDown(app.dispose);

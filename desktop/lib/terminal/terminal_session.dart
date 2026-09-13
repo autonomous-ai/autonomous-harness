@@ -627,15 +627,20 @@ class TerminalSession extends ChangeNotifier {
   }
 
   bool _writeBytes(List<int> bytes) {
-    final combined = <int>[..._utf8Tail, ...bytes];
+    // Most packets end on a scalar boundary. Decode their existing byte view
+    // directly; only a split UTF-8 scalar needs a joined buffer.
+    final combined = _utf8Tail.isEmpty ? bytes : <int>[..._utf8Tail, ...bytes];
     for (
       var tailLength = 0;
       tailLength <= min(3, combined.length);
       tailLength++
     ) {
       try {
-        final prefix = combined.sublist(0, combined.length - tailLength);
-        final text = utf8.decode(prefix, allowMalformed: false);
+        final text = utf8.decoder.convert(
+          combined,
+          0,
+          combined.length - tailLength,
+        );
         if (text.isNotEmpty) _writeTerminalText(text);
         _utf8Tail = tailLength == 0
             ? const []

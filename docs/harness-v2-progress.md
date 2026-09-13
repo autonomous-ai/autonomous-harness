@@ -68,6 +68,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Compact headers remove routine transport/status/pin clutter, retaining exceptional states and offline/unavailable placeholders.
 - Existing terminal sessions/transports/renderer and patched `third_party/xterm` are retained. One regression verifies renderer identity, hidden geometry during window resize, and input going only to the active view.
 - Binary dispatch reads current session stream IDs and skips unrelated sessions before awaiting them, avoiding a scheduling turn per unrelated view. No duplicate stream registry is maintained. Socket FIFO remains in `WsConn`; regressions additionally exercise direct concurrent dispatch during tab reorder, hidden shared views, machine isolation, unknown streams and corrupt-frame recovery.
+- Terminal output decodes directly from the received byte view, avoiding two full-packet copies on the ordinary path. Split UTF-8 scalars still join the retained tail; bounded decoding avoids copying each candidate prefix. Explicit 16 KiB ASCII/Unicode output benchmarks measure the production decoder and parser, with results and limits in `docs/harness-v2-performance.md`.
 - Compact remote panes expose a Show/Hide message composer button in their header. Closing the final visible pane restores keyboard focus even when its shared terminal remains parked in another Swarm.
 
 ### Shell and dialogs
@@ -143,14 +144,14 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
 | macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. The screen remains locked, so final native visual review is pending. |
-| Full Flutter suite | **987 passed, 1 skipped** after persistence, modal menus, retained-terminal performance, stream dispatch and closed-Swarm recovery. |
+| Full Flutter suite | **987 passed, 1 skipped** after persistence, modal menus, retained-terminal performance, stream dispatch, closed-Swarm recovery and output decoding changes. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
 | Closed-Swarm recovery | 7 passed: arrangement and shared-view restoration, untouched welcome replacement, rapid close/reopen with delayed cleanup, capacity, bounded history, sign-out isolation and the keyboard command. Native command availability and modal behavior also pass in the interaction suite. |
 | Local CLI discovery | 25 passed, including older-daemon folder parsing and continuous snapshots without spawning/reconnecting. |
 | CLI typecheck | `npm run typecheck` passed. |
 | CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
 | Flutter analyzer | **0 errors, 0 warnings, 12 existing vendored xterm infos**; passes with `--no-fatal-infos`. |
-| Headless performance | 3 explicit benchmarks passed: 2,000-agent catalog and 16/48 retained terminals. Reproducible command and limits in `docs/harness-v2-performance.md`. |
+| Headless performance | 5 explicit benchmarks passed: 2,000-agent catalog, 16/48 retained terminals and two terminal output workloads. Reproducible commands and limits in `docs/harness-v2-performance.md`. |
 | AppKit components | **151 assertions passed** for overflow, selected-tab visibility after resize, pre-paint labels, accessible order after reorder, retained tab controls, capacity and modal-disabled actions. No window opened. This complements the pending native end-to-end visual audit. |
 | Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and end-to-end latency measurements remain. |
 
@@ -170,6 +171,7 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-retained-tests.log`: 27 terminal/menu/layout checks.
 - `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
 - `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
+- `harness-v2-output-before.log`, `harness-v2-output-after.log`: paired production terminal decode-and-parse CPU measurements.
 - `harness-v2-native-titlebar-tests.log`: windowless checks against the actual AppKit tab source.
 - `harness-v2-routing-tests.log`: 68 stream-routing, binary protocol and terminal session checks.
 - `harness-v2-reopen-tests.log`: 23 Swarm recovery, state and interaction checks.
