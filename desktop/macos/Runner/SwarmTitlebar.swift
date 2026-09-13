@@ -67,6 +67,18 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
 
   private func installSwarmMenu() {
     guard let main = NSApp.mainMenu, main.item(withTitle: "Swarm") == nil else { return }
+    // The stock Flutter nib includes a disabled Preferences placeholder. Make
+    // the app-menu command work, and give ⌘, a single native owner.
+    var settingsInAppMenu = false
+    if let appMenu = main.item(at: 0)?.submenu,
+       let settings = appMenu.items.first(where: { $0.keyEquivalent == "," && $0.action == nil }) {
+      settings.title = "Settings…"
+      settings.target = self
+      settings.action = #selector(menuAction(_:))
+      settings.representedObject = "settings"
+      settings.keyEquivalentModifierMask = [.command]
+      settingsInAppMenu = true
+    }
     let menu = NSMenu(title: "Swarm")
     func add(_ title: String, _ key: String, _ action: String, _ modifiers: NSEvent.ModifierFlags = [.command]) {
       let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
@@ -84,7 +96,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     menu.addItem(.separator())
     add("Add Agent…", "f", "addAgent", [.command, .shift])
     add("Close Agent View", "w", "closePane", [.command, .shift])
-    add("Settings…", ",", "settings")
+    if !settingsInAppMenu { add("Settings…", ",", "settings") }
     let item = NSMenuItem(title: "Swarm", action: nil, keyEquivalent: "")
     item.submenu = menu
     main.insertItem(item, at: min(2, main.numberOfItems))

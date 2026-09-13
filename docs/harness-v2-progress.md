@@ -91,7 +91,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
 - Accessibility names/selection update with state, including overflowed tabs that have never painted. Tab context menus obey modal-disabled state. Layout reveals the selected tab after window resize.
 - Accessibility child order follows the displayed order after a reorder; AppKit receives a layout-change notification when tabs are added, moved or closed. A windowless check compiles the production Swift source and exercises these native controls directly, without booting Flutter or reading saved account/layout data.
-- Native Swarm menu includes new/close/rename, previous/next, Add agent, close agent view, Settings.
+- Native Swarm menu includes new/close/rename, previous/next, Add agent and close agent view. Settings activates the former disabled Preferences placeholder in the application menu, giving Cmd+, one native owner. It follows the same modal-disabled state as the titlebar controls.
 - Real tabs alongside traffic lights were visually verified. Native selection, new tabs, modal-disabled controls, and independently accessible select/close buttons were checked. Drag/reorder, overflow, and a wider keyboard/accessibility audit remain.
 
 ### CLI project metadata
