@@ -24,17 +24,8 @@ import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
 import 'terminal_panel.dart';
 
-/// The terminals, as up to four tiles.
-///
-/// Fixed shapes rather than a splittable tree. A binary layout tree is what
-/// tmux and herdr give you, and it earns its complexity — drag handles, sibling
-/// ordering, a serialised shape — only once the count is open-ended. Capped at
-/// four, every arrangement anyone would build by hand is already one of the
-/// four below, and none of that machinery has to exist or be maintained.
-///
-/// The shapes are fixed; the DIVIDERS are not. Each one can be dragged and its
-/// position is remembered per pane count (see [PaneSplits]) — which is the part
-/// of a split tree people actually reach for, without the tree.
+/// Terminal views arranged by the chosen preset. Swarms keep each view under
+/// one stable parent as its rectangle, visibility and keyboard focus change.
 class PaneGrid extends StatelessWidget {
   const PaneGrid({
     super.key,
@@ -52,6 +43,13 @@ class PaneGrid extends StatelessWidget {
     return ValueListenableBuilder<AgentDragRef?>(
       valueListenable: agentDrag,
       builder: (context, dragging, _) {
+        if (swarmMode) {
+          return _SwarmCanvas(
+            notifier: notifier,
+            dragging: dragging,
+            empty: empty,
+          );
+        }
         final panes = notifier.panes;
         final zoomed = notifier.zoomedPaneId;
         final visible = zoomed == null
@@ -75,43 +73,9 @@ class PaneGrid extends StatelessWidget {
               child: const _AddSlot(),
             ),
         ];
-        final canvas = panes.isEmpty
+        return panes.isEmpty
             ? empty ?? _EmptyGrid(notifier: notifier)
             : _arrange(cells);
-        if (!swarmMode) return canvas;
-        // A shared agent is mounted exactly once, including across tab changes.
-        // Offstage keeps its renderer/selection/scroll position; the fixed old
-        // size and disabled auto-resize keep hidden geometry off the wire.
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            Positioned.fill(child: canvas),
-            for (final pane in notifier.allPanes)
-              if (!visible.contains(pane) && pane.lastViewSize != null)
-                Positioned.fill(
-                  key: ValueKey(pane.id),
-                  child: _ParkedPane(
-                    session: pane.session,
-                    child: Offstage(
-                      offstage: true,
-                      child: TickerMode(
-                        enabled: false,
-                        child: ExcludeFocus(
-                          child: OverflowBox(
-                            alignment: Alignment.topLeft,
-                            minWidth: pane.lastViewSize!.width,
-                            maxWidth: pane.lastViewSize!.width,
-                            minHeight: pane.lastViewSize!.height,
-                            maxHeight: pane.lastViewSize!.height,
-                            child: cell(pane, visible: false),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-          ],
-        );
       },
     );
   }
@@ -234,32 +198,268 @@ class PaneGrid extends StatelessWidget {
   }
 }
 
-/// A tab switch does not change terminals that stay hidden. Keep their widget
-/// configuration as well as their renderer; rebuilding their headers, menus,
-/// and gestures makes switching cost grow with every previously visited tab.
-/// Session replacement still reaches the parked view. When shown, the cell's
-/// GlobalKey moves it into the active layout with current agent metadata.
-class _ParkedPane extends StatefulWidget {
-  const _ParkedPane({required this.session, required this.child});
-
-  final TerminalSession? session;
-  final Widget child;
-
+/// Switching layouts must not reparent terminal subtrees. GlobalKey grafting
+/// preserves State but invalidates inherited dependencies throughout each view.
+/// This canvas changes rectangles under a single Stack instead, including when
+/// a large Swarm needs to scroll. Unvisited views remain unmounted.
+class _SwarmCanvas extends StatefulWidget {
+  const _SwarmCanvas({
+    required this.notifier,
+    required this.dragging,
+    this.empty,
+  });
+  final AppNotifier notifier;
+  final AgentDragRef? dragging;
+  final Widget? empty;
   @override
-  State<_ParkedPane> createState() => _ParkedPaneState();
+  State<_SwarmCanvas> createState() => _SwarmCanvasState();
 }
 
-class _ParkedPaneState extends State<_ParkedPane> {
-  late Widget _child = widget.child;
+class _SwarmCanvasState extends State<_SwarmCanvas> {
+  final _scroll = ScrollController(keepScrollOffset: false);
+  final _offsets = <String, double>{};
+  late String _activeId = widget.notifier.activeSwarmId;
 
   @override
-  void didUpdateWidget(_ParkedPane oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.session, widget.session)) _child = widget.child;
+  void initState() {
+    super.initState();
+    widget.notifier.addListener(_onAppChanged);
+    terminalFontStore.addListener(_onFontChanged);
   }
 
   @override
-  Widget build(BuildContext context) => _child;
+  void didUpdateWidget(_SwarmCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.notifier, widget.notifier)) {
+      oldWidget.notifier.removeListener(_onAppChanged);
+      widget.notifier.addListener(_onAppChanged);
+      _offsets.clear();
+      _activeId = widget.notifier.activeSwarmId;
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+    }
+  }
+
+  void _onAppChanged() {
+    final app = widget.notifier;
+    if (_activeId != app.activeSwarmId) {
+      if (_scroll.hasClients) _offsets[_activeId] = _scroll.offset;
+      _activeId = app.activeSwarmId;
+      // The notification precedes the frame. Restore before layout/paint so
+      // switching never briefly displays the previous Swarm's scroll offset.
+      if (_scroll.hasClients) _scroll.jumpTo(_offsets[_activeId] ?? 0);
+      final open = app.swarms.map((s) => s.id).toSet();
+      _offsets.removeWhere((id, _) => !open.contains(id));
+    }
+    setState(() {});
+  }
+
+  void _onFontChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    widget.notifier.removeListener(_onAppChanged);
+    terminalFontStore.removeListener(_onFontChanged);
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Cache the healthy terminal path when focus/discovery changes no visible
+  /// presentation. Connection/setup views still read their complete state.
+  /// Theme/font dependencies continue updating retained descendants directly.
+  Object? _presentation(TerminalPane pane, bool visible) {
+    if (!visible) return null;
+    final app = widget.notifier;
+    final machine = app.stateOf(pane.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == pane.agentId)
+        .firstOrNull;
+    final session = pane.session;
+    if (machine == null ||
+        agent == null ||
+        session == null ||
+        machine.nodeOnline == false ||
+        machine.needsLink ||
+        (machine.isLocalMachine && !machine.usesLocalTransport) ||
+        !agent.terminalAvailable ||
+        session.status != TerminalSessionStatus.controlling) {
+      return Object();
+    }
+    return (
+      notifier: app,
+      machine: machine.machine,
+      local: machine.isLocalMachine,
+      agent: agent,
+      project: machine.projectOf(agent),
+      session: session,
+      terminal: session.terminal,
+      name: session.agentName,
+      link: session.linkMode,
+      upload: session.uploadProgress,
+      focused: app.isPaneFocused(pane.id),
+      single: app.panes.length == 1,
+      pinned: app.isPanePinned(pane),
+      composer: pane.composerVisible,
+      blocked: app.questionFor(pane.machineId, agent.id) != null,
+      dragging: widget.dragging,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final app = widget.notifier;
+      final visible = [
+        for (final pane in app.panes)
+          if (app.zoomedPaneId == null || pane.id == app.zoomedPaneId) pane,
+      ];
+      final layout = _SwarmGeometry(
+        count: visible.length,
+        viewport: constraints.biggest,
+        preset: app.presetFor(visible.length),
+        minimum: _MinTile.of(),
+      );
+      if (layout.columns != null) app.gridColumns = layout.columns;
+      final rectangles = {
+        for (var i = 0; i < visible.length; i++)
+          visible[i].id: layout.rectangles[i],
+      };
+      // The scroll view stays mounted even when content fits. Its maximum
+      // extent is then zero; keeping its ancestry is what avoids grafting.
+      return SingleChildScrollView(
+        controller: _scroll,
+        child: SizedBox(
+          width: constraints.maxWidth,
+          height: layout.height,
+          child: Stack(
+            children: [
+              if (visible.isEmpty)
+                Positioned.fill(
+                  child: widget.empty ?? _EmptyGrid(notifier: app),
+                ),
+              for (final pane in app.allPanes)
+                if (rectangles.containsKey(pane.id) ||
+                    pane.lastViewSize != null)
+                  Positioned.fromRect(
+                    key: ValueKey(pane.id),
+                    rect:
+                        rectangles[pane.id] ?? Offset.zero & pane.lastViewSize!,
+                    child: _PaneLayer(
+                      session: pane.session,
+                      visible: rectangles.containsKey(pane.id),
+                      presentation: _presentation(
+                        pane,
+                        rectangles.containsKey(pane.id),
+                      ),
+                      child: _PaneCell(
+                        key: pane.cellKey,
+                        notifier: app,
+                        pane: pane,
+                        dragging: widget.dragging,
+                        visible: rectangles.containsKey(pane.id),
+                        swarmMode: true,
+                      ),
+                    ),
+                  ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Convert the same unit rectangles used by the layout picker and keyboard
+/// navigation to pixels. A boundary at fraction f maps to f * (extent + gap);
+/// subtracting one gap from each tile preserves spanning and nested cuts.
+class _SwarmGeometry {
+  _SwarmGeometry({
+    required int count,
+    required Size viewport,
+    required PanePreset? preset,
+    required Size minimum,
+  }) : height = viewport.height {
+    if (count == 0) return;
+    if (count == 1) {
+      rectangles = [Offset.zero & viewport];
+      return;
+    }
+    var shape = preset ?? PanePreset.defaultFor(count)!;
+    if (shape == PanePreset.splitLong && viewport.height > viewport.width) {
+      shape = PanePreset.rows;
+    }
+    if (shape == PanePreset.auto || shape.statedColumns != null) {
+      columns =
+          (shape.statedColumns ?? (viewport.width / minimum.width).floor())
+              .clamp(1, count);
+      final rows = (count / columns!).ceil();
+      height = (rows * minimum.height + kPaneGap * (rows - 1)).clamp(
+        viewport.height,
+        double.infinity,
+      );
+    }
+    rectangles = [
+      for (final tile in shape.tilesFor(count, columns: columns))
+        Rect.fromLTWH(
+          tile.left * (viewport.width + kPaneGap),
+          tile.top * (height + kPaneGap),
+          (tile.width * (viewport.width + kPaneGap) - kPaneGap).clamp(
+            0,
+            double.infinity,
+          ),
+          (tile.height * (height + kPaneGap) - kPaneGap).clamp(
+            0,
+            double.infinity,
+          ),
+        ),
+    ];
+  }
+  double height;
+  int? columns;
+  List<Rect> rectangles = const [];
+}
+
+/// A hidden view retains its last configuration and geometry. Status changes
+/// update a replaced session; showing it applies fresh machine/agent metadata.
+class _PaneLayer extends StatefulWidget {
+  const _PaneLayer({
+    required this.session,
+    required this.visible,
+    required this.presentation,
+    required this.child,
+  });
+
+  final TerminalSession? session;
+  final bool visible;
+  final Object? presentation;
+  final Widget child;
+
+  @override
+  State<_PaneLayer> createState() => _PaneLayerState();
+}
+
+class _PaneLayerState extends State<_PaneLayer> {
+  late Widget _layer = _buildLayer();
+
+  @override
+  void didUpdateWidget(_PaneLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.visible != widget.visible ||
+        oldWidget.presentation != widget.presentation ||
+        !identical(oldWidget.session, widget.session)) {
+      _layer = _buildLayer();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _layer;
+
+  Widget _buildLayer() => Offstage(
+    offstage: !widget.visible,
+    child: TickerMode(
+      enabled: widget.visible,
+      child: ExcludeFocus(excluding: !widget.visible, child: widget.child),
+    ),
+  );
 }
 
 /// Five or more tiles: a grid, sized by what a terminal actually needs.
@@ -401,12 +601,12 @@ class _Axis extends StatelessWidget {
 ///
 /// The font is one process-wide setting, so one measurement serves every tile.
 class _MinTile {
-  static double _forSize = -1;
+  static TerminalStyle? _forStyle;
   static Size _cached = Size.zero;
 
   static Size of() {
     final style = terminalFontStore.value;
-    if (style.fontSize == _forSize) return _cached;
+    if (identical(style, _forStyle)) return _cached;
     // The renderer measures its cell by laying out ten 'm' and dividing; do the
     // same here rather than inventing a second idea of how wide a column is.
     final painter = TextPainter(
@@ -423,7 +623,8 @@ class _MinTile {
     )..layout();
     final cellW = painter.width / 10;
     final cellH = painter.height;
-    _forSize = style.fontSize;
+    painter.dispose();
+    _forStyle = style;
     // 46 is the pane header, which is chrome the terminal never gets.
     _cached = Size(40 * cellW + 16, 46 + 12 * cellH + 8);
     return _cached;

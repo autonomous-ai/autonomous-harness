@@ -1,6 +1,6 @@
 # Harness V2 performance checks
 
-Measured on 2026-09-12 with Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
+Measured on 2026-09-12, with a retained-canvas continuation on 2026-09-13, using Apple M2 Max, macOS 26.6.2, Flutter 3.47.2 and Dart 3.13.2.
 
 The explicit benchmark runs in the headless Flutter test runner with isolated synthetic sessions. It never opens a sample-data app or connects to a real agent. Run it from `desktop/`:
 
@@ -31,13 +31,32 @@ The output checks call the production `TerminalSession.handleBinary` with 16 KiB
 
 ## Reduced work when switching tabs
 
-Previously, switching between two swarms rebuilt headers, gestures and menus for terminals in every previously visited swarm. Hidden panes now retain their widget configuration as well as their renderer, with stable identities in the parked list. Session replacement updates a parked view; showing it applies current machine and agent metadata.
+The first improvement retained hidden panes' widget configurations as well as their renderers. It reduced a 16-terminal switch from 2,480 to 1,491 widget rebuilds; the 48-terminal case rebuilt 1,625 widgets. Moving GlobalKey subtrees between the visible layout and parked list still invalidated inherited dependencies when changing tabs, zoom or presets.
 
-With 16 retained terminals, one switch went from **2,480 to 1,491 widget rebuilds**, a 40% reduction. With 48 retained terminals, it rebuilt 1,625 widgets. Background output continues reaching the session buffer. Regression checks cover renderer identity, hidden geometry, input ownership, selection, scroll position, renaming while hidden and session replacement.
+The current Swarm canvas keeps every visited terminal under one mounted scroll view and Stack, changing its rectangle without reparenting it. Healthy visible cells and unchanged headers retain their widget configuration too. Connection/setup states remain uncached, and cached header actions resolve the current widget. Session replacement updates hidden views; showing a pane applies current machine and agent metadata. Background output continues reaching the session buffer.
+
+The paired continuation used the same benchmark before and after these changes, adding 60 focus-change/frame samples to each existing tab workload:
+
+| Workload | Before median / p95 | After median / p95 | Rebuilds before → after |
+| --- | ---: | ---: | ---: |
+| Tab switch: 4 Swarms / 16 terminals | 20.924 / 26.020 ms | 12.226 / 17.116 ms | 1,491 → 917 |
+| Tab switch: 12 Swarms / 48 terminals | 14.151 / 17.363 ms | 8.925 / 10.497 ms | 1,625 → 1,051 |
+| Focus change: 4 Swarms / 16 terminals | 6.764 / 7.909 ms | 5.284 / 6.613 ms | 980 → 602 |
+| Focus change: 12 Swarms / 48 terminals | 5.150 / 6.260 ms | 4.586 / 5.535 ms | 1,114 → 736 |
+
+Median tab CPU time fell by 42% and 37%; focus CPU time fell by 22% and 11%. These remain headless debug measurements with host-load and JIT variability, excluding native input and the physical display. Stable-ancestry tests and lower rebuild counts provide structural evidence alongside the timings. Logs: `/private/tmp/harness-v2-stable-canvas-before.log` and `/private/tmp/harness-v2-stable-canvas-measured.log`. Reproduce with:
+
+```bash
+flutter test test/benchmarks/swarm_benchmark.dart --no-pub --reporter expanded --plain-name 'tab-switch CPU benchmark'
+```
+
+Regression checks cover renderer identity and element ancestry, hidden geometry, input ownership, selection, first-frame per-Swarm scroll restoration, renaming while hidden, session replacement and fresh header callbacks. Swarm geometry matches the legacy layouts across fixed presets and auto grids. Changing font metrics at the same point size now invalidates the minimum-tile cache and immediately updates grid dimensions.
 
 Rapid navigation also coalesces pending arrangement writes. While the first write is in flight, only the latest subsequent snapshot is retained. Tests with 100 rapid tab changes verify that the first and final snapshots are written, including recovery after the first write fails. Normal quit waits for the final snapshot with a one-second bound for stalled storage.
 
 Incoming binary data now skips unrelated sessions before awaiting the matching renderer queue. This removes one async scheduling turn per unrelated view from each frame's dispatch, while retaining socket FIFO, current stream identity and machine isolation. This change is verified by routing tests; the CPU table above does not measure network delivery.
+
+Settings route and section fades are removed: the former opening/closing durations were 170/120 ms for the route and 200/90 ms for the section switcher. Both now present their destination immediately. Existing Settings, modal and route checks pass; this change removes configured animation time, not all possible input or rendering cost.
 
 ## Terminal output allocations
 
@@ -68,7 +87,7 @@ All five benchmark cases passed; retained rebuild counts remained 1,491 / 1,625.
 
 ## Native follow-up
 
-The optimized real-data app builds and runs locally. The desktop is now unlocked, and native visual review is underway. The tab strip uses AppKit's compact unified title bar: the old right accessory was clipped to 32 points; the container now supplies 40 points and aligns controls with the system traffic lights.
+The optimized real-data app builds and runs locally. The native tab/canvas polish was visually reviewed before the navigation and retained-canvas continuations; CUA currently returns `cgWindowNotFound` for the rebuilt Release preview, so those newer interactions still need live native review. The tab strip uses AppKit's compact unified title bar: the old right accessory was clipped to 32 points; the container now supplies 40 points and aligns controls with the system traffic lights.
 
 The native check covers overflow, resizing, accessibility order and disabled actions. `bash tool/check_swarm_titlebar.sh /path/to/flutter --window-layout` adds actual container checks in a hidden window at three widths, for 170 assertions total. No Flutter engine, account or terminal is accessed.
 

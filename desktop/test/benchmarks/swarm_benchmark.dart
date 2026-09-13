@@ -206,8 +206,23 @@ void main() {
       }
       final largest = rebuilds.entries.toList()
         ..sort((a, b) => b.value.compareTo(a.value));
+      final focusTimes = <int>[];
+      for (var sample = 0; sample < 60; sample++) {
+        final watch = Stopwatch()..start();
+        app.focusPaneBy(1);
+        await tester.pump();
+        focusTimes.add(watch.elapsedMicroseconds);
+      }
+      var focusRebuilds = 0;
+      debugOnRebuildDirtyWidget = (_, _) => focusRebuilds++;
+      try {
+        app.focusPaneBy(1);
+        await tester.pump();
+      } finally {
+        debugOnRebuildDirtyWidget = null;
+      }
       debugPrint(
-        'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'swarms': swarmCount, 'terminals': swarmCount * 4, 'scrollbackLinesPerTerminal': 1000, 'viewport': '1280x800', 'tabSwitchAndFrame': distribution(times), 'rebuildsPerSwitch': rebuilds.values.fold(0, (total, count) => total + count), 'mostRebuiltWidgets': Map.fromEntries(largest.take(12))})}',
+        'SWARM_BENCH ${jsonEncode({'kind': 'headless_debug_cpu', 'swarms': swarmCount, 'terminals': swarmCount * 4, 'scrollbackLinesPerTerminal': 1000, 'viewport': '1280x800', 'tabSwitchAndFrame': distribution(times), 'rebuildsPerSwitch': rebuilds.values.fold(0, (total, count) => total + count), 'focusAndFrame': distribution(focusTimes), 'rebuildsPerFocus': focusRebuilds, 'mostRebuiltWidgets': Map.fromEntries(largest.take(12))})}',
       );
       await tester.pumpWidget(const SizedBox());
       app.dispose();

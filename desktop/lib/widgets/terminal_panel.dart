@@ -115,6 +115,8 @@ class _TerminalPanelState extends State<TerminalPanel>
   late final RemoteMediaDownloader _mediaDownloader;
   MediaDownloadCancellation? _previewCancellation;
   RemoteMediaProgress? _previewProgress;
+  Object? _headerPresentation;
+  Widget? _header;
 
   @override
   void initState() {
@@ -665,19 +667,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       color: grid.AppPalette.windowBg,
       child: Column(
         children: [
-          _TerminalHeader(
-            notifier: widget.notifier,
-            session: session,
-            compact: widget.compactHeader,
-            onClose: widget.onClose,
-            pinned: widget.pinned,
-            onTogglePin: widget.onTogglePin,
-            onToggleComposer: remote && !widget.readOnly
-                ? widget.onToggleComposer
-                : null,
-            composerVisible: widget.composerVisible,
-            paneDrag: widget.paneDrag,
-          ),
+          _buildHeader(context, remote: remote),
 
           Divider(height: 1, color: AppColors.border),
           Expanded(
@@ -806,6 +796,59 @@ class _TerminalPanelState extends State<TerminalPanel>
         ],
       ),
     );
+  }
+
+  /// Visibility and focus affect the renderer, not its title and controls.
+  /// Retain that subtree until its presentation changes. Callback wrappers
+  /// resolve the current widget so cached controls never retain an old action.
+  Widget _buildHeader(BuildContext context, {required bool remote}) {
+    final session = widget.session;
+    final machine = widget.notifier.stateOf(session.machineId);
+    final agent = machine?.agents
+        .where((a) => a.id == session.agentId)
+        .firstOrNull;
+    final canToggleComposer =
+        remote && !widget.readOnly && widget.onToggleComposer != null;
+    final presentation = (
+      theme: Theme.of(context),
+      brightness: grid.AppTheme.brightness.value,
+      fontFamily: AppFonts.sans,
+      notifier: widget.notifier,
+      session: session,
+      name: session.agentName,
+      status: session.status,
+      link: session.linkMode,
+      machine: machine?.machine,
+      agent: agent,
+      project: agent == null ? null : machine?.projectOf(agent),
+      compact: widget.compactHeader,
+      pinned: widget.pinned,
+      close: widget.onClose != null,
+      pin: widget.onTogglePin != null,
+      composer: canToggleComposer,
+      composerVisible: widget.composerVisible,
+      dragId: widget.paneDrag?.ref.paneId,
+      dragSize: widget.paneDrag?.size,
+    );
+    if (_headerPresentation != presentation) {
+      _headerPresentation = presentation;
+      _header = _TerminalHeader(
+        notifier: widget.notifier,
+        session: session,
+        compact: widget.compactHeader,
+        onClose: widget.onClose == null ? null : () => widget.onClose?.call(),
+        pinned: widget.pinned,
+        onTogglePin: widget.onTogglePin == null
+            ? null
+            : () => widget.onTogglePin?.call(),
+        onToggleComposer: canToggleComposer
+            ? () => widget.onToggleComposer?.call()
+            : null,
+        composerVisible: widget.composerVisible,
+        paneDrag: widget.paneDrag,
+      );
+    }
+    return _header!;
   }
 }
 

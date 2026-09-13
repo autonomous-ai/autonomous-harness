@@ -28,14 +28,23 @@ AppNotifier _withPanes(int n) {
 }
 
 /// Where each tile actually landed, as fractions of the grid.
-Future<List<Rect>> _layout(WidgetTester tester, AppNotifier notifier) async {
+Future<List<Rect>> _layout(
+  WidgetTester tester,
+  AppNotifier notifier, {
+  bool swarmMode = false,
+  Size size = const Size(1600, 1500),
+}) async {
   // Tall enough that no shape here hits the scroll fallback. Two columns of
   // nine tiles is five rows, and a window without the height for five rows at
   // the terminal floor SCROLLS rather than squeezing — correct behaviour, and
   // covered in pane_lattice_test, but it puts tiles outside the grid box and
   // there are no fractions of a visible grid left to measure.
-  await tester.binding.setSurfaceSize(const Size(1600, 1500));
-  await tester.pumpWidget(MaterialApp(home: PaneGrid(notifier: notifier)));
+  await tester.binding.setSurfaceSize(size);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: PaneGrid(notifier: notifier, swarmMode: swarmMode),
+    ),
+  );
   await tester.pump();
   final grid = tester.getRect(find.byType(PaneGrid));
   return [
@@ -74,6 +83,37 @@ void _expectShape(List<Rect> actual, List<Rect> want) {
 }
 
 void main() {
+  testWidgets(
+    'automatic Swarm layouts match the prior geometry at narrow and wide sizes',
+    (tester) async {
+      for (final size in [const Size(880, 600), const Size(1800, 900)]) {
+        for (final count in [6, 17]) {
+          final notifier = _withPanes(count);
+          notifier.setPreset(count, PanePreset.auto);
+          final legacy = await _layout(tester, notifier, size: size);
+          final swarm = await _layout(
+            tester,
+            notifier,
+            size: size,
+            swarmMode: true,
+          );
+          for (var i = 0; i < count; i++) {
+            expect(
+              (swarm[i].topLeft - legacy[i].topLeft).distance,
+              lessThan(0.000001),
+            );
+            expect(
+              (swarm[i].bottomRight - legacy[i].bottomRight).distance,
+              lessThan(0.000001),
+            );
+          }
+          await tester.pumpWidget(const SizedBox());
+          notifier.dispose();
+        }
+      }
+    },
+  );
+
   for (final count in [2, 3, 4, 5, 6, 7, 9]) {
     for (final preset in PanePreset.forCount(count)) {
       // `auto` measures the window, so its diagram is openly approximate and
@@ -85,7 +125,22 @@ void main() {
       ) async {
         final notifier = _withPanes(count);
         notifier.setPreset(count, preset);
-        _expectShape(await _layout(tester, notifier), preset.tilesFor(count));
+        final legacy = await _layout(tester, notifier);
+        _expectShape(legacy, preset.tilesFor(count));
+        final swarm = await _layout(tester, notifier, swarmMode: true);
+        _expectShape(swarm, preset.tilesFor(count));
+        for (var i = 0; i < count; i++) {
+          expect(
+            (swarm[i].topLeft - legacy[i].topLeft).distance,
+            lessThan(0.000001),
+          );
+          expect(
+            (swarm[i].bottomRight - legacy[i].bottomRight).distance,
+            lessThan(0.000001),
+          );
+        }
+        await tester.pumpWidget(const SizedBox());
+        notifier.dispose();
       });
     }
   }

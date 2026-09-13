@@ -1,6 +1,6 @@
 # Harness App V2 — development handoff
 
-Updated 2026-09-13 after the jump-navigation continuation. This is a working preview, not a release.
+Updated 2026-09-13 after the retained-canvas performance continuation. This is a working preview, not a release.
 
 ## Resume here
 
@@ -14,7 +14,8 @@ Updated 2026-09-13 after the jump-navigation continuation. This is a working pre
 - Latest design direction: wallpaper fills an empty New swarm only. Populated Swarms use a flat `#463746` canvas matching the selected native tab. Tab hover, spacing and alignment are being compared with the user's Chrome references.
 - The user requested research into expert developers' tools and a smaller feature set. [Developer-tool research and the keep/improve/remove/defer audit](harness-v2-developer-tools-research.md) documents firsthand sources and a proposed three-part focus: durable sessions, instant navigation, and steering agents without losing concentration.
 - Cmd+P now jumps to existing agents and Swarms with fuzzy project/machine context and bounded recent-work history. Cmd+Shift+F remains Add agent. The jump dialog has no transition or backdrop blur; selecting an existing view is focus-only, including terminals controlled elsewhere. The 2,000-agent headless search check measured 1.06 ms median / 1.15 ms p95 CPU time; this is not native display latency.
-- The final Release preview was rebuilt and normally relaunched; PID **19010** was the sole V2 instance at the last check. Revalidate the process before any later restart. CUA now reports `cgWindowNotFound` when selecting that full bundle path, including after a CUA reset and a second normal rebuild/relaunch. The first relaunched process did have a 1280×840 onscreen CoreGraphics window. Bundle-ID selection was also ambiguous with the retained backup under `/Users/ab/code/harness-app-v2`; no backup was altered. Do not claim the new jump interaction was reviewed in the live native window. The actual native titlebar/canvas had been reviewed before this continuation; the new picker was visually inspected in an isolated Flutter render with native font files and engine icons loaded.
+- Swarm terminals now keep the same widget ancestry across tabs, zoom and presets, retaining unchanged cells and headers. The paired headless check reduced median tab-switch CPU time from 20.924 to 12.226 ms with 16 terminals and from 14.151 to 8.925 ms with 48; focus changes also improved. Settings route and section fades are removed. These are debug CPU measurements, not native input-to-display timings.
+- The final Release preview was rebuilt and normally relaunched; PID **39721** was the sole V2 instance at the last check. Revalidate the process before any later restart. CUA still reports `cgWindowNotFound` when selecting that full bundle path after this rebuild, as it did after an earlier CUA reset and normal relaunches. An earlier relaunched process did have a 1280×840 onscreen CoreGraphics window. Bundle-ID selection was also ambiguous with the retained backup under `/Users/ab/code/harness-app-v2`; no backup was altered. Do not claim the new jump interaction or stable canvas was reviewed in the live native window. The actual native titlebar/canvas had been reviewed before these continuations; the new picker was visually inspected in an isolated Flutter render with native font files and engine icons loaded.
 - Continue implementation here. Do not create another repository or fork for V2.
 
 ```bash
@@ -67,8 +68,9 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 
 ### Retained terminal views
 
-- `PaneGrid` swarm mode parks previously displayed inactive terminal widgets under Offstage with ticking/focus disabled and their last visible dimensions preserved.
-- Parked panes retain their widget configuration while hidden, so tab changes do not rebuild unrelated terminal headers and controls. A replaced session still updates its parked view; returning to a tab uses current metadata. The 16-terminal benchmark dropped from 2,480 to 1,491 widget rebuilds per switch; see `docs/harness-v2-performance.md` for measurements and limits.
+- `PaneGrid` swarm mode keeps visited terminals at stable keyed positions under one mounted scroll view and Stack. Tab, zoom and preset changes update rectangles without GlobalKey reparenting or inherited-dependency invalidation. Unvisited views remain unmounted; inactive views use Offstage with ticking/focus disabled and retain their last visible dimensions.
+- Hidden panes retain their widget configuration; healthy visible cells retain it until their presentation changes. Connection/setup views continue reading their full state. A replaced session updates its hidden view; returning to a tab applies current machine and agent metadata. Headers separately retain unchanged title/controls, with callbacks resolving the current widget. The paired 16-terminal benchmark reduced rebuilds from 1,491 to 917 per switch and 980 to 602 per focus change; see `docs/harness-v2-performance.md` for all measurements and limits.
+- Swarm rectangles use the same unit geometry as the layout picker and keyboard navigation. Per-Swarm scroll offsets restore before the first frame, including transitions between large, small and empty Swarms. Font metric changes invalidate the minimum-tile cache and update grid geometry even when the point size is unchanged. Legacy non-Swarm layouts retain their existing renderer.
 - `TerminalPane.lastViewSize` retains geometry. Hidden `TerminalPanel` views stop auto-resizing/reporting viewport and release input focus.
 - Compact headers remove routine transport/status/pin clutter, retaining exceptional states and offline/unavailable placeholders.
 - Existing terminal sessions/transports/renderer and patched `third_party/xterm` are retained. One regression verifies renderer identity, hidden geometry during window resize, and input going only to the active view.
@@ -90,6 +92,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 - Search supports arrows, Ctrl-N/P, and Return, reveals the selected row, and retains the highlighted agent across live list changes. Both the welcome and picker immediately focus search; blank Return on welcome does not open an invisible first result.
 - Notifications come from real blocked agents; selecting an existing membership uses the same focus-only navigation without implicitly retrying the terminal.
 - Spoken-task subscription/reporting/window reveal and existing linking dialogs are retained. Settings is in the title bar, with Account/sign-out restored inside Settings.
+- Settings opens/closes immediately and switches sections without cross-fades. The former 170/120 ms route and 200/90 ms section transitions are removed.
 - Non-macOS/tests use a Flutter reorderable tab-strip fallback. Linux/Windows have not been built or visually reviewed.
 
 ### Native macOS tabs
@@ -153,7 +156,8 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
 | macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. Unlocked native review confirmed the taller tab container, edge-to-edge empty wallpaper, and the flat populated canvas joining the selected tab. The native hover rendering was also inspected in a local image. |
-| Full Flutter suite | **1,000 passed, 1 skipped** after the jump navigation changes, including terminal, modal, persistence and shortcut regressions. |
+| Full Flutter suite | **1,005 passed, 1 skipped** on the final retained-canvas production code, including terminal, modal, persistence and shortcut regressions. One additional auto-layout comparison was then added to the tests only; the complete 39-case layout file passed afterward. |
+| Retained canvas and header | Five new checks cover stable element ancestry and terminal State across tabs/zoom/presets, first-frame per-Swarm scrolling, tall splits and hidden geometry, font metrics at unchanged point size, and fresh header metadata/callbacks. Layout checks compare legacy and Swarm geometry for all fixed presets and auto layouts at two sizes. |
 | Jump navigation | 13 new state/widget checks cover fuzzy context, shared/offline views, focus-only navigation, preserved layout and terminal state, bounded recents, stale results, captured destinations, immediate focus, keyboard scrolling, live discovery and Add separation. The three widget checks also pass after adding assertions that the first terminal key reaches only the destination session. |
 | Jump visual review | Isolated render inspected with SF font files and engine icons; selected-result text now stays white on a quiet highlight. Four checks (the three widget cases plus the temporary visual fixture) passed after this contrast adjustment. Final Release build passed. Live CUA review remains unavailable with `cgWindowNotFound`. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
@@ -162,7 +166,7 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | CLI typecheck | `npm run typecheck` passed. |
 | CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
 | Flutter analyzer | **0 errors, 0 warnings, 12 existing vendored xterm infos**; passes with `--no-fatal-infos`. |
-| Headless performance | 5 explicit benchmarks passed: 2,000-agent catalog, 16/48 retained terminals and two terminal output workloads. Reproducible commands and limits in `docs/harness-v2-performance.md`. |
+| Headless performance | The prior five-case catalog/terminal/output benchmark passed. The paired retained-canvas continuation reran both 16/48-terminal cases with new focus measurements: tab medians 12.226 / 8.925 ms and focus medians 5.284 / 4.586 ms. Reproducible commands and limits in `docs/harness-v2-performance.md`. |
 | AppKit components and container | **170 assertions passed**: the original 151 component checks plus native-container checks at 880, 1280 and 1920 points. These verify height, traffic-light clearance/alignment, direct contact with the content edge and active-tab visibility. The optional container check creates a hidden native window; no window is displayed and no engine, account or terminal is accessed. |
 | Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and end-to-end latency measurements remain. |
 
@@ -172,11 +176,15 @@ Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing ag
 
 Evidence on this Mac under `/private/tmp`:
 
+- `harness-v2-canvas-full-tests.log`: full 1,005-test pass on the final production changes.
+- `harness-v2-canvas-geometry.log`: 39 layout checks after adding the final test-only auto-layout comparison.
+- `harness-v2-canvas-analyze.log`: latest diagnostics, 0 errors/warnings and 12 existing vendored infos.
+- `harness-v2-stable-canvas-before.log`, `harness-v2-stable-canvas-measured.log`: paired tab/focus CPU and rebuild counts before and after the stable canvas and presentation caches.
 - `harness-v2-jump-full-tests.log`: full 1,000-test pass.
 - `harness-v2-jump-tests.log`: 60 focused navigation/shortcut/interaction checks.
 - `harness-v2-jump-focus-tests.log`: three widget checks including first-key destination ownership.
 - `harness-v2-jump-visual-tests.log` and `harness-jump-review.png`: final focused checks and isolated visual fixture (not the real-data app). Temporary renderer source is `/private/tmp/harness-jump-render.dart`; no mock data or capture tooling was added to the application.
-- `harness-v2-jump-analyze.log`: latest diagnostics.
+- `harness-v2-jump-analyze.log`: earlier jump-navigation diagnostics.
 - `harness-v2-final-build.log`: real-entry debug build.
 - `harness-v2-release-build.log`: optimized local build.
 - `harness-v2-final-cli-check.log`, `harness-v2-final-cli-tests.log`: final metadata checks.
@@ -184,7 +192,7 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-keyboard-tests.log`, `harness-v2-local-project-tests.log`: focused interaction/discovery checks.
 - `harness-v2-retained-tests.log`: 27 terminal/menu/layout checks.
 - `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
-- `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
+- `harness-v2-benchmark-final.log`: earlier catalog and retained-terminal CPU measurements.
 - `harness-v2-benchmark-polish.log`: subsequent five-case pass after native/canvas polish; identical retained rebuild counts, higher debug timings across workloads. Both runs and the comparison limits are recorded in the performance notes.
 - `harness-v2-benchmark-jump.log`: five-case pass after navigation changes, including the new catalog-build/query measurements; retained rebuild counts remain 1,491 / 1,625.
 - `harness-v2-output-before.log`, `harness-v2-output-after.log`: paired production terminal decode-and-parse CPU measurements.
@@ -197,7 +205,7 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 
 ## Remaining work
 
-1. Restore CUA access to the current Release preview and review the new jump workflow, actual project starters and keyboard navigation. The tool currently reports `cgWindowNotFound`; the process is running. The user can change window size and Swarms; re-read UI state before actions and preserve their arrangement.
+1. Restore CUA access to the current Release preview and review the new jump workflow, stable canvas, actual project starters and keyboard navigation. The tool currently reports `cgWindowNotFound`; the process is running. The user can change window size and Swarms; re-read UI state before actions and preserve their arrangement.
 2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
 3. Measure native terminal input and tab-switch responsiveness before making end-to-end latency claims. Headless CPU benchmarks are now recorded. Preserve the existing immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
