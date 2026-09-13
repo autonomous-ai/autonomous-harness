@@ -9,7 +9,7 @@ Updated 2026-09-12 after the implementation continuation and live-data review. T
 - Resume folder: `/Users/ab/code/autonomous-harness`.
 - Desktop: `desktop/`. CLI: `cli/`. Backend: `backend/`.
 - The user resumed implementation here, requested real machines/projects after seeing the temporary QA app, and then asked Codex to keep working while away for a couple of hours. The original active goal is a polished, very fast, keyboard-first native app with each tab representing a Swarm.
-- The QA app was closed. Review uses the normal `lib/main.dart` entry point, the existing Harness account, and saved V2 Swarms. Keep sample fixtures out of the foreground review app.
+- The QA app was closed, unregistered from Launch Services and retained as `/private/tmp/Harness V2 QA.disabled`. Review uses the normal `lib/main.dart` entry point, the existing Harness account, and saved V2 Swarms. Keep sample fixtures out of the foreground review app.
 - Continue implementation here. Do not create another repository or fork for V2.
 
 ```bash
@@ -198,6 +198,21 @@ open -n 'build/macos/Build/Products/Debug/Harness V2.app'
 ```
 
 Use online `pub get` if packages are not cached. Enable SPM before pub get; do not accept CocoaPods fallback rewriting the project. Do not commit generated build/ephemeral files or caches. Use `--no-fatal-infos` for the existing vendored xterm infos; do not modify vendored style merely to erase them.
+
+For a local optimized preview with the available toolchain, prepare Release configuration and use command-line signing overrides. These do not change the repository's distribution settings:
+
+```bash
+cd /Users/ab/code/autonomous-harness/desktop
+XDG_CONFIG_HOME=/private/tmp/harness-v2-tool-config /private/tmp/harness-v2-flutter/bin/flutter --suppress-analytics build macos --release --config-only --no-pub --target lib/main.dart
+XDG_CONFIG_HOME=/private/tmp/harness-v2-tool-config xcodebuild \
+  -workspace macos/Runner.xcworkspace -scheme Runner -configuration Release \
+  -derivedDataPath build/macos -destination 'platform=macOS,arch=arm64' \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+  OTHER_CODE_SIGN_FLAGS= ENABLE_HARDENED_RUNTIME=NO build
+open -n 'build/macos/Build/Products/Release/Harness V2.app'
+```
+
+Quit an existing V2 preview normally before rebuilding its bundle. Flutter's asynchronous termination may make AppleScript report `User canceled (-128)` even though the process exits; verify the process state before interpreting that as a refused quit. The final optimized preview was launched and its process verified running. Do not launch a second V2 instance while one remains active.
 
 Native component checks can run while the desktop is locked. They require Xcode and Flutter's already-cached macOS release engine. The SDK path is read from the generated Flutter config, or can be passed explicitly:
 
