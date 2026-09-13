@@ -5,16 +5,11 @@ import 'package:flutter/services.dart';
 
 import 'build_identity.dart';
 
-/// Puts the window into the same shape Grid's uses, before the first frame.
+/// Configures the native window before the first Flutter frame.
 ///
-/// On macOS the title bar is hidden and the traffic lights float over the
-/// rail, which leaves room for them (see `railTopInset` in
-/// `widgets/window_chrome.dart`) and doubles as the drag handle. Windows and
-/// Linux keep their native caption bar: they draw no controls over a hidden
-/// one, so hiding it would leave a window with no close button.
-///
-/// The sizes are Grid's too, so the two apps open to the same frame on a desk
-/// where both are running.
+/// On macOS, AppKit places Swarm tabs beside the system traffic lights in a
+/// compact unified title bar. Flutter starts below that row. Windows and Linux
+/// keep their native caption bar and use the Flutter Swarm-tab fallback.
 Future<void> configureDesktopWindow() async {
   await windowManager.ensureInitialized();
   final options = WindowOptions(

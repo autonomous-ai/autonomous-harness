@@ -10,16 +10,18 @@ flutter test --no-pub --reporter expanded test/benchmarks/swarm_benchmark.dart
 
 It prints `SWARM_BENCH` JSON records. Its filename deliberately does not end in `_test.dart`, so ordinary correctness runs do not include timing measurements.
 
-## Current measurements
+## Recorded measurements
 
-| Operation | Median CPU time | p95 CPU time |
+| Operation | Earlier median / p95 | Latest median / p95 |
 | --- | ---: | ---: |
-| Search 2,000 agents across 8 machines | 1.06 ms | 1.13 ms |
-| Group the same catalog into 50 projects | 1.14 ms | 1.27 ms |
-| Switch tab and pump a frame: 4 swarms, 16 terminals | 18.45 ms | 25.88 ms |
-| Switch tab and pump a frame: 12 swarms, 48 terminals | 14.51 ms | 16.95 ms |
-| Decode and parse a 16 KiB ASCII output frame | 0.51 ms | 0.68 ms |
-| Decode and parse a 16 KiB Unicode output frame | 0.31 ms | 0.35 ms |
+| Search 2,000 agents across 8 machines | 1.06 / 1.13 ms | 1.16 / 1.34 ms |
+| Group the same catalog into 50 projects | 1.14 / 1.27 ms | 1.31 / 1.52 ms |
+| Switch tab and pump a frame: 4 swarms, 16 terminals | 18.45 / 25.88 ms | 24.32 / 31.76 ms |
+| Switch tab and pump a frame: 12 swarms, 48 terminals | 14.51 / 16.95 ms | 19.40 / 22.14 ms |
+| Decode and parse a 16 KiB ASCII output frame | 0.51 / 0.68 ms | 0.55 / 0.73 ms |
+| Decode and parse a 16 KiB Unicode output frame | 0.31 / 0.35 ms | 0.34 / 0.43 ms |
+
+The latest repetition followed the native/canvas polish while the workstation was in active use. All five benchmark cases passed and retained rebuild counts stayed at 1,491 and 1,625, but timings were higher across all workloads. This was not a controlled paired comparison, so it neither isolates a cause nor establishes unchanged user-visible performance. Preserve this result and measure under controlled load in the native release app; do not report only the faster earlier run. The latest local log is `/private/tmp/harness-v2-benchmark-polish.log`.
 
 Catalog operations use 20 warmups and 100 samples. Each terminal has 1,000 scrollback lines; the window is 1280 × 800 with four visible terminals. Tab checks warm up for three full cycles, then take 60 samples. They retain one renderer per session and include Flutter frame work and test-runner overhead. Network, persistence I/O, AppKit titlebar rendering and physical display latency are outside these measurements.
 
@@ -45,4 +47,10 @@ In the paired headless checks, median decoding-and-parsing time fell from 0.683 
 
 ## Native follow-up
 
-The optimized real-data app builds and runs locally. A separate windowless AppKit check covers tab overflow geometry, resizing, accessibility order and disabled actions (`bash tool/check_swarm_titlebar.sh`, with an optional Flutter SDK path). Measure release input-to-display and tab-switch latency in the unlocked native window before making latency claims. The screen was locked during this pass, so native end-to-end drag and visual inspection remain in the development handoff.
+The optimized real-data app builds and runs locally. The desktop is now unlocked, and native visual review is underway. The tab strip uses AppKit's compact unified title bar: the old right accessory was clipped to 32 points; the container now supplies 40 points and aligns controls with the system traffic lights.
+
+The native check covers overflow, resizing, accessibility order and disabled actions. `bash tool/check_swarm_titlebar.sh /path/to/flutter --window-layout` adds actual container checks in a hidden window at three widths, for 170 assertions total. No Flutter engine, account or terminal is accessed.
+
+Wallpaper is built only for the empty New swarm. Populated Swarms paint a flat color matching the selected native tab, and the disposed wallpaper evicts its own decoded cache entry. This removes wallpaper painting/cache retention from the active terminal canvas; no process-memory reduction has been measured yet.
+
+Measure release input-to-display, focus, search, scrolling, layout and tab-switch latency before making user-visible performance claims. The first App Launch Instruments recording overlapped a stale Debug preview and is not a clean baseline. Native end-to-end timings and drag/overflow review remain in the development handoff; passing headless CPU checks does not establish zero latency.

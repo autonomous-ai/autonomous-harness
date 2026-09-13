@@ -22,6 +22,7 @@ import '../widgets/new_agent_dialog.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/swarm_dialogs.dart';
+import '../widgets/swarm_wallpaper.dart';
 import '../widgets/swarm_welcome.dart';
 import '../widgets/task_palette.dart';
 
@@ -559,61 +560,74 @@ class _SwarmScreenState extends State<SwarmScreen> {
                     ),
                   ),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: PaneGrid(
-                            notifier: app,
-                            swarmMode: true,
-                            empty: SwarmWelcome(
-                              key: ValueKey(app.activeSwarmId),
-                              notifier: app,
-                              projects: _projects.projects,
-                              onNewAgent: _newAgent,
-                              onAddProject: _addProject,
-                              onLinkMachine: () => _dialog(
-                                () => showSwarmLinkDialog(context, app),
-                              ),
-                              onMachine: _machine,
-                              onProject: _project,
-                              onAgent: (entry) => app.addAgentToSwarm(
-                                entry.machineId,
-                                entry.agent.id,
-                              ),
-                            ),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (app.panes.isEmpty)
+                        RepaintBoundary(
+                          child: SwarmWallpaper(
+                            index: app.activeSwarm.wallpaper,
                           ),
                         ),
-                        if (app.panes.isNotEmpty)
-                          Positioned(
-                            right: 10,
-                            bottom: 10,
-                            child: Material(
-                              color: grid.AppPalette.swarmTabBar,
-                              elevation: 6,
-                              borderRadius: BorderRadius.circular(8),
-                              child: IconButton(
-                                tooltip: withShortcutHint(
-                                  'Add agent',
-                                  ShortcutAction.switchAgent,
-                                ),
-                                onPressed: _addAgent,
-                                constraints: const BoxConstraints.tightFor(
-                                  width: 34,
-                                  height: 34,
-                                ),
-                                padding: EdgeInsets.zero,
-                                icon: Icon(
-                                  Icons.add,
-                                  size: 21,
-                                  color: grid.AppPalette.swarmAccent,
+                      Padding(
+                        padding: app.panes.isEmpty
+                            ? EdgeInsets.zero
+                            : const EdgeInsets.all(10),
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: PaneGrid(
+                                notifier: app,
+                                swarmMode: true,
+                                empty: SwarmWelcome(
+                                  key: ValueKey(app.activeSwarmId),
+                                  notifier: app,
+                                  projects: _projects.projects,
+                                  onNewAgent: _newAgent,
+                                  onAddProject: _addProject,
+                                  onLinkMachine: () => _dialog(
+                                    () => showSwarmLinkDialog(context, app),
+                                  ),
+                                  onMachine: _machine,
+                                  onProject: _project,
+                                  onAgent: (entry) => app.addAgentToSwarm(
+                                    entry.machineId,
+                                    entry.agent.id,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
-                    ),
+                            if (app.panes.isNotEmpty)
+                              Positioned(
+                                right: 10,
+                                bottom: 10,
+                                child: Material(
+                                  color: grid.AppPalette.swarmTabBar,
+                                  elevation: 6,
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: IconButton(
+                                    tooltip: withShortcutHint(
+                                      'Add agent',
+                                      ShortcutAction.switchAgent,
+                                    ),
+                                    onPressed: _addAgent,
+                                    constraints: const BoxConstraints.tightFor(
+                                      width: 34,
+                                      height: 34,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    icon: Icon(
+                                      Icons.add,
+                                      size: 21,
+                                      color: grid.AppPalette.swarmAccent,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

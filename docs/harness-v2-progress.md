@@ -10,6 +10,9 @@ Updated 2026-09-12 after the implementation continuation and live-data review. T
 - Desktop: `desktop/`. CLI: `cli/`. Backend: `backend/`.
 - The user resumed implementation here, requested real machines/projects after seeing the temporary QA app, and then asked Codex to keep working while away for a couple of hours. The original active goal is a polished, very fast, keyboard-first native app with each tab representing a Swarm.
 - The QA app was closed, unregistered from Launch Services and retained as `/private/tmp/Harness V2 QA.disabled`. Review uses the normal `lib/main.dart` entry point, the existing Harness account, and saved V2 Swarms. Keep sample fixtures out of the foreground review app.
+- The desktop is now unlocked and the user is actively reviewing the app. A stale Debug build briefly ran alongside Release and obscured the latest changes. Both previews were quit normally, the stale Debug bundle was unregistered and retained as `/private/tmp/Harness V2.previous-debug-1789267673713820000.disabled`, and only the updated Release preview was relaunched. Preserve the user's current saved arrangement; do not restore an earlier snapshot or launch duplicate V2 instances.
+- Latest design direction: wallpaper fills an empty New swarm only. Populated Swarms use a flat `#463746` canvas matching the selected native tab. Tab hover, spacing and alignment are being compared with the user's Chrome references.
+- The user requested research into expert developers' tools and a smaller feature set. [Developer-tool research and the keep/improve/remove/defer audit](harness-v2-developer-tools-research.md) documents firsthand sources and a proposed three-part focus: durable sessions, instant navigation, and steering agents without losing concentration.
 - Continue implementation here. Do not create another repository or fork for V2.
 
 ```bash
@@ -34,7 +37,7 @@ Harness is one place to work with all your agents. Swarms are named, chosen coll
 - The same agent may belong to multiple swarms. Reuse one session/controller and buffer for it.
 - Closing a pane or swarm removes views and must never stop/delete the agent.
 - Per-swarm layout, focus, zoom, and wallpaper. Canceling Add agent preserves the view and zoom.
-- Rounded dark panes with padding/gaps over plum. Compact header: original colored engine mark, agent, available project/branch, machine, close.
+- Rounded dark panes with padding/gaps over a flat canvas matching the selected native tab. Wallpaper is limited to empty Swarms. Compact header: original colored engine mark, agent, available project/branch, machine, close.
 - Small Add agent `+` overlays a pane corner and opens a stable dialog.
 - Preserve terminal input, clipboard, resize, remote transports, spoken tasks, and dial routing. Cmd+Enter zoom and Cmd+HJKL directional focus remain.
 - Notifications reflect actual pending questions, never fabricated sample statuses.
@@ -74,7 +77,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 ### Shell and dialogs
 
 - `desktop/lib/screens/swarm_screen.dart` is wired into the authenticated case in `main.dart`.
-- `widgets/swarm_welcome.dart`: wallpapers, live search, real machines/projects, New agent. Wallpaper rotates for a new swarm, stays stable, and supports manual next.
+- `widgets/swarm_welcome.dart`: live search, real machines/projects, New agent. `SwarmWallpaper` fills the empty canvas without an inset or rounded frame. It is absent from populated Swarms and evicts its own decoded image cache entry when replaced or disposed. Wallpaper rotates for a new swarm, stays stable, and supports manual next.
 - `widgets/swarm_dialogs.dart`: fixed-size Add agent picker, rename, Add project, Link machine entry points.
 - Add project saves an **existing folder**, via native local picker or existing remote folder browser. It does not clone a GitHub URL.
 - `NewAgentDialog`: machine chooser, initial folder, captured destination swarm; local default when available. Reuses engine probes, Codex profiles, advanced permission behavior, and remote browsing. Profile/folder responses are rejected after a machine switch, including switching away and back. Launch replies are ignored after notifier disposal or machine replacement.
@@ -89,6 +92,7 @@ Approved reference: `/Users/ab/code/harness-new-ui`, React prototype commit `f83
 
 - `desktop/macos/Runner/SwarmTitlebar.swift`, registered in Xcode and owned by `MainFlutterWindow`.
 - `NSTitlebarAccessoryViewController` with native scrollable tabs, new button, notification bell, settings. Automatic native window tabbing disabled; Flutter content begins below title bar.
+- An empty native toolbar with `.unifiedCompact` supplies a single 40-point title row. A `.right` accessory cannot set its own height; the prior standalone view was clipped to 32 points. AppKit now owns height, traffic lights align with the tab controls, and the selected tab has flared lower shoulders at the canvas edge. The selected fill matches Dart's `#463746` exactly. Hover rectangles, measured text and close controls share one vertical center, with balanced horizontal padding.
 - Method channel `harness/swarm_tabs`: Dart sends tab ID/name/selection/attention and recovery availability; Swift sends new/reopen/select/close/rename/reorder/navigation/settings/notifications.
 - Native tab click, double-click rename, context menu, close, drag/drop reorder. Tab button instances are retained across refreshes.
 - Accessibility names/selection update with state, including overflowed tabs that have never painted. Tab context menus obey modal-disabled state. Layout reveals the selected tab after window resize.
@@ -143,7 +147,7 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | Check | Result |
 | --- | --- |
 | macOS debug build | Passed and launched from the monorepo with real saved Swarms and terminals. |
-| macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. The screen remains locked, so final native visual review is pending. |
+| macOS optimized local build | Passed and running with the real entry point and saved V2 state. Local ad hoc signing requires the command-line `ENABLE_HARDENED_RUNTIME=NO` override for Flutter's framework; distribution signing settings remain unchanged. The distribution Developer ID certificate is unavailable; nothing was uploaded. Normal asynchronous quit and relaunch were verified. Unlocked native review confirmed the taller tab container, edge-to-edge empty wallpaper, and the flat populated canvas joining the selected tab. The native hover rendering was also inspected in a local image. |
 | Full Flutter suite | **987 passed, 1 skipped** after persistence, modal menus, retained-terminal performance, stream dispatch, closed-Swarm recovery and output decoding changes. |
 | Focused interaction checks | 8 passed: picker navigation/scroll/refresh, welcome keys, shared-view close, composer, native modal guard, profile and folder races. |
 | Closed-Swarm recovery | 7 passed: arrangement and shared-view restoration, untouched welcome replacement, rapid close/reopen with delayed cleanup, capacity, bounded history, sign-out isolation and the keyboard command. Native command availability and modal behavior also pass in the interaction suite. |
@@ -152,7 +156,7 @@ The reopen binding follows the documented Mac tab-recovery shortcut in [Safari](
 | CLI targeted tests | 135 passed across project/frame, registry/restore, and terminal recovery files. Project/frame tests rerun after port normalization: 9 passed. |
 | Flutter analyzer | **0 errors, 0 warnings, 12 existing vendored xterm infos**; passes with `--no-fatal-infos`. |
 | Headless performance | 5 explicit benchmarks passed: 2,000-agent catalog, 16/48 retained terminals and two terminal output workloads. Reproducible commands and limits in `docs/harness-v2-performance.md`. |
-| AppKit components | **151 assertions passed** for overflow, selected-tab visibility after resize, pre-paint labels, accessible order after reorder, retained tab controls, capacity and modal-disabled actions. No window opened. This complements the pending native end-to-end visual audit. |
+| AppKit components and container | **170 assertions passed**: the original 151 component checks plus native-container checks at 880, 1280 and 1920 points. These verify height, traffic-light clearance/alignment, direct contact with the content edge and active-tab visibility. The optional container check creates a hidden native window; no window is displayed and no engine, account or terminal is accessed. |
 | Remote terminals / production release | No remote takeover, release, installer, or production CLI update/restart. Cross-platform and end-to-end latency measurements remain. |
 
 Tests now exercise the actual V2 welcome/settings/linking flow. Usage pricing again explains a partial estimate as a lower bound. Small offline panes avoid overflowing the full connection guide. No remaining full-suite failures are being dismissed as baseline.
@@ -171,8 +175,10 @@ Evidence on this Mac under `/private/tmp`:
 - `harness-v2-retained-tests.log`: 27 terminal/menu/layout checks.
 - `harness-v2-persistence-tests.log`: 21 state/async checks including rapid writes and bounded quit.
 - `harness-v2-benchmark-final.log`: latest catalog and retained-terminal CPU measurements.
+- `harness-v2-benchmark-polish.log`: subsequent five-case pass after native/canvas polish; identical retained rebuild counts, higher debug timings across workloads. Both runs and the comparison limits are recorded in the performance notes.
 - `harness-v2-output-before.log`, `harness-v2-output-after.log`: paired production terminal decode-and-parse CPU measurements.
 - `harness-v2-native-titlebar-tests.log`: windowless checks against the actual AppKit tab source.
+- `harness-v2-native-titlebar-layout.log`: 170 component/native-container checks.
 - `harness-v2-routing-tests.log`: 68 stream-routing, binary protocol and terminal session checks.
 - `harness-v2-reopen-tests.log`: 23 Swarm recovery, state and interaction checks.
 
@@ -180,12 +186,12 @@ Earlier logs contain superseded failures. Temporary logs and toolchains are loca
 
 ## Remaining work
 
-1. Review the running optimized real-data build after the Mac is unlocked; verify actual local project starters and keyboard navigation in the native shell.
+1. Continue the unlocked native review of actual project starters and keyboard navigation. The user is actively changing window size and Swarms; re-read UI state before actions and preserve their arrangement.
 2. Audit native drag/reorder, overflow, close-last-tab, renaming and accessibility without changing the user's saved agent memberships. Keep any integration runner separate and out of the foreground review app.
 3. Measure native terminal input and tab-switch responsiveness before making end-to-end latency claims. Headless CPU benchmarks are now recorded. Preserve the existing immediate first-input flush and shared retained renderers.
 4. Visually confirm app-menu modal behavior and overflow accessibility in AppKit; route/shortcut behavior is covered by passing Flutter tests.
 5. Build/review Linux and Windows when their toolchains are available. Remote full project/branch metadata requires daemons running the new wire format; do not upgrade them automatically.
-6. Continue the agreed goal autonomously. The user has stepped away; lack of immediate replies is not a reason to stop independent implementation, checks, or app-v2 publishing.
+6. Continue the agreed goal and apply the latest steering. The research proposes a focused roadmap and specific subtraction candidates; do not mistake proposals for already-implemented removals.
 
 ## Toolchain and workflow
 
@@ -201,8 +207,6 @@ export XDG_CONFIG_HOME=/private/tmp/harness-v2-tool-config
 /private/tmp/harness-v2-flutter/bin/flutter --suppress-analytics analyze --no-pub
 /private/tmp/harness-v2-flutter/bin/flutter --suppress-analytics test --no-pub test/swarm_state_test.dart test/swarm_screen_test.dart test/crash_log_test.dart
 /private/tmp/harness-v2-flutter/bin/flutter --suppress-analytics test --no-pub
-/private/tmp/harness-v2-flutter/bin/flutter --suppress-analytics build macos --debug --no-pub
-open -n 'build/macos/Build/Products/Debug/Harness V2.app'
 ```
 
 Use online `pub get` if packages are not cached. Enable SPM before pub get; do not accept CocoaPods fallback rewriting the project. Do not commit generated build/ephemeral files or caches. Use `--no-fatal-infos` for the existing vendored xterm infos; do not modify vendored style merely to erase them.
@@ -222,14 +226,15 @@ open -n 'build/macos/Build/Products/Release/Harness V2.app'
 
 Quit an existing V2 preview normally before rebuilding its bundle. Flutter's asynchronous termination may make AppleScript report `User canceled (-128)` even though the process exits; verify the process state before interpreting that as a refused quit. The final optimized preview was launched and its process verified running. Do not launch a second V2 instance while one remains active.
 
-Native component checks can run while the desktop is locked. They require Xcode and Flutter's already-cached macOS release engine. The SDK path is read from the generated Flutter config, or can be passed explicitly:
+Native component checks require Xcode and Flutter's already-cached macOS release engine. The SDK path is read from the generated Flutter config, or can be passed explicitly. Add `--window-layout` after the SDK path to verify the real AppKit container in a hidden window:
 
 ```bash
 cd /Users/ab/code/autonomous-harness/desktop
 bash tool/check_swarm_titlebar.sh /private/tmp/harness-v2-flutter
+bash tool/check_swarm_titlebar.sh /private/tmp/harness-v2-flutter --window-layout
 ```
 
-The script appends same-file assertions to the actual `SwarmTitlebar.swift` in a disposable temporary directory. It uses AppKit with activation prohibited, creates no windows, and does not launch the app, an engine, or any account/transport code.
+The script appends same-file assertions to the actual `SwarmTitlebar.swift` in a disposable temporary directory. It uses AppKit with activation prohibited. By default it creates no windows; `--window-layout` creates a hidden native window and never displays it. Neither mode launches the app, an engine, or any account/transport code.
 
 ```bash
 cd /Users/ab/code/autonomous-harness/cli

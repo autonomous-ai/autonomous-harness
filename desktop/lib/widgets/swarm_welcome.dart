@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/skeleton.dart';
 import '../state/app_state.dart';
-import '../state/swarm.dart';
 import '../state/swarm_catalog.dart';
 import 'engine_identity.dart';
 import 'swarm_agent_selection.dart';
@@ -44,218 +43,195 @@ class _SwarmWelcomeState extends State<SwarmWelcome> {
     final app = widget.notifier;
     final groups = swarmProjects(app, widget.projects);
     final results = swarmAgents(app, _query);
-    final wallpaper =
-        swarmWallpapers[app.activeSwarm.wallpaper % swarmWallpapers.length];
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'assets/swarm-wallpapers/swarm-welcome-$wallpaper.jpg',
-            fit: BoxFit.cover,
-            excludeFromSemantics: true,
-          ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0x1211111c), Color(0x750c111e)],
-              ),
-            ),
-          ),
-          LayoutBuilder(
-            builder: (context, constraints) => SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Center(
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 1000),
-                    padding: const EdgeInsets.fromLTRB(56, 40, 56, 62),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Start a swarm',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: -0.7,
-                            color: Colors.white,
-                            shadows: [
-                              Shadow(blurRadius: 16, color: Colors.black54),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Choose a machine or project, or add agents individually.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Color(0xffe0dce3),
-                          ),
-                        ),
-                        const SizedBox(height: 28),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: SwarmSearchField(
-                                autofocus: true,
-                                onChanged: (v) => setState(() {
-                                  _query = v;
-                                  _selection.reset();
-                                }),
-                                onMove: (delta) {
-                                  if (_query.trim().isNotEmpty) {
-                                    setState(
-                                      () => _selection.move(results, delta),
-                                    );
-                                  }
-                                },
-                                onSubmitted: () {
-                                  final selected = _selection.selected(results);
-                                  if (_query.trim().isNotEmpty &&
-                                      selected != null) {
-                                    widget.onAgent(selected);
-                                  }
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            FilledButton.icon(
-                              onPressed: widget.onNewAgent,
-                              icon: const Icon(Icons.add, size: 17),
-                              label: const Text('New agent'),
-                              style: FilledButton.styleFrom(
-                                minimumSize: const Size(126, 44),
-                                backgroundColor: grid.AppPalette.swarmAccent,
-                                foregroundColor: grid.AppPalette.swarmTabBar,
-                              ),
-                            ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 1000),
+                  padding: const EdgeInsets.fromLTRB(56, 40, 56, 62),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Start a swarm',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: -0.7,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(blurRadius: 16, color: Colors.black54),
                           ],
                         ),
-                        const SizedBox(height: 34),
-                        _Glass(
-                          child: _query.trim().isNotEmpty
-                              ? SizedBox(
-                                  height: 300,
-                                  child: SwarmAgentRows(
-                                    notifier: app,
-                                    agents: results,
-                                    selectedIndex: _selection.index(results),
-                                    onAgent: widget.onAgent,
-                                  ),
-                                )
-                              : LayoutBuilder(
-                                  builder: (context, size) {
-                                    final machines = _section(
-                                      'Machines',
-                                      'Link machine',
-                                      widget.onLinkMachine,
-                                      [
-                                        if (app.machinesLoading &&
-                                            app.machineStates.isEmpty)
-                                          const SkeletonList(rows: 3),
-                                        for (final machine
-                                            in app.machineStates.values)
-                                          _StarterRow(
-                                            icon: Icons.computer_outlined,
-                                            name: machine.machine.displayName,
-                                            note: machine.needsLink
-                                                ? 'Link required'
-                                                : machine.nodeOnline == false
-                                                ? 'Offline'
-                                                : machine.isLocalMachine
-                                                ? 'Local'
-                                                : null,
-                                            count: machine.agents.length,
-                                            onTap: () =>
-                                                widget.onMachine(machine),
-                                          ),
-                                        if (!app.machinesLoading &&
-                                            app.machineStates.isEmpty)
-                                          const Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              vertical: 18,
-                                            ),
-                                            child: Text(
-                                              'Link a machine to find its agents.',
-                                            ),
-                                          ),
-                                      ],
-                                    );
-                                    final projects = _section(
-                                      'Projects',
-                                      'Add project',
-                                      widget.onAddProject,
-                                      [
-                                        for (final group in groups)
-                                          _StarterRow(
-                                            icon: Icons.folder_outlined,
-                                            name: group.name,
-                                            count: group.agents.length,
-                                            onTap: () =>
-                                                widget.onProject(group),
-                                          ),
-                                        if (groups.isEmpty)
-                                          const Padding(
-                                            padding: EdgeInsets.symmetric(
-                                              vertical: 18,
-                                            ),
-                                            child: Text(
-                                              'Add a working folder to start a project.',
-                                              style: TextStyle(
-                                                color: Color(0xffc5bece),
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    );
-                                    return size.maxWidth < 570
-                                        ? Column(
-                                            children: [
-                                              machines,
-                                              const SizedBox(height: 24),
-                                              projects,
-                                            ],
-                                          )
-                                        : Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Expanded(child: machines),
-                                              const SizedBox(width: 36),
-                                              Expanded(child: projects),
-                                            ],
-                                          );
-                                  },
-                                ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Choose a machine or project, or add agents individually.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Color(0xffe0dce3),
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 28),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SwarmSearchField(
+                              autofocus: true,
+                              onChanged: (v) => setState(() {
+                                _query = v;
+                                _selection.reset();
+                              }),
+                              onMove: (delta) {
+                                if (_query.trim().isNotEmpty) {
+                                  setState(
+                                    () => _selection.move(results, delta),
+                                  );
+                                }
+                              },
+                              onSubmitted: () {
+                                final selected = _selection.selected(results);
+                                if (_query.trim().isNotEmpty &&
+                                    selected != null) {
+                                  widget.onAgent(selected);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          FilledButton.icon(
+                            onPressed: widget.onNewAgent,
+                            icon: const Icon(Icons.add, size: 17),
+                            label: const Text('New agent'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(126, 44),
+                              backgroundColor: grid.AppPalette.swarmAccent,
+                              foregroundColor: grid.AppPalette.swarmTabBar,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 34),
+                      _Glass(
+                        child: _query.trim().isNotEmpty
+                            ? SizedBox(
+                                height: 300,
+                                child: SwarmAgentRows(
+                                  notifier: app,
+                                  agents: results,
+                                  selectedIndex: _selection.index(results),
+                                  onAgent: widget.onAgent,
+                                ),
+                              )
+                            : LayoutBuilder(
+                                builder: (context, size) {
+                                  final machines = _section(
+                                    'Machines',
+                                    'Link machine',
+                                    widget.onLinkMachine,
+                                    [
+                                      if (app.machinesLoading &&
+                                          app.machineStates.isEmpty)
+                                        const SkeletonList(rows: 3),
+                                      for (final machine
+                                          in app.machineStates.values)
+                                        _StarterRow(
+                                          icon: Icons.computer_outlined,
+                                          name: machine.machine.displayName,
+                                          note: machine.needsLink
+                                              ? 'Link required'
+                                              : machine.nodeOnline == false
+                                              ? 'Offline'
+                                              : machine.isLocalMachine
+                                              ? 'Local'
+                                              : null,
+                                          count: machine.agents.length,
+                                          onTap: () =>
+                                              widget.onMachine(machine),
+                                        ),
+                                      if (!app.machinesLoading &&
+                                          app.machineStates.isEmpty)
+                                        const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            vertical: 18,
+                                          ),
+                                          child: Text(
+                                            'Link a machine to find its agents.',
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                  final projects = _section(
+                                    'Projects',
+                                    'Add project',
+                                    widget.onAddProject,
+                                    [
+                                      for (final group in groups)
+                                        _StarterRow(
+                                          icon: Icons.folder_outlined,
+                                          name: group.name,
+                                          count: group.agents.length,
+                                          onTap: () => widget.onProject(group),
+                                        ),
+                                      if (groups.isEmpty)
+                                        const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            vertical: 18,
+                                          ),
+                                          child: Text(
+                                            'Add a working folder to start a project.',
+                                            style: TextStyle(
+                                              color: Color(0xffc5bece),
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                  return size.maxWidth < 570
+                                      ? Column(
+                                          children: [
+                                            machines,
+                                            const SizedBox(height: 24),
+                                            projects,
+                                          ],
+                                        )
+                                      : Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Expanded(child: machines),
+                                            const SizedBox(width: 36),
+                                            Expanded(child: projects),
+                                          ],
+                                        );
+                                },
+                              ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
           ),
-          Positioned(
-            right: 14,
-            bottom: 10,
-            child: TextButton.icon(
-              onPressed: app.nextSwarmWallpaper,
-              icon: const Icon(Icons.wallpaper_outlined, size: 14),
-              label: const Text(
-                'Next wallpaper',
-                style: TextStyle(fontSize: 11),
-              ),
-              style: TextButton.styleFrom(foregroundColor: Colors.white70),
-            ),
+        ),
+        Positioned(
+          right: 14,
+          bottom: 10,
+          child: TextButton.icon(
+            onPressed: app.nextSwarmWallpaper,
+            icon: const Icon(Icons.wallpaper_outlined, size: 14),
+            label: const Text('Next wallpaper', style: TextStyle(fontSize: 11)),
+            style: TextButton.styleFrom(foregroundColor: Colors.white70),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

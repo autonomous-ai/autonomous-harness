@@ -53,8 +53,16 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
     window.titlebarAppearsTransparent = true
     window.styleMask.remove(.fullSizeContentView)
     window.backgroundColor = NSColor(srgbRed: 0.20, green: 0.16, blue: 0.21, alpha: 1)
+    // AppKit fixes a right accessory's height to the title bar. A taller view
+    // alone is clipped. A compact unified toolbar gives the native traffic
+    // lights and the tab strip one 40-point row, without a second toolbar row.
+    let toolbar = NSToolbar(identifier: "harness.swarm.titlebar")
+    toolbar.displayMode = .iconOnly
+    toolbar.allowsUserCustomization = false
+    window.toolbar = toolbar
+    window.toolbarStyle = .unifiedCompact
+    window.titlebarSeparatorStyle = .none
     accessory.layoutAttribute = .right
-    accessory.fullScreenMinHeight = 40
     accessory.view = strip
     window.addTitlebarAccessoryViewController(accessory)
     resize()
@@ -63,7 +71,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
 
   private func resize() {
     guard let window else { return }
-    strip.setFrameSize(NSSize(width: max(200, window.frame.width - 92), height: 40))
+    // AppKit owns height; only width is configurable for a right accessory.
+    strip.setFrameSize(NSSize(width: max(200, window.frame.width - 88), height: strip.frame.height))
     strip.needsLayout = true
   }
 
@@ -116,6 +125,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation {
 }
 
 private let swarmPasteboardType = NSPasteboard.PasteboardType("ai.autonomous.harness.v2.swarm")
+// Matches AppPalette.swarmField exactly, joining the tab to the terminal canvas.
+private let swarmSelectedTabColor = NSColor(srgbRed: 70.0 / 255, green: 55.0 / 255, blue: 70.0 / 255, alpha: 1)
 
 private final class SwarmTabStrip: NSView {
   var emit: ((String, Any?) -> Void)?
@@ -139,6 +150,7 @@ private final class SwarmTabStrip: NSView {
     addSubview(scroll)
     func button(_ button: NSButton, _ symbol: String, _ label: String, _ action: Selector) {
       button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+      button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
       button.isBordered = false
       button.contentTintColor = NSColor(srgbRed: 0.80, green: 0.75, blue: 0.83, alpha: 1)
       button.target = self
@@ -174,6 +186,9 @@ private final class SwarmTabStrip: NSView {
       tab.needsDisplay = true
       return tab
     }
+    for (index, tab) in tabs.enumerated() {
+      tab.showsDivider = !tab.selected && index + 1 < tabs.count && !tabs[index + 1].selected
+    }
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
     newButton.isEnabled = actionsEnabled && tabs.count < 24
@@ -193,20 +208,28 @@ private final class SwarmTabStrip: NSView {
 
   override func layout() {
     super.layout()
-    let available = max(120, bounds.width - 106)
-    let width = min(204, max(124, available / CGFloat(max(1, tabs.count))))
+    let available = max(120, bounds.width - 112)
+    let width = min(220, max(132, available / CGFloat(max(1, tabs.count))))
     let occupied = min(available, CGFloat(tabs.count) * width)
-    scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: 40)
-    document.frame = NSRect(x: 0, y: 0, width: max(occupied, CGFloat(tabs.count) * width), height: 40)
+    scroll.frame = NSRect(x: 0, y: 0, width: occupied, height: bounds.height)
+    document.frame = NSRect(x: 0, y: 0, width: max(occupied, CGFloat(tabs.count) * width), height: bounds.height)
     for (index, tab) in tabs.enumerated() {
-      tab.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width - 2, height: 36)
+      tab.frame = NSRect(x: CGFloat(index) * width, y: 0, width: width, height: bounds.height - 6)
+      tab.contentCenterY = bounds.midY
     }
-    newButton.frame = NSRect(x: occupied + 3, y: 4, width: 30, height: 30)
-    notifications.frame = NSRect(x: bounds.width - 69, y: 4, width: 30, height: 30)
-    settings.frame = NSRect(x: bounds.width - 35, y: 4, width: 30, height: 30)
+    let buttonY = (bounds.height - 28) / 2
+    newButton.frame = NSRect(x: occupied + 4, y: buttonY, width: 28, height: 28)
+    notifications.frame = NSRect(x: bounds.width - 68, y: buttonY, width: 28, height: 28)
+    settings.frame = NSRect(x: bounds.width - 34, y: buttonY, width: 28, height: 28)
     if let active = tabs.first(where: { $0.swarmId == activeId }) {
       document.scrollToVisible(active.frame)
     }
+  }
+  override func draw(_ dirtyRect: NSRect) {
+    // The selected tab meets this edge; its bottom corners are shoulders,
+    // rather than the rounded bottom of a separate pill.
+    swarmSelectedTabColor.setFill()
+    NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
   }
   override func mouseDown(with event: NSEvent) {
     if event.clickCount == 2 { window?.performZoom(nil) }
@@ -233,6 +256,8 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   var name = "New swarm" { didSet { updateAccessibility() } }
   var selected = false { didSet { updateAccessibility() } }
   var attention = false
+  var showsDivider = false
+  var contentCenterY: CGFloat = 20
   var emit: ((String, Any?) -> Void)?
   private let closeButton = NSButton()
   private let selectButton = SwarmSelectButton()
@@ -243,6 +268,8 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     }
   }
   private var downPoint = NSPoint.zero
+  private var hovered = false
+  private var hoverTracking: NSTrackingArea?
   override var acceptsFirstResponder: Bool { false }
   override var mouseDownCanMoveWindow: Bool { false }
 
@@ -258,7 +285,8 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
     selectButton.action = #selector(selectSwarm)
     addSubview(selectButton)
     closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close swarm")
-    closeButton.imageScaling = .scaleProportionallyDown
+    closeButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+    closeButton.contentTintColor = NSColor(white: 0.78, alpha: 1)
     closeButton.isBordered = false
     closeButton.target = self
     closeButton.action = #selector(closeSwarm)
@@ -276,22 +304,55 @@ private final class SwarmTabButton: NSView, NSDraggingSource, NSMenuItemValidati
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
   override func layout() {
     super.layout()
-    selectButton.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 29), height: bounds.height)
-    closeButton.frame = NSRect(x: bounds.width - 27, y: 9, width: 18, height: 18)
+    selectButton.frame = NSRect(x: 0, y: 0, width: max(0, bounds.width - 36), height: bounds.height)
+    closeButton.frame = NSRect(x: bounds.width - 36, y: contentCenterY - 12, width: 24, height: 24)
   }
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let hoverTracking { removeTrackingArea(hoverTracking) }
+    let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+      owner: self, userInfo: nil)
+    addTrackingArea(area)
+    hoverTracking = area
+  }
+  override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+  override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
   override func draw(_ dirtyRect: NSRect) {
     if selected {
-      NSColor(srgbRed: 0.275, green: 0.216, blue: 0.275, alpha: 1).setFill()
-      NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
+      let w = bounds.width, h = bounds.height
+      let shape = NSBezierPath()
+      shape.move(to: NSPoint(x: 0, y: 0))
+      shape.curve(to: NSPoint(x: 8, y: 8), controlPoint1: NSPoint(x: 4.4, y: 0), controlPoint2: NSPoint(x: 8, y: 3.6))
+      shape.line(to: NSPoint(x: 8, y: h - 10))
+      shape.curve(to: NSPoint(x: 18, y: h), controlPoint1: NSPoint(x: 8, y: h - 4.5), controlPoint2: NSPoint(x: 12.5, y: h))
+      shape.line(to: NSPoint(x: w - 18, y: h))
+      shape.curve(to: NSPoint(x: w - 8, y: h - 10), controlPoint1: NSPoint(x: w - 12.5, y: h), controlPoint2: NSPoint(x: w - 8, y: h - 4.5))
+      shape.line(to: NSPoint(x: w - 8, y: 8))
+      shape.curve(to: NSPoint(x: w, y: 0), controlPoint1: NSPoint(x: w - 8, y: 3.6), controlPoint2: NSPoint(x: w - 4.4, y: 0))
+      shape.close()
+      swarmSelectedTabColor.setFill()
+      shape.fill()
+    } else if hovered && actionsEnabled {
+      NSColor(white: 1, alpha: 0.05).setFill()
+      let hoverRect = NSRect(x: 8, y: contentCenterY - 14, width: bounds.width - 16, height: 28)
+      NSBezierPath(roundedRect: hoverRect, xRadius: 10, yRadius: 10).fill()
+    }
+    if showsDivider && !hovered {
+      NSColor(white: 1, alpha: 0.16).setFill()
+      NSBezierPath(roundedRect: NSRect(x: bounds.width - 0.5, y: contentCenterY - 8, width: 1, height: 16),
+        xRadius: 0.5, yRadius: 0.5).fill()
     }
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byTruncatingTail
-    (name as NSString).draw(in: NSRect(x: 13, y: 9, width: bounds.width - 45, height: 19),
-      withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: selected ? .medium : .regular),
+    let label = NSAttributedString(string: name,
+      attributes: [.font: NSFont.systemFont(ofSize: 12, weight: selected ? .medium : .regular),
         .foregroundColor: selected ? NSColor.white : NSColor(white: 0.72, alpha: 1), .paragraphStyle: paragraph])
+    let labelHeight = label.size().height
+    label.draw(in: NSRect(x: 24, y: contentCenterY - labelHeight / 2,
+      width: bounds.width - 64, height: labelHeight))
     if attention {
       NSColor.systemOrange.setFill()
-      NSBezierPath(ovalIn: NSRect(x: 4, y: 16, width: 4, height: 4)).fill()
+      NSBezierPath(ovalIn: NSRect(x: 13, y: contentCenterY - 2, width: 4, height: 4)).fill()
     }
   }
   // Overflowed tabs might not be drawn. Their names and selection still need

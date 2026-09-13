@@ -22,4 +22,6 @@ xcrun swiftc -swift-version 5 -module-cache-path "$check_dir/module-cache" \
   -F "$framework_dir" -framework FlutterMacOS \
   -Xlinker -rpath -Xlinker "$framework_dir" \
   "$check_dir/main.swift" -o "$check_dir/check-titlebar"
-"$check_dir/check-titlebar"
+# Optional native-container checks create a hidden NSWindow. They never show
+# the window, boot Flutter, connect to agents or read saved app data.
+"$check_dir/check-titlebar" "${2:-}"
