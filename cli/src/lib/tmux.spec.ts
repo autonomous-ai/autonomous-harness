@@ -9,6 +9,7 @@ import {
   bypassPermissionActive,
   engineProcessMatch,
   engineProcessMatchScore,
+  LSTART_MARKER_RE,
   parseProcessRow,
   resumeSessionId,
   sendLiteralToTmux,
@@ -73,6 +74,54 @@ describe('tmux process primitives', () => {
    * the live pane. processRows() now reads ps under LC_ALL=C.UTF-8 and repairs any surviving `?` row from
    * /proc, which is raw bytes. These two cases pin the before and the after.
    */
+  /**
+   * `lstart`'s shape belongs to LC_TIME, not to `ps`. Captured with
+   * `LC_TIME=<locale> ps -axo pid=,ppid=,comm=,lstart=,args=` on macOS 15.5, one run per locale on the
+   * same machine in the same second. Of sixteen locales tried only C, en_US and hu_HU parse at all; the
+   * rest reorder the fields and yield ZERO rows out of ~590.
+   *
+   * Zero rows is the whole bug: processRows returns `[]`, not null, so "we looked and the machine is
+   * empty" is indistinguishable from the truth, resolvePaneEngineProcess finds no engine under any pane,
+   * and watchCreatedPane burns its full ten minutes before reporting START_TIMEOUT — "claude did not
+   * expose an engine process within 10 minutes" — against a pane where claude is running and still
+   * firing hooks. This is why processRows spawns ps under psEnv instead of inheriting the locale.
+   */
+  it('cannot parse an lstart column written by a locale that reorders it', () => {
+    const rows = [
+      '15160  2281 /Users/admin/.lo Tue 15 Sep 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo Di. 15 Sep. 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo mar. 15 sept. 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo \u706b  9/15 23:10:38 2026 /Users/admin/.local/bin/claude',
+      '15160  2281 /Users/admin/.lo \u0432\u0442\u043e\u0440\u043d\u0438\u043a, 15 \u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f 2026 \u0433. 23:10:38 /Users/admin/.local/bin/claude',
+    ]
+    for (const row of rows) expect(parseProcessRow(row)).toBeNull()
+
+    // The same process, same second, under the LC_TIME=C that psEnv guarantees.
+    expect(parseProcessRow('15160  2281 /Users/admin/.lo Tue Sep 15 23:10:38 2026 /Users/admin/.local/bin/claude'))
+      .toEqual({
+        pid: 15160,
+        parentPid: 2281,
+        executable: '/Users/admin/.lo',
+        startMarker: 'Tue Sep 15 23:10:38 2026',
+        args: '/Users/admin/.local/bin/claude',
+      })
+  })
+
+  /**
+   * checkSessionRuntime adopts, rather than compares, any saved marker this rejects. It has to reject
+   * localized stamps too: a marker recorded before psEnv landed (hu_HU parsed fine, `K szept. 15 …`) can
+   * never equal the C-locale stamp read back for the same live process, and comparing them would evict a
+   * live pane exactly once per session on upgrade.
+   */
+  it('recognises only a C-locale lstart stamp as a comparable start marker', () => {
+    expect(LSTART_MARKER_RE.test('Tue Sep 15 23:10:38 2026')).toBe(true)
+    expect(LSTART_MARKER_RE.test('Fri Aug 21 09:28:14 2026')).toBe(true)
+
+    expect(LSTART_MARKER_RE.test('K szept. 15 23:10:38 2026')).toBe(false)   // hu_HU, parsed pre-fix
+    expect(LSTART_MARKER_RE.test('Tue 15 Sep 23:10:38 2026')).toBe(false)    // en_AU
+    expect(LSTART_MARKER_RE.test('Greeting Thu Jul 30 11:00:03 2026')).toBe(false) // pre-fix shifted comm
+  })
+
   it('scores Command Code from the real bytes, and cannot from the mangled ones', () => {
     const mangled = parseProcessRow('  185   178 ??? harness-cli Fri Aug 21 09:34:20 2026 ??? harness-cli ubuntu probe')
     expect(engineProcessMatchScore(mangled!, 'commandcode')).toBe(0)

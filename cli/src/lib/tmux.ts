@@ -15,6 +15,7 @@ import {
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
 import { BYPASS_PERMISSION_FLAGS } from './engineLaunch.js'
+import { psEnv } from './childLocale.js'
 
 function cleanPaneTitle(title: string): string | null {
   const cleaned = title
@@ -133,7 +134,13 @@ function agentAliasCandidate(row: Pick<ProcessRow, 'executable' | 'args'>): bool
  * PID-reuse guard that startMarker exists for.
  *
  * So anchor on `lstart` instead — it is the one field with a fixed shape (`DOW MON DD HH:MM:SS YYYY`) —
- * and let comm be lazy. The day/month names stay unconstrained so a non-English `LC_TIME` still parses.
+ * and let comm be lazy.
+ *
+ * That shape is only fixed because every `ps` whose output reaches this parser is spawned under
+ * `LC_TIME=C` (`psEnv`, lib/childLocale.ts). The day and month names are left unconstrained as a
+ * courtesy to a locale that merely renames them — NOT as support for one. A locale that REORDERS the
+ * fields parses zero rows here, and most of them do: `Tue 15 Sep` (en_GB, en_AU), `Di. 15 Sep.`
+ * (de_DE), `火  9/15` (ja_JP), `вторник, 15 сентября 2026 г.` (ru_RU). That is what `psEnv` prevents.
  */
 export function parseProcessRow(line: string): ProcessRow | null {
   const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s+(\S+\s+\S+\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s*(.*)$/.exec(line)
@@ -175,7 +182,7 @@ function readProcField(pid: number, field: 'cmdline' | 'comm'): string | null {
 /** The process table, or null when `ps` itself failed — "we could not look" is not "nothing is there". */
 export async function processRows(): Promise<ProcessRow[] | null> {
   const rows = await new Promise<ProcessRow[] | null>((resolve) => {
-    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000 }, (err, stdout) => {
+    execFile('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], { timeout: 3000, env: psEnv() }, (err, stdout) => {
       if (err) { resolve(null); return }
       const rows: ProcessRow[] = []
       for (const line of stdout.split('\n')) {
@@ -689,8 +696,16 @@ export async function resolvePaneEngineProcess(
   return found.ok ? found.identity : null
 }
 
-/** A whole `lstart` stamp — `DOW MON DD HH:MM:SS YYYY` — and nothing else. */
-const LSTART_MARKER_RE = /^\S+\s+\S+\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4}$/
+/**
+ * A whole C-locale `lstart` stamp — `DOW MON DD HH:MM:SS YYYY` — and nothing else.
+ *
+ * The names are spelled out rather than left as `\S+` so this also rejects a stamp recorded while `ps`
+ * still ran under the user's own `LC_TIME` (`K szept. 15 …` parsed fine before `psEnv` landed). Such a
+ * stamp can never equal the C-locale one read back for the same process, so without this it would fail
+ * the identity comparison below and evict a live pane once per session on upgrade.
+ */
+export const LSTART_MARKER_RE =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4}$/
 
 /** Pane + engine process validation. A saved identity prevents PID reuse from reviving a stale entry. */
 export async function validateSessionRuntime(session: RegisteredSession): Promise<boolean> {
@@ -721,8 +736,9 @@ export async function checkSessionRuntime(session: RegisteredSession): Promise<R
   if (!found.ok) return { state: found.unknown ? 'unknown' : 'gone', reason: found.reason }
   const live = found.identity
   const saved = session.processIdentity
-  // A persisted identity whose startMarker is not an lstart stamp was written by the pre-fix parser (see
-  // parseProcessRow) — its fields are shifted, so it can NEVER match the corrected ones again. Adopt the
+  // A persisted identity whose startMarker is not a C-locale lstart stamp was written either by the
+  // pre-fix parser (see parseProcessRow), with its fields shifted, or by a `ps` that still inherited the
+  // user's LC_TIME (see psEnv). Either way it can NEVER match the corrected ones again. Adopt the
   // corrected identity instead of failing: the pane still has a matching engine process, and failing here
   // would drop a live session for good (Command Code, the only engine affected, does not re-register on
   // its Stop hook). One-time, per session.

@@ -372,7 +372,7 @@ function execFileText(cmd, args, timeout, env) {
 }
 
 /**
- * Mirrors PS_ENV in src/lib/tmux.ts. Linux procps substitutes `?` for every byte it cannot print in the
+ * Mirrors ensureUtf8Locale in src/lib/childLocale.ts. Linux procps substitutes `?` for every byte it cannot print in the
  * current locale, and a hook child launched by an engine under systemd/docker/ssh usually has no locale
  * at all. Measured on Ubuntu 24.04 + procps-ng 4.0.4: `⌘ <title>` reads back as `??? <title>` in BOTH
  * comm and args, which kills both halves of the Command Code marker in processMatchScore. macOS never
@@ -391,6 +391,20 @@ function ensureUtf8Locale(env = process.env) {
   env.LC_ALL = 'C.UTF-8'
 }
 ensureUtf8Locale()
+
+/**
+ * Mirrors psEnv in src/lib/childLocale.ts. `processRows` below anchors on the `lstart` column, whose
+ * shape belongs to LC_TIME, not to `ps`: only C and en_US produce `DOW MON DD HH:MM:SS YYYY`. en_GB and
+ * en_AU swap day and month, de_DE/fr_FR do that and add dots, ja_JP prints `火  9/15`, ru_RU puts the
+ * year before the time. Every one of those parses ZERO rows, the hook concludes the machine has no
+ * processes, and the engine it was launched by goes unrecognised. LC_ALL has to be cleared because it
+ * outranks both categories; LC_CTYPE stays UTF-8 so Linux procps keeps returning raw bytes.
+ */
+function psEnv(env = process.env) {
+  const configured = env.LC_ALL || env.LC_CTYPE || env.LANG
+  const ctype = configured && /utf-?8/i.test(configured) ? configured : 'C.UTF-8'
+  return { ...env, LC_ALL: '', LC_CTYPE: ctype, LC_TIME: 'C' }
+}
 
 /** Second line of defence: /proc is raw bytes, so a glibc without C.UTF-8 still resolves correctly. */
 function repairMangledRows(rows) {
@@ -560,7 +574,7 @@ function processMatchScore(row, engine, ownership, allowAgentHint = false) {
 }
 
 async function processRows() {
-  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000)
+  const stdout = await execFileText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3000, psEnv())
   if (stdout === null) return null
   const rows = []
   for (const line of stdout.split('\n')) {

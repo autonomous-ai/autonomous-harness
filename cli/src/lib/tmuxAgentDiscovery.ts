@@ -18,6 +18,7 @@ import { probeGatewayRuntime } from './gatewayRuntime.js'
 import { probeGridAssignment, type GridAssignment } from './gridAssignment.js'
 import { probeCodexHome } from './codexHomeProbe.js'
 import { isHarnessSession } from './harnessSessionLabel.js'
+import { psEnv } from './childLocale.js'
 import type { ProcessIdentity, RegisteredSession } from './registry.js'
 import {
   ambiguousAgentProcess,
@@ -75,9 +76,14 @@ export interface TmuxAgentDiscoveryDeps {
 
 const MISS_LIMIT = 2
 
-function execText(command: string, args: string[], timeout: number): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+function execText(
+  command: string,
+  args: string[],
+  timeout: number,
+  env?: NodeJS.ProcessEnv,
+): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout }, (err, stdout) => {
+    execFile(command, args, { timeout, ...(env && { env }) }, (err, stdout) => {
       if (err) { resolve({ ok: false, error: err.message }); return }
       resolve({ ok: true, stdout })
     })
@@ -238,7 +244,9 @@ export async function probeTmuxAgents(
 ): Promise<TmuxAgentProbe> {
   const [tmux, ps] = await Promise.all([
     listTmuxPanes(),
-    execText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3_000),
+    // parseProcessRow below anchors on the `lstart` column, which only has its documented shape
+    // under LC_TIME=C — see psEnv (lib/childLocale.ts).
+    execText('ps', ['-axo', 'pid=,ppid=,comm=,lstart=,args='], 3_000, psEnv()),
   ])
   if (!tmux.ok) return { ok: false, error: `tmux list-panes failed: ${tmux.error}` }
   if (!ps.ok) return { ok: false, error: `process table failed: ${ps.error}` }
