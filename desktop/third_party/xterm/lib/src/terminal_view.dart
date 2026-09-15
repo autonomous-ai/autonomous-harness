@@ -725,7 +725,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       onEditableRect: onEditableRect,
       composingText: composingText,
       composingBacktrackCells: composingBacktrackCells,
-    );
+    )..devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
   }
 
   @override
@@ -747,6 +747,7 @@ class _TerminalView extends LeafRenderObjectWidget {
       ..alwaysShowCursor = alwaysShowCursor
       ..onEditableRect = onEditableRect
       ..composingText = composingText
-      ..composingBacktrackCells = composingBacktrackCells;
+      ..composingBacktrackCells = composingBacktrackCells
+      ..devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
   }
 }

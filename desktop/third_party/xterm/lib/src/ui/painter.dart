@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/painting.dart';
 
+import 'package:xterm/src/ui/block_glyphs.dart';
 import 'package:xterm/src/ui/palette_builder.dart';
 import 'package:xterm/src/ui/paragraph_cache.dart';
 import 'package:xterm/xterm.dart';
@@ -62,6 +63,18 @@ class TerminalPainter {
     _theme = value;
     _colorPalette = PaletteBuilder(value).build();
     _paragraphCache.clear();
+  }
+
+  /// Device pixels per logical pixel, used to snap block-glyph edges so that
+  /// neighbouring cells share a pixel boundary. Impeller ignores
+  /// `Paint.isAntiAlias = false` (flutter/flutter#104721) and resolves every
+  /// edge through MSAA, so without snapping two abutting rectangles can leave a
+  /// hairline where one would not.
+  double get devicePixelRatio => _devicePixelRatio;
+  double _devicePixelRatio = 1.0;
+  set devicePixelRatio(double value) {
+    if (value == _devicePixelRatio) return;
+    _devicePixelRatio = value;
   }
 
   Size _measureCharSize() {
@@ -185,6 +198,12 @@ class TerminalPainter {
     final charCode = cellData.content & CellContent.codepointMask;
     if (charCode == 0) return;
 
+    final block = BlockGlyph.lookup(charCode);
+    if (block != null) {
+      paintBlockGlyph(canvas, offset, cellData, block);
+      return;
+    }
+
     final cacheKey = cellData.getHash() ^ _textScaler.hashCode;
     var paragraph = _paragraphCache.getLayoutFromCache(cacheKey);
 
@@ -226,6 +245,53 @@ class TerminalPainter {
     }
 
     canvas.drawParagraph(paragraph, offset);
+  }
+
+  /// Paints a Block Elements character (U+2580–U+259F) as filled rectangles
+  /// covering the whole cell instead of the font's glyph. See [BlockGlyph] for
+  /// why; the colour rules match the text path above.
+  void paintBlockGlyph(
+    Canvas canvas,
+    Offset offset,
+    CellData cellData,
+    BlockGlyph block,
+  ) {
+    final cellFlags = cellData.flags;
+
+    var color = cellFlags & CellFlags.inverse == 0
+        ? resolveForegroundColor(cellData.foreground)
+        : resolveBackgroundColor(cellData.background);
+
+    var opacity = block.opacity;
+    if (cellFlags & CellFlags.faint != 0) opacity *= 0.5;
+    if (opacity != 1.0) color = color.withValues(alpha: opacity);
+
+    // Blocks are meant to tile, so every edge lands on a device pixel and
+    // anti-aliasing is off (Skia honours that; Impeller relies on the
+    // snapping alone). A strip thinner than one device pixel — an eighth of a
+    // narrow cell — is widened to one so it never rasterises to nothing.
+    final paint = Paint()
+      ..color = color
+      ..isAntiAlias = false;
+
+    final widthScale = cellData.content >> CellContent.widthShift == 2 ? 2 : 1;
+    final width = _cellSize.width * widthScale;
+    final height = _cellSize.height;
+
+    for (final unit in block.rects) {
+      canvas.drawRect(
+        snapRectToDevicePixels(
+          Rect.fromLTRB(
+            offset.dx + unit.left * width,
+            offset.dy + unit.top * height,
+            offset.dx + unit.right * width,
+            offset.dy + unit.bottom * height,
+          ),
+          _devicePixelRatio,
+        ),
+        paint,
+      );
+    }
   }
 
   /// Paints the background of a cell represented by [cellData] to [canvas] at
