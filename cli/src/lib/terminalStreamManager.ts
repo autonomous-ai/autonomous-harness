@@ -754,9 +754,9 @@ export class TerminalStreamManager {
 
   /** Scroll gestures arrive stream-scoped, same as resize — no ordering/seq guard needed since,
    *  unlike input, an out-of-order or dropped scroll frame just means one gesture scrolled a little
-   *  more or less than intended, never a corrupted stream. The pane's live output stream (already
-   *  flowing via `sink.onData`) naturally carries the scrolled copy-mode view back to the client, so
-   *  no explicit keyframe push is needed here the way resize needs one. */
+   *  more or less than intended, never a corrupted stream. PageUp/PageDown are written into the
+   *  pty, so the program's own redraw rides the live output stream (`sink.onData`) back to the
+   *  client; no explicit keyframe push is needed here the way resize needs one. */
   private async scroll(connId: string, payload: FramePayload): Promise<void> {
     const state = this.streamFor(connId, payload)
     if (!state) return
@@ -923,7 +923,9 @@ export class TerminalStreamManager {
       reason: 'tmux snapshot did not run',
     }
     try {
-      snapshot = await state.handle.snapshot()
+      snapshot = await state.handle.snapshot(
+        state.engineId === 'grok' ? { tuiOwnsScrollback: true } : undefined,
+      )
     } catch (error) {
       snapshot = { state: 'failed', reason: error instanceof Error ? error.message : 'tmux snapshot failed' }
     }
