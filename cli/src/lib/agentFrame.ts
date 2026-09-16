@@ -21,7 +21,7 @@
 import { stat } from 'node:fs/promises'
 import { agentProject, type AgentProject } from './agentProject.js'
 import type { GridAssignment } from './gridAssignment.js'
-import { projectDisplayName, type RegisteredSession } from './registry.js'
+import { projectDisplayName, type RegisteredSession, titleDisplayName } from './registry.js'
 import type { DshVerdict } from '../dsh/verdict.js'
 
 /**
@@ -35,6 +35,13 @@ export type AgentFrame = {
   sessionId: string
   userId: string
   name: string
+  /**
+   * What the agent is on, in its own words — the transcript's title (Claude Code's, Codex's),
+   * cleaned; null when there is none or it is the name already. Not the name: a created agent
+   * keeps its `harness-N` name while its title moves with the work, and a client searching for
+   * "board fab check" must find it by this, not by luck in a recap.
+   */
+  title: string | null
   status: string
   launch: NonNullable<RegisteredSession['launch']>
   createdAt: string
@@ -82,6 +89,11 @@ export interface AgentFrameContext {
  * by recency follows the conversation rather than the daemon's housekeeping; an unreadable or absent
  * transcript falls back to the registry, never to "now".
  */
+function frameTitle(s: RegisteredSession): string | null {
+  const title = titleDisplayName(s.title)
+  return title && title !== projectDisplayName(s) ? title : null
+}
+
 export async function agentFrame(
   s: RegisteredSession,
   { selectedModel, terminalAvailable, dsh }: AgentFrameContext,
@@ -92,6 +104,7 @@ export async function agentFrame(
     sessionId: s.sessionId,
     userId: '',
     name: projectDisplayName(s),
+    title: frameTitle(s),
     status: s.active ? 'active' : 'offline',
     launch: s.launch ?? { state: 'ready' },
     createdAt: new Date(s.registeredAt).toISOString(),

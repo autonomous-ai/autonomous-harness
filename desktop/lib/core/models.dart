@@ -121,6 +121,11 @@ class Agent {
   final String id;
   final String? sessionId;
   final String name;
+
+  /// What the agent is on, in its own words — the transcript's title as the
+  /// daemon cleaned it, null when it has none or it is the name already. A
+  /// search finds an agent by this before it finds one by a recap.
+  final String? title;
   final String? engine;
   final String? engineDisplayName;
   final String? engineIconHint;
@@ -155,6 +160,7 @@ class Agent {
     required this.id,
     this.sessionId,
     required this.name,
+    this.title,
     this.engine,
     this.engineDisplayName,
     this.engineIconHint,
@@ -207,6 +213,7 @@ class Agent {
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
       name: j['name'] as String? ?? 'agent',
+      title: _safeLabel(j['title']),
       engine: _safeEngine(j['engine']),
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
@@ -235,6 +242,7 @@ class Agent {
     id: id,
     sessionId: sessionId,
     name: name ?? this.name,
+    title: title,
     engine: engine,
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,

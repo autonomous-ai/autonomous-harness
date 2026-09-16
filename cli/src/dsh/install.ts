@@ -18,7 +18,7 @@ import {
   upsertInstalledRecord, isBrokenDsh, type InstalledDsh, type InstalledDshRecord,
 } from './installed.js'
 import { readDshManifest, viewerUse, type DshManifest } from './manifest.js'
-import { registryEntry } from './registry.js'
+import { registryEntry, type DshRegistryEntry } from './registry.js'
 import { runDshCommand } from './shell.js'
 
 const execFileAsync = promisify(execFile)
@@ -48,6 +48,8 @@ export interface DshInstallOptions {
   /** Setup/doctor output, line by line. */
   onLine?: (line: string) => void
   setupTimeoutMs?: number
+  /** Where a `viewer.use` id resolves to a repo; the bundled registry by default. Test seam. */
+  registry?: (id: string) => DshRegistryEntry | undefined
 }
 
 export interface DshDoctorResult {
@@ -244,15 +246,27 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
   // first (`harness dsh install <url>`), and the doctor says so rather than the pane going blank.
   const uses = viewerUse(manifest)
   if (uses && !installedDsh(uses)) {
-    const entry = registryEntry(uses)
+    const entry = (opts.registry ?? registryEntry)(uses)
     if (entry) {
       opts.onLine?.(`viewer ${uses} · installing`)
-      const dep = await installDsh({ source: entry.repo, ref: entry.ref, onProgress: opts.onProgress, onLine: opts.onLine, setupTimeoutMs: opts.setupTimeoutMs })
+      // The viewer's own phases are narrated UNDER THE HARNESS: the dialog watches the id it asked
+      // for, and a frame carrying the viewer's id would land in a run nobody is looking at — the
+      // install would read as hung for the minutes OpenCascade takes to arrive. The viewer's `done`
+      // is not the harness's done, so it reports as the harness's setup still going.
+      const dep = await installDsh({
+        source: entry.repo, ref: entry.ref, setupTimeoutMs: opts.setupTimeoutMs, onLine: opts.onLine,
+        onProgress: (p) => {
+          if (p.phase === 'failed') return // reported below, once, with the viewer named
+          const phase: DshInstallPhase = p.phase === 'done' ? 'setup' : p.phase
+          progress({ id: manifest.id, phase, detail: `viewer ${uses} · ${p.phase}${p.detail ? ` · ${p.detail}` : ''}`.slice(0, 300) })
+        },
+      })
       if (!dep.ok) {
         const detail = `viewer ${uses} · ${dep.detail}`.slice(0, 2000)
         progress({ id: manifest.id, phase: 'failed', detail })
         return { ok: false, error: dep.error, detail }
       }
+      progress({ id: manifest.id, phase: 'setup', detail: `viewer ${uses} · installed` })
     } else {
       opts.onLine?.(`miss viewer ${uses} is not installed and not in the registry · install it first`)
     }

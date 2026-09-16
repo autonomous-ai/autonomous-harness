@@ -1644,7 +1644,7 @@ const SELF_NAMES: ReadonlySet<string> = (() => {
  * about the machine, not the engine, so it is refused by what it SAYS rather than by who sent it —
  * any engine that adopts the same convention is covered without a table to keep in step.
  */
-function titleDisplayName(title: string | null | undefined): string | null {
+export function titleDisplayName(title: string | null | undefined): string | null {
   const cleaned = title
     ?.trim()
     .replace(/^[\s\p{Mark}\p{Punctuation}\p{Symbol}]+/u, '')

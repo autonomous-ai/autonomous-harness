@@ -172,10 +172,17 @@ class SwarmDestination {
     this.previewKey,
     this.members = const {},
     Iterable<String?> searchFields = const [],
+    int titleFields = 1,
   }) : fields = [
          title.toLowerCase(),
          ...searchFields.whereType<String>().map((s) => s.toLowerCase()),
-       ];
+       ],
+       titleFieldCount = titleFields;
+
+  /// How many leading [fields] are "the name of the thing" rather than
+  /// metadata: the row's title, plus the agent's own title when it has one.
+  /// A match there outranks any match in a folder, a machine or a recap.
+  final int titleFieldCount;
 
   final String id, title, detail, machineLabel;
 
@@ -457,7 +464,10 @@ class SwarmLocationCatalog {
       previewKey: agent == null ? null : app.previewKey(pane.machineId, agent),
       engine: engine,
       current: swarm.id == app.activeSwarmId && pane.id == app.focusedPaneId,
-      searchFields: [detail.text, project?.cwd, engine, swarm.name],
+      // The agent's own title first, ranked like the name: "board fab check"
+      // finds the agent whose work that is, not whichever recap mentions fab.
+      searchFields: [agent?.title, detail.text, project?.cwd, engine, swarm.name],
+      titleFields: agent?.title == null ? 1 : 2,
     );
   }
 }
@@ -895,7 +905,11 @@ List<SwarmDestination> swarmDestinations(
         engine: engine,
         current:
             owner?.id == app.activeSwarmId && pane?.id == app.focusedPaneId,
+        // The agent's own title is ranked like its name (see titleFields):
+        // "board fab check" finds the agent whose work that is, never the
+        // one whose folder or recap happens to mention fab.
         searchFields: [
+          row?.$2.title,
           type,
           machineName,
           project?.name,
@@ -904,6 +918,7 @@ List<SwarmDestination> swarmDestinations(
           engine,
           ...memberships.map((s) => s.name),
         ],
+        titleFields: row?.$2.title == null ? 1 : 2,
       ),
     );
   }
@@ -949,7 +964,7 @@ List<SwarmDestination> rankSwarmDestinations(
   final recency = {for (var i = 0; i < recent.length; i++) recent[i]: i};
   final ranked = <({SwarmDestination entry, int score, bool content})>[];
   for (final entry in all) {
-    if (entry.fields.first == needle) {
+    if (entry.fields.take(entry.titleFieldCount).contains(needle)) {
       ranked.add((entry: entry, score: -1, content: false));
       continue;
     }
@@ -960,7 +975,11 @@ List<SwarmDestination> rankSwarmDestinations(
       int? best;
       for (var i = 0; i < entry.fields.length; i++) {
         final field = entry.fields[i];
-        final score = swarmFieldMatchScore(field, term, title: i == 0);
+        final score = swarmFieldMatchScore(
+          field,
+          term,
+          title: i < entry.titleFieldCount,
+        );
         if (score == null) continue;
         if (best == null || score < best) best = score;
         // Every remaining field is metadata, whose best possible score is 64.

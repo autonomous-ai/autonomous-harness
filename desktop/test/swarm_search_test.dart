@@ -54,6 +54,34 @@ void main() {
     },
   );
 
+  test('an agent is found by its own title before any agent whose metadata or recap mentions the words', () {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final local = app.machineStates['m']!;
+    local.agents = [
+      const Agent(
+        id: 'a6',
+        name: 'harness-6',
+        title: 'Board fab check and parts review',
+        terminalAvailable: true,
+        project: AgentProject(name: 'agent-1', cwd: '/h/agent-1'),
+      ),
+      const Agent(
+        id: 'a10',
+        name: 'harness-10',
+        terminalAvailable: true,
+        project: AgentProject(name: 'fab-shop', cwd: '/h/fab-shop'),
+      ),
+    ];
+    final entries = SwarmSearchCatalog().read(app, const []);
+    expect(rankSwarmDestinations(entries, 'Board fab check').first.agentId, 'a6');
+    expect(rankSwarmDestinations(entries, 'parts review').first.agentId, 'a6');
+    // a bare word that names a project outranks a title that merely contains it
+    expect(rankSwarmDestinations(entries, 'fab').first.isProject, isTrue);
+    // the whole title, exactly, is the strongest match there is
+    expect(rankSwarmDestinations(entries, 'board fab check and parts review').first.agentId, 'a6');
+  });
+
   test('one cached catalog searches all four objects and explicit remote project members', () {
     final app = createApp();
     addTearDown(app.dispose);

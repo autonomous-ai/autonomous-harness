@@ -1,7 +1,8 @@
 # Extending Harness
 
 Every layer has a contract, a starter and a check. Domain harnesses have their own guide:
-[`dsh/README.md`](../dsh/README.md).
+[`dsh/README.md`](../dsh/README.md), which also covers the second kind of package, a **viewer** —
+a pane any number of agents point at with `viewer.use` — and the `author` every package names.
 
 ## Add your agent
 
