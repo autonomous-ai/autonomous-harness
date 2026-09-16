@@ -372,17 +372,14 @@ function execFileText(cmd, args, timeout, env) {
 }
 
 /**
- * Mirrors ensureUtf8Locale in src/lib/childLocale.ts. Linux procps substitutes `?` for every byte it cannot print in the
- * current locale, and a hook child launched by an engine under systemd/docker/ssh usually has no locale
- * at all. Measured on Ubuntu 24.04 + procps-ng 4.0.4: `⌘ <title>` reads back as `??? <title>` in BOTH
- * comm and args, which kills both halves of the Command Code marker in processMatchScore. macOS never
- * substitutes, so this is Linux-only and cannot regress it.
- */
-/**
- * Mirrors lib/childLocale.ts. This process is spawned by the ENGINE, not by the daemon, so it inherits
- * the engine's environment and has to set its own — it shells out to both `tmux` and `ps`, and Linux
- * mangles both without a UTF-8 locale (tmux turns the -F TAB separator into `_`; ps turns `⌘` into
- * `???`). Only when nothing usable is configured.
+ * Mirrors ensureUtf8Locale in src/lib/childLocale.ts. This process is spawned by the ENGINE, not by the
+ * daemon, so it inherits the engine's environment and has to set its own — and a hook child launched by
+ * an engine under systemd/docker/ssh usually has no locale at all. It shells out to both `tmux` and
+ * `ps`, and Linux mangles both without a UTF-8 locale: tmux turns the `-F` TAB separator into `_`, and
+ * procps substitutes `?` for every byte it cannot print. Measured on Ubuntu 24.04 + procps-ng 4.0.4,
+ * `⌘ <title>` reads back as `??? <title>` in BOTH comm and args, which kills both halves of the Command
+ * Code marker in processMatchScore. macOS never substitutes, so this is Linux-only and cannot regress
+ * it. Applied only when nothing usable is configured.
  */
 function ensureUtf8Locale(env = process.env) {
   if (process.platform !== 'linux') return
