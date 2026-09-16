@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/dsh_catalog.dart';
+import 'package:harness/core/engine_availability.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/store/store_controller.dart';
@@ -138,6 +139,10 @@ Future<(_Notifier, _FakeStore)> open(WidgetTester tester, {String? initialHarnes
   addTearDown(notifier.dispose);
   final state = MachineState(_machine)..localOnly = true;
   state.dsh.replace(const [_marp, _typst, _docViewer]);
+  state.engines.replace(const [
+    EngineAvailability(engine: 'claude', installed: true),
+    EngineAvailability(engine: 'codex', installed: false, installable: true, installCommand: 'npm install -g @openai/codex'),
+  ]);
   notifier.machineStates['machine-1'] = state;
   final store = _FakeStore();
   await tester.pumpWidget(
@@ -160,7 +165,7 @@ void main() {
     expect(find.byKey(const ValueKey('store-card:autonomous/typst')), findsOneWidget);
     expect(find.byKey(const ValueKey('store-card:autonomous/doc-viewer')), findsNothing, reason: 'a viewer is not a tile');
     expect(find.text('4.5 · 2'), findsOneWidget);
-    expect(find.text('No ratings yet'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('store-card:autonomous/typst')), matching: find.text('No ratings yet')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('store-shelf-viewers')));
     await tester.pumpAndSettle();
@@ -180,7 +185,12 @@ void main() {
 
   testWidgets('a harness not installed here gets Get, and Get installs on that machine', (tester) async {
     final (notifier, _) = await open(tester);
-    await tester.tap(find.byKey(const ValueKey('store-card:autonomous/typst')));
+    // The shelf scrolls (the engines sit above the harnesses); settle the
+    // scroll before the tap, or the tap lands where the card was.
+    final card = find.byKey(const ValueKey('store-card:autonomous/typst'));
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    await tester.tap(card);
     await tester.pumpAndSettle();
     expect(find.text('Typst GmbH · Documents · Runs on Claude'), findsOneWidget);
     expect(find.descendant(of: find.byKey(const ValueKey('store-primary-action')), matching: find.text('Get')), findsOneWidget);
@@ -231,5 +241,24 @@ void main() {
     await tester.tap(post);
     await tester.pumpAndSettle();
     expect(store.puts, [('autonomous/marp', 4, 'Sharp decks', 'Art takes a while.')]);
+  });
+
+  testWidgets('the built-in engines are on the shelf too, under Code, as the machines probed them', (tester) async {
+    await open(tester);
+    expect(find.byKey(const ValueKey('store-card:claude')), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-card:codex')), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-shelf-category:Code')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('store-card:claude')), matching: find.text('Installed')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('store-card:codex')), matching: find.text('Get')), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('store-card:codex')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('store-card:codex')));
+    await tester.pumpAndSettle();
+    expect(find.text('OpenAI · Code · Coding agent'), findsOneWidget);
+    expect(find.text('Harness installs it: npm install -g @openai/codex'), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-get:machine-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('store-remove:machine-1')), findsNothing, reason: 'a vendor CLI is not ours to uninstall');
+    expect(find.text('Website'), findsOneWidget);
   });
 }

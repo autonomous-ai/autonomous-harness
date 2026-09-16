@@ -23,6 +23,13 @@ class EngineIdentity {
   /// the category so the tile says what it makes and whose it is.
   final String? creator;
 
+  /// The vendor's page for it — the store's Website link. Null when there is
+  /// no page worth sending someone to.
+  final String? homepage;
+
+  /// One sentence for the store card: what it is, whose it is.
+  final String? blurb;
+
   const EngineIdentity({
     required this.id,
     required this.label,
@@ -30,6 +37,8 @@ class EngineIdentity {
     this.asset,
     this.category,
     this.creator,
+    this.homepage,
+    this.blurb,
   });
 
   /// "Code · OpenAI", "CAD · Jake Fitzgerald" — the tile's second line.
@@ -46,6 +55,8 @@ const _engines = <String, EngineIdentity>{
     category: 'Code',
     creator: 'Anthropic',
     color: Color(0xffcc7c5e),
+    homepage: 'https://claude.com/product/claude-code',
+    blurb: "Anthropic's agentic coding tool in the terminal: reads the codebase, edits, runs tests, opens pull requests.",
   ),
   'codex': EngineIdentity(
     id: 'codex',
@@ -54,6 +65,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'OpenAI',
     color: Color(0xff64d2ff),
     asset: 'assets/engine-icons/codex.png',
+    homepage: 'https://github.com/openai/codex',
+    blurb: "OpenAI's coding agent for the terminal, on the Codex models.",
   ),
   'cursor': EngineIdentity(
     id: 'cursor',
@@ -62,6 +75,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Anysphere',
     color: Color(0xffc6ff72),
     asset: 'assets/engine-icons/cursor.png',
+    homepage: 'https://cursor.com/cli',
+    blurb: "Cursor's agent in the terminal — the same agent as in the editor.",
   ),
   'opencode': EngineIdentity(
     id: 'opencode',
@@ -70,6 +85,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Anomaly',
     color: Color(0xfff1ecec),
     asset: 'assets/engine-icons/opencode.png',
+    homepage: 'https://opencode.ai',
+    blurb: "An open-source coding agent for the terminal that works with any model.",
   ),
   'pi': EngineIdentity(
     id: 'pi',
@@ -78,6 +95,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'pi.dev',
     color: Colors.white,
     asset: 'assets/engine-icons/pi.png',
+    homepage: 'https://pi.dev',
+    blurb: "A small, extensible coding agent for the terminal.",
   ),
   'hermes': EngineIdentity(
     id: 'hermes',
@@ -86,6 +105,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Nous Research',
     color: Color(0xff9b8cff),
     asset: 'assets/engine-icons/hermes.png',
+    homepage: 'https://github.com/NousResearch/hermes-agent',
+    blurb: "Nous Research's open agent with memory and skills, in the terminal.",
   ),
   'commandcode': EngineIdentity(
     id: 'commandcode',
@@ -94,6 +115,7 @@ const _engines = <String, EngineIdentity>{
     creator: 'Command Code',
     color: Color(0xfff5f5f5),
     asset: 'assets/engine-icons/commandcode.png',
+    blurb: "Command Code's coding agent for the terminal.",
   ),
   'devin': EngineIdentity(
     id: 'devin',
@@ -102,6 +124,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Cognition',
     color: Color(0xff8fb8ff),
     asset: 'assets/engine-icons/devin.png',
+    homepage: 'https://devin.ai',
+    blurb: "Cognition's Devin, as an agent in the terminal.",
   ),
   'muse': EngineIdentity(
     id: 'muse',
@@ -110,6 +134,7 @@ const _engines = <String, EngineIdentity>{
     creator: 'Meta',
     color: Color(0xff0082fb),
     asset: 'assets/engine-icons/muse.png',
+    blurb: "Meta's coding agent for the terminal.",
   ),
   'amp': EngineIdentity(
     id: 'amp',
@@ -118,6 +143,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Sourcegraph',
     color: Color(0xfff34e3f),
     asset: 'assets/engine-icons/amp.png',
+    homepage: 'https://ampcode.com',
+    blurb: "Sourcegraph's agentic coding tool.",
   ),
   'kilo': EngineIdentity(
     id: 'kilo',
@@ -126,6 +153,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Kilo Code',
     color: Color(0xfff8f676),
     asset: 'assets/engine-icons/kilo.png',
+    homepage: 'https://kilocode.ai',
+    blurb: "Kilo Code's open-source coding agent.",
   ),
   'grok': EngineIdentity(
     id: 'grok',
@@ -134,6 +163,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'xAI',
     color: Colors.white,
     asset: 'assets/engine-icons/grok.png',
+    homepage: 'https://x.ai',
+    blurb: "xAI's Grok as a coding agent in the terminal.",
   ),
   'copilot': EngineIdentity(
     id: 'copilot',
@@ -142,6 +173,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'GitHub',
     color: Color(0xff8957e5),
     asset: 'assets/engine-icons/copilot.png',
+    homepage: 'https://github.com/github/copilot-cli',
+    blurb: "GitHub Copilot's coding agent in the terminal.",
   ),
   'agy': EngineIdentity(
     id: 'agy',
@@ -150,6 +183,8 @@ const _engines = <String, EngineIdentity>{
     creator: 'Google',
     color: Color(0xff3287fb),
     asset: 'assets/engine-icons/agy.png',
+    homepage: 'https://antigravity.google',
+    blurb: "Google's Antigravity agent in the terminal.",
   ),
 };
 

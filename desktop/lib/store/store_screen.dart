@@ -127,7 +127,9 @@ class _StoreScreenState extends State<StoreScreen> {
   }
 
   /// One row per harness id across every machine, the local machine's row
-  /// winning: its catalog carries the whole registry.
+  /// winning (its catalog carries the whole registry) — and one row per
+  /// built-in engine, because a person looking for "Claude Code" in a store
+  /// should find it beside Marp, not learn that it is a different kind of thing.
   Map<String, DshEntry> get _catalog {
     final rows = <String, DshEntry>{};
     final local = widget.notifier.localMachineState;
@@ -135,6 +137,19 @@ class _StoreScreenState extends State<StoreScreen> {
       if (local != null) local,
       ...widget.notifier.machineStates.values.where((s) => !identical(s, local)),
     ];
+    for (final identity in allEngines) {
+      rows[identity.id] = DshEntry(
+        id: identity.id,
+        name: identity.label,
+        engine: identity.id,
+        kind: 'engine',
+        category: identity.category ?? 'Code',
+        author: identity.creator,
+        description: identity.blurb,
+        homepage: identity.homepage,
+        installed: states.any((s) => s.engines[identity.id]?.installed == true),
+      );
+    }
     for (final state in states) {
       for (final entry in state.dsh.entries) {
         rows.putIfAbsent(entry.id, () => entry);
@@ -143,10 +158,11 @@ class _StoreScreenState extends State<StoreScreen> {
     return rows;
   }
 
-  /// The machines that have [id] installed.
+  /// The machines that have [id] installed — a harness from their catalog, an
+  /// engine from their probe.
   List<MachineState> _installedOn(String id) => [
     for (final state in widget.notifier.machineStates.values)
-      if (state.dsh[id]?.installed == true) state,
+      if (isHarnessId(id) ? state.dsh[id]?.installed == true : state.engines[id]?.installed == true) state,
   ];
 
   List<String> get _categories {
@@ -417,7 +433,7 @@ class _Shelf$View extends StatelessWidget {
                     _StoreCard(
                       key: ValueKey('store-card:${entry.id}'),
                       entry: entry,
-                      rating: store.ratingOf(entry.id),
+                      rating: store.ratingOf(StoreController.keyFor(entry)),
                       installed: installedOn(entry.id).isNotEmpty,
                       onTap: () => onOpen(entry.id),
                     ),
@@ -632,13 +648,15 @@ class _ProductPageState extends State<_ProductPage> {
   /// Machines with a Get or Remove in flight, so a double click cannot start two.
   final Set<String> _busy = {};
 
+  String get _key => StoreController.keyFor(widget.entry);
+
   @override
   void initState() {
     super.initState();
     // Deferred a frame: the load's first notification would otherwise land
     // inside the build that is putting this page on screen.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(widget.store.loadReviews(widget.entry.id));
+      if (mounted) unawaited(widget.store.loadReviews(_key));
     });
   }
 
@@ -648,6 +666,9 @@ class _ProductPageState extends State<_ProductPage> {
   }
 
   Future<void> _get(String machineId) async {
+    // An engine is installed by the daemon on the way to the first harness
+    // that needs it (`installIfMissing` on create), so Get is Open.
+    if (widget.entry.isEngine) return _open(machineId);
     if (!_busy.add(machineId)) return;
     setState(() {});
     final failure = await widget.notifier.installDsh(machineId, widget.entry.id);
@@ -682,22 +703,22 @@ class _ProductPageState extends State<_ProductPage> {
       widget.notifier,
       machineId,
       source: 'store',
-      initialDsh: widget.entry.id,
+      initialEngine: widget.entry.id,
     );
     if (result != null && mounted) Navigator.of(context).maybePop();
   }
 
   Future<void> _review() async {
-    final page = widget.store.reviews[widget.entry.id];
+    final page = widget.store.reviews[_key];
     final draft = await showAppDialog<_ReviewDraft>(
       context: context,
       builder: (context) => _ReviewDialog(name: widget.entry.name, existing: page?.mine),
     );
     if (draft == null || !mounted) return;
     final failure = draft.delete
-        ? await widget.store.remove(widget.entry.id)
+        ? await widget.store.remove(_key)
         : await widget.store.submit(
-            widget.entry.id,
+            _key,
             rating: draft.rating,
             title: draft.title,
             body: draft.body,
@@ -711,10 +732,11 @@ class _ProductPageState extends State<_ProductPage> {
     final identity = engineIdentity(entry.id, displayName: entry.name);
     final author = entry.author ?? identity.creator;
     final category = entry.category ?? identity.category;
-    final rating = widget.store.ratingOf(entry.id);
-    final page = widget.store.reviews[entry.id];
+    final rating = widget.store.ratingOf(_key);
+    final page = widget.store.reviews[_key];
     final local = widget.notifier.localMachineState;
-    final localInstalled = local != null && local.dsh[entry.id]?.installed == true;
+    final localInstalled = local != null &&
+        (entry.isEngine ? local.engines[entry.id]?.installed == true : local.dsh[entry.id]?.installed == true);
     final machines = widget.notifier.machineStates.values.toList()
       ..sort((a, b) {
         if (identical(a, local)) return -1;
@@ -764,7 +786,7 @@ class _ProductPageState extends State<_ProductPage> {
                           [
                             if (author != null) author,
                             if (category != null) category,
-                            if (entry.isViewerPackage) 'Viewer package' else if (baseLabel != null) 'Runs on $baseLabel',
+                            if (entry.isViewerPackage) 'Viewer package' else if (entry.isEngine) 'Coding agent' else if (baseLabel != null) 'Runs on $baseLabel',
                           ].join(' · '),
                           style: TextStyle(fontSize: 13, color: grid.AppPalette.textSecondary),
                         ),
@@ -894,10 +916,10 @@ class _ProductPageState extends State<_ProductPage> {
               ),
               const SizedBox(height: 8),
               _RatingSummary(rating: rating),
-              if (widget.store.reviewsError[entry.id] != null) ...[
+              if (widget.store.reviewsError[_key] != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  widget.store.reviewsError[entry.id]!,
+                  widget.store.reviewsError[_key]!,
                   style: TextStyle(fontSize: 12, color: grid.AppPalette.warn),
                 ),
               ],
@@ -957,6 +979,7 @@ class _MachineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (entry.isEngine) return _engineRow(context);
     final row = state.dsh[entry.id];
     final run = state.dsh.runs[entry.id];
     final installing = run != null && run.inProgress;
@@ -1030,6 +1053,59 @@ class _MachineRow extends StatelessWidget {
               onPressed: state.dsh.loaded ? onGet : null,
               style: FilledButton.styleFrom(minimumSize: const Size(72, 32), shape: const StadiumBorder()),
               child: Text(run?.failed == true ? 'Try again' : 'Get'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+extension on _MachineRow {
+  /// An engine's row: what the machine's probe said. Installed → Open; not
+  /// installed but installable → Get, which opens New Harness and lets the
+  /// daemon install it on the way (the command is shown first, as the dialog
+  /// shows it); anything else is said and not offered.
+  Widget _engineRow(BuildContext context) {
+    final probe = state.engines[entry.id];
+    final loaded = state.engines.loaded;
+    final installed = probe?.installed == true;
+    final String status;
+    if (!loaded) {
+      status = 'Asking…';
+    } else if (installed) {
+      status = 'Installed';
+    } else if (probe?.installable == true) {
+      status = probe?.installCommand == null ? 'Harness installs it when you open one' : 'Harness installs it: ${probe!.installCommand}';
+    } else {
+      status = 'Not installed';
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(isLocal ? LucideIcons.laptop300 : LucideIcons.server300, size: 16, color: grid.AppPalette.textSecondary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isLocal ? '${state.machine.displayName} · this computer' : state.machine.displayName,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: grid.AppPalette.textPrimary),
+                ),
+                const SizedBox(height: 2),
+                Text(status, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: grid.AppPalette.textSecondary)),
+              ],
+            ),
+          ),
+          if (installed)
+            TextButton(key: ValueKey('store-open:${state.machine.machineId}'), onPressed: onOpen, child: const Text('Open'))
+          else if (loaded && probe?.installable == true)
+            FilledButton.tonal(
+              key: ValueKey('store-get:${state.machine.machineId}'),
+              onPressed: onGet,
+              style: FilledButton.styleFrom(minimumSize: const Size(72, 32), shape: const StadiumBorder()),
+              child: const Text('Get'),
             ),
         ],
       ),

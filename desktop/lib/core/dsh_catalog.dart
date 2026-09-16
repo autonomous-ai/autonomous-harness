@@ -52,6 +52,11 @@ class DshEntry {
   final String kind;
   bool get isViewerPackage => kind == 'viewer';
 
+  /// A built-in engine (Claude Code, Codex…) as the store lists it: never on
+  /// the wire — the store builds these rows from [allEngines] and the machines'
+  /// engine probes, so the Code shelf and the harness shelves are one list.
+  bool get isEngine => kind == 'engine';
+
   /// Who made it — "Autonomous" for everything under autonomous/ — beside the category on the tile.
   final String? author;
 

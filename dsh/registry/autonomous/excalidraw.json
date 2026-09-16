@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/excalidraw",
+  "name": "Excalidraw",
+  "category": "Diagrams",
+  "author": "Excalidraw",
+  "description": "Describe a diagram — an architecture, a flow, a whiteboard sketch — and watch it appear hand-drawn in the pane, as an .excalidraw file you can open anywhere.",
+  "repo": "https://github.com/autonomous-ai/autonomous-excalidraw",
+  "ref": "main",
+  "homepage": "https://excalidraw.com",
+  "upstream": "https://github.com/excalidraw/excalidraw",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

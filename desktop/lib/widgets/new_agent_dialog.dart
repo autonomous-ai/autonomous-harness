@@ -62,9 +62,9 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
   bool offerBackToSearch = false,
-  /// Open with this harness already chosen — the store's Open button, which
-  /// knows exactly which one the person is looking at.
-  String? initialDsh,
+  /// Open with this engine or harness already chosen — the store's Get and
+  /// Open buttons, which know exactly which one the person is looking at.
+  String? initialEngine,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -76,7 +76,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
     veilBlur: 0,
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
-      initialDsh: initialDsh,
+      initialEngine: initialEngine,
       machineId: machineId,
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
@@ -107,12 +107,12 @@ class _NewAgentDialog extends StatefulWidget {
     this.initialEngineProbe,
     required this.offerFindExisting,
     required this.offerBackToSearch,
-    this.initialDsh,
+    this.initialEngine,
   });
 
-  /// A harness to open on, chosen elsewhere (the store); null lets the
-  /// remembered or first installed engine win.
-  final String? initialDsh;
+  /// An engine or harness to open on, chosen elsewhere (the store); null lets
+  /// the remembered or first installed engine win.
+  final String? initialEngine;
 
   @override
   State<_NewAgentDialog> createState() => _NewAgentDialogState();
@@ -164,8 +164,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   void initState() {
     super.initState();
     final remembered = widget.notifier.agentPreference.value;
-    final asked = widget.initialDsh;
-    if (asked != null && isHarnessId(asked)) {
+    final asked = widget.initialEngine;
+    if (asked != null &&
+        (isHarnessId(asked) || allEngines.any((identity) => identity.id == asked))) {
       // Chosen before the dialog opened: counts as the person's choice, so no
       // probe or remembered preference moves it.
       _engine = asked;

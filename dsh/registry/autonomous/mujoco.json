@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/mujoco",
+  "name": "MuJoCo",
+  "category": "Simulation",
+  "author": "Google DeepMind",
+  "description": "Describe a robot, a scene, a controller — a Unitree quadruped standing, a humanoid learning to walk — and watch the rollout play: MuJoCo physics, Menagerie robots, MJX for training.",
+  "repo": "https://github.com/autonomous-ai/autonomous-mujoco",
+  "ref": "main",
+  "homepage": "https://mujoco.org",
+  "upstream": "https://github.com/google-deepmind/mujoco",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

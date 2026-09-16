@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../api/api_client.dart';
+import '../core/dsh_catalog.dart';
 import 'store_models.dart';
 
 /// The store's calls, behind an interface so a widget test can answer them
@@ -88,6 +89,12 @@ class StoreController extends ChangeNotifier {
 
   StoreRating ratingOf(String harnessId) =>
       ratings[harnessId] ?? StoreRating.none(harnessId);
+
+  /// What a row is rated under. A harness by its registry id; an engine —
+  /// never in the registry — under `engine/<id>`, the two-part shape the
+  /// backend keys on.
+  static String keyFor(DshEntry entry) =>
+      entry.isEngine ? 'engine/${entry.id}' : entry.id;
 
   Future<void> loadRatings() async {
     if (ratingsLoading) return;
