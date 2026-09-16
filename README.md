@@ -1,7 +1,7 @@
 # Harness
 
-Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. Toys
-with Toymaker. PCBs with Copper. Keynotes with Marp. Every agent runs in a persistent terminal on
+Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. CAD
+with Toymaker and text-to-cad. PCBs with Copper. Keynotes with Marp. Every agent runs in a persistent terminal on
 any machine you own, and the domains beyond code get a viewer beside it that shows the work as it
 is made.
 
@@ -21,7 +21,7 @@ code, the viewer beside it. Pick an agent, and yours is a git repository away.
 | Category | Agents |
 |---|---|
 | **Code** | <img src=".github/assets/engines/claude.png" height="28" alt="Claude Code"> Claude Code &nbsp;&nbsp; <img src=".github/assets/engines/codex.png" height="28" alt="Codex"> Codex &nbsp;&nbsp; <img src=".github/assets/engines/cursor.png" height="28" alt="Cursor"> Cursor &nbsp;&nbsp; <img src=".github/assets/engines/opencode.png" height="28" alt="OpenCode"> OpenCode &nbsp;&nbsp; <img src=".github/assets/engines/pi.png" height="28" alt="Pi"> Pi &nbsp;&nbsp; <img src=".github/assets/engines/hermes.png" height="28" alt="Hermes"> Hermes &nbsp;&nbsp; <img src=".github/assets/engines/commandcode.png" height="28" alt="Command Code"> Command Code &nbsp;&nbsp; <img src=".github/assets/engines/devin.png" height="28" alt="Devin"> Devin &nbsp;&nbsp; <img src=".github/assets/engines/muse.png" height="28" alt="Muse Code"> Muse Code &nbsp;&nbsp; <img src=".github/assets/engines/amp.png" height="28" alt="Amp"> Amp &nbsp;&nbsp; <img src=".github/assets/engines/kilo.png" height="28" alt="Kilo"> Kilo &nbsp;&nbsp; <img src=".github/assets/engines/grok.png" height="28" alt="Grok"> Grok &nbsp;&nbsp; <img src=".github/assets/engines/agy.png" height="28" alt="Antigravity"> Antigravity &nbsp;&nbsp; <img src=".github/assets/engines/copilot.png" height="28" alt="GitHub Copilot"> GitHub Copilot |
-| **Toys** | <img src=".github/assets/engines/toymaker.png" height="28" alt="Toymaker"> Toymaker |
+| **CAD** | <img src=".github/assets/engines/toymaker.png" height="28" alt="Toymaker"> Toymaker &nbsp;&nbsp; <img src=".github/assets/engines/text-to-cad.png" height="28" alt="text-to-cad"> text-to-cad |
 | **PCB** | <img src=".github/assets/engines/copper.png" height="28" alt="Copper"> Copper |
 | **Slides** | <img src=".github/assets/engines/marp.png" height="28" alt="Marp"> Marp |
 

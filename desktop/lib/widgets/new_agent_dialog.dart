@@ -230,6 +230,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     return entry != null && !entry.installed;
   }
 
+  /// What it makes and whose it is — "CAD · Autonomous" — the
+  /// machine's words first, this build's when the machine has not answered,
+  /// the description when there is nothing else.
+  String? _harnessDetail(DshEntry harness) {
+    final identity = engineIdentity(harness.id);
+    final parts = [
+      harness.category ?? identity.category,
+      harness.author ?? identity.creator,
+    ].whereType<String>().where((s) => s.isNotEmpty);
+    return parts.isEmpty ? harness.description : parts.join(' · ');
+  }
+
   /// The harnesses to list after the engines: what the machine named when it
   /// has answered, else the ones this build ships a face for.
   List<DshEntry> get _harnessOptions {
@@ -250,6 +262,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           id: identity.id,
           name: identity.label,
           category: identity.category,
+          author: identity.creator,
           engine: knownHarnessBase[identity.id] ?? 'claude',
         ),
     ];
@@ -864,7 +877,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                 SelectOption(
                   value: identity.id,
                   label: identity.label,
-                  detail: identity.category,
+                  detail: identity.detail,
                   leading: () => EngineMark(engine: identity.id, size: 14),
                 ),
               // The domain harnesses, after the engines they run on. What the
@@ -877,10 +890,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   // detail (owner, 2026-09-15) — the settings row says it.
                   // What it makes, in a word or two; the machine's word first,
                   // this build's when the machine has not answered.
-                  detail:
-                      harness.category ??
-                      engineIdentity(harness.id).category ??
-                      harness.description,
+                  detail: _harnessDetail(harness),
                   leading: () => EngineMark(
                     engine: harness.id,
                     displayName: harness.name,

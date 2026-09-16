@@ -18,13 +18,25 @@ class EngineIdentity {
   /// explain itself.
   final String? category;
 
+  /// Who made the agent — "Anthropic", "OpenAI", and "Autonomous" for every
+  /// package under autonomous/. The picker shows it beside the category so the
+  /// tile says what it makes and whose it is.
+  final String? creator;
+
   const EngineIdentity({
     required this.id,
     required this.label,
     required this.color,
     this.asset,
     this.category,
+    this.creator,
   });
+
+  /// "Code · OpenAI", "CAD · Jake (earthtojake)" — the tile's second line.
+  String? get detail {
+    final parts = [category, creator].whereType<String>().where((s) => s.isNotEmpty);
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
 }
 
 const _engines = <String, EngineIdentity>{
@@ -32,12 +44,14 @@ const _engines = <String, EngineIdentity>{
     id: 'claude',
     label: 'Claude',
     category: 'Code',
+    creator: 'Anthropic',
     color: Color(0xffcc7c5e),
   ),
   'codex': EngineIdentity(
     id: 'codex',
     label: 'Codex',
     category: 'Code',
+    creator: 'OpenAI',
     color: Color(0xff64d2ff),
     asset: 'assets/engine-icons/codex.png',
   ),
@@ -45,6 +59,7 @@ const _engines = <String, EngineIdentity>{
     id: 'cursor',
     label: 'Cursor',
     category: 'Code',
+    creator: 'Anysphere',
     color: Color(0xffc6ff72),
     asset: 'assets/engine-icons/cursor.png',
   ),
@@ -52,6 +67,7 @@ const _engines = <String, EngineIdentity>{
     id: 'opencode',
     label: 'OpenCode',
     category: 'Code',
+    creator: 'Anomaly',
     color: Color(0xfff1ecec),
     asset: 'assets/engine-icons/opencode.png',
   ),
@@ -59,6 +75,7 @@ const _engines = <String, EngineIdentity>{
     id: 'pi',
     label: 'Pi',
     category: 'Code',
+    creator: 'pi.dev',
     color: Colors.white,
     asset: 'assets/engine-icons/pi.png',
   ),
@@ -66,6 +83,7 @@ const _engines = <String, EngineIdentity>{
     id: 'hermes',
     label: 'Hermes',
     category: 'Code',
+    creator: 'Nous Research',
     color: Color(0xff9b8cff),
     asset: 'assets/engine-icons/hermes.png',
   ),
@@ -73,6 +91,7 @@ const _engines = <String, EngineIdentity>{
     id: 'commandcode',
     label: 'Command Code',
     category: 'Code',
+    creator: 'Command Code',
     color: Color(0xfff5f5f5),
     asset: 'assets/engine-icons/commandcode.png',
   ),
@@ -80,6 +99,7 @@ const _engines = <String, EngineIdentity>{
     id: 'devin',
     label: 'Devin',
     category: 'Code',
+    creator: 'Cognition',
     color: Color(0xff8fb8ff),
     asset: 'assets/engine-icons/devin.png',
   ),
@@ -87,6 +107,7 @@ const _engines = <String, EngineIdentity>{
     id: 'muse',
     label: 'Muse',
     category: 'Code',
+    creator: 'Meta',
     color: Color(0xff0082fb),
     asset: 'assets/engine-icons/muse.png',
   ),
@@ -94,6 +115,7 @@ const _engines = <String, EngineIdentity>{
     id: 'amp',
     label: 'Amp',
     category: 'Code',
+    creator: 'Sourcegraph',
     color: Color(0xfff34e3f),
     asset: 'assets/engine-icons/amp.png',
   ),
@@ -101,6 +123,7 @@ const _engines = <String, EngineIdentity>{
     id: 'kilo',
     label: 'Kilo',
     category: 'Code',
+    creator: 'Kilo Code',
     color: Color(0xfff8f676),
     asset: 'assets/engine-icons/kilo.png',
   ),
@@ -108,6 +131,7 @@ const _engines = <String, EngineIdentity>{
     id: 'grok',
     label: 'Grok',
     category: 'Code',
+    creator: 'xAI',
     color: Colors.white,
     asset: 'assets/engine-icons/grok.png',
   ),
@@ -115,6 +139,7 @@ const _engines = <String, EngineIdentity>{
     id: 'copilot',
     label: 'Copilot',
     category: 'Code',
+    creator: 'GitHub',
     color: Color(0xff8957e5),
     asset: 'assets/engine-icons/copilot.png',
   ),
@@ -122,6 +147,7 @@ const _engines = <String, EngineIdentity>{
     id: 'agy',
     label: 'Antigravity',
     category: 'Code',
+    creator: 'Google',
     color: Color(0xff3287fb),
     asset: 'assets/engine-icons/agy.png',
   ),
@@ -140,13 +166,15 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/copper',
     label: 'Copper',
     category: 'PCB',
+    creator: 'Autonomous',
     color: Color(0xffd98a4a),
     asset: 'assets/engine-icons/copper.png',
   ),
   'autonomous/toymaker': EngineIdentity(
     id: 'autonomous/toymaker',
     label: 'Toymaker',
-    category: 'Toys',
+    category: 'CAD',
+    creator: 'Autonomous',
     color: Color(0xff5a52d8),
     asset: 'assets/engine-icons/toymaker.png',
   ),
@@ -154,6 +182,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/marp',
     label: 'Marp',
     category: 'Slides',
+    creator: 'Autonomous',
     color: Color(0xff218cdb),
     asset: 'assets/engine-icons/marp.png',
   ),
@@ -161,6 +190,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/text-to-cad',
     label: 'text-to-cad',
     category: 'CAD',
+    creator: 'Autonomous',
     color: Color(0xff3aa0e0),
     asset: 'assets/engine-icons/text-to-cad.png',
   ),

@@ -114,7 +114,7 @@ is what lets hundreds of DSHs exist without any of them touching this repo.
 |---|---|---|
 | [Marp](https://github.com/autonomous-ai/autonomous-marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
 | [Copper](https://github.com/autonomous-ai/autonomous-circuit) (PCB) | Claude Code | a Python toolchain vendored by `setup.sh`, a board viewer, phases Build / Checks / Fab written by the generation pipeline |
-| [Toymaker](https://github.com/autonomous-ai/autonomous-workshop) (Toys) | Codex | a Codex base, CAD scripts as skills, a STEP viewer found through `artifactExtensions`, phases Build / Fit / Print / Motion / Review |
+| [Toymaker](https://github.com/autonomous-ai/autonomous-workshop) (CAD) | Codex | a Codex base, CAD scripts as skills, a STEP viewer found through `artifactExtensions`, phases Build / Fit / Print / Motion / Review |
 
 Two rules hold across all of them. The pane is progressive: a harness that only produces a final
 file is not one. And the domain stays in the harness: if adding yours needs a change in this repo,

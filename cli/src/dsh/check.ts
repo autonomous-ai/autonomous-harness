@@ -52,6 +52,7 @@ export function checkDsh(path: string): CheckResult {
     ? `harness.json parses · ${manifest.id} "${manifest.name}" is a viewer package`
     : `harness.json parses · ${manifest.id} "${manifest.name}" runs on ${manifest.engine}`)
   if (!manifest.description) add('warn', viewerPkg ? 'no description' : 'no description — the picker tile will have none')
+  if (!manifest.author && !viewerPkg) add('warn', 'no author — the tile will not say who made it')
   if (viewerPkg) {
     if (manifest.workspace) add('warn', 'a viewer package has no workspace of its own; workspace.* is ignored')
     if (manifest.verdict) add('warn', 'a viewer package writes no verdict; the harness that uses it does')

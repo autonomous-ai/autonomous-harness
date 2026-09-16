@@ -42,6 +42,12 @@
       "maxLength": 24,
       "description": "The kind of thing it makes, in a word or two — PCB, 3D design, Slides. The picker's second line under the name."
     },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "description": "Spec 1.1. Who made the agent — Autonomous for everything under autonomous/, a vendor name for a built-in engine — shown beside the category on the tile."
+    },
     "formerly": {
       "type": "array",
       "maxItems": 8,

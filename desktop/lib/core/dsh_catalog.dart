@@ -20,6 +20,7 @@ class DshEntry {
     this.viewer = false,
     this.tier = 0,
     this.kind = 'agent',
+    this.author,
   });
 
   /// `owner/name` — the install directory on the machine and the wire id.
@@ -45,6 +46,9 @@ class DshEntry {
   final String kind;
   bool get isViewerPackage => kind == 'viewer';
 
+  /// Who made it — "Autonomous" for everything under autonomous/ — beside the category on the tile.
+  final String? author;
+
   static DshEntry? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final id = raw['id'];
@@ -55,6 +59,7 @@ class DshEntry {
     final name = raw['name'];
     final description = raw['description'];
     final category = raw['category'];
+    final author = raw['author'];
     final tier = raw['tier'];
     return DshEntry(
       id: id,
@@ -71,6 +76,9 @@ class DshEntry {
           : null,
       category: category is String && category.trim().isNotEmpty
           ? category.trim().substring(0, category.trim().length.clamp(0, 24))
+          : null,
+      author: author is String && author.trim().isNotEmpty
+          ? author.trim().substring(0, author.trim().length.clamp(0, 80))
           : null,
       installed: raw['installed'] == true,
       viewer: raw['viewer'] == true,

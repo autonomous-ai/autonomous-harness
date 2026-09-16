@@ -2,6 +2,7 @@
   "id": "autonomous/copper",
   "name": "Copper",
   "category": "PCB",
+  "author": "Autonomous",
   "description": "Describe a board; get a fab-ready PCB with a live board view, ordered from JLCPCB in a click.",
   "repo": "https://github.com/autonomous-ai/autonomous-circuit",
   "ref": "main",

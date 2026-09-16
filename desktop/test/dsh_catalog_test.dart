@@ -46,6 +46,7 @@ const _circuit = {
 };
 
 void main() {
+  _authorAndKindTests();
   test('an entry is read off the wire and refuses ids outside owner/name', () {
     final entry = DshEntry.fromJson(_circuit)!;
     expect(entry.id, 'autonomous/copper');
@@ -172,3 +173,35 @@ void main() {
     );
   });
 }
+
+void _authorAndKindTests() {
+  test('a row carries who made it, and a viewer package needs no engine', () {
+    final agent = DshEntry.fromJson({
+      'id': 'autonomous/text-to-cad',
+      'name': 'text-to-cad',
+      'category': 'CAD',
+      'author': '  Autonomous  ',
+      'engine': 'claude',
+      'installed': true,
+      'viewer': true,
+      'tier': 2,
+    });
+    expect(agent, isNotNull);
+    expect(agent!.author, 'Autonomous');
+    expect(agent.isViewerPackage, isFalse);
+    final viewer = DshEntry.fromJson({
+      'id': 'autonomous/cad-viewer',
+      'kind': 'viewer',
+      'name': 'CAD Viewer',
+      'installed': true,
+      'viewer': true,
+      'tier': 2,
+    });
+    expect(viewer, isNotNull);
+    expect(viewer!.isViewerPackage, isTrue);
+    expect(viewer.engine, '');
+    // an agent row without an engine is still refused
+    expect(DshEntry.fromJson({'id': 'a/b', 'name': 'B'}), isNull);
+  });
+}
+

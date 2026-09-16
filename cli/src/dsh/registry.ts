@@ -23,6 +23,7 @@ export const DshRegistryEntrySchema = z.strictObject({
   name: z.string().min(1).max(40),
   description: z.string().max(300).optional(),
   category: z.string().min(1).max(24).optional(),
+  author: z.string().min(1).max(80).optional(),
   repo: z.string().min(1).max(2048),
   ref: z.string().min(1).max(200).optional(),
   engine: z.enum(ENGINES).optional(),
