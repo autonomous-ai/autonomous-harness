@@ -336,6 +336,23 @@ void main() {
     app.dispose();
   });
 
+  test('a store tab is remembered as the store, and comes back as one', () async {
+    final storage = _MemoryStore();
+    final app = _notifier(layout: PaneLayoutStore(storage: storage));
+    app.openStore();
+    expect(app.activeSwarm.isStore, isTrue);
+    await Future<void>.delayed(Duration.zero);
+    final layout = jsonDecode(storage.values['swarm_layout_v1']!);
+    expect(layout['swarms'][0]['kind'], 'store');
+    app.dispose();
+
+    final again = _notifier(layout: PaneLayoutStore(storage: storage));
+    await again.restorePaneLayoutForTest();
+    expect(again.swarms.where((s) => s.isStore).length, 1, reason: 'the store, once');
+    expect(again.swarms.where((s) => s.isStore).single.name, 'Harness Store');
+    again.dispose();
+  });
+
   test('the layout is remembered, and machine tiles are not', () async {
     final storage = _MemoryStore();
     final app = _notifier(layout: PaneLayoutStore(storage: storage));

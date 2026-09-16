@@ -5839,6 +5839,9 @@ class AppNotifier extends ChangeNotifier {
                   (raw['name'] as String).length.clamp(0, 80),
                 )
               : Swarm.defaultName,
+          // A store tab comes back as the store; a layout saved before tabs
+          // had a kind reads as a harness tab, which is what it was.
+          kind: raw['kind'] == 'store' ? 'store' : 'harness',
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
