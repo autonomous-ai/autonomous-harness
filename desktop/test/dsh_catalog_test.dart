@@ -180,14 +180,14 @@ void _authorAndKindTests() {
       'id': 'autonomous/text-to-cad',
       'name': 'text-to-cad',
       'category': 'CAD',
-      'author': '  Autonomous  ',
+      'author': '  Jake Fitzgerald  ',
       'engine': 'claude',
       'installed': true,
       'viewer': true,
       'tier': 2,
     });
     expect(agent, isNotNull);
-    expect(agent!.author, 'Autonomous');
+    expect(agent!.author, 'Jake Fitzgerald');
     expect(agent.isViewerPackage, isFalse);
     final viewer = DshEntry.fromJson({
       'id': 'autonomous/cad-viewer',

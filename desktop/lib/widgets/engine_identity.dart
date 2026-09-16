@@ -18,9 +18,9 @@ class EngineIdentity {
   /// explain itself.
   final String? category;
 
-  /// Who made the agent — "Anthropic", "OpenAI", and "Autonomous" for every
-  /// package under autonomous/. The picker shows it beside the category so the
-  /// tile says what it makes and whose it is.
+  /// Who made the agent — "Anthropic", "OpenAI", "Autonomous" for the org's own
+  /// packages, "Jake Fitzgerald" for text-to-cad. The picker shows it beside
+  /// the category so the tile says what it makes and whose it is.
   final String? creator;
 
   const EngineIdentity({
@@ -32,7 +32,7 @@ class EngineIdentity {
     this.creator,
   });
 
-  /// "Code · OpenAI", "CAD · Jake (earthtojake)" — the tile's second line.
+  /// "Code · OpenAI", "CAD · Jake Fitzgerald" — the tile's second line.
   String? get detail {
     final parts = [category, creator].whereType<String>().where((s) => s.isNotEmpty);
     return parts.isEmpty ? null : parts.join(' · ');
@@ -190,7 +190,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/text-to-cad',
     label: 'text-to-cad',
     category: 'CAD',
-    creator: 'Autonomous',
+    creator: 'Jake Fitzgerald',
     color: Color(0xff3aa0e0),
     asset: 'assets/engine-icons/text-to-cad.png',
   ),

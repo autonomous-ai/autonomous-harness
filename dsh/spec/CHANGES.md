@@ -52,7 +52,7 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
 
 ## 2026-09-16 — `author`, and CAD as one category
 - **Change:** manifest and registry entries gain `author` (≤ 80 chars): who made the agent —
-  "Autonomous" for everything under `autonomous/`, a vendor for a built-in engine. `dsh_list`
+  "Autonomous" for the org's own packages, "Jake Fitzgerald" for text-to-cad, a vendor for a built-in engine. `dsh_list`
   forwards it; the picker shows it beside the category ("CAD · Autonomous"), and every built-in engine shows its maker the same way
   ("Code · OpenAI"). Toymaker and text-to-cad share the category "CAD".
 - **Backward compatible:** `author` is optional.
