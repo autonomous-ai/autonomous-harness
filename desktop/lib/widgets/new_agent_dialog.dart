@@ -195,6 +195,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         // actionable control once the route and its focus tree are mounted.
         _folderFocus.requestFocus();
         unawaited(_probeEngines(initialProbe: widget.initialEngineProbe));
+        // And the harnesses, whatever is selected: a package installed from
+        // a terminal since the last answer is otherwise missing from More.
+        unawaited(_probeHarnesses());
         unawaited(_loadAgentPreference());
       }
     });

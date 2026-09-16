@@ -219,11 +219,11 @@ void main() {
       );
       expect(
         app.harnessProbes,
-        0,
-        reason: 'not asked until a harness is chosen',
+        1,
+        reason: 'asked once on open, so More is never stale',
       );
       await pick(tester, 'Copper');
-      expect(app.harnessProbes, 1);
+      expect(app.harnessProbes, 2);
       expect(engineField(tester), 'autonomous/copper');
       // Chosen, it is what the More tile shows.
       expect(
