@@ -17,7 +17,7 @@ import {
   dshInstallDir, dshRootDir, installedDsh, readInstalledIndex, removeInstalledRecord, resolveInstalled,
   upsertInstalledRecord, isBrokenDsh, type InstalledDsh, type InstalledDshRecord,
 } from './installed.js'
-import { readDshManifest, type DshManifest } from './manifest.js'
+import { readDshManifest, viewerUse, type DshManifest } from './manifest.js'
 import { registryEntry } from './registry.js'
 import { runDshCommand } from './shell.js'
 
@@ -236,6 +236,25 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
         : `setup exited ${setup.code ?? setup.signal} · ${setup.lines.slice(-5).join(' · ')}`.slice(0, 2000)
       progress({ id: manifest.id, phase: 'failed', detail })
       return { ok: false, error: 'SETUP_FAILED', detail }
+    }
+  }
+
+  // The viewer it points at is part of the install: without it the tile opens with no pane. The
+  // registry names the package's repo; a package not in the registry is the author's to install
+  // first (`harness dsh install <url>`), and the doctor says so rather than the pane going blank.
+  const uses = viewerUse(manifest)
+  if (uses && !installedDsh(uses)) {
+    const entry = registryEntry(uses)
+    if (entry) {
+      opts.onLine?.(`viewer ${uses} · installing`)
+      const dep = await installDsh({ source: entry.repo, ref: entry.ref, onProgress: opts.onProgress, onLine: opts.onLine, setupTimeoutMs: opts.setupTimeoutMs })
+      if (!dep.ok) {
+        const detail = `viewer ${uses} · ${dep.detail}`.slice(0, 2000)
+        progress({ id: manifest.id, phase: 'failed', detail })
+        return { ok: false, error: dep.error, detail }
+      }
+    } else {
+      opts.onLine?.(`miss viewer ${uses} is not installed and not in the registry · install it first`)
     }
   }
 

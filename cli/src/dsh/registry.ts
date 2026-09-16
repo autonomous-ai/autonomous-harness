@@ -18,15 +18,17 @@ declare const __DSH_REGISTRY__: string | undefined
 
 export const DshRegistryEntrySchema = z.strictObject({
   id: z.string().regex(DSH_ID_RE),
+  /** `agent` (default) is a tile; `viewer` is a pane other packages use — listed, installable, never a tile. */
+  kind: z.enum(['agent', 'viewer']).optional(),
   name: z.string().min(1).max(40),
   description: z.string().max(300).optional(),
   category: z.string().min(1).max(24).optional(),
   repo: z.string().min(1).max(2048),
   ref: z.string().min(1).max(200).optional(),
-  engine: z.enum(ENGINES),
+  engine: z.enum(ENGINES).optional(),
   tier: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
   verified: z.boolean().optional(),
-})
+}).refine((entry) => entry.kind === 'viewer' || entry.engine !== undefined, { path: ['engine'], message: 'an agent entry needs an engine' })
 
 export type DshRegistryEntry = z.infer<typeof DshRegistryEntrySchema>
 

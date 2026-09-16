@@ -1475,10 +1475,11 @@ export class BackendSocket {
             seen.add(entry.id)
             rows.push({
               id: entry.id,
+              kind: entry.manifest.kind ?? 'agent',
               name: entry.manifest.name,
               description: entry.manifest.description ?? null,
               category: entry.manifest.category ?? null,
-              engine: entry.manifest.engine,
+              engine: entry.manifest.engine ?? null,
               installed: true,
               viewer: !!entry.manifest.viewer,
               tier: dshTier(entry.manifest),
@@ -1489,10 +1490,11 @@ export class BackendSocket {
             if (seen.has(entry.id)) continue
             rows.push({
               id: entry.id,
+              kind: entry.kind ?? 'agent',
               name: entry.name,
               description: entry.description ?? null,
               category: entry.category ?? null,
-              engine: entry.engine,
+              engine: entry.engine ?? null,
               installed: false,
               viewer: (entry.tier ?? 0) >= 2,
               tier: entry.tier ?? 0,
@@ -1694,6 +1696,9 @@ export class BackendSocket {
             const installed = installedDsh(payload.dsh)
             if (!installed) {
               reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is not installed on this machine` }); return
+            }
+            if (installed.manifest.kind === 'viewer') {
+              reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} is a viewer package, not an agent` }); return
             }
             if (installed.manifest.engine !== engine) {
               reply(type, requestId, { error: 'INVALID_DSH', detail: `${payload.dsh} runs on ${installed.manifest.engine}, not ${engine}` }); return

@@ -1,18 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://harness.autonomous.ai/dsh/spec/1/harness.schema.json",
-  "title": "Domain-specific harness manifest (harness.json), spec 1",
+  "title": "Domain-specific harness manifest (harness.json), spec 1 (with the 1.1 additions: kind, viewer.use)",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "spec",
     "id",
-    "name",
-    "engine"
+    "name"
   ],
   "properties": {
     "spec": {
       "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "agent",
+        "viewer"
+      ],
+      "description": "Spec 1.1. agent (default): a harness, one tile in the picker. viewer: a pane other packages point at with viewer.use; no engine, never a tile."
     },
     "id": {
       "type": "string",
@@ -33,7 +40,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 24,
-      "description": "The kind of thing it makes, in a word or two \u2014 PCB, 3D design, Slides. The picker's second line under the name."
+      "description": "The kind of thing it makes, in a word or two — PCB, 3D design, Slides. The picker's second line under the name."
     },
     "formerly": {
       "type": "array",
@@ -46,7 +53,7 @@
     },
     "engine": {
       "type": "string",
-      "description": "The base engine this harness runs on: claude, codex, cursor, \u2026 (one of the CLI's ENGINES)."
+      "description": "The base engine an agent package runs on: claude, codex, cursor, … (one of the CLI's ENGINES). Absent for a viewer package."
     },
     "workspace": {
       "type": "object",
@@ -112,34 +119,94 @@
       }
     },
     "viewer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "command",
-        "url"
-      ],
-      "properties": {
-        "command": {
-          "type": "string",
-          "description": "Long-running; env HARNESS_VIEWER_PORT, HARNESS_WORKSPACE, HARNESS_DSH_DIR; cwd = install dir."
+      "description": "Spec 1.1: either the viewer this package ships (command + url) or, for a harness, the viewer package it uses (use).",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "command",
+            "url"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Long-running; env HARNESS_VIEWER_PORT, HARNESS_WORKSPACE, HARNESS_DSH, HARNESS_DSH_DIR, HARNESS_VIEWER, HARNESS_VIEWER_DIR."
+            },
+            "url": {
+              "type": "string",
+              "description": "Template: ${port} and ${artifact} (url-encoded)."
+            },
+            "artifactExtensions": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "pattern": "^\\.[A-Za-z0-9]+$"
+              }
+            }
+          }
         },
-        "url": {
-          "type": "string",
-          "description": "Template with ${port} and ${artifact} (url-encoded workspace-relative path, or empty)."
-        },
-        "artifactExtensions": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^\\.[A-Za-z0-9]+$"
-          },
-          "description": "The newest file under the workspace with one of these extensions is ${artifact} when the verdict names none."
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "use"
+          ],
+          "properties": {
+            "use": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$",
+              "description": "A viewer package's id. Installed with this harness (from the registry) and run in its own directory."
+            },
+            "url": {
+              "type": "string",
+              "description": "Optional: narrows the package's URL template."
+            },
+            "artifactExtensions": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "pattern": "^\\.[A-Za-z0-9]+$"
+              }
+            }
+          }
         }
-      }
+      ]
     },
     "verdict": {
       "type": "string",
       "description": "Workspace-relative path of the verdict file. Default .harness/verdict.json."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "viewer"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "viewer"
+        ],
+        "not": {
+          "required": [
+            "engine"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "engine"
+        ]
+      }
+    }
+  ]
 }

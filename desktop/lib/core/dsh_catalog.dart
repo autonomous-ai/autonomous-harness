@@ -19,6 +19,7 @@ class DshEntry {
     this.installed = false,
     this.viewer = false,
     this.tier = 0,
+    this.kind = 'agent',
   });
 
   /// `owner/name` — the install directory on the machine and the wire id.
@@ -39,12 +40,18 @@ class DshEntry {
   final bool viewer;
   final int tier;
 
+  /// `agent` — a harness, one tile; `viewer` — a pane other packages point at
+  /// with `viewer.use`, installed alongside them and never a tile (spec 1.1).
+  final String kind;
+  bool get isViewerPackage => kind == 'viewer';
+
   static DshEntry? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final id = raw['id'];
-    final engine = raw['engine'];
+    final kind = raw['kind'] == 'viewer' ? 'viewer' : 'agent';
+    final engine = kind == 'viewer' ? '' : raw['engine'];
     if (id is! String || !_validId(id)) return null;
-    if (engine is! String || engine.isEmpty || engine.length > 64) return null;
+    if (kind != 'viewer' && (engine is! String || engine.isEmpty || engine.length > 64)) return null;
     final name = raw['name'];
     final description = raw['description'];
     final category = raw['category'];
@@ -54,7 +61,8 @@ class DshEntry {
       name: name is String && name.trim().isNotEmpty
           ? name.trim().substring(0, name.trim().length.clamp(0, 40))
           : id.substring(id.indexOf('/') + 1),
-      engine: engine,
+      engine: engine is String ? engine : '',
+      kind: kind,
       description: description is String && description.trim().isNotEmpty
           ? description.trim().substring(
               0,

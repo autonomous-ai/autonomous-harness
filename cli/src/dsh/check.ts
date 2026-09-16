@@ -9,7 +9,7 @@
  */
 import { existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { readDshManifest, type DshManifest } from './manifest.js'
+import { isViewerPackage, readDshManifest, viewerUse, type DshManifest } from './manifest.js'
 import { skillDirsIn } from './materialize.js'
 
 export interface CheckLine {
@@ -47,8 +47,15 @@ export function checkDsh(path: string): CheckResult {
     return { ok: false, lines, manifest: null }
   }
   const manifest = read.manifest
-  add('ok', `harness.json parses · ${manifest.id} "${manifest.name}" runs on ${manifest.engine}`)
-  if (!manifest.description) add('warn', 'no description — the picker tile will have none')
+  const viewerPkg = isViewerPackage(manifest)
+  add('ok', viewerPkg
+    ? `harness.json parses · ${manifest.id} "${manifest.name}" is a viewer package`
+    : `harness.json parses · ${manifest.id} "${manifest.name}" runs on ${manifest.engine}`)
+  if (!manifest.description) add('warn', viewerPkg ? 'no description' : 'no description — the picker tile will have none')
+  if (viewerPkg) {
+    if (manifest.workspace) add('warn', 'a viewer package has no workspace of its own; workspace.* is ignored')
+    if (manifest.verdict) add('warn', 'a viewer package writes no verdict; the harness that uses it does')
+  }
 
   const ws = manifest.workspace
   if (ws?.template) {
@@ -80,7 +87,7 @@ export function checkDsh(path: string): CheckResult {
     if (!dirs.length) add('fail', `agent.skills ${root} has no SKILL.md-bearing directory`)
     else add('ok', `agent.skills ${root}/ · ${dirs.map((d) => d.slice(full.length + 1) || '.').join(', ')}`)
   }
-  if (!agent?.skills?.length) add('warn', 'no agent.skills — a tier-0 harness usually ships at least one')
+  if (!agent?.skills?.length && !viewerPkg) add('warn', 'no agent.skills — a tier-0 harness usually ships at least one')
   for (const [key, value] of Object.entries(agent?.env ?? {})) {
     if (key.startsWith('HARNESS_')) add('fail', `agent.env.${key} is reserved (HARNESS_* is set by Harness)`)
     else if (/\$\{(?!dsh\}|workspace\}|home\})/.test(value)) add('warn', `agent.env.${key} uses a variable Harness does not expand: ${value}`)
@@ -96,7 +103,11 @@ export function checkDsh(path: string): CheckResult {
   if (!manifest.toolchain?.doctor) add('warn', 'no toolchain.doctor — Harness cannot tell the user what is missing before a create')
 
   const viewer = manifest.viewer
-  if (viewer) {
+  const uses = viewerUse(manifest)
+  if (uses) {
+    add('ok', `viewer.use ${uses} — installed with this harness; its command and URL come from that package`)
+    if (viewer && 'url' in viewer && viewer.url && !viewer.url.includes('${port}')) add('fail', 'viewer.url has no ${port}: Harness picks the port, the URL must use it')
+  } else if (viewer && 'command' in viewer) {
     const p = commandPath(dir, viewer.command)
     if (p === null) add('ok', 'viewer.command is a shell line')
     else if (isFile(p)) add('ok', `viewer.command ${viewer.command}`)

@@ -1,0 +1,11 @@
+{
+  "id": "autonomous/text-to-cad",
+  "name": "text-to-cad",
+  "category": "CAD",
+  "description": "Jake's text-to-cad skills (earthtojake/text-to-cad), pinned: describe a part, get STEP with mesh exports, drawings, robot files and G-code, live in the CAD Viewer.",
+  "repo": "https://github.com/autonomous-ai/autonomous-text-to-cad",
+  "ref": "main",
+  "engine": "claude",
+  "tier": 2,
+  "verified": true
+}

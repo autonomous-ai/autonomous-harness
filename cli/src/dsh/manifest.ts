@@ -29,8 +29,30 @@ const relativePath = z.string().min(1).max(512).refine(insideHarness, {
 })
 const command = z.string().min(1).max(4096)
 
+/** A viewer a harness ships itself: the daemon runs `command` in the harness's install directory. */
+const OwnViewerSchema = z.strictObject({
+  command,
+  url: z.string().min(1).max(2048),
+  artifactExtensions: z.array(z.string().regex(/^\.[A-Za-z0-9]+$/)).max(32).optional(),
+})
+/**
+ * A viewer taken from another package (spec 1.1): `use` names a viewer package by id — installed
+ * like a harness, run in ITS directory — and the harness may narrow the URL and the extensions.
+ */
+const UsedViewerSchema = z.strictObject({
+  use: z.string().regex(DSH_ID_RE, 'viewer.use must be a package id, owner/name'),
+  url: z.string().min(1).max(2048).optional(),
+  artifactExtensions: z.array(z.string().regex(/^\.[A-Za-z0-9]+$/)).max(32).optional(),
+})
+
 export const DshManifestSchema = z.strictObject({
   spec: z.literal(1),
+  /**
+   * What the package is (spec 1.1). An `agent` is a harness: a base engine plus skills, toolchain and
+   * verdict, one tile in the picker. A `viewer` is a pane other packages point at with `viewer.use`;
+   * it has no engine and is never a tile. Absent means agent.
+   */
+  kind: z.enum(['agent', 'viewer']).optional(),
   id: z.string().regex(DSH_ID_RE, 'id must be owner/name in lowercase letters, digits and dashes'),
   name: z.string().min(1).max(40),
   description: z.string().max(300).optional(),
@@ -38,7 +60,8 @@ export const DshManifestSchema = z.strictObject({
   category: z.string().min(1).max(24).optional(),
   /** Ids this harness answered to before: an agent created under one keeps its harness across a rename. */
   formerly: z.array(z.string().regex(DSH_ID_RE)).max(8).optional(),
-  engine: z.enum(ENGINES),
+  /** The base engine. Required for an agent; a viewer package has none. */
+  engine: z.enum(ENGINES).optional(),
   workspace: z.strictObject({
     template: relativePath.optional(),
     marker: relativePath.optional(),
@@ -54,15 +77,38 @@ export const DshManifestSchema = z.strictObject({
     setup: command.optional(),
     doctor: command.optional(),
   }).optional(),
-  viewer: z.strictObject({
-    command,
-    url: z.string().min(1).max(2048),
-    artifactExtensions: z.array(z.string().regex(/^\.[A-Za-z0-9]+$/)).max(32).optional(),
-  }).optional(),
+  viewer: z.union([OwnViewerSchema, UsedViewerSchema]).optional(),
   verdict: relativePath.optional(),
+}).superRefine((manifest, ctx) => {
+  if (manifest.kind === 'viewer') {
+    if (!manifest.viewer || !('command' in manifest.viewer)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['viewer'], message: 'a viewer package must ship viewer.command and viewer.url' })
+    }
+    if (manifest.engine) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['engine'], message: 'a viewer package has no engine' })
+    if (manifest.agent) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['agent'], message: 'a viewer package has no agent' })
+  } else if (!manifest.engine) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['engine'], message: 'an agent package needs a base engine' })
+  }
 })
 
 export type DshManifest = z.infer<typeof DshManifestSchema>
+export type DshViewerSpec = z.infer<typeof OwnViewerSchema>
+export type DshViewerUse = z.infer<typeof UsedViewerSchema>
+
+/** True for a viewer package: a pane others point at, never a tile. */
+export function isViewerPackage(manifest: DshManifest): boolean {
+  return manifest.kind === 'viewer'
+}
+
+/** The id of the viewer package this harness points at, or null when it ships its own (or none). */
+export function viewerUse(manifest: DshManifest): string | null {
+  return manifest.viewer && 'use' in manifest.viewer ? manifest.viewer.use : null
+}
+
+/** The base engine of an agent package; a viewer package answers null. */
+export function dshEngine(manifest: DshManifest): DshManifest['engine'] | null {
+  return manifest.engine ?? null
+}
 
 export type ManifestResult =
   | { ok: true; manifest: DshManifest }
@@ -112,7 +158,7 @@ export function expandDshValue(value: string, vars: DshVars): string {
 
 /** Which tier the manifest declares, by what it ships — the desktop shows this on the tile. */
 export function dshTier(manifest: DshManifest): 0 | 1 | 2 {
-  if (manifest.viewer) return 2
+  if (manifest.viewer) return 2 // its own, or one it uses: either way a pane opens beside it
   if (manifest.verdict) return 1
   return 0
 }
@@ -123,6 +169,6 @@ export function dshVerdictPath(manifest: DshManifest): string {
 }
 
 /** Where a base engine looks for project-level skills. */
-export function dshSkillsDirFor(engine: DshManifest['engine']): string {
+export function dshSkillsDirFor(engine: NonNullable<DshManifest['engine']>): string {
   return engine === 'claude' ? '.claude/skills' : '.agents/skills'
 }

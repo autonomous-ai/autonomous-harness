@@ -1,0 +1,11 @@
+{
+  "id": "autonomous/cad-viewer",
+  "kind": "viewer",
+  "name": "CAD Viewer",
+  "category": "3D",
+  "description": "Jake's CAD Viewer (earthtojake/text-to-cad) as a Harness pane: STEP, GLB, STL, 3MF, DXF, URDF, SRDF and SDF, with MoveIt2 inverse kinematics.",
+  "repo": "https://github.com/autonomous-ai/autonomous-cad-viewer",
+  "ref": "main",
+  "tier": 2,
+  "verified": true
+}

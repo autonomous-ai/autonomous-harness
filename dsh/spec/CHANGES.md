@@ -24,3 +24,21 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
   `formerly` (≤ 8); the daemon resolves an agent's `HARNESS_DSH` through it, so an agent created as
   `autonomous/circuit` or `autonomous/workshop` keeps its harness, viewer and verdict after the
   rename. Without it, such an agent draws by its name and runs as its plain engine.
+
+## 2026-09-16 — spec 1.1: viewer packages and `viewer.use`
+- **Change:** a package declares its `kind`: `agent` (default; a harness, a tile) or `viewer` (a
+  pane other packages point at; no `engine`, never a tile, ships `viewer.command` + `viewer.url`).
+  A harness may declare `"viewer": { "use": "<viewer id>" }` instead of its own viewer, optionally
+  narrowing `url` and `artifactExtensions`. The daemon installs the used viewer with the harness
+  (from the registry), runs its command in the viewer's own directory with `HARNESS_VIEWER` and
+  `HARNESS_VIEWER_DIR` added to the usual env, and publishes the URL exactly as for an own viewer.
+  Registry entries carry `kind` too; `dsh_list` rows forward it so the picker skips viewers.
+- **Why:** one viewer, many agents. Solid's 3D pane is a vendored copy of text-to-cad's CAD Viewer;
+  text-to-cad itself, and any CAD agent after it, wants the same pane. A viewer that is its own
+  package is installed once, credited once, and updated with a version bump instead of a re-vendor.
+- **Backward compatible:** yes — `kind` absent is an agent, `viewer` with `command` is unchanged,
+  every existing manifest and registry entry parses as before.
+- **Mechanism:** `cli/src/dsh/manifest.ts` (`kind`, viewer union, `viewerUse`), `viewer.ts`
+  (`resolveViewer`), `install.ts` (dependency install), `check.ts`, `backendSocket.ts` (`kind` on
+  rows; a viewer package refused as an agent on create).
+

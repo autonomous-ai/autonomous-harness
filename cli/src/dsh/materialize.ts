@@ -94,7 +94,7 @@ function writeInstructions(dsh: InstalledDsh, workspace: string, result: Materia
       result.created.push(`${AGENTS_FILE} (appended)`)
     }
   }
-  if (dsh.manifest.engine === 'claude') {
+  if (dshBaseEngine(dsh) === 'claude') {
     const claude = join(workspace, CLAUDE_FILE)
     if (!existsSync(claude)) {
       writeFileSync(claude, `${CLAUDE_IMPORT_LINE}\n`)
@@ -114,7 +114,7 @@ function writeInstructions(dsh: InstalledDsh, workspace: string, result: Materia
 function linkSkills(dsh: InstalledDsh, workspace: string, result: MaterializeResult): void {
   const roots = dsh.manifest.agent?.skills ?? []
   if (!roots.length) return
-  const skillsDir = join(workspace, dshSkillsDirFor(dsh.manifest.engine))
+  const skillsDir = join(workspace, dshSkillsDirFor(dshBaseEngine(dsh)))
   ensureDir(skillsDir)
   for (const root of roots) {
     const dirs = skillDirsIn(join(dsh.realDir, root))
@@ -145,8 +145,17 @@ export function resolveDshCommand(dsh: Pick<InstalledDsh, 'realDir'>, command: s
   return `'${inside.replace(/'/g, `'\\''`)}'`
 }
 
+/** The engine an agent package runs on. A viewer package is refused before this is asked. */
+function dshBaseEngine(dsh: InstalledDsh): NonNullable<InstalledDsh['manifest']['engine']> {
+  return dsh.manifest.engine ?? 'claude'
+}
+
 export async function materializeWorkspace(dsh: InstalledDsh, workspace: string): Promise<MaterializeResult> {
   const result: MaterializeResult = { created: [], kept: [], warnings: [], initLines: [] }
+  if (dsh.manifest.kind === 'viewer') {
+    result.warnings.push(`${dsh.id} is a viewer package; it has no workspace to lay out`)
+    return result
+  }
   const ws = dsh.manifest.workspace
   const marker = ws?.marker ? join(workspace, ws.marker) : null
   const fresh = marker ? !existsSync(marker) : false

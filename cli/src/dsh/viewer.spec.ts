@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
 import type { InstalledDsh } from './installed.js'
-import { DshViewerManager, buildViewerUrl } from './viewer.js'
+import { DshViewerManager, buildViewerUrl, resolveViewer } from './viewer.js'
 
 function fakeChild(): ChildProcess & { exitWith: (code: number) => void } {
   const child = new EventEmitter() as ChildProcess & { exitWith: (code: number) => void }
@@ -118,5 +118,54 @@ describe('DshViewerManager', () => {
     await manager!.stop('a1')
     expect(urls.at(-1)).toBeNull()
     expect(manager!.url('a1')).toBeNull()
+  })
+})
+
+describe('viewer.use (spec 1.1)', () => {
+  const pkg: InstalledDsh = {
+    id: 'acme/viewer', dir: '/i/acme/viewer', realDir: '/real/acme/viewer', source: '', ref: null, commit: null, linked: false, installedAt: 0,
+    manifest: { spec: 1, kind: 'viewer', id: 'acme/viewer', name: 'Viewer', viewer: { command: 'viewer.sh', url: 'http://127.0.0.1:${port}/?file=${artifact}', artifactExtensions: ['.step', '.glb'] } },
+  }
+  const lookup = (id: string) => (id === 'acme/viewer' ? pkg : undefined)
+
+  it('resolves a used viewer to the package: its command and directory, the harness narrowing url and extensions', () => {
+    const own = resolveViewer(dsh({ command: 'mine.sh', url: 'http://127.0.0.1:${port}/' }), lookup)
+    expect(own.ok && own.viewer).toEqual({ id: 'acme/thing', dir: '/i/acme/thing', command: 'mine.sh', url: 'http://127.0.0.1:${port}/', artifactExtensions: [] })
+    const used = resolveViewer(dsh({ use: 'acme/viewer' }), lookup)
+    expect(used.ok && used.viewer).toEqual({ id: 'acme/viewer', dir: '/real/acme/viewer', command: 'viewer.sh', url: 'http://127.0.0.1:${port}/?file=${artifact}', artifactExtensions: ['.step', '.glb'] })
+    const narrowed = resolveViewer(dsh({ use: 'acme/viewer', artifactExtensions: ['.step'] }), lookup)
+    expect(narrowed.ok && narrowed.viewer.artifactExtensions).toEqual(['.step'])
+    const missing = resolveViewer(dsh({ use: 'acme/nope' }), lookup)
+    expect(missing.ok).toBe(false)
+    expect(!missing.ok && missing.error).toContain('not installed')
+    const notViewer = resolveViewer(dsh({ use: 'acme/viewer' }), () => dsh({ command: 'x', url: 'http://127.0.0.1:${port}/' }))
+    expect(!notViewer.ok && notViewer.error).toContain('not a viewer package')
+  })
+
+  it('launches a used viewer in the package directory, naming both the harness and the viewer in the env', async () => {
+    const spawned: Array<{ env: Record<string, string>; cwd: string }> = []
+    const urls: Array<string | null> = []
+    const manager = new DshViewerManager({
+      onUrl: (_a, url) => urls.push(url),
+      freePort: async () => 4800,
+      waitForPort: async () => true,
+      spawn: ((_script: string, o: { cwd: string; env?: Record<string, string> }) => { spawned.push({ env: o.env ?? {}, cwd: o.cwd }); return fakeChild() }) as typeof import('./shell.js').spawnDshCommand,
+      lookup,
+    })
+    try {
+      await manager.start('a9', dsh({ use: 'acme/viewer' }), '/ws')
+      expect(spawned).toHaveLength(1)
+      expect(spawned[0]!.cwd).toBe('/real/acme/viewer')
+      expect(spawned[0]!.env).toMatchObject({ HARNESS_DSH: 'acme/thing', HARNESS_DSH_DIR: '/i/acme/thing', HARNESS_VIEWER: 'acme/viewer', HARNESS_VIEWER_DIR: '/real/acme/viewer', HARNESS_WORKSPACE: '/ws', HARNESS_VIEWER_PORT: '4800' })
+      expect(urls).toEqual(['http://127.0.0.1:4800/?file='])
+      // a harness whose viewer package is missing gets no pane and no crash
+      const logs: string[] = []
+      const bare = new DshViewerManager({ onUrl: () => undefined, log: (l) => logs.push(l), lookup: () => undefined })
+      await bare.start('a10', dsh({ use: 'acme/viewer' }), '/ws')
+      expect(bare.url('a10')).toBeNull()
+      expect(logs.join(' ')).toContain('not installed')
+    } finally {
+      await manager.stopAll()
+    }
   })
 })

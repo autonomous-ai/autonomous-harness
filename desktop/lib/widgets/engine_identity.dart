@@ -157,6 +157,13 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xff218cdb),
     asset: 'assets/engine-icons/marp.png',
   ),
+  'autonomous/text-to-cad': EngineIdentity(
+    id: 'autonomous/text-to-cad',
+    label: 'text-to-cad',
+    category: 'CAD',
+    color: Color(0xff3aa0e0),
+    asset: 'assets/engine-icons/text-to-cad.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -166,6 +173,7 @@ const knownHarnessBase = <String, String>{
   'autonomous/copper': 'claude',
   'autonomous/solid': 'codex',
   'autonomous/marp': 'claude',
+  'autonomous/text-to-cad': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

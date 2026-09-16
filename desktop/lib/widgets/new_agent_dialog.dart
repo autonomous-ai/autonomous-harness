@@ -237,7 +237,12 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     if (machine != null &&
         machine.dsh.loaded &&
         machine.dsh.entries.isNotEmpty) {
-      return machine.dsh.entries;
+      // A viewer package is installed beside the harnesses that use it; it is
+      // not something to create.
+      return [
+        for (final entry in machine.dsh.entries)
+          if (!entry.isViewerPackage) entry,
+      ];
     }
     return [
       for (final identity in knownHarnesses)

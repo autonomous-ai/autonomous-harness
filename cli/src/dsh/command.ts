@@ -35,7 +35,7 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       const rows: string[] = []
       for (const dsh of installed) {
         seen.add(dsh.id)
-        rows.push(`  ${dsh.id.padEnd(28)} ${dsh.manifest.name.padEnd(12)} on ${dsh.manifest.engine.padEnd(8)} tier ${dshTier(dsh.manifest)}  installed${dsh.linked ? ' (linked)' : ''} · ${dsh.dir}`)
+        rows.push(`  ${dsh.id.padEnd(28)} ${dsh.manifest.name.padEnd(12)} ${(dsh.manifest.kind === 'viewer' ? 'viewer' : `on ${dsh.manifest.engine}`).padEnd(11)} tier ${dshTier(dsh.manifest)}  installed${dsh.linked ? ' (linked)' : ''} · ${dsh.dir}`)
       }
       for (const row of broken) {
         seen.add(row.id)
@@ -43,7 +43,7 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       }
       for (const entry of registry) {
         if (seen.has(entry.id)) continue
-        rows.push(`  ${entry.id.padEnd(28)} ${entry.name.padEnd(12)} on ${entry.engine.padEnd(8)} tier ${entry.tier ?? '?'}  available · ${entry.repo}`)
+        rows.push(`  ${entry.id.padEnd(28)} ${entry.name.padEnd(12)} ${(entry.kind === 'viewer' ? 'viewer' : `on ${entry.engine}`).padEnd(11)} tier ${entry.tier ?? '?'}  available · ${entry.repo}`)
       }
       console.log(rows.length ? rows.join('\n') : '  (nothing installed, registry empty)')
       return 0
@@ -63,7 +63,7 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
         onLine: (line) => console.log(`    ${line}`),
       })
       if (!result.ok) { console.error(`harness dsh install failed · ${result.error} · ${result.detail}`); return 1 }
-      console.log(`Installed ${result.installed.id} (${result.installed.manifest.name}, runs on ${result.installed.manifest.engine}) at ${result.installed.dir}`)
+      console.log(`Installed ${result.installed.id} (${result.installed.manifest.name}, ${result.installed.manifest.kind === 'viewer' ? 'a viewer package' : `runs on ${result.installed.manifest.engine}`}) at ${result.installed.dir}`)
       return 0
     }
     case 'doctor': {

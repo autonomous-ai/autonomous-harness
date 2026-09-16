@@ -53,6 +53,28 @@ Launch env, always: `HARNESS_DSH=<id>`, `HARNESS_DSH_DIR=<install dir>`,
 `HARNESS_WORKSPACE=<workspace>`, plus `agent.env` expanded. Set through tmux `-e`, the same channel
 grids and Codex profiles use, on create AND on every relaunch (`buildLaunchOverrides`).
 
+## Viewer packages (spec 1.1)
+
+A viewer can be a package of its own, pointed at by any number of harnesses:
+
+```jsonc
+// harness.json of a viewer package
+{ "spec": 1, "kind": "viewer", "id": "autonomous/cad-viewer", "name": "CAD Viewer",
+  "toolchain": { "setup": "setup.sh", "doctor": "doctor.sh" },
+  "viewer": { "command": "viewer.sh", "url": "http://127.0.0.1:${port}/?file=${artifact}",
+              "artifactExtensions": [".step", ".stp", ".glb", ".stl", ".3mf"] } }
+
+// harness.json of an agent that uses it
+{ "spec": 1, "id": "autonomous/text-to-cad", "name": "text-to-cad", "engine": "claude",
+  "viewer": { "use": "autonomous/cad-viewer" } }
+```
+
+A viewer package has no engine, no workspace and no verdict, and is never a tile. `harness dsh
+install` of a harness that `use`s a viewer installs the viewer too (by registry id). At launch the
+daemon runs the viewer's command in the VIEWER's directory with the usual env plus
+`HARNESS_VIEWER=<viewer id>` and `HARNESS_VIEWER_DIR=<its install dir>`; `HARNESS_DSH` and
+`HARNESS_DSH_DIR` still name the harness. The harness may narrow `url` and `artifactExtensions`.
+
 ## `.harness/verdict.json`
 
 ```jsonc
