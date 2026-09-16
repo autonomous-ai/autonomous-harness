@@ -120,3 +120,15 @@ Two rules hold across all of them. The pane is progressive: a harness that only 
 file is not one. And the domain stays in the harness: if adding yours needs a change in this repo,
 that is a spec change, and [`spec/README.md`](spec/README.md) with its schemas is where the
 contract lives. Changes to it are appended to [`spec/CHANGES.md`](spec/CHANGES.md).
+
+## Stewardship of packages built on other people's work
+
+Some first-party packages wrap a project Autonomous did not write: Marp (Yuki Hattori and the Marp
+team), text-to-cad and the CAD Viewer (Jake Fitzgerald). Each carries the upstream licence and a
+`THIRD_PARTY_NOTICES.md`, changes nothing upstream, names the author on its tile (`author` in the
+manifest), and says in its README that Autonomous wrote the wrapper on the project's behalf to
+bootstrap the catalogue. The ideal end state is that maintainers own their own Harness package: any
+upstream maintainer can ask, on this repository's issues, to have the wrapper repository transferred
+and the registry entry pointed at theirs. Until then bugs in the project go upstream and bugs in the
+wrapper come here.
+

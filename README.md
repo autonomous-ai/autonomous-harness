@@ -82,7 +82,7 @@ Every layer has a contract, a starter and a check, and most ways in never touch 
 
 | You could | Start at | The bar |
 |---|---|---|
-| **Build a harness** for your domain and list it | [`dsh/README.md`](dsh/README.md), [`dsh/starter-dsh/`](dsh/starter-dsh/), then a file in [`dsh/registry/`](dsh/registry/) | `harness dsh check .` green; an afternoon from the starter |
+| **Build a harness** for your domain, or bring your own project in | [`dsh/README.md`](dsh/README.md), [`dsh/starter-dsh/`](dsh/starter-dsh/), then a file in [`dsh/registry/`](dsh/registry/) | `harness dsh check .` green; an afternoon from the starter. Marp and text-to-cad are wrappers Autonomous wrote to show the shape; their maintainers can take them over |
 | **Bring your agent** as a CLI engine | [`cli/src/engines/README.md`](cli/src/engines/README.md) | a recorded session of the real binary; the fixtures pass |
 | **Bring your agent** as an API provider | [`provider/README.md`](provider/README.md) | eight JSON-RPC methods; the conformance runner, zero failures |
 | **A terminal multiplexer** | [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-multiplexer) | `npm run test:tmux-real`; open an issue first |
