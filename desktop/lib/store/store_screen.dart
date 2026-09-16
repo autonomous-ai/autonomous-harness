@@ -93,7 +93,11 @@ class _StoreTabState extends State<StoreTab> {
       // per-machine fact, and an install started from a terminal is exactly
       // what a stored answer misses.
       for (final machine in widget.notifier.machineStates.values) {
-        unawaited(widget.notifier.probeDsh(machine.machine.machineId, force: true));
+        final id = machine.machine.machineId;
+        unawaited(widget.notifier.probeDsh(id, force: true));
+        // The engine rows read the same probe the New Harness dialog does; a
+        // machine that has never been asked would show Claude Code as absent.
+        unawaited(widget.notifier.probeEngines(id, force: true));
       }
     });
   }

@@ -55,9 +55,12 @@ class _Notifier extends AppNotifier {
   final installs = <(String, String)>[];
   final removals = <(String, String)>[];
   int probes = 0;
+  int engineProbes = 0;
 
   @override
-  Future<void> probeEngines(String machineId, {bool force = false}) async {}
+  Future<void> probeEngines(String machineId, {bool force = false}) async {
+    engineProbes++;
+  }
 
   @override
   Future<void> probeDsh(String machineId, {bool force = false}) async {
@@ -162,6 +165,7 @@ void main() {
   testWidgets('the shelf is the catalog as cards, viewers apart, ratings on', (tester) async {
     final (notifier, store) = await open(tester);
     expect(notifier.probes, 1, reason: 'every machine is asked again on open');
+    expect(notifier.engineProbes, 1, reason: 'and about its engines, for the Code shelf');
     expect(store.ratingReads, 1);
     expect(find.byKey(const ValueKey('store-card:autonomous/marp')), findsOneWidget);
     expect(find.byKey(const ValueKey('store-card:autonomous/typst')), findsOneWidget);

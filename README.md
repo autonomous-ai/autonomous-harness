@@ -12,7 +12,8 @@ is made.
 ## One app, every agent
 
 An agent is the who: Claude Code, Codex, Cursor and eleven more for code, and the specialized ones,
-Toymaker, Copper and Marp, each an agent plus the skills, toolchain and viewer of its domain. Harness
+Toymaker, Copper, Marp, Typst, Blender, MuJoCo and more, each an agent plus the skills, toolchain
+and viewer of its domain. Harness
 never wraps an agent; it reads the transcript each one already writes and installs the vendor's own
 hooks, so your credentials stay in your `~/.claude`, `~/.codex`, and so on. A harness is one
 session of an agent running somewhere: a machine, a project, a pane, and for the domains beyond
@@ -24,6 +25,15 @@ code, the viewer beside it. Pick an agent, and yours is a git repository away.
 | **CAD** | <img src=".github/assets/engines/toymaker.png" height="28" alt="Toymaker"> Toymaker &nbsp;&nbsp; <img src=".github/assets/engines/text-to-cad.png" height="28" alt="text-to-cad"> text-to-cad, by Jake Fitzgerald |
 | **PCB** | <img src=".github/assets/engines/copper.png" height="28" alt="Copper"> Copper |
 | **Slides** | <img src=".github/assets/engines/marp.png" height="28" alt="Marp"> Marp |
+| **Documents** | <img src=".github/assets/engines/typst.png" height="28" alt="Typst"> Typst |
+| **Diagrams** | <img src=".github/assets/engines/excalidraw.png" height="28" alt="Excalidraw"> Excalidraw |
+| **Notebooks** | <img src=".github/assets/engines/marimo.png" height="28" alt="marimo"> marimo |
+| **Video** | <img src=".github/assets/engines/remotion.png" height="28" alt="Remotion"> Remotion &nbsp;&nbsp; <img src=".github/assets/engines/manim.png" height="28" alt="Manim"> Manim |
+| **3D** | <img src=".github/assets/engines/blender.png" height="28" alt="Blender"> Blender |
+| **Simulation** | <img src=".github/assets/engines/mujoco.png" height="28" alt="MuJoCo"> MuJoCo |
+
+All of them, and every coding agent, are in the **Harness Store**: a tab in the app with a page per
+agent, where it is installed, Get, Open and Remove per machine, ratings and reviews.
 
 ## Every machine you own
 
