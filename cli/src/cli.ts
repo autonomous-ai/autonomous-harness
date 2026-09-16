@@ -74,7 +74,7 @@ import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath } from './dsh/manifest.js'
 import { registryEntry } from './dsh/registry.js'
-import { installDsh, resolveInstallSource } from './dsh/install.js'
+import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
 import { DshViewerManager } from './dsh/viewer.js'
@@ -2107,6 +2107,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
+  backend.onDshRemove = (id) => removeDsh(id)
   backend.onDshInstall = async ({ id, url, ref }, progress) => {
     const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
     if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
@@ -3151,6 +3152,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
   // written by whoever spawned us — so a parent that died mid-handover left a daemon nothing could

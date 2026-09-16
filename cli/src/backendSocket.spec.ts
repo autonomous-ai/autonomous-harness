@@ -657,6 +657,29 @@ describe('BackendSocket outbound queue', () => {
     await socket.stop()
   })
 
+  it('dsh_remove uninstalls through the daemon and refuses a malformed id', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:store', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    const removed: string[] = []
+    socket.onDshRemove = (id) => { removed.push(id); return id === 'autonomous/marp' ? { ok: true } : { ok: false, error: 'NOT_INSTALLED', detail: `${id} is not installed` } }
+
+    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-1', id: 'autonomous/marp' } })
+    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-2', id: 'autonomous/none' } })
+    socket.handleLocalFrame('local:store', { type: 'dsh_remove', payload: { requestId: 'rm-3', id: '../../etc' } })
+
+    await vi.waitFor(() => expect(frames.filter((f) => f.type === 'dsh_remove_result')).toHaveLength(3))
+    const results = frames.filter((f) => f.type === 'dsh_remove_result').map((f) => f.payload as Record<string, unknown>)
+    expect(results).toEqual([
+      expect.objectContaining({ requestId: 'rm-1', ok: true, id: 'autonomous/marp' }),
+      expect.objectContaining({ requestId: 'rm-2', error: 'NOT_INSTALLED' }),
+      expect.objectContaining({ requestId: 'rm-3', error: 'INVALID_DSH' }),
+    ])
+    expect(removed).toEqual(['autonomous/marp', 'autonomous/none'])
+    await socket.unregisterLocalClient('local:store')
+    await socket.stop()
+  })
+
   it('does not let a slow engines_probe block agent_create on the same connection', async () => {
     const socket = new BackendSocket('token')
     const frames: Array<Record<string, unknown>> = []

@@ -83,7 +83,13 @@ export function checkDsh(path: string): CheckResult {
   }
   for (const root of agent?.skills ?? []) {
     const full = join(dir, root)
-    if (!isDir(full)) { add('fail', `agent.skills ${root} is not a directory`); continue }
+    if (!isDir(full)) {
+      // A skills root that setup populates (upstream skills fetched at install, not vendored — the
+      // shape a project without a licence to copy forces) is absent on a plain checkout by design.
+      if (manifest.toolchain?.setup) add('warn', `agent.skills ${root} is not in the checkout; toolchain.setup must create it, or the agent gets no skills`)
+      else add('fail', `agent.skills ${root} is not a directory`)
+      continue
+    }
     const dirs = skillDirsIn(full)
     if (!dirs.length) add('fail', `agent.skills ${root} has no SKILL.md-bearing directory`)
     else add('ok', `agent.skills ${root}/ · ${dirs.map((d) => d.slice(full.length + 1) || '.').join(', ')}`)

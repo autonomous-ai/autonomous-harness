@@ -62,6 +62,9 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   Future<void>? initialEngineProbe,
   bool offerFindExisting = false,
   bool offerBackToSearch = false,
+  /// Open with this harness already chosen — the store's Open button, which
+  /// knows exactly which one the person is looking at.
+  String? initialDsh,
 }) {
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
@@ -73,6 +76,7 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
     veilBlur: 0,
     builder: (context) => _NewAgentDialog(
       notifier: notifier,
+      initialDsh: initialDsh,
       machineId: machineId,
       initialFolder: initialFolder,
       swarmId: swarmId ?? notifier.activeSwarmId,
@@ -103,7 +107,12 @@ class _NewAgentDialog extends StatefulWidget {
     this.initialEngineProbe,
     required this.offerFindExisting,
     required this.offerBackToSearch,
+    this.initialDsh,
   });
+
+  /// A harness to open on, chosen elsewhere (the store); null lets the
+  /// remembered or first installed engine win.
+  final String? initialDsh;
 
   @override
   State<_NewAgentDialog> createState() => _NewAgentDialogState();
@@ -155,7 +164,13 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   void initState() {
     super.initState();
     final remembered = widget.notifier.agentPreference.value;
-    if (_knownChoice(remembered)) {
+    final asked = widget.initialDsh;
+    if (asked != null && isHarnessId(asked)) {
+      // Chosen before the dialog opened: counts as the person's choice, so no
+      // probe or remembered preference moves it.
+      _engine = asked;
+      _engineChosenByUser = true;
+    } else if (_knownChoice(remembered)) {
       _engine = remembered!;
       _engineChosenByUser = true;
     } else {

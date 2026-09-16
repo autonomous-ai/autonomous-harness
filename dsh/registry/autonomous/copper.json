@@ -6,6 +6,7 @@
   "description": "Describe a board; get a fab-ready PCB with a live board view, ordered from JLCPCB in a click.",
   "repo": "https://github.com/autonomous-ai/autonomous-circuit",
   "ref": "main",
+  "license": "MIT",
   "engine": "claude",
   "tier": 2,
   "verified": true

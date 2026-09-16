@@ -31,6 +31,7 @@ import '../state/swarm_search.dart';
 import '../state/swarm.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
+import '../store/store_screen.dart';
 import '../widgets/harness_start_page.dart';
 import '../widgets/link_machine_screen.dart';
 import '../widgets/machine_actions.dart';
@@ -1442,6 +1443,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                                   catalog: _searchCatalog,
                                                 ),
                                             onNew: _newAgent,
+                                            onStore: () => showStoreScreen(
+                                              context,
+                                              app,
+                                              source: 'start_page',
+                                            ),
                                             onChoose: (selection) =>
                                                 _activateSearch(
                                                   selection,

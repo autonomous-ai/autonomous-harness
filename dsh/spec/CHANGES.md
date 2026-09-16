@@ -57,3 +57,27 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
   ("Code · OpenAI"). Toymaker and text-to-cad share the category "CAD".
 - **Backward compatible:** `author` is optional.
 
+## 2026-09-16 — The Harness Store
+- **Change:** registry entries gain the facts a store page needs, all optional: `homepage` (the
+  project's site), `upstream` (the repo a wrapper brings into Harness), `license` (SPDX id of the
+  wrapper), `screenshots` (https URLs, ≤ 8). `dsh_list` rows carry them — plus `repo`, and `linked`
+  for an install that is a link to a checkout — whether or not the package is installed, because a
+  manifest does not know them. A new RPC, `dsh_remove { id }`, uninstalls a package from the machine
+  that answers it (a linked install loses only its link) and replies `{ ok, id }` or
+  `{ error, detail }`; a daemon without it answers `UNSUPPORTED`, which the app turns into "update the
+  CLI". Ratings and reviews live in the control plane (`/api/store/…`), proxied by the local CLI
+  like the machine list; they are keyed by registry id and are not part of the package.
+- **Why:** the app's Harness Store shows every registry package as a card and a page — whose it is,
+  where it lives, what it is licensed under, what people think, and where it is installed — and a
+  page with Get needs a Remove.
+- **Backward compatible:** yes — every field is optional, every old row and manifest parses as before.
+- **Mechanism:** `cli/src/dsh/registry.ts`, `backendSocket.ts` (`dsh_list` facts, `dsh_remove`),
+  `hookServer.ts` (`/api/store/*` proxy), `backend/src/routes/store.ts`, `desktop/lib/store/`.
+
+## 2026-09-16 — Skills a setup fetches
+- **Change:** `harness dsh check` warns instead of failing when an `agent.skills` root is missing
+  from the checkout but the manifest declares `toolchain.setup`. The root must exist after setup, or
+  the agent gets no skills.
+- **Why:** a project that publishes skills without a licence to copy them (Remotion's, for one) can
+  still be wrapped — its skills are fetched at install time, at a pinned commit, never vendored.
+

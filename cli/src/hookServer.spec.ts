@@ -157,6 +157,39 @@ describe('process-owned hook server', () => {
   })
 })
 
+describe('the Harness Store proxy', () => {
+  it('forwards a store read with its path and query, and a store write only with the local header', async () => {
+    const calls: Array<[string, string, unknown]> = []
+    const { base } = await start({
+      onStore: async (method, path, body) => { calls.push([method, path, body]); return { status: 200, body: { success: true, data: { ok: method } } } },
+    })
+    const read = await fetch(`${base}/api/store/harnesses/autonomous/marp/reviews?limit=5`)
+    expect(read.status).toBe(200)
+    expect(await read.json()).toEqual({ success: true, data: { ok: 'GET' } })
+
+    const crossOrigin = await fetch(`${base}/api/store/harnesses/autonomous/marp/review`, { method: 'PUT', body: JSON.stringify({ rating: 5 }) })
+    expect(crossOrigin.status).toBe(403)
+
+    const write = await fetch(`${base}/api/store/harnesses/autonomous/marp/review`, {
+      method: 'PUT', headers: { 'x-adapter-local': '1', 'content-type': 'application/json' }, body: JSON.stringify({ rating: 5, title: 'Keynote' }),
+    })
+    expect(write.status).toBe(200)
+    const gone = await fetch(`${base}/api/store/harnesses/autonomous/marp/review`, { method: 'DELETE', headers: { 'x-adapter-local': '1' } })
+    expect(gone.status).toBe(200)
+    expect(calls).toEqual([
+      ['GET', '/api/store/harnesses/autonomous/marp/reviews?limit=5', undefined],
+      ['PUT', '/api/store/harnesses/autonomous/marp/review', { rating: 5, title: 'Keynote' }],
+      ['DELETE', '/api/store/harnesses/autonomous/marp/review', undefined],
+    ])
+  })
+
+  it('refuses a store path with anything but id characters in it', async () => {
+    const { base } = await start({ onStore: async () => ({ status: 200, body: {} }) })
+    expect((await fetch(`${base}/api/store/harnesses/a%20b/reviews`)).status).toBe(400)
+    expect((await fetch(`${base}/api/store/ratings`, { method: 'POST', headers: { 'x-adapter-local': '1' } })).status).toBe(405)
+  })
+})
+
 describe('chooseHookAgent', () => {
   it('prefers caller ancestry, the evidence that cannot be guessed at', () => {
     expect(chooseHookAgent(['strong'], ['weak'])).toEqual({ agent: 'strong', reason: 'ancestry' })

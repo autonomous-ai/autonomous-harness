@@ -51,6 +51,40 @@ class ApiClient {
     return unwrapApiResponse(res) as Map<String, dynamic>?;
   }
 
+  // -- the Harness Store: ratings and reviews (control plane, proxied by the local CLI) --
+  Future<Map<String, dynamic>?> storeRatings() async {
+    final res = await _dio.get('/api/store/ratings');
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  Future<Map<String, dynamic>?> storeReviews(String harnessId) async {
+    final res = await _dio.get('/api/store/harnesses/$harnessId/reviews');
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  /// Write (or rewrite) the signed-in person's review of [harnessId].
+  Future<Map<String, dynamic>?> putStoreReview(
+    String harnessId, {
+    required int rating,
+    String? title,
+    String? body,
+  }) async {
+    final res = await _dio.put(
+      '/api/store/harnesses/$harnessId/review',
+      data: {
+        'rating': rating,
+        if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+        if (body != null && body.trim().isNotEmpty) 'body': body.trim(),
+      },
+    );
+    return unwrapApiResponse(res) as Map<String, dynamic>?;
+  }
+
+  Future<void> deleteStoreReview(String harnessId) async {
+    final res = await _dio.delete('/api/store/harnesses/$harnessId/review');
+    unwrapApiResponse(res);
+  }
+
   // -- machines (control plane, proxied by the local CLI) --
   /// Whether the last [machines] answer came from the daemon's cache rather than the backend.
   ///

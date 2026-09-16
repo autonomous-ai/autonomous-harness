@@ -6,6 +6,9 @@
   "description": "Jake Fitzgerald's text-to-cad skills (earthtojake/text-to-cad), pinned: describe a part, get STEP with mesh exports, drawings, robot files and G-code, live in the CAD Viewer.",
   "repo": "https://github.com/autonomous-ai/autonomous-text-to-cad",
   "ref": "main",
+  "homepage": "https://github.com/earthtojake/text-to-cad",
+  "upstream": "https://github.com/earthtojake/text-to-cad",
+  "license": "MIT",
   "engine": "claude",
   "tier": 2,
   "verified": true

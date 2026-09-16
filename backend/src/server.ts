@@ -10,7 +10,7 @@ import { registerAuthMiddleware } from './middlewares/authMiddleware.js'
 import { cursorRoutes } from './routes/cursor.js'
 import { voiceRoutes } from './routes/voice.js'
 import { deviceAuthRoutes } from './routes/deviceAuth.js'
-import { healthRoutes, authRoutes, userRoutes, machineRoutes, planRoutes, deviceRoutes, mobileRoutes, appRoutes, analyticsRoutes, agentRouteRoutes } from './routes/index.js'
+import { healthRoutes, authRoutes, userRoutes, machineRoutes, planRoutes, deviceRoutes, mobileRoutes, appRoutes, analyticsRoutes, agentRouteRoutes, storeRoutes } from './routes/index.js'
 import { startSubdomainProxy, startMeshProxy } from './lib/subdomainProxy.js'
 import { handleDeviceUpgrade } from './lib/deviceWs.js'
 import { handleWebUpgrade } from './lib/webWs.js'
@@ -149,6 +149,7 @@ async function start(): Promise<void> {
   // Absent from the auth middleware's skip-list on purpose: that absence IS the gate.
   await app.register(voiceRoutes)
   await app.register(deviceAuthRoutes) // device-authorization grant: how the desktop app gets a machine key
+  await app.register(storeRoutes)      // the Harness Store's ratings and reviews; the catalogue is the CLI's registry
 
   // Dedicated public subdomain app-proxy on its own port (Host-header routed → tunnelled to the node app).
   const appProxyServer = startSubdomainProxy()

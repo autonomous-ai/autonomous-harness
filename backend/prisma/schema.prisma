@@ -524,3 +524,25 @@ model AgentDailyPresence {
   @@index([userId, dayUtc])
   @@map("agent_daily_presence")
 }
+
+/// One person's review of one harness in the Harness Store — a star rating and, optionally, a title
+/// and some words. One row per (harness, user): writing again replaces it, so a rating cannot be
+/// stacked. `harnessId` is the registry id (`owner/name`), never validated against the registry here
+/// — the registry lives in the CLI, and a review of a harness the backend has not heard of is still a
+/// review. `authorName` is a snapshot of the user's name at write time; the store shows it, never
+/// the email.
+model HarnessReview {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  harnessId  String
+  userId     String // User.id
+  authorName String
+  rating     Int // 1..5
+  title      String?
+  body       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([harnessId, userId])
+  @@index([harnessId])
+  @@map("harness_reviews")
+}

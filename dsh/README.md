@@ -121,6 +121,19 @@ file is not one. And the domain stays in the harness: if adding yours needs a ch
 that is a spec change, and [`spec/README.md`](spec/README.md) with its schemas is where the
 contract lives. Changes to it are appended to [`spec/CHANGES.md`](spec/CHANGES.md).
 
+## The Harness Store
+
+The app's start page has a door to the store: every package in this registry as a card, and a page
+per package — its mark, who made it (`author`), its category and description, where it lives
+(`repo`, `homepage`, `upstream`), what it is licensed under (`license`), pictures (`screenshots`),
+ratings and reviews, and a row per machine with Get, Open or Remove. Installing is still what it
+always was — a clone under `~/.harness/dsh` on one machine, its toolchain set up beside it — so the
+page is honest about that: a harness is on a machine, not on an account.
+
+To appear in the store, a package needs nothing beyond its registry entry. The optional fields
+above make the page better; a package without them still has one. Ratings and reviews are the
+signed-in person's, one per package, kept in the control plane, never in this repository.
+
 ## Stewardship of packages built on other people's work
 
 Some first-party packages wrap a project Autonomous did not write: Marp (Yuki Hattori and the Marp

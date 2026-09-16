@@ -1,0 +1,13 @@
+{
+  "id": "autonomous/video-viewer",
+  "kind": "viewer",
+  "name": "Video Viewer",
+  "category": "Video",
+  "author": "Autonomous",
+  "description": "A pane for video: the MP4, WebM or GIF a harness is rendering, replayed on every new render, with duration and size in the header.",
+  "repo": "https://github.com/autonomous-ai/autonomous-video-viewer",
+  "ref": "main",
+  "license": "MIT",
+  "tier": 2,
+  "verified": false
+}

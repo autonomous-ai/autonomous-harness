@@ -194,6 +194,64 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xff3aa0e0),
     asset: 'assets/engine-icons/text-to-cad.png',
   ),
+  // The store's first wave: open-source projects under their own names, their
+  // makers on the tile (dsh/README.md "Stewardship").
+  'autonomous/typst': EngineIdentity(
+    id: 'autonomous/typst',
+    label: 'Typst',
+    category: 'Documents',
+    creator: 'Typst GmbH',
+    color: Color(0xff239dad),
+    asset: 'assets/engine-icons/typst.png',
+  ),
+  'autonomous/manim': EngineIdentity(
+    id: 'autonomous/manim',
+    label: 'Manim',
+    category: 'Math animation',
+    creator: 'Manim Community',
+    color: Color(0xffe0a458),
+    asset: 'assets/engine-icons/manim.png',
+  ),
+  'autonomous/excalidraw': EngineIdentity(
+    id: 'autonomous/excalidraw',
+    label: 'Excalidraw',
+    category: 'Diagrams',
+    creator: 'Excalidraw',
+    color: Color(0xff6965db),
+    asset: 'assets/engine-icons/excalidraw.png',
+  ),
+  'autonomous/marimo': EngineIdentity(
+    id: 'autonomous/marimo',
+    label: 'marimo',
+    category: 'Notebooks',
+    creator: 'marimo',
+    color: Color(0xff1c7c54),
+    asset: 'assets/engine-icons/marimo.png',
+  ),
+  'autonomous/remotion': EngineIdentity(
+    id: 'autonomous/remotion',
+    label: 'Remotion',
+    category: 'Video',
+    creator: 'Remotion',
+    color: Color(0xff0b84f3),
+    asset: 'assets/engine-icons/remotion.png',
+  ),
+  'autonomous/blender': EngineIdentity(
+    id: 'autonomous/blender',
+    label: 'Blender',
+    category: '3D',
+    creator: 'Blender Foundation',
+    color: Color(0xffe87d0d),
+    asset: 'assets/engine-icons/blender.png',
+  ),
+  'autonomous/mujoco': EngineIdentity(
+    id: 'autonomous/mujoco',
+    label: 'MuJoCo',
+    category: 'Simulation',
+    creator: 'Google DeepMind',
+    color: Color(0xff1b2a6b),
+    asset: 'assets/engine-icons/mujoco.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -204,6 +262,13 @@ const knownHarnessBase = <String, String>{
   'autonomous/toymaker': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
+  'autonomous/typst': 'claude',
+  'autonomous/manim': 'claude',
+  'autonomous/excalidraw': 'claude',
+  'autonomous/marimo': 'claude',
+  'autonomous/remotion': 'claude',
+  'autonomous/blender': 'claude',
+  'autonomous/mujoco': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

@@ -118,6 +118,13 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 - Discovery reads `HARNESS_DSH` off the live process (`probeDsh`, same cached env read as
   `probeCodexHome`) so a pane the daemon did not create, or re-minted after a restart, is labelled.
 
+### The store's facts
+
+A registry entry may also carry `homepage`, `upstream`, `license` and `screenshots` (see
+`cli/src/dsh/registry.ts`). They are the store page's, not the package's: a manifest never has them,
+and `dsh_list` rows forward them from the registry whether or not the package is installed, with
+`repo` and `linked` beside them. `dsh_remove { id }` uninstalls from the answering machine.
+
 ## On disk
 
 ```

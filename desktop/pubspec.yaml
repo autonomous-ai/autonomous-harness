@@ -110,6 +110,7 @@ flutter:
     - assets/app_icon.png
     - assets/harness_device.png
     - assets/harness_device_studio.png
+    - assets/harness_store_card.png
     - assets/swarm-wallpapers/
 
   # To add assets to your application, add an assets section, like this:

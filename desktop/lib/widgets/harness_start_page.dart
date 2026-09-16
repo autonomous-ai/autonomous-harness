@@ -20,11 +20,15 @@ class HarnessStartPage extends StatefulWidget {
     required this.createSearch,
     required this.onNew,
     required this.onChoose,
+    this.onStore,
   });
   final FocusNode focusNode;
   final SwarmSearchController Function() createSearch;
   final VoidCallback onNew;
   final ValueChanged<SwarmSearchSelection> onChoose;
+
+  /// Open the Harness Store. Null hides its card (a build without one).
+  final VoidCallback? onStore;
   @override
   State<HarnessStartPage> createState() => _HarnessStartPageState();
 }
@@ -154,6 +158,63 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
       ),
     ),
   );
+
+  /// The door to the Harness Store, in the device card's own shape: a shelf of
+  /// the harness marks, and the words. Same size, same corner, so the two read
+  /// as a pair of things you can get.
+  Widget _store({required bool compact}) {
+    return Semantics(
+      button: true,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: compact ? 300 : 360),
+        child: AspectRatio(
+          aspectRatio: 2,
+          child: Material(
+            color: const Color(0xFF101112),
+            borderRadius: BorderRadius.circular(16),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.asset(
+                  'assets/harness_store_card.png',
+                  fit: BoxFit.cover,
+                  excludeFromSemantics: true,
+                ),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('harness-store-link'),
+                    mouseCursor: SystemMouseCursors.click,
+                    onTap: widget.onStore,
+                    hoverColor: Colors.white.withValues(alpha: .04),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: .48,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 18, right: 8),
+                          child: Text(
+                            'Browse the\nHarness Store',
+                            style: TextStyle(
+                              fontSize: 16,
+                              height: 1.3,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white.withValues(alpha: .94),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   /// A compact product photograph below the agent controls.
   Widget _device({required bool compact}) {
@@ -347,7 +408,15 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  _device(compact: constraints.maxHeight < 600),
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 16,
+                    children: [
+                      if (widget.onStore != null)
+                        _store(compact: constraints.maxHeight < 600),
+                      _device(compact: constraints.maxHeight < 600),
+                    ],
+                  ),
                 ],
               ),
             ),

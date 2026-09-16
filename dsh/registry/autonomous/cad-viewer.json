@@ -7,6 +7,8 @@
   "description": "Jake Fitzgerald's CAD Viewer (earthtojake/text-to-cad) as a Harness pane: STEP, GLB, STL, 3MF, DXF, URDF, SRDF and SDF, with MoveIt2 inverse kinematics.",
   "repo": "https://github.com/autonomous-ai/autonomous-cad-viewer",
   "ref": "main",
+  "upstream": "https://github.com/earthtojake/text-to-cad",
+  "license": "MIT",
   "tier": 2,
   "verified": true
 }

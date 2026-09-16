@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/manim",
+  "name": "Manim",
+  "category": "Math animation",
+  "author": "Manim Community",
+  "description": "Describe an explanation — a proof, a transform, an algorithm, a graph — and watch it animate: scenes in Python, rendered by Manim, playing in the pane.",
+  "repo": "https://github.com/autonomous-ai/autonomous-manim",
+  "ref": "main",
+  "homepage": "https://www.manim.community",
+  "upstream": "https://github.com/ManimCommunity/manim",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

@@ -3645,6 +3645,44 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
+  /// Uninstall the harness [id] from [machineId] (`dsh_remove`): the clone
+  /// goes, a linked install loses only its link, and the machine's catalog is
+  /// asked again so the store's "Installed" reads true. Null on success, else
+  /// a sentence for the person who clicked.
+  Future<String?> removeDsh(String machineId, String id) async {
+    final machine = machineStates[machineId];
+    if (machine == null) return 'Machine not found';
+    final machineName = machine.machine.displayName;
+    try {
+      final result = await _conn(machineId).request(
+        'dsh_remove',
+        payload: {'id': id},
+        timeout: const Duration(seconds: 30),
+      );
+      if (result['ok'] != true) {
+        final detail = result['detail'];
+        return detail is String && detail.isNotEmpty
+            ? detail
+            : 'Remove failed on $machineName';
+      }
+    } on WsRequestFailure catch (failure) {
+      return switch (failure.code) {
+        'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
+          'Update the harness CLI on $machineName to remove harnesses',
+        _ =>
+          failure.detail?.isNotEmpty == true
+              ? failure.detail!
+              : 'Remove failed on $machineName (${failure.code})',
+      };
+    } on WsRequestTimeout {
+      return '$machineName did not answer. Try again.';
+    } catch (_) {
+      return 'Remove failed on $machineName';
+    }
+    await probeDsh(machineId, force: true);
+    return null;
+  }
+
   /// Install the harness [id] on [machineId]: clone, set up its toolchain, run
   /// its doctor. Minutes, not seconds — the Circuit toolchain alone is an
   /// `npm ci` — so the request carries its own long budget and the machine

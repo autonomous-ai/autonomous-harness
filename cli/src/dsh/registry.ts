@@ -29,6 +29,14 @@ export const DshRegistryEntrySchema = z.strictObject({
   engine: z.enum(ENGINES).optional(),
   tier: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
   verified: z.boolean().optional(),
+  /** The store's product page: where the thing lives, whose it is, what it is licensed under. */
+  homepage: z.string().url().max(2048).optional(),
+  /** The upstream project a wrapper brings into Harness (its repo), when the package is a wrapper. */
+  upstream: z.string().url().max(2048).optional(),
+  /** SPDX id of the wrapper's licence — "MIT", "Apache-2.0"; the upstream's is in its repo. */
+  license: z.string().min(1).max(40).optional(),
+  /** Pictures for the product page, in order; absent while a package has none yet. */
+  screenshots: z.array(z.string().url().max(2048)).max(8).optional(),
 }).refine((entry) => entry.kind === 'viewer' || entry.engine !== undefined, { path: ['engine'], message: 'an agent entry needs an engine' })
 
 export type DshRegistryEntry = z.infer<typeof DshRegistryEntrySchema>

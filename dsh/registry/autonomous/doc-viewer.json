@@ -1,0 +1,13 @@
+{
+  "id": "autonomous/doc-viewer",
+  "kind": "viewer",
+  "name": "Doc Viewer",
+  "category": "Documents",
+  "author": "Autonomous",
+  "description": "A pane for documents: the PDF a harness is writing, redrawn on every save, with page count and size in the header.",
+  "repo": "https://github.com/autonomous-ai/autonomous-doc-viewer",
+  "ref": "main",
+  "license": "MIT",
+  "tier": 2,
+  "verified": false
+}

@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/typst",
+  "name": "Typst",
+  "category": "Documents",
+  "author": "Typst GmbH",
+  "description": "Describe a document — a paper, a spec sheet, a report, a letter — and watch the PDF take shape as Typst compiles it on every save.",
+  "repo": "https://github.com/autonomous-ai/autonomous-typst",
+  "ref": "main",
+  "homepage": "https://typst.app",
+  "upstream": "https://github.com/typst/typst",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

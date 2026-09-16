@@ -124,4 +124,36 @@ void main() {
     expect(_results, findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('the store card is the door to the Harness Store, and only when there is one', (
+    tester,
+  ) async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    var opened = 0;
+    Widget page({VoidCallback? onStore}) => MaterialApp(
+      home: Scaffold(
+        body: HarnessStartPage(
+          focusNode: focus,
+          createSearch: () => SwarmSearchController(app, [], adding: true),
+          onNew: () {},
+          onChoose: (_) {},
+          onStore: onStore,
+        ),
+      ),
+    );
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(find.byKey(const ValueKey('harness-store-link')), findsNothing);
+    expect(find.byKey(const ValueKey('harness-device-link')), findsOneWidget);
+
+    await tester.pumpWidget(page(onStore: () => opened++));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('harness-store-link')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('harness-store-link')));
+    await tester.pump();
+    expect(opened, 1);
+  });
 }

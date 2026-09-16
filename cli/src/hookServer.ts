@@ -118,7 +118,13 @@ export interface HookServerHandlers {
   onMachineDelete?: (machineId: string) => Promise<PairOutcome>
   /** GET /api/auth/me — proxy the signed-in user's profile from backend. */
   onAuthMe?: () => Promise<PairOutcome>
+  /** /api/store/* — proxy the Harness Store's ratings and reviews to backend the same way: reads
+   *  ungated like the machine list, writes (PUT/DELETE) CSRF-guarded like a rename. */
+  onStore?: (method: 'GET' | 'PUT' | 'DELETE', path: string, body?: unknown) => Promise<PairOutcome>
 }
+
+/** A store path the daemon will forward: /api/store/… with nothing but id characters, slashes and a query. */
+export const STORE_PATH_RE = /^\/api\/store\/[A-Za-z0-9_\-./]{1,200}(?:\?[A-Za-z0-9_\-.=&%]{0,200})?$/
 
 const MAX_HOOK_BODY_BYTES = 256 * 1024
 const HOOK_BODY_FIELDS = new Set([
@@ -624,6 +630,26 @@ export function startHookServer(
         const machineId = decodeURIComponent(url.slice('/api/machines/'.length))
         if (!machineId) { json(400, { error: 'MISSING_MACHINE_ID' }); return }
         await proxied(() => remove(machineId)); return
+      }
+
+      // The Harness Store: ratings and reviews live in the backend, and the app reaches them the way
+      // it reaches its machine list — through this daemon's own session. The path is forwarded as
+      // given (query included) so the backend's own validation is the one that answers.
+      if (url.startsWith('/api/store/')) {
+        const store = handlers.onStore
+        if (!store) { json(503, { error: 'UNAVAILABLE' }); return }
+        const full = req.url ?? url
+        if (!STORE_PATH_RE.test(full)) { json(400, { error: 'BAD_PATH' }); return }
+        if (req.method === 'GET') { await proxied(() => store('GET', full)); return }
+        if (req.method === 'PUT' || req.method === 'DELETE') {
+          if (!localOk) { json(403, { error: 'FORBIDDEN' }); return }
+          let body: unknown
+          if (req.method === 'PUT') {
+            try { body = JSON.parse(await readBody(req)) } catch { json(400, { error: 'bad json' }); return }
+          }
+          await proxied(() => store(req.method as 'PUT' | 'DELETE', full, body)); return
+        }
+        json(405, { error: 'METHOD_NOT_ALLOWED' }); return
       }
 
       // `harness pairings` — list paired browsers.
