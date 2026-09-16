@@ -584,11 +584,17 @@ class AppNotifier extends ChangeNotifier {
 
   /// The Harness Store takes over the tab it was opened from — the New Tab
   /// whose start page carries the card — exactly as the first agent takes
-  /// over a New Tab. From anywhere else (a tab with panes) it gets a tab of
-  /// its own; a tab that is already the store stays put.
+  /// over a New Tab. One store tab per window, like one New Tab: when it is
+  /// already open somewhere, that one is selected. From a tab with panes it
+  /// gets a tab of its own.
   void openStore() {
     final current = activeSwarm;
     if (current.isStore) return;
+    final existing = swarms.where((swarm) => swarm.isStore).firstOrNull;
+    if (existing != null) {
+      selectSwarm(existing.id);
+      return;
+    }
     if (current.isEmptyStarter) {
       current
         ..kind = 'store'
@@ -5830,6 +5836,9 @@ class AppNotifier extends ChangeNotifier {
         }
         final id = raw['id'] as String;
         if (id.isEmpty || restored.any((s) => s.id == id)) continue;
+        // One store tab, as one New Tab: a second saved one has nothing in it
+        // that the first does not, so it is not brought back.
+        if (raw['kind'] == 'store' && restored.any((s) => s.isStore)) continue;
         final swarm = Swarm(
           id: id,
           name:

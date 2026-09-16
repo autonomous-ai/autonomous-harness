@@ -351,6 +351,17 @@ void main() {
     expect(again.swarms.where((s) => s.isStore).length, 1, reason: 'the store, once');
     expect(again.swarms.where((s) => s.isStore).single.name, 'Harness Store');
     again.dispose();
+
+    // A layout that somehow holds two store tabs brings back one.
+    final doubled = jsonDecode(storage.values['swarm_layout_v1']!) as Map<String, dynamic>;
+    final rows = List<dynamic>.from(doubled['swarms'] as List);
+    rows.add({...(rows.first as Map), 'id': 'swarm-99'});
+    doubled['swarms'] = rows;
+    storage.values['swarm_layout_v1'] = jsonEncode(doubled);
+    final once = _notifier(layout: PaneLayoutStore(storage: storage));
+    await once.restorePaneLayoutForTest();
+    expect(once.swarms.where((s) => s.isStore).length, 1);
+    once.dispose();
   });
 
   test('the layout is remembered, and machine tiles are not', () async {

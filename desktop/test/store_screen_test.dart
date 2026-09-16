@@ -286,5 +286,11 @@ void main() {
     notifier.newSwarm();
     expect(notifier.activeSwarm.isStore, isFalse);
     expect(notifier.swarms.length, before + 1);
+    // The card on that fresh New Tab goes to the store that is already open —
+    // one store tab, as one New Tab — rather than making a second.
+    notifier.openStore();
+    expect(notifier.swarms.where((s) => s.isStore).length, 1);
+    expect(identical(notifier.activeSwarm, starter), isTrue);
+    expect(notifier.swarms.length, before + 1);
   });
 }
