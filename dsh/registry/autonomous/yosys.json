@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/yosys",
+  "name": "Yosys",
+  "category": "Chips",
+  "author": "YosysHQ",
+  "description": "Describe a digital circuit — a counter, a UART, a state machine — and get Verilog, a simulation with waveforms, a synthesized gate-level schematic and an FPGA bitstream for an iCE40 board. Prompt to silicon.",
+  "repo": "https://github.com/autonomous-ai/autonomous-yosys",
+  "ref": "main",
+  "homepage": "https://yosyshq.net",
+  "upstream": "https://github.com/YosysHQ/yosys",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}
