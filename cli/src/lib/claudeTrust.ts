@@ -32,3 +32,20 @@ export function preTrustClaudeProject(cwd: string, home = homedir()): 'trusted' 
   renameSync(tmp, file)
   return 'trusted'
 }
+
+/**
+ * Codex keeps the same answer in `~/.codex/config.toml` as a `[projects."<path>"]` table with
+ * `trust_level = "trusted"`. Same rules: only a folder the daemon made, only when Codex has a
+ * config here, never rewriting what is there — the table is appended at the end.
+ */
+export function preTrustCodexProject(cwd: string, home = homedir()): 'trusted' | 'already' | 'skipped' {
+  const file = join(home, '.codex', 'config.toml')
+  if (!existsSync(file)) return 'skipped'
+  const text = readFileSync(file, 'utf8')
+  const header = `[projects.${JSON.stringify(cwd)}]`
+  if (text.includes(header)) return 'already'
+  const tmp = `${file}.harness-${process.pid}.tmp`
+  writeFileSync(tmp, `${text.replace(/\s*$/, '')}\n\n${header}\ntrust_level = "trusted"\n`, { mode: 0o600 })
+  renameSync(tmp, file)
+  return 'trusted'
+}

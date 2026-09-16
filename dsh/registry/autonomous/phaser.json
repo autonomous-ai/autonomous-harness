@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/phaser",
+  "name": "Phaser",
+  "category": "Games",
+  "author": "Phaser Studio",
+  "description": "Describe a game — a breakout, a platformer, a shooter, a puzzle — and play it in the pane as the agent writes it in Phaser 4, reloading on every save.",
+  "repo": "https://github.com/autonomous-ai/autonomous-phaser",
+  "ref": "main",
+  "homepage": "https://phaser.io",
+  "upstream": "https://github.com/phaserjs/phaser",
+  "license": "MIT",
+  "engine": "codex",
+  "tier": 2,
+  "verified": false
+}

@@ -33,7 +33,7 @@ import { probeEngines } from './lib/engineProbe.js'
 import { AgentCreationReceipts, AgentCreationReceiptError, creationFingerprint, validCreationId, type AgentCreationStatus } from './lib/agentCreationReceipt.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
-import { preTrustClaudeProject } from './lib/claudeTrust.js'
+import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
 import { installedDsh, listInstalledDsh } from './dsh/installed.js'
@@ -1761,9 +1761,10 @@ export class BackendSocket {
                       detail: error instanceof ProjectFolderError ? error.message : 'Could not prepare the project folder.' }
                   }
                   // A folder this daemon just made is one Claude Code need not ask about.
-                  if (input.engine === 'claude') {
-                    try { preTrustClaudeProject(preparedFolder) } catch (error) { console.warn(`[agent] pre-trust ${preparedFolder} · ${error instanceof Error ? error.message : error}`) }
-                  }
+                  try {
+                    if (input.engine === 'claude') preTrustClaudeProject(preparedFolder)
+                    if (input.engine === 'codex') preTrustCodexProject(preparedFolder)
+                  } catch (error) { console.warn(`[agent] pre-trust ${preparedFolder} · ${error instanceof Error ? error.message : error}`) }
                 }
                 const result = await create(preparedFolder ? { ...input, cwd: preparedFolder } : input)
                 if (result.ok) return { state: 'created', agentId: result.session.agentId }
