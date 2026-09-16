@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/remotion",
+  "name": "Remotion",
+  "category": "Video",
+  "author": "Remotion",
+  "description": "Describe a video — a product launch, an explainer, a data story — and watch it play in Remotion Studio as the agent writes it in React, then render it to MP4.",
+  "repo": "https://github.com/autonomous-ai/autonomous-remotion",
+  "ref": "main",
+  "homepage": "https://www.remotion.dev",
+  "upstream": "https://github.com/remotion-dev/remotion",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

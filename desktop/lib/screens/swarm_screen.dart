@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/services.dart';
 
 import '../core/desktop_window.dart';
@@ -731,6 +732,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
     String? swarmId,
     PaneSplitRequest? split,
   }) async {
+    // A pane never lands in the store tab: New Harness from there goes to
+    // the empty starter tab (or a fresh one), the way New Tab does.
+    if (swarmId == null && app.activeSwarm.isStore) app.newSwarm();
     final target = swarmId ?? _search?.targetId ?? app.activeSwarmId;
     final requestedSplit = split ?? _search?.split;
     if (app.activeSwarmId != target) return;
@@ -1404,6 +1408,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             key: ValueKey('harness-start-background'),
                             child: SwarmWallpaper(),
                           ),
+                        if (app.activeSwarm.isStore)
+                          StoreTab(
+                            key: ValueKey('store-tab:${app.activeSwarmId}'),
+                            notifier: app,
+                            source: 'tab',
+                          )
+                        else
                         Padding(
                           padding: app.panes.isEmpty
                               ? EdgeInsets.zero
@@ -1443,11 +1454,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                                   catalog: _searchCatalog,
                                                 ),
                                             onNew: _newAgent,
-                                            onStore: () => showStoreScreen(
-                                              context,
-                                              app,
-                                              source: 'start_page',
-                                            ),
+                                            onStore: app.openStore,
                                             onChoose: (selection) =>
                                                 _activateSearch(
                                                   selection,
@@ -1547,7 +1554,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   ),
                                   child: Row(
                                     children: [
-                                      if (swarm.panes.length == 1)
+                                      if (swarm.isStore)
+                                        Icon(
+                                          LucideIcons.layoutGrid300,
+                                          key: ValueKey('tab-store:${swarm.id}'),
+                                          size: 15,
+                                        )
+                                      else if (swarm.panes.length == 1)
                                         EngineMark(
                                           key: ValueKey(
                                             'tab-engine:${swarm.id}',

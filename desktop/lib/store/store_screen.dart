@@ -13,44 +13,22 @@ import '../shared/widgets/app_dialog.dart';
 import '../state/app_state.dart';
 import '../widgets/engine_identity.dart';
 import '../widgets/new_agent_dialog.dart';
-import '../widgets/window_chrome.dart';
 import 'store_controller.dart';
 import 'store_models.dart';
 
-/// Open the Harness Store over the window, the way Settings opens: a screen,
-/// not a dialog. [source] names the door, for the funnel.
-Future<void> showStoreScreen(
-  BuildContext context,
-  AppNotifier notifier, {
-  required String source,
-  StoreApi? api,
-  String? initialHarness,
-}) {
-  return Navigator.of(context).push<void>(
-    PageRouteBuilder<void>(
-      pageBuilder: (context, animation, _) => StoreScreen(
-        notifier: notifier,
-        source: source,
-        api: api,
-        initialHarness: initialHarness,
-      ),
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-    ),
-  );
-}
-
-/// The Harness Store: every harness the registry knows, as a shelf of cards;
-/// one becomes its page — what it is, whose it is, where it is installed,
-/// what people think of it — with Get, Open and Remove.
+/// The Harness Store, the content of its tab: every harness the registry
+/// knows and every built-in engine, as a shelf of cards; one becomes its page
+/// — what it is, whose it is, where it is installed, what people think of it —
+/// with Get, Open and Remove. A tab, not a screen over the window, so the
+/// strip stays where it is and browsing never blocks switching.
 ///
 /// The catalogue is what the machines answered `dsh_list` with, so the same
 /// screen is honest about the one fact an app store usually hides: a harness
 /// is installed PER MACHINE. The page lists your machines and lets you put it
 /// on any of them. Ratings and reviews come from the control plane through
 /// [StoreApi]; the screen works without them (a page simply has no stars).
-class StoreScreen extends StatefulWidget {
-  const StoreScreen({
+class StoreTab extends StatefulWidget {
+  const StoreTab({
     super.key,
     required this.notifier,
     this.source = 'unknown',
@@ -68,7 +46,7 @@ class StoreScreen extends StatefulWidget {
   final String? initialHarness;
 
   @override
-  State<StoreScreen> createState() => _StoreScreenState();
+  State<StoreTab> createState() => _StoreTabState();
 }
 
 /// What the rail selects: the whole shelf, what is installed somewhere, the
@@ -94,7 +72,7 @@ class _Category extends _Shelf {
   final String name;
 }
 
-class _StoreScreenState extends State<StoreScreen> {
+class _StoreTabState extends State<StoreTab> {
   late final StoreController _store = StoreController(
     widget.api ?? ApiStoreApi(widget.notifier.api),
   );
@@ -206,9 +184,9 @@ class _StoreScreenState extends State<StoreScreen> {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
-    return Scaffold(
-      backgroundColor: grid.AppPalette.windowBg,
-      body: ListenableBuilder(
+    return ColoredBox(
+      color: grid.AppPalette.windowBg,
+      child: ListenableBuilder(
         listenable: Listenable.merge([widget.notifier, _store]),
         builder: (context, _) {
           final catalog = _catalog;
@@ -227,7 +205,6 @@ class _StoreScreenState extends State<StoreScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const WindowDragStrip(),
                     Expanded(
                       child: selected != null
                           ? _ProductPage(
@@ -286,14 +263,7 @@ class _StoreNav extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const WindowDragStrip(),
-            const SizedBox(height: 6),
-            SidebarItem(
-              icon: LucideIcons.arrowLeft300,
-              label: 'Back to app',
-              onTap: () => Navigator.of(context).maybePop(),
-            ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             const RailSectionHeader(label: 'Harness Store'),
             SidebarItem(
               key: const ValueKey('store-shelf-discover'),
@@ -697,15 +667,23 @@ class _ProductPageState extends State<_ProductPage> {
     if (failure != null) _say(failure);
   }
 
+  /// Open (or Get) from the store: the harness needs a tab of its own, since
+  /// a pane never lands in the store tab. A draft tab is opened for it and
+  /// abandoned — back to the store — if the dialog is dismissed.
   Future<void> _open(String machineId) async {
+    final notifier = widget.notifier;
+    notifier.newSwarm(draft: true);
+    final target = notifier.activeSwarmId;
+    if (!mounted) return;
     final result = await showNewAgentDialog(
       context,
-      widget.notifier,
+      notifier,
       machineId,
       source: 'store',
       initialEngine: widget.entry.id,
+      swarmId: target,
     );
-    if (result != null && mounted) Navigator.of(context).maybePop();
+    if (result == null) notifier.cancelSwarmDraft(target);
   }
 
   Future<void> _review() async {

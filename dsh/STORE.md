@@ -1,5 +1,11 @@
 # The harness store: candidates
 
+> **Built (2026-09-16), on branch `viewer-packages`, local repos under `/Users/ab/code/autonomous-*`:**
+> Typst (+ Doc Viewer), Manim (+ Video Viewer), Excalidraw, marimo, Remotion, Blender, MuJoCo — each
+> registered in `dsh/registry/autonomous/`, installed with `harness dsh install --link`, and proven
+> through the daemon (`dsh/tools/dsh-e2e.mjs`): the starter renders, the verdict reads ready, the
+> pane answers. The store in the app lists them beside the built-in engines.
+
 What the picker could offer next, ranked. The rule from Marp and text-to-cad: wrap the open-source
 project under its own name, credit its author, run on Claude Code or Codex, produce files in a
 folder, show them in a pane. Numbers are GitHub stars on 2026-09-16.

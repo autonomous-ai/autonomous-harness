@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/blender",
+  "name": "Blender",
+  "category": "3D",
+  "author": "Blender Foundation",
+  "description": "Describe an object, a scene, a shot — and watch it take shape: modelled in Blender's Python, rendered headless, exported as glTF, the turntable playing in the pane.",
+  "repo": "https://github.com/autonomous-ai/autonomous-blender",
+  "ref": "main",
+  "homepage": "https://www.blender.org",
+  "upstream": "https://projects.blender.org/blender/blender",
+  "license": "MIT",
+  "engine": "claude",
+  "tier": 2,
+  "verified": false
+}

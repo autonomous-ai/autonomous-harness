@@ -8,8 +8,16 @@ import 'terminal_pane.dart';
 /// Shared agents reuse the same pane/session across swarms, so the daemon has
 /// exactly one controller and switching tabs cannot take over our own stream.
 class Swarm {
-  Swarm({required this.id, String name = defaultName})
+  Swarm({required this.id, String name = defaultName, this.kind = 'harness'})
     : name = normalizeName(name);
+
+  /// What the tab holds: `harness` — panes of agents (the default); `store` —
+  /// the Harness Store, one per window, no panes. A store tab is a tab like
+  /// any other — switched to, closed, restored — so browsing never covers
+  /// the strip; it just is not somewhere a pane can land.
+  final String kind;
+  bool get isStore => kind == 'store';
+  static const storeName = 'Harness Store';
 
   static const defaultName = 'New Tab';
   // 'New Harness' was the default until 2026-09-15 and 'New Agent' for a day
@@ -94,6 +102,7 @@ class Swarm {
     return {
       'id': id,
       'name': name,
+      if (kind != 'harness') 'kind': kind,
       'focus': agents.indexWhere((p) => p.id == focusedPaneId),
       'previousFocus': agents.indexWhere((p) => p.id == previousPaneId),
       'zoom': agents.indexWhere((p) => p.id == zoomedPaneId),
@@ -163,6 +172,7 @@ class ClosedSwarm extends ClosedWork {
     this.engine,
   }) : id = swarm.id,
        name = swarm.name,
+       kind = swarm.kind,
        gridColumns = swarm.gridColumns,
        focus = swarm.panes.indexWhere((p) => p.id == swarm.focusedPaneId),
        previousFocus = swarm.panes.indexWhere(
@@ -184,6 +194,9 @@ class ClosedSwarm extends ClosedWork {
 
   final String id;
   final String name;
+
+  /// So a closed store tab reopens as the store, not as an empty harness tab.
+  final String kind;
   final String? engine;
   final int index;
   final int? gridColumns;

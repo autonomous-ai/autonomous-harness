@@ -582,6 +582,27 @@ class AppNotifier extends ChangeNotifier {
     selectSwarm(swarm.id);
   }
 
+  /// The Harness Store, as a tab: the one that is there, else a new one.
+  /// Never a second store tab, never a pane in it.
+  void openStore() {
+    final existing = swarms.where((swarm) => swarm.isStore).firstOrNull;
+    if (existing != null) {
+      if (existing.id != activeSwarmId) selectSwarm(existing.id);
+      return;
+    }
+    if (swarms.length >= maxSwarms) return;
+    while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
+      _nextSwarmId++;
+    }
+    final swarm = Swarm(
+      id: 'swarm-${_nextSwarmId++}',
+      name: Swarm.storeName,
+      kind: 'store',
+    );
+    swarms.add(swarm);
+    selectSwarm(swarm.id);
+  }
+
   void selectSwarm(String id, {bool attachPending = true}) {
     if (!swarms.any((s) => s.id == id)) return;
     if (id != activeSwarmId && isDraftSwarm(activeSwarmId)) {
@@ -803,7 +824,7 @@ class AppNotifier extends ChangeNotifier {
       selectSwarm(target.id);
       return;
     }
-    final restored = Swarm(id: saved.id, name: saved.name)
+    final restored = Swarm(id: saved.id, name: saved.name, kind: saved.kind)
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets)
       ..paneSizes.addAll(saved.paneSizes);

@@ -147,7 +147,9 @@ Future<(_Notifier, _FakeStore)> open(WidgetTester tester, {String? initialHarnes
   final store = _FakeStore();
   await tester.pumpWidget(
     MaterialApp(
-      home: StoreScreen(notifier: notifier, api: store, source: 'test', initialHarness: initialHarness),
+      home: Scaffold(
+        body: StoreTab(notifier: notifier, api: store, source: 'test', initialHarness: initialHarness),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -260,5 +262,21 @@ void main() {
     expect(find.byKey(const ValueKey('store-get:machine-1')), findsOneWidget);
     expect(find.byKey(const ValueKey('store-remove:machine-1')), findsNothing, reason: 'a vendor CLI is not ours to uninstall');
     expect(find.text('Website'), findsOneWidget);
+  });
+
+  testWidgets('the store is one tab: opened once, found again, never a second', (tester) async {
+    final (notifier, _) = await open(tester);
+    final before = notifier.swarms.length;
+    notifier.openStore();
+    expect(notifier.swarms.where((s) => s.isStore).length, 1);
+    expect(notifier.activeSwarm.isStore, isTrue);
+    expect(notifier.activeSwarm.name, 'Harness Store');
+    notifier.newSwarm();
+    expect(notifier.activeSwarm.isStore, isFalse);
+    notifier.openStore();
+    expect(notifier.swarms.where((s) => s.isStore).length, 1);
+    expect(notifier.activeSwarm.isStore, isTrue);
+    // New Tab reuses the empty starter tab, so only the store tab is new.
+    expect(notifier.swarms.length, before + 1);
   });
 }
