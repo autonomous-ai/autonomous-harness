@@ -127,6 +127,7 @@ void main() {
         final row = (updates.last['tabs'] as List).single as Map;
         expect(row['kind'], 'store');
         expect(row['agentCount'], 0);
+        expect(row['iconAsset'], 'assets/engine-icons/store.png');
       } else {
         expect(find.byKey(ValueKey('tab-store:${tab.id}')), findsOneWidget);
       }

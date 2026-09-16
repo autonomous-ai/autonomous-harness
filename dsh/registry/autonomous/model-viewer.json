@@ -1,0 +1,14 @@
+{
+  "id": "autonomous/model-viewer",
+  "kind": "viewer",
+  "name": "3D Viewer",
+  "category": "3D",
+  "author": "Autonomous",
+  "description": "A pane for 3D models: the glTF a harness exports, in Google's model-viewer — orbit, zoom, auto-rotate — reloaded on every export.",
+  "repo": "https://github.com/autonomous-ai/autonomous-model-viewer",
+  "ref": "main",
+  "upstream": "https://github.com/google/model-viewer",
+  "license": "MIT",
+  "tier": 2,
+  "verified": false
+}

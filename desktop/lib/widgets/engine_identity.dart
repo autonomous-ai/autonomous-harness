@@ -287,6 +287,38 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xff1b2a6b),
     asset: 'assets/engine-icons/mujoco.png',
   ),
+  'autonomous/phaser': EngineIdentity(
+    id: 'autonomous/phaser',
+    label: 'Phaser',
+    category: 'Games',
+    creator: 'Phaser Studio',
+    color: Color(0xff2a5bd7),
+    asset: 'assets/engine-icons/phaser.png',
+  ),
+  'autonomous/strudel': EngineIdentity(
+    id: 'autonomous/strudel',
+    label: 'Strudel',
+    category: 'Music',
+    creator: 'Strudel',
+    color: Color(0xffe0577b),
+    asset: 'assets/engine-icons/strudel.png',
+  ),
+  'autonomous/rdkit': EngineIdentity(
+    id: 'autonomous/rdkit',
+    label: 'RDKit',
+    category: 'Chemistry',
+    creator: 'RDKit',
+    color: Color(0xff1d7bb8),
+    asset: 'assets/engine-icons/rdkit.png',
+  ),
+  'autonomous/yosys': EngineIdentity(
+    id: 'autonomous/yosys',
+    label: 'Yosys',
+    category: 'Chips',
+    creator: 'YosysHQ',
+    color: Color(0xff2f7d5b),
+    asset: 'assets/engine-icons/yosys.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -304,6 +336,10 @@ const knownHarnessBase = <String, String>{
   'autonomous/remotion': 'claude',
   'autonomous/blender': 'claude',
   'autonomous/mujoco': 'claude',
+  'autonomous/phaser': 'codex',
+  'autonomous/strudel': 'claude',
+  'autonomous/rdkit': 'codex',
+  'autonomous/yosys': 'claude',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

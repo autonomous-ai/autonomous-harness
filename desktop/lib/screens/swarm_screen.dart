@@ -337,8 +337,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'name': swarm.name,
             'kind': swarm.kind,
             'agentCount': swarm.panes.length,
-            'engine': _tabEngine(swarm),
-            'iconAsset': engineIdentity(_tabEngine(swarm)).asset,
+            'engine': swarm.isStore ? 'store' : _tabEngine(swarm),
+            'iconAsset': swarm.isStore
+                ? kStoreMarkAsset
+                : engineIdentity(_tabEngine(swarm)).asset,
             'attention': swarm.panes
                 .where(
                   (p) =>
@@ -1555,12 +1557,13 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Row(
                                     children: [
                                       if (swarm.isStore)
-                                        // A storefront, from the Material set
-                                        // the strip's plus already comes from.
-                                        Icon(
-                                          Icons.storefront_outlined,
+                                        // The store's own mark: a shelf of
+                                        // four tiles, one lifted.
+                                        Image.asset(
+                                          kStoreMarkAsset,
                                           key: ValueKey('tab-store:${swarm.id}'),
-                                          size: 16,
+                                          width: 16,
+                                          height: 16,
                                         )
                                       else if (swarm.panes.length == 1)
                                         EngineMark(

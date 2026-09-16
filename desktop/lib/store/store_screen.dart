@@ -17,6 +17,10 @@ import '../widgets/new_agent_dialog.dart';
 import 'store_controller.dart';
 import 'store_models.dart';
 
+/// The store's mark — a shelf of four tiles, one lifted — drawn once for the
+/// tab strip, the rail and the card.
+const String kStoreMarkAsset = 'assets/engine-icons/store.png';
+
 /// The Harness Store, the content of its tab: every harness the registry
 /// knows and every built-in engine, as a shelf of cards; one becomes its page
 /// — what it is, whose it is, where it is installed, what people think of it —
@@ -271,8 +275,20 @@ class _StoreNav extends StatelessWidget {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const SizedBox(height: 10),
-            const RailSectionHeader(label: 'Harness Store'),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 4),
+              child: Row(
+                children: [
+                  Image.asset(kStoreMarkAsset, width: 18, height: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Harness Store',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: grid.AppPalette.textPrimary),
+                  ),
+                ],
+              ),
+            ),
             SidebarItem(
               key: const ValueKey('store-shelf-discover'),
               icon: LucideIcons.sparkles300,
