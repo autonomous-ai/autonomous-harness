@@ -1,7 +1,8 @@
 # The harness store: candidates
 
 > **Built (2026-09-16), on branch `viewer-packages`, local repos under `/Users/ab/code/autonomous-*`:**
-> Typst (+ Doc Viewer), Manim (+ Video Viewer), Excalidraw, marimo, Remotion, Blender, MuJoCo — each
+> Typst (+ Doc Viewer), Manim (+ Video Viewer), Excalidraw, marimo, Remotion, Blender (+ 3D Viewer), MuJoCo
+> (+ MuJoCo Viewer, live WebAssembly physics), Phaser, Strudel, RDKit, Yosys, CircuitJS — each
 > registered in `dsh/registry/autonomous/`, installed with `harness dsh install --link`, and proven
 > through the daemon (`dsh/tools/dsh-e2e.mjs`): the starter renders, the verdict reads ready, the
 > pane answers. The store in the app lists them beside the built-in engines.

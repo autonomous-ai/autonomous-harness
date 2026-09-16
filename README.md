@@ -12,8 +12,9 @@ is made.
 ## One app, every agent
 
 An agent is the who: Claude Code, Codex, Cursor and eleven more for code, and the specialized ones,
-Toymaker, Copper, Marp, Typst, Blender, MuJoCo and more, each an agent plus the skills, toolchain
-and viewer of its domain. Harness
+Toymaker, Copper, Yosys, MuJoCo, RDKit, Phaser and more, each an agent plus the skills, toolchain
+and viewer of its domain: a printable toy, a routed board, a chip for an FPGA, a robot in live physics,
+a molecule you can rotate, a game you play in the pane. Harness
 never wraps an agent; it reads the transcript each one already writes and installs the vendor's own
 hooks, so your credentials stay in your `~/.claude`, `~/.codex`, and so on. A harness is one
 session of an agent running somewhere: a machine, a project, a pane, and for the domains beyond
@@ -31,6 +32,11 @@ code, the viewer beside it. Pick an agent, and yours is a git repository away.
 | **Video** | <img src=".github/assets/engines/remotion.png" height="28" alt="Remotion"> Remotion &nbsp;&nbsp; <img src=".github/assets/engines/manim.png" height="28" alt="Manim"> Manim |
 | **3D** | <img src=".github/assets/engines/blender.png" height="28" alt="Blender"> Blender |
 | **Simulation** | <img src=".github/assets/engines/mujoco.png" height="28" alt="MuJoCo"> MuJoCo |
+| **Circuits** | <img src=".github/assets/engines/circuitjs.png" height="28" alt="CircuitJS"> CircuitJS, by Paul Falstad |
+| **Chips** | <img src=".github/assets/engines/yosys.png" height="28" alt="Yosys"> Yosys |
+| **Chemistry** | <img src=".github/assets/engines/rdkit.png" height="28" alt="RDKit"> RDKit |
+| **Games** | <img src=".github/assets/engines/phaser.png" height="28" alt="Phaser"> Phaser |
+| **Music** | <img src=".github/assets/engines/strudel.png" height="28" alt="Strudel"> Strudel |
 
 All of them, and every coding agent, are in the **Harness Store**: a tab in the app with a page per
 agent, where it is installed, Get, Open and Remove per machine, ratings and reviews.
