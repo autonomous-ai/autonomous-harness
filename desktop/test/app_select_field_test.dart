@@ -541,4 +541,157 @@ void main() {
       );
     });
   });
+
+  group('a searchable menu', () {
+    // Nine rows: one past `filterThreshold`, and the shape of the real list —
+    // a dozen coding engines that differ only by name, and the harnesses a
+    // person actually came looking for.
+    const long = <SelectOption<String>>[
+      SelectOption(
+        value: 'claude',
+        label: 'Claude Code',
+        detail: 'Code · Anthropic',
+      ),
+      SelectOption(value: 'codex', label: 'Codex', detail: 'Code · OpenAI'),
+      SelectOption(
+        value: 'cursor',
+        label: 'Cursor',
+        detail: 'Code · Anysphere',
+      ),
+      SelectOption(value: 'kilo', label: 'Kilo', detail: 'Code · Kilo Code'),
+      SelectOption(value: 'amp', label: 'Amp', detail: 'Code · Sourcegraph'),
+      SelectOption(value: 'grok', label: 'Grok', detail: 'Code · xAI'),
+      SelectOption(
+        value: 'marp',
+        label: 'Marp',
+        detail: 'Slides · Yuki Hattori',
+      ),
+      SelectOption(
+        value: 'typst',
+        label: 'Typst',
+        detail: 'Documents · Typst GmbH',
+      ),
+      SelectOption(
+        value: 'manim',
+        label: 'Manim',
+        detail: 'Math animation · Manim Community',
+      ),
+    ];
+    final filter = find.byKey(const Key('app-select-filter'));
+
+    Future<void> openWith(
+      WidgetTester tester,
+      List<SelectOption<String>> options,
+      List<String> picked,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          AppSelectField<String>(
+            value: 'claude',
+            options: options,
+            onChanged: picked.add,
+            filterable: true,
+            width: 240,
+          ),
+          top: true,
+        ),
+      );
+      await _open(tester);
+    }
+
+    testWidgets('opens on the field past the threshold, and not below it', (
+      tester,
+    ) async {
+      final picked = <String>[];
+      await openWith(tester, long, picked);
+      expect(filter, findsOneWidget);
+      expect(
+        tester.widget<TextField>(filter).focusNode!.hasPrimaryFocus,
+        isTrue,
+        reason: 'the first keystroke must narrow the list, not open a browser',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      // Eight rows is a list you READ. A search box over it is furniture that
+      // says "there is more here" when there is not.
+      await openWith(tester, long.take(8).toList(), picked);
+      expect(filter, findsNothing);
+      expect(find.byType(AppMenuItem), findsNWidgets(8));
+      expect(picked, isEmpty);
+    });
+
+    testWidgets('typing narrows the rows, and Enter takes the match', (
+      tester,
+    ) async {
+      final picked = <String>[];
+      await openWith(tester, long, picked);
+      await tester.enterText(filter, 'typ');
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsOneWidget);
+      expect(find.widgetWithText(AppMenuItem, 'Typst'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(picked, ['typst']);
+      expect(find.byType(AppMenuItem), findsNothing);
+    });
+
+    testWidgets('matches the second line too, and Enter takes the first', (
+      tester,
+    ) async {
+      final picked = <String>[];
+      await openWith(tester, long, picked);
+      // Nothing called "anthropic" — the maker is on the detail line, and on
+      // this list that is what people know a row by.
+      await tester.enterText(filter, 'ANTHROPIC');
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsOneWidget);
+      expect(find.widgetWithText(AppMenuItem, 'Claude Code'), findsOneWidget);
+
+      await tester.enterText(filter, 'ma');
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsNWidgets(2));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(picked, ['marp'], reason: 'the first of several matches');
+    });
+
+    testWidgets('Escape closes it, and reopening forgets the query', (
+      tester,
+    ) async {
+      final picked = <String>[];
+      await openWith(tester, long, picked);
+      await tester.enterText(filter, 'ma');
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsNWidgets(2));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(picked, isEmpty);
+      expect(find.byType(AppMenuItem), findsNothing);
+
+      await _open(tester);
+      expect(tester.widget<TextField>(filter).controller!.text, isEmpty);
+      expect(find.byType(AppMenuItem), findsNWidgets(long.length));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a query that matches nothing says so', (tester) async {
+      final picked = <String>[];
+      await openWith(tester, long, picked);
+      await tester.enterText(filter, 'zzz');
+      await tester.pumpAndSettle();
+      expect(find.byType(AppMenuItem), findsNothing);
+      // Not an empty panel: a typo must read as "no matches" rather than as a
+      // menu that mysteriously emptied.
+      expect(find.text('No matches'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(picked, isEmpty);
+      expect(
+        filter,
+        findsOneWidget,
+        reason: 'Enter on nothing chooses nothing',
+      );
+    });
+  });
 }

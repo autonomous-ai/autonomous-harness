@@ -5,6 +5,7 @@ import 'dart:async';
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/auth/auth_session.dart';
 import 'package:harness/core/config.dart';
@@ -14,6 +15,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/core/project_folder.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/pane_arrangement.dart';
+import 'package:harness/shared/widgets/app_menu.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 import 'package:harness/widgets/new_agent_dialog.dart';
 
@@ -357,7 +359,7 @@ void main() {
     expect(app.launches.single['dsh'], isNull);
   });
 
-  testWidgets('More lists the machine\'s harnesses after the engines', (
+  testWidgets('More lists the machine\'s harnesses before the engines', (
     tester,
   ) async {
     await open(
@@ -374,10 +376,14 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
     await tester.tap(find.byKey(const Key('new-agent-engine-field')));
     await tester.pumpAndSettle();
-    // Far down a list of fourteen engines: scrolled into view first, or the
-    // tap lands on the menu's edge and quietly selects nothing.
-    await tester.ensureVisible(find.text('Robot Arm').last);
-    await tester.pumpAndSettle();
+    // The three tiles already offered three coding engines; the eleven behind
+    // them are more of the same, and the harnesses are what More is FOR.
+    final rows = tester
+        .widgetList<AppMenuItem>(find.byType(AppMenuItem))
+        .map((row) => row.label)
+        .toList();
+    expect(rows.take(2), ['Copper', 'Robot Arm']);
+    expect(rows.skip(2), contains('Cursor'));
     expect(find.text('Robot Arm'), findsWidgets);
     expect(find.text('on Codex'), findsNothing, reason: 'backend detail');
     await tester.tap(find.text('Robot Arm').last);
@@ -386,6 +392,34 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
     await tester.tap(find.byKey(const Key('new-agent-advanced')));
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('More is searched by name, not scrolled through', (tester) async {
+    await open(
+      tester,
+      seed: (state) => state.dsh.replace([
+        _circuit,
+        const DshEntry(
+          id: 'someone/robot-arm',
+          name: 'Robot Arm',
+          engine: 'codex',
+        ),
+      ]),
+    );
+    await tester.ensureVisible(find.byKey(const Key('new-agent-engine-field')));
+    await tester.tap(find.byKey(const Key('new-agent-engine-field')));
+    await tester.pumpAndSettle();
+    // Thirteen rows behind the three tiles — past the point where reading the
+    // list beats typing at it.
+    final filter = find.byKey(const Key('app-select-filter'));
+    expect(filter, findsOneWidget);
+    await tester.enterText(filter, 'robot');
+    await tester.pumpAndSettle();
+    expect(find.byType(AppMenuItem), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(engineField(tester), 'someone/robot-arm');
     expect(tester.takeException(), isNull);
   });
 }

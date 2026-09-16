@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/shared/widgets/app_choice_picker.dart';
+import 'package:harness/shared/widgets/app_menu.dart';
 import 'package:harness/shared/widgets/app_select_field.dart';
 
 void main() {
@@ -185,6 +186,170 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('the overflow lists the named kind before the rest', (
+    tester,
+  ) async {
+    // The three tiles are the preferred values and are untouched; what is left
+    // over is sorted by KIND, so the harnesses somebody opened More for are not
+    // buried under engines that differ from the tiles only by name.
+    const moreKey = ValueKey('more');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppChoicePicker<String>(
+            value: 'codex',
+            options: const [
+              SelectOption(value: 'codex', label: 'Codex'),
+              SelectOption(value: 'claude', label: 'Claude Code'),
+              SelectOption(value: 'opencode', label: 'OpenCode'),
+              SelectOption(value: 'cursor', label: 'Cursor'),
+              SelectOption(value: 'kilo', label: 'Kilo'),
+              SelectOption(value: 'autonomous/typst', label: 'Typst'),
+              SelectOption(value: 'someone/robot-arm', label: 'Robot Arm'),
+            ],
+            preferredValues: const ['codex', 'claude', 'opencode'],
+            overflowFirst: (id) => id.contains('/'),
+            optionKey: (id) => ValueKey(id),
+            moreKey: moreKey,
+            moreLabel: 'More agents',
+            tileSize: const Size(200, 100),
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(moreKey));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widgetList<AppMenuItem>(find.byType(AppMenuItem))
+          .map((row) => row.label),
+      ['Typst', 'Robot Arm', 'Cursor', 'Kilo'],
+    );
+    expect(
+      tester
+          .widgetList<AppChoiceTile>(find.byType(AppChoiceTile))
+          .map((tile) => tile.label),
+      ['Codex', 'Claude Code', 'OpenCode'],
+      reason: 'the direct tiles are the preferred values, unsorted',
+    );
+  });
+
+  testWidgets('an overflow past eight rows gets a search field', (
+    tester,
+  ) async {
+    const moreKey = ValueKey('more');
+    var selected = 'e0';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => AppChoicePicker<String>(
+              value: selected,
+              options: [
+                for (var i = 0; i < 12; i++)
+                  SelectOption(value: 'e$i', label: 'Engine $i'),
+              ],
+              optionKey: (id) => ValueKey(id),
+              moreKey: moreKey,
+              moreLabel: 'More engines',
+              tileSize: const Size(200, 100),
+              onChanged: (value) => setState(() => selected = value),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(moreKey));
+    await tester.pumpAndSettle();
+    // Nine rows in the overflow — the picker turns the field on by handing
+    // `filterable` down; the threshold is the field's own.
+    expect(find.byType(AppMenuItem), findsNWidgets(9));
+    final filter = find.byKey(const Key('app-select-filter'));
+    expect(filter, findsOneWidget);
+    await tester.enterText(filter, 'ne 7');
+    await tester.pumpAndSettle();
+    expect(find.byType(AppMenuItem), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(selected, 'e7');
+  });
+
+  group('a tile\'s detail line', () {
+    test('spends the spare line on the detail unless the name needs it', () {
+      // 68 points is the room a 100pt tile has inside its padding: three lines
+      // between the two of them, and one of them gets the second.
+      ({int label, int detail}) lines({
+        required double room,
+        required bool labelWraps,
+      }) => AppChoiceTileContent.linesFor(
+        room: room,
+        labelWraps: labelWraps,
+        hasDetail: true,
+        scaler: TextScaler.noScaling,
+      );
+      expect(lines(room: 68, labelWraps: false), (label: 1, detail: 2));
+      expect(lines(room: 68, labelWraps: true), (label: 2, detail: 1));
+      expect(lines(room: 120, labelWraps: true), (label: 2, detail: 2));
+      expect(lines(room: 40, labelWraps: true), (label: 1, detail: 1));
+      expect(
+        AppChoiceTileContent.linesFor(
+          room: 68,
+          labelWraps: true,
+          hasDetail: false,
+          scaler: TextScaler.noScaling,
+        ),
+        (label: 2, detail: 0),
+      );
+    });
+
+    testWidgets('draws on two lines, and a wrapping name still wraps', (
+      tester,
+    ) async {
+      Future<void> pump(String label, String detail) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: AppChoiceTile(
+                // The dialog's own tile at a 4-column desktop width.
+                size: const Size(190, 100),
+                label: label,
+                detail: detail,
+                onPressed: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await pump('Manim', 'Math animation · Manim Community');
+      final detail = tester.widget<Text>(
+        find.text('Math animation · Manim Community'),
+      );
+      expect(detail.maxLines, 2);
+      expect(
+        tester.getSize(find.text('Math animation · Manim Community')).height,
+        greaterThan(
+          AppChoiceTileContent.detailSize *
+              AppChoiceTileContent.lineHeight *
+              1.5,
+        ),
+        reason: 'the maker\'s name belongs on the tile, not behind an ellipsis',
+      );
+      expect(tester.takeException(), isNull);
+
+      // A name that genuinely needs two lines keeps them: the second line is
+      // the detail's only while the name can spare it.
+      await pump('dees-MacBook-Pro.local', 'Remote · Offline');
+      expect(
+        tester.widget<Text>(find.text('dees-MacBook-Pro.local')).maxLines,
+        2,
+      );
+      expect(tester.widget<Text>(find.text('Remote · Offline')).maxLines, 1);
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   testWidgets('up to three options need no overflow menu', (tester) async {
     for (var count = 1; count <= 3; count++) {

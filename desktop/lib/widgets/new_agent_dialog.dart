@@ -867,11 +867,26 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           : constraints.maxWidth >= minimumTileWidth * 2 + AppChoiceTile.gap
           ? 2
           : 1;
+      // Three lines of text, and the 38 the tile spends on its own padding and
+      // the gap between them. Three because the name and the detail under it
+      // each want two and the tile can afford one second line between them:
+      // sized for whichever of those two shapes is taller, so either can
+      // happen without the column overflowing its box. The detail is the one
+      // that usually takes it — "Documents · Typst GmbH" does not fit on one
+      // line at this width, and on one it arrived as "Documents · Typst Gm…".
+      // Which line is spent where is decided per tile, against the name it
+      // actually holds: AppChoiceTileContent.linesFor.
+      final labelLine =
+          scaler.scale(AppChoiceTileContent.labelSize) *
+          AppChoiceTileContent.lineHeight;
+      final detailLine =
+          scaler.scale(AppChoiceTileContent.detailSize) *
+          AppChoiceTileContent.lineHeight;
       final tileSize = Size(
         (constraints.maxWidth - AppChoiceTile.gap * (columns - 1)) / columns,
         math.max(
           compactHeight ? 96 : 100,
-          scaler.scale(16) * 2.5 + scaler.scale(14) * 1.25 + 38,
+          math.max(labelLine * 2 + detailLine, labelLine + detailLine * 2) + 38,
         ),
       );
       return Column(
