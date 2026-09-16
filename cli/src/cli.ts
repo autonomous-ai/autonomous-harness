@@ -75,6 +75,7 @@ import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath } from './dsh/manifest.js'
 import { registryEntry } from './dsh/registry.js'
 import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
+import { preTrustClaudeProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
 import { DshViewerManager } from './dsh/viewer.js'
@@ -3785,6 +3786,10 @@ async function runForeground(session: AuthSession): Promise<void> {
         const materialized = await materializeWorkspace(installed, cwd)
         for (const warning of materialized.warnings) console.warn(`[dsh] ${dsh} materialize · ${warning}`)
         console.log(`[dsh] ${dsh} materialized ${cwd} · created ${materialized.created.length} · kept ${materialized.kept.length}`)
+        // The template just went in: the folder is the harness's, and Claude Code need not ask.
+        if (engine === 'claude' && materialized.created.some((item) => item.startsWith('template'))) {
+          try { preTrustClaudeProject(cwd) } catch (error) { console.warn(`[dsh] pre-trust ${cwd} · ${error instanceof Error ? error.message : error}`) }
+        }
       } catch (error) {
         const detail = `could not prepare the workspace for ${dsh} · ${error instanceof Error ? error.message : error}`
         console.warn(`[agent] create ${dsh} refused · ${detail}`)
