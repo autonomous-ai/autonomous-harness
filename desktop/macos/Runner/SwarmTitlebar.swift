@@ -1219,7 +1219,12 @@ private final class SwarmTabStrip: NSView {
       tab.palette = palette
       tab.name = row["name"] as? String ?? "New Tab"
       let count = row["agentCount"] as? Int ?? 0
-      tab.icon = count == 1
+      // The Harness Store tab holds no agents; without its own mark it would wear New Tab's plus.
+      let store = row["kind"] as? String == "store"
+      tab.icon = store
+        ? (NSImage(systemSymbolName: "storefront", accessibilityDescription: "Harness Store")
+           ?? NSImage(systemSymbolName: "bag", accessibilityDescription: "Harness Store"))
+        : count == 1
         ? icons.image(engine: row["engine"] as? String, asset: row["iconAsset"] as? String)
         : count > 1
         ? SwarmIdentity.menuIcon

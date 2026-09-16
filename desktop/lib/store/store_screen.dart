@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../analytics/analytics.dart';
 import '../core/dsh_catalog.dart';
+import '../core/test_run.dart';
 import '../shared/layouts/widgets/rail_section_header.dart';
 import '../shared/layouts/widgets/sidebar_item.dart';
 import '../shared/theme/app_theme.dart' as grid;
@@ -86,6 +87,9 @@ class _StoreTabState extends State<StoreTab> {
     // Deferred a frame: both calls notify listeners at once, and this screen
     // is built while the shell underneath — which listens to the same
     // notifier — is mid-build.
+    // Under test, only an injected [StoreApi] loads: the real one is an HTTP
+    // call with a timeout, which is a Timer a widget test cannot let end.
+    if (widget.api == null && kUnderTest) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_store.loadRatings());

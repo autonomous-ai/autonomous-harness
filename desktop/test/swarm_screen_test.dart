@@ -100,6 +100,38 @@ void main() {
   });
 
   for (final native in [false, true]) {
+    testWidgets('the store tab wears a storefront, not New Tab\'s plus (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final updates = <Map>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'update') updates.add(call.arguments as Map);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      final tab = app.activeSwarm;
+      await mount(tester, app, nativeTabs: native);
+      app.openStore();
+      await tester.pump();
+      expect(tab.isStore, isTrue);
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['kind'], 'store');
+        expect(row['agentCount'], 0);
+      } else {
+        expect(find.byKey(ValueKey('tab-store:${tab.id}')), findsOneWidget);
+      }
+    });
+
     testWidgets('tab identity follows its agent count (native=$native)', (
       tester,
     ) async {

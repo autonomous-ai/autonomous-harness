@@ -4,7 +4,6 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/services.dart';
 
 import '../core/desktop_window.dart';
@@ -336,6 +335,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           {
             'id': swarm.id,
             'name': swarm.name,
+            'kind': swarm.kind,
             'agentCount': swarm.panes.length,
             'engine': _tabEngine(swarm),
             'iconAsset': engineIdentity(_tabEngine(swarm)).asset,
@@ -1555,12 +1555,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Row(
                                     children: [
                                       if (swarm.isStore)
-                                        // A storefront: the grid read as a
-                                        // plus at tab size, i.e. as New Tab.
+                                        // A storefront, from the Material set
+                                        // the strip's plus already comes from.
                                         Icon(
-                                          LucideIcons.store300,
+                                          Icons.storefront_outlined,
                                           key: ValueKey('tab-store:${swarm.id}'),
-                                          size: 15,
+                                          size: 16,
                                         )
                                       else if (swarm.panes.length == 1)
                                         EngineMark(
