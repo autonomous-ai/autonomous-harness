@@ -182,7 +182,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/marp',
     label: 'Marp',
     category: 'Slides',
-    creator: 'Autonomous',
+    creator: 'Yuki Hattori',
     color: Color(0xff218cdb),
     asset: 'assets/engine-icons/marp.png',
   ),

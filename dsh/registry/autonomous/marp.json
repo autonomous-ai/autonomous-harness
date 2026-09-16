@@ -2,7 +2,7 @@
   "id": "autonomous/marp",
   "name": "Marp",
   "category": "Slides",
-  "author": "Autonomous",
+  "author": "Yuki Hattori",
   "description": "Describe a talk; get a keynote — huge type, generated art, speaker notes — live in the pane, exported to PDF, PPTX or HTML.",
   "repo": "https://github.com/autonomous-ai/autonomous-marp",
   "ref": "main",
