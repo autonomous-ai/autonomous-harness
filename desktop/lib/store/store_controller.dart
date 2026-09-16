@@ -165,7 +165,7 @@ class StoreController extends ChangeNotifier {
   static String _sentence(Object error, String fallback) {
     if (error is ApiException) {
       return switch (error.status) {
-        404 => 'Ratings and reviews are not available on this account yet.',
+        404 => 'Ratings and reviews are not on the Harness server yet; they arrive with its next release.',
         401 || 403 => 'Sign in to see ratings and reviews.',
         _ => error.message.trim().isEmpty ? fallback : error.message.trim(),
       };

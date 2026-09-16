@@ -352,10 +352,12 @@ void main() {
     expect(again.swarms.where((s) => s.isStore).single.name, 'Harness Store');
     again.dispose();
 
-    // A layout that somehow holds two store tabs brings back one.
+    // A layout that somehow holds two store tabs brings back one — and an
+    // empty tab named for the store, saved by a build before tabs had a kind,
+    // counts as the store rather than as an empty harness tab.
     final doubled = jsonDecode(storage.values['swarm_layout_v1']!) as Map<String, dynamic>;
     final rows = List<dynamic>.from(doubled['swarms'] as List);
-    rows.add({...(rows.first as Map), 'id': 'swarm-99'});
+    rows.add({...(rows.first as Map), 'id': 'swarm-99'}..remove('kind'));
     doubled['swarms'] = rows;
     storage.values['swarm_layout_v1'] = jsonEncode(doubled);
     final once = _notifier(layout: PaneLayoutStore(storage: storage));

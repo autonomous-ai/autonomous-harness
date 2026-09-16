@@ -5836,9 +5836,13 @@ class AppNotifier extends ChangeNotifier {
         }
         final id = raw['id'] as String;
         if (id.isEmpty || restored.any((s) => s.id == id)) continue;
-        // One store tab, as one New Tab: a second saved one has nothing in it
-        // that the first does not, so it is not brought back.
-        if (raw['kind'] == 'store' && restored.any((s) => s.isStore)) continue;
+        // An empty tab carrying the store's name is the store — a layout
+        // saved by a build that did not yet write the kind — and one store
+        // tab, as one New Tab: a second has nothing the first does not.
+        final isStore =
+            raw['kind'] == 'store' ||
+            (raw['name'] == Swarm.storeName && (raw['panes'] as List).isEmpty);
+        if (isStore && restored.any((s) => s.isStore)) continue;
         final swarm = Swarm(
           id: id,
           name:
@@ -5848,9 +5852,7 @@ class AppNotifier extends ChangeNotifier {
                   (raw['name'] as String).length.clamp(0, 80),
                 )
               : Swarm.defaultName,
-          // A store tab comes back as the store; a layout saved before tabs
-          // had a kind reads as a harness tab, which is what it was.
-          kind: raw['kind'] == 'store' ? 'store' : 'harness',
+          kind: isStore ? 'store' : 'harness',
         );
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
