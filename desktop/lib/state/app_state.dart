@@ -582,12 +582,20 @@ class AppNotifier extends ChangeNotifier {
     selectSwarm(swarm.id);
   }
 
-  /// The Harness Store, as a tab: the one that is there, else a new one.
-  /// Never a second store tab, never a pane in it.
+  /// The Harness Store takes over the tab it was opened from — the New Tab
+  /// whose start page carries the card — exactly as the first agent takes
+  /// over a New Tab. From anywhere else (a tab with panes) it gets a tab of
+  /// its own; a tab that is already the store stays put.
   void openStore() {
-    final existing = swarms.where((swarm) => swarm.isStore).firstOrNull;
-    if (existing != null) {
-      if (existing.id != activeSwarmId) selectSwarm(existing.id);
+    final current = activeSwarm;
+    if (current.isStore) return;
+    if (current.isEmptyStarter) {
+      current
+        ..kind = 'store'
+        ..name = Swarm.storeName;
+      _draftSwarmReturns.remove(current.id);
+      _persistLayout();
+      notifyListeners();
       return;
     }
     if (swarms.length >= maxSwarms) return;

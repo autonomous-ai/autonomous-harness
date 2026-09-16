@@ -12,10 +12,11 @@ class Swarm {
     : name = normalizeName(name);
 
   /// What the tab holds: `harness` — panes of agents (the default); `store` —
-  /// the Harness Store, one per window, no panes. A store tab is a tab like
-  /// any other — switched to, closed, restored — so browsing never covers
-  /// the strip; it just is not somewhere a pane can land.
-  final String kind;
+  /// the Harness Store, no panes. A store tab is a tab like any other —
+  /// switched to, closed, restored — so browsing never covers the strip; it
+  /// just is not somewhere a pane can land. Mutable because the store takes
+  /// over the New Tab it was opened from, the way a first agent does.
+  String kind;
   bool get isStore => kind == 'store';
   static const storeName = 'Harness Store';
 

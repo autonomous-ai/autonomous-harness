@@ -264,19 +264,23 @@ void main() {
     expect(find.text('Website'), findsOneWidget);
   });
 
-  testWidgets('the store is one tab: opened once, found again, never a second', (tester) async {
+  testWidgets('the store takes over the New Tab it was opened from, as a first agent does', (tester) async {
     final (notifier, _) = await open(tester);
+    // The app starts on one empty New Tab: its start page is where the card is.
+    final starter = notifier.activeSwarm;
+    expect(starter.isEmptyStarter, isTrue);
     final before = notifier.swarms.length;
     notifier.openStore();
-    expect(notifier.swarms.where((s) => s.isStore).length, 1);
-    expect(notifier.activeSwarm.isStore, isTrue);
-    expect(notifier.activeSwarm.name, 'Harness Store');
+    expect(notifier.swarms.length, before, reason: 'no second tab');
+    expect(identical(notifier.activeSwarm, starter), isTrue);
+    expect(starter.isStore, isTrue);
+    expect(starter.name, 'Harness Store');
+    // Again from the store tab: nothing moves.
+    notifier.openStore();
+    expect(notifier.swarms.length, before);
+    // New Tab from here makes a fresh starter, since this one is the store now.
     notifier.newSwarm();
     expect(notifier.activeSwarm.isStore, isFalse);
-    notifier.openStore();
-    expect(notifier.swarms.where((s) => s.isStore).length, 1);
-    expect(notifier.activeSwarm.isStore, isTrue);
-    // New Tab reuses the empty starter tab, so only the store tab is new.
     expect(notifier.swarms.length, before + 1);
   });
 }
