@@ -1,0 +1,14 @@
+{
+  "id": "autonomous/mujoco-viewer",
+  "kind": "viewer",
+  "name": "MuJoCo Viewer",
+  "category": "Simulation",
+  "author": "Autonomous",
+  "description": "An interactive pane for MuJoCo: the robot's scene in the browser with live WebAssembly physics — orbit, scrub a recorded rollout, switch to live stepping, reset — on MuJoCo's own WebAssembly build and three.js.",
+  "repo": "https://github.com/autonomous-ai/autonomous-mujoco-viewer",
+  "ref": "main",
+  "upstream": "https://github.com/google-deepmind/mujoco",
+  "license": "MIT",
+  "tier": 2,
+  "verified": false
+}
