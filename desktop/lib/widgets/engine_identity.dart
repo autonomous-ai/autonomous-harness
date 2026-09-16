@@ -319,6 +319,14 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xff2f7d5b),
     asset: 'assets/engine-icons/yosys.png',
   ),
+  'autonomous/circuitjs': EngineIdentity(
+    id: 'autonomous/circuitjs',
+    label: 'CircuitJS',
+    category: 'Circuits',
+    creator: 'Paul Falstad',
+    color: Color(0xff50fa78),
+    asset: 'assets/engine-icons/circuitjs.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -340,6 +348,7 @@ const knownHarnessBase = <String, String>{
   'autonomous/strudel': 'claude',
   'autonomous/rdkit': 'codex',
   'autonomous/yosys': 'claude',
+  'autonomous/circuitjs': 'codex',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

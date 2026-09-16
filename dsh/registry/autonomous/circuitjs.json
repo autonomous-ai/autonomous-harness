@@ -1,0 +1,15 @@
+{
+  "id": "autonomous/circuitjs",
+  "name": "CircuitJS",
+  "category": "Circuits",
+  "author": "Paul Falstad",
+  "description": "Describe a circuit and watch it run — Paul Falstad's CircuitJS1 (GPL-2.0 upstream) in the pane, current animating and scopes drawing, while the agent writes it.",
+  "repo": "https://github.com/autonomous-ai/autonomous-circuitjs",
+  "ref": "main",
+  "homepage": "https://www.falstad.com/circuit/",
+  "upstream": "https://github.com/pfalstad/circuitjs1",
+  "license": "MIT",
+  "engine": "codex",
+  "tier": 2,
+  "verified": false
+}
