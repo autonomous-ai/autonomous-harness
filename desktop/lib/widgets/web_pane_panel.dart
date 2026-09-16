@@ -3,6 +3,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import '../core/models.dart' show AgentVerdict;
 import '../core/test_run.dart';
@@ -80,7 +82,17 @@ class _WebPanePanelState extends State<WebPanePanel> {
   }
 
   void _mountController() {
-    final controller = WebViewController()
+    // WebKit's default media policy wants a click before any playback, which
+    // leaves a viewer's muted video sitting at 00:00 with a play button; a
+    // pane whose whole point is the render the harness just made autoplays it.
+    final controller = WebViewController.fromPlatformCreationParams(
+      WebViewPlatform.instance is WebKitWebViewPlatform
+          ? WebKitWebViewControllerCreationParams(
+              allowsInlineMediaPlayback: true,
+              mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+            )
+          : const PlatformWebViewControllerCreationParams(),
+    )
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(

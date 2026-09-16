@@ -1555,8 +1555,10 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Row(
                                     children: [
                                       if (swarm.isStore)
+                                        // A storefront: the grid read as a
+                                        // plus at tab size, i.e. as New Tab.
                                         Icon(
-                                          LucideIcons.layoutGrid300,
+                                          LucideIcons.store300,
                                           key: ValueKey('tab-store:${swarm.id}'),
                                           size: 15,
                                         )
