@@ -42,10 +42,10 @@ describe('isCandidateArtifact', () => {
 })
 
 describe('bundledDshRegistry', () => {
-  it('reads the registry off the source tree in dev, with Copper, Solid and Marp present', () => {
+  it('reads the registry off the source tree in dev, with Copper, Toymaker and Marp present', () => {
     resetBundledDshRegistry()
     const ids = bundledDshRegistry().map((entry) => entry.id)
-    expect(ids).toEqual(expect.arrayContaining(['autonomous/copper', 'autonomous/solid', 'autonomous/marp']))
+    expect(ids).toEqual(expect.arrayContaining(['autonomous/copper', 'autonomous/toymaker', 'autonomous/marp']))
     expect(resolveInstallSource('autonomous/copper')).toMatchObject({ source: 'https://github.com/autonomous-ai/autonomous-circuit', id: 'autonomous/copper' })
     expect(resolveInstallSource('https://example.com/x.git')).toEqual({ source: 'https://example.com/x.git' })
     expect(resolveInstallSource('bad\nsource')).toBeNull()

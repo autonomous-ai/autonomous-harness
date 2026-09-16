@@ -42,3 +42,11 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
   (`resolveViewer`), `install.ts` (dependency install), `check.ts`, `backendSocket.ts` (`kind` on
   rows; a viewer package refused as an agent on create).
 
+## 2026-09-16 — Toymaker
+- **Change:** the Make harness is `autonomous/toymaker`, "Toymaker", category "Toys" (was
+  `autonomous/solid`, "Solid", "3D design"). `formerly` lists `autonomous/solid` and
+  `autonomous/workshop`, so every agent created under either keeps its harness.
+- **Why:** the public buys toys — kits of printed parts, printed fasteners, a mechanism — and the
+  name should say what comes out, not the room it comes from.
+- **Backward compatible:** yes, through `formerly`.
+

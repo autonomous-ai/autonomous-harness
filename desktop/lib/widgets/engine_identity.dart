@@ -143,12 +143,12 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffd98a4a),
     asset: 'assets/engine-icons/copper.png',
   ),
-  'autonomous/solid': EngineIdentity(
-    id: 'autonomous/solid',
-    label: 'Solid',
-    category: '3D design',
+  'autonomous/toymaker': EngineIdentity(
+    id: 'autonomous/toymaker',
+    label: 'Toymaker',
+    category: 'Toys',
     color: Color(0xff5a52d8),
-    asset: 'assets/engine-icons/solid.png',
+    asset: 'assets/engine-icons/toymaker.png',
   ),
   'autonomous/marp': EngineIdentity(
     id: 'autonomous/marp',
@@ -171,7 +171,7 @@ const _harnesses = <String, EngineIdentity>{
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
   'autonomous/copper': 'claude',
-  'autonomous/solid': 'codex',
+  'autonomous/toymaker': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
 };

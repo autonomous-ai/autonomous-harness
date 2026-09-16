@@ -94,13 +94,13 @@ void main() {
       'm',
       engine: 'codex',
       folder: '/w',
-      dsh: 'autonomous/solid',
+      dsh: 'autonomous/toymaker',
       // What the dialog passes when no tab was chosen: the current one.
       swarmId: app.activeSwarmId,
     );
     expect(app.swarms, hasLength(2));
     expect(app.activeSwarm, isNot(same(busy)));
-    expect(app.activeSwarm.name, 'Solid');
+    expect(app.activeSwarm.name, 'Toymaker');
     connection.calls.single.created('w1');
     expect(await create, isNull);
     expect(app.activeSwarm.panes.single.agentId, 'w1');

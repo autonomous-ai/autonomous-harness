@@ -1,0 +1,11 @@
+{
+  "id": "autonomous/toymaker",
+  "name": "Toymaker",
+  "category": "Toys",
+  "description": "Describe a toy; get a kit of printed parts that fits, prints without support, moves, and passes review — a live 3D view beside the agent.",
+  "repo": "https://github.com/autonomous-ai/autonomous-workshop",
+  "ref": "main",
+  "engine": "codex",
+  "tier": 2,
+  "verified": true
+}

@@ -124,7 +124,7 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 ~/.harness/dsh/
   installed.json                # [{ id, dir, source, ref, commit, installedAt }]
   autonomous/copper/           # clone, or a symlink when installed with --link (dev loop)
-  autonomous/solid/
+  autonomous/toymaker/
 ```
 
 CLI: `harness dsh install <git-url|path> [--link] [--ref <ref>]`, `harness dsh list`,

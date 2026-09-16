@@ -308,8 +308,8 @@ void main() {
     'a machine that has not answered offers the tiles without a verdict',
     (tester) async {
       final app = await open(tester, seed: (_) {});
-      await pick(tester, 'Solid');
-      expect(engineField(tester), 'autonomous/solid');
+      await pick(tester, 'Toymaker');
+      expect(engineField(tester), 'autonomous/toymaker');
       await tester.ensureVisible(find.byKey(const Key('new-agent-advanced')));
       await tester.tap(find.byKey(const Key('new-agent-advanced')));
       await tester.pumpAndSettle();
@@ -317,7 +317,7 @@ void main() {
       // The machine never answered, so nothing can be called missing.
       expect(app.installs, isEmpty);
       expect(app.launches.single['engine'], 'codex');
-      expect(app.launches.single['dsh'], 'autonomous/solid');
+      expect(app.launches.single['dsh'], 'autonomous/toymaker');
       expect(tester.takeException(), isNull);
     },
   );
