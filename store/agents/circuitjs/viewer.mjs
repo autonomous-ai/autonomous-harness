@@ -4,14 +4,20 @@
 // from the workspace — so the pane works offline and the iframe is same-origin, which is what
 // CircuitJS1's JavaScript interface requires.
 //
-// The trick that makes it live: the app is loaded once, with ?startCircuit= pointed at a virtual
-// path that resolves to the workspace file. After that a change on disk is an SSE `change`, and the
-// page re-imports the text through CircuitJS1.importCircuit() — no reload, no flash, the app keeps
-// its window, its menus and its run state. The sim stays fully editable: poking at it is the point.
-import { createServer } from 'node:http'
+// The trick that makes it live: the app boots on an empty circuit, and the page hands it the file
+// through CircuitJS1.importCircuit(). A save on disk is an SSE `change`; the page fetches the file
+// and, when its text actually changed, imports it again — no reload, no flash, the app keeps its
+// window, its menus and its run state. The sim stays fully editable: poking at it is the point.
+//
+// Around the app, the page adds what a person watching an agent needs: a live status (updated,
+// waiting, problems), the labeled nodes' voltages as they move, a readable account of lines the
+// simulator could not load (the package's own checker, toolchain/verdict.py, plus the app's own
+// load errors), and a legend for the colours, dots and controls.
+import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, statSync, watch } from 'node:fs'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createServer } from 'node:http'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.HARNESS_VIEWER_PORT)
@@ -19,9 +25,8 @@ const workspace = resolve(process.env.HARNESS_WORKSPACE)
 const war = join(here, 'upstream', 'war')
 const clients = new Set()
 
-// Where the GWT app asks for a named setup file: moduleBase + "circuits/" + startCircuit. One name
-// under it is ours, and the rest of it resolves under the workspace.
-const SETUP = '/app/circuitjs1/circuits/__workspace__/'
+// The circuit the app boots on, before the page imports the workspace file: an options line and
+// nothing else, so the canvas never flashes one of upstream's example circuits.
 const BLANK = '$ 1 0.000005 10.20027730826997 50 5 43 5e-11\n'
 
 const TYPES = {
@@ -46,92 +51,37 @@ function appShell() {
   return shell
 }
 
-const page = `<!doctype html><meta charset="utf-8"><title>CircuitJS</title>
-<style>
-  :root { color-scheme: dark; }
-  [hidden] { display: none !important; }
-  html, body { margin: 0; height: 100%; background: #1c1c1e; color: #e5e5ea; font: 12px -apple-system, system-ui, sans-serif; }
-  #bar { position: absolute; top: 0; left: 0; right: 0; height: 30px; display: flex; gap: 10px; align-items: center; padding: 0 10px; background: #1c1c1e; border-bottom: 1px solid #333; z-index: 5; }
-  #bar .muted { color: #8e8e93; }
-  #bar .grow { flex: 1; }
-  #bar button { font: inherit; color: #e5e5ea; background: #2c2c2e; border: 1px solid #3a3a3c; border-radius: 4px; padding: 2px 9px; cursor: pointer; }
-  #bar button:hover { background: #3a3a3c; }
-  #name { font-weight: 600; }
-  #t { font-variant-numeric: tabular-nums; }
-  #sim { position: absolute; top: 30px; left: 0; right: 0; bottom: 0; width: 100%; height: calc(100% - 30px); border: 0; background: #fff; }
-  #note { position: absolute; inset: 30px 0 0 0; display: grid; place-items: center; text-align: center; padding: 0 16px; color: #8e8e93; background: #1c1c1e; z-index: 4; }
-</style>
-<div id="bar">
-  <span id="name">…</span>
-  <span class="muted" id="count"></span>
-  <span class="muted" id="t"></span>
-  <span class="grow"></span>
-  <button id="run" type="button">Pause</button>
-  <button id="reload" type="button">Reload</button>
-  <span class="muted">CircuitJS1 · Paul Falstad</span>
-</div>
-<iframe id="sim" title="CircuitJS1"></iframe>
-<div id="note">Loading CircuitJS1…</div>
-<script>
-  const file = new URLSearchParams(location.search).get('file') || 'circuit.txt';
-  const frame = document.getElementById('sim');
-  const note = document.getElementById('note');
-  const runBtn = document.getElementById('run');
-  document.getElementById('name').textContent = file;
-  frame.src = '/app/circuitjs.html?startCircuit=__workspace__/' + file.split('/').map(encodeURIComponent).join('/') + '&running=true';
-
-  let sim = null;
-  const si = (v) => {
-    const a = Math.abs(v);
-    if (a >= 1) return v.toFixed(3) + ' s';
-    if (a >= 1e-3) return (v * 1e3).toFixed(3) + ' ms';
-    if (a >= 1e-6) return (v * 1e6).toFixed(3) + ' µs';
-    return (v * 1e9).toFixed(0) + ' ns';
-  };
-  function refresh() {
-    if (!sim) return;
-    let n = 0;
-    try { n = sim.getElements().length; } catch (e) {}
-    document.getElementById('count').textContent = n + ' element' + (n === 1 ? '' : 's');
-    try { document.getElementById('t').textContent = 't = ' + si(sim.getTime()); } catch (e) {}
-    try { runBtn.textContent = sim.isRunning() ? 'Pause' : 'Run'; } catch (e) {}
-  }
-  function ready(s) {
-    if (sim === s) return;
-    sim = s;
-    note.hidden = true;
-    s.onanalyze = refresh;
-    refresh();
-  }
-  // The hook has to be on the iframe's window before its GWT module finishes booting, and the
-  // window is replaced on every navigation, so plant it (and check for a sim that beat us) on a
-  // short poll rather than once.
-  setInterval(() => {
-    let w = null;
-    try { w = frame.contentWindow; } catch (e) { return; }
-    if (!w) return;
-    if (w.CircuitJS1) ready(w.CircuitJS1);
-    else { try { w.oncircuitjsloaded = ready; } catch (e) {} }
-  }, 120);
-  setInterval(refresh, 250);
-
-  async function load() {
-    if (!sim) return;                       // the first load is ?startCircuit='s job
-    let text;
+// The package's own checker, run on the text the page is about to import: the same judge the
+// verdict uses, so the pane and the header never disagree about what is wrong with a line.
+function check(text, rel) {
+  return new Promise((ok) => {
+    const code = [
+      'import json, sys',
+      `sys.path.insert(0, ${JSON.stringify(join(here, 'toolchain'))})`,
+      'from verdict import judge',
+      'print(json.dumps(judge(sys.stdin.read(), sys.argv[1])))',
+    ].join('\n')
+    let out = ''
+    let child
     try {
-      const res = await fetch('/' + file.split('/').map(encodeURIComponent).join('/') + '?t=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) throw new Error(res.status);
-      text = await res.text();
-    } catch (e) { return; }
-    const running = sim.isRunning();
-    sim.importCircuit(text, false);
-    sim.setSimRunning(running);
-    refresh();
-  }
-  runBtn.addEventListener('click', () => { if (sim) { sim.setSimRunning(!sim.isRunning()); refresh(); } });
-  document.getElementById('reload').addEventListener('click', load);
-  new EventSource('/events').addEventListener('change', load);
-</script>`
+      child = spawn('python3', ['-c', code, rel], { stdio: ['pipe', 'pipe', 'ignore'] })
+    } catch { ok(null); return }
+    const timer = setTimeout(() => { child.kill(); ok(null) }, 10_000)
+    child.stdout.on('data', (d) => { out += d })
+    child.on('error', () => { clearTimeout(timer); ok(null) })
+    child.on('close', () => {
+      clearTimeout(timer)
+      try {
+        const v = JSON.parse(out)
+        ok({ findings: v.findings.filter((f) => f.severity === 'error' || (f.severity === 'warning' && ['slider_label', 'no_ground', 'zero_length'].includes(f.kind))) })
+      } catch { ok(null) }
+    })
+    child.stdin.end(text)
+  })
+}
+
+// Read per request: it is small, and a package update then needs no pane restart.
+const page = () => readFileSync(join(here, 'viewer.html'), 'utf8').replace('__BLANK__', encodeURIComponent(BLANK))
 
 function safe(root, rel) {
   const full = normalize(join(root, rel))
@@ -148,33 +98,42 @@ function sendFile(res, full, req) {
   send(res, readFileSync(full), type, full.startsWith(war) ? 'max-age=3600' : 'no-store')
 }
 
-createServer((req, res) => {
+createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   const path = decodeURIComponent(url.pathname)
-  if (path === '/') { send(res, page, 'text/html; charset=utf-8', 'no-store'); return }
+  if (path === '/') { send(res, page(), 'text/html; charset=utf-8', 'no-store'); return }
   if (path === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
     res.write(': hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return
   }
-  // The app asking for its start circuit: the workspace file, or a valid empty circuit when the
-  // agent has not written it yet — a 404 here is an alert box in the user's face.
-  if (path.startsWith(SETUP)) {
-    const full = safe(workspace, path.slice(SETUP.length))
-    if (full && existsSync(full) && statSync(full).isFile()) { sendFile(res, full, req); return }
-    send(res, BLANK, TYPES['.txt'], 'no-store'); return
+  if (path === '/__check' && req.method === 'POST') {
+    let body = ''
+    req.on('data', (d) => { body += d; if (body.length > 4e6) req.destroy() })
+    req.on('end', async () => {
+      const result = await check(body, url.searchParams.get('file') || 'circuit.txt')
+      send(res, JSON.stringify(result ?? { findings: null }), 'application/json', 'no-store')
+    })
+    return
   }
   if (path === '/app/circuitjs.html') { send(res, appShell(), TYPES['.html'], 'no-store'); return }
   if (path.startsWith('/app/')) { sendFile(res, safe(war, path.slice('/app/'.length)), req); return }
   sendFile(res, safe(workspace, path.replace(/^\/+/, '')), req)
 }).listen(port, '127.0.0.1', () => console.log(`[circuitjs] listening on http://127.0.0.1:${port}/ (workspace: ${workspace})`))
 
+// Any change under the workspace is announced by name; the page decides whether it is its file and
+// whether the text really changed, so a README or a verdict write never resets the simulation.
 let timer = null
+const changed = new Set()
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
-    const n = String(name ?? '')
-    if (!n || n.startsWith('.harness') || n.startsWith('.git')) return
+    const n = String(name ?? '').split(sep).join('/')
+    if (!n || n.startsWith('.git') || n.startsWith('node_modules')) return
+    changed.add(n)
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => { for (const c of clients) c.write('event: change\ndata: {}\n\n') }, 200)
+    timer = setTimeout(() => {
+      const names = [...changed]; changed.clear()
+      for (const c of clients) c.write(`event: change\ndata: ${JSON.stringify({ names })}\n\n`)
+    }, 150)
   })
 } catch (error) { console.log(`[circuitjs] watch failed: ${error.message}`) }
 setInterval(() => { for (const c of clients) c.write(': ping\n\n') }, 20_000).unref()

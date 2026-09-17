@@ -10,10 +10,18 @@ Circuits menu and load one of the 373 examples: it keeps running, and the agent'
 the app without a reload.
 
 - `harness.json` — engine, template, skill, toolchain, and this package's own viewer.
-- `viewer.mjs` — the pane: CircuitJS1 in a same-origin iframe served off loopback, plus a header
-  bar with the file name, the element count and the simulation clock. A change on disk becomes a
-  `CircuitJS1.importCircuit()` call through the app's own JavaScript interface, so the app keeps its
-  window and its run state.
+- `viewer.mjs` + `viewer.html` — the pane: CircuitJS1 in a same-origin iframe served off loopback,
+  under a bar that says what is going on — **Live**, **Updated** when the agent's save lands,
+  **Waiting for circuit.txt**, or how many lines did not load — with the simulation clock,
+  Pause/Run, Revert (load the file again) and a **?** legend for the colours, the moving dots, the
+  scopes and the mouse. Below it, a **Nodes** row reads every labeled node's voltage live. A save
+  becomes a `CircuitJS1.importCircuit()` call through the app's own JavaScript interface — only when
+  the circuit's text really changed, so other files never reset the simulation — and the app keeps
+  its window and its run state. Lines the app cannot load are listed by line number (the package's
+  own checker, `toolchain/verdict.py`, plus the app's own load log) above a circuit that keeps
+  running. The app boots with its own URL options `cct=` (an empty circuit, so the first load goes
+  the same way as every other) and `mouseWheelEdit=false` (scrolling over a part zooms rather than
+  silently changing its value).
 - `toolchain/setup.sh` — fetches CircuitJS1 into `upstream/` (gitignored); `verdict.py` parses the
   circuit and writes `.harness/verdict.json`; `doctor.sh` says what is missing.
 - `skills/circuitjs/` — the file format, the layout rules and nine of upstream's own circuits.

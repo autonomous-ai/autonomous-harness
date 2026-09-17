@@ -19,7 +19,8 @@ URL, never open a browser.
   change: `python3 "$CIRCUITJS_TOOLCHAIN/verdict.py"`. Never edit it by hand.
 - **The pane is live and it is editable.** A save is re-imported into the running app without a
   reload, and the user can drag parts, change values and turn sliders themselves. That is the point
-  of this harness — leave them a circuit worth poking at.
+  of this harness — leave them a circuit worth poking at. A line the app cannot load is listed in
+  the pane by line number while the rest keeps running; fix it before the next branch.
 
 ## How to work: the circuit appears in the pane
 
@@ -28,7 +29,8 @@ URL, never open a browser.
 2. **Then one branch at a time**, saving after each, so the user watches it take shape. Fix what the
    verdict flags before adding the next part; a floating end now is ten minutes of confusion later.
 3. **Finish with a scope on the output and a slider on the value worth turning.** A circuit with no
-   `o` line is a picture, not a simulation.
+   `o` line is a picture, not a simulation. **Label the nodes worth watching** (`207`, a labeled
+   node: `OUT`, `VCC`, `GATE`): the pane reads every label's voltage live in a row above the circuit.
 4. **Say what it does in one line** — the frequency, the gain, the time constant, what to watch on
    the scope, which knob is theirs. Do the arithmetic; do not make them.
 5. **Ask only what you cannot infer.** Supply voltage, cutoff frequency, NPN or PNP — pick the

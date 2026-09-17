@@ -36,6 +36,12 @@ it is sent: the web-app manifest link is made relative (upstream's points at an 
 are already local and a cache in front of them can only serve something stale. The service worker
 itself is not downloaded. See the comment at the top of `viewer.mjs`.
 
+The pane loads the app with three of its own URL options — `cct=` (an empty starting circuit),
+`running=true` and `mouseWheelEdit=false` — and drives it only through its published JavaScript
+interface (`window.CircuitJS1`: `importCircuit`, `getElements`, `getNodeVoltage`, `getTime`,
+`isRunning`, `setSimRunning`). While it imports a file it listens to the app's console for the load
+errors the app reports there. None of that changes CircuitJS1.
+
 ## LZString
 
 `upstream/war/lz-string.min.js` arrives with CircuitJS1's `war/` directory. © 2013 pieroxy, MIT.

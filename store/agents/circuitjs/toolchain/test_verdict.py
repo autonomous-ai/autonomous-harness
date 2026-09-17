@@ -86,8 +86,17 @@ class TestErrors(unittest.TestCase):
         self.assertEqual(["scope_ref"], kinds(v, "error"))
 
     def test_slider_points_past_the_end(self):
-        v = verdict.judge(RC + "38 12 F0 0 1 101 -1 Resistance 0\n", "circuit.txt")
+        v = verdict.judge(RC + "38 12 F0 0 1 101 Resistance 0\n", "circuit.txt")
         self.assertEqual(["slider_ref"], kinds(v, "error"))
+
+    def test_unshared_slider_with_a_shared_field_loses_its_label(self):
+        v = verdict.judge(RC + "38 1 F0 0 1 101 -1 Resistance 0\n", "circuit.txt")
+        self.assertTrue(v["ready"])
+        self.assertIn("slider_label", kinds(v, "warning"))
+        ok = verdict.judge(RC + "38 1 F0 0 1 101 Resistance 0\n", "circuit.txt")
+        self.assertNotIn("slider_label", kinds(ok, "warning"))
+        shared = verdict.judge(RC + "38 1 F0 0 1 101 Resistance 0\n38 1 F1 0 1 101 0 Shared 0\n", "circuit.txt")
+        self.assertNotIn("slider_label", kinds(shared, "warning"))
 
     def test_xml_dump_is_the_wrong_format(self):
         v = verdict.judge('<circuit>\n<r x="0"/>\n</circuit>\n', "circuit.txt")

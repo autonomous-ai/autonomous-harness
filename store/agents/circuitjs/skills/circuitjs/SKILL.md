@@ -141,13 +141,17 @@ multi-plot form; both load, and the short one above is the one to write by hand.
 A knob in the app's right-hand column. The user turning it while the sim runs is most of the fun.
 
 ```
-38 <element> F<flags> <editItem> <min> <max> <sharedWith> <label> <step>
+38 <element> F<flags> <editItem> <min> <max> <label> <step>
 ```
 
 `element` is the same index as a scope's. `editItem` is which of that element's editable values the
 slider drives, from 0 — `0` is the primary one (a resistor's resistance, a capacitor's capacitance).
-`F0` is plain, `F2` logarithmic. `sharedWith` is `-1`. Spaces in the label are written `\s`.
-`38 0 F0 0 1 101 -1 Resistance 0` puts a 1 Ω – 101 Ω knob on element 0. See `examples/lrc.txt`.
+`F0` is plain, `F2` logarithmic. Spaces in the label are written `\s`; `step` is `0` for a smooth knob.
+`38 0 F0 0 1 101 Resistance 0` puts a 1 Ω – 101 Ω knob on element 0. See `examples/lrc.txt`.
+
+**No `-1` before the label.** The app's own export writes a `sharedWith` field there, but the loader
+only reads it when the flags say the knob is shared (`F1`); after `F0` or `F2` the `-1` becomes the
+knob's label and the pane shows a slider called "-1". The verdict warns about it.
 
 ## Other line types
 

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CircuitJS</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f5f5f7; --panel: #fff; --line: #d9d9de; --soft: #ececf0; --text: #1d1d1f; --muted: #6e6e73; --faint: #a1a1a6;
+    --accent: #0a84ff; --ok: #1f9d55; --warn: #b26a00; --fail: #d70015;
+    --pos: #1fa835; --neg: #e0282e; --zero: #8e8e93;
+  }
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); font: 12px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus:not(:focus-visible) { outline: none; }
+  kbd { font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); border-bottom-width: 2px; background: var(--panel); color: var(--text); white-space: nowrap; }
+
+  header { flex: none; height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 12px; background: var(--bg); border-bottom: 1px solid var(--line); min-width: 0; }
+  #name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 40%; }
+  #state { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; min-width: 0; }
+  #state .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; transition: background .2s; }
+  #state[data-kind="live"] .dot { background: var(--ok); }
+  #state[data-kind="updated"] .dot { background: var(--accent); box-shadow: 0 0 0 3px rgba(10,132,255,.2); }
+  #state[data-kind="updated"] { color: var(--accent); }
+  #state[data-kind="waiting"] .dot { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  #state[data-kind="problem"] .dot { background: var(--fail); }
+  #state[data-kind="problem"] { color: var(--fail); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  #stats { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .grow { flex: 1; min-width: 0; }
+  #t { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 86px; text-align: right; }
+  .btn { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); white-space: nowrap; }
+  .btn:hover { background: var(--soft); }
+  .btn svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
+  .btn.icon { width: 26px; padding: 0; justify-content: center; font-weight: 600; }
+  .btn[aria-pressed="true"] { background: var(--text); color: #fff; border-color: var(--text); }
+
+  #nodes { flex: none; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  #nodes::-webkit-scrollbar { display: none; }
+  #nodes .label { color: var(--faint); text-transform: uppercase; font-size: 10px; letter-spacing: .04em; font-weight: 600; margin-right: 2px; flex: none; }
+  .chip { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px 0 6px; border-radius: 10px; background: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--zero); flex: none; }
+  .chip b { font-weight: 600; }
+  .chip span { color: var(--muted); min-width: 52px; text-align: right; }
+
+  #problems { flex: none; max-height: 30vh; overflow: auto; padding: 8px 12px; background: #fff4f4; border-bottom: 1px solid #f3c7c9; color: #7a0610; }
+  #problems.warn { background: #fff8eb; border-color: #f0dcb4; color: #6b4200; }
+  #problems .head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  #problems .head button { margin-left: auto; border: 0; background: none; color: inherit; opacity: .7; padding: 2px 4px; }
+  #problems ul { margin: 6px 0 0; padding: 0 0 0 16px; }
+  #problems li { margin: 2px 0; }
+  #problems code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  #stage { position: relative; flex: 1; min-height: 0; }
+  #sim { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+  .cover { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: var(--bg); color: var(--muted); z-index: 4; }
+  .cover h2 { margin: 0 0 6px; font-size: 14px; color: var(--text); font-weight: 600; }
+  .cover code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--soft); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+  .spinner { width: 18px; height: 18px; margin: 0 auto 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #help { position: absolute; top: 8px; right: 8px; z-index: 6; width: min(380px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.28); padding: 14px 16px; }
+  #help h3 { margin: 0 0 8px; font-size: 13px; }
+  #help h4 { margin: 12px 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+  #help .row { display: grid; grid-template-columns: 74px 1fr; gap: 8px; align-items: center; margin: 5px 0; color: var(--muted); }
+  #help .row > :first-child { display: flex; align-items: center; gap: 4px; color: var(--text); }
+  #help .close { position: absolute; top: 8px; right: 8px; border: 0; background: none; font-size: 16px; color: var(--faint); }
+  .swatch { display: inline-block; height: 8px; width: 60px; border-radius: 4px; background: linear-gradient(90deg, #ff0000, #7f7f7f, #00ff00); }
+  .wire { position: relative; display: inline-block; width: 60px; height: 10px; background: #000; border-radius: 3px; overflow: hidden; }
+  .wire::before { content: ""; position: absolute; left: 0; right: 0; top: 4px; height: 2px; background: #00c800; }
+  .wire::after { content: ""; position: absolute; top: 3px; left: -8px; width: 76px; height: 4px; background: radial-gradient(circle, #ff0 1.6px, transparent 2px) 0 0 / 12px 4px repeat-x; animation: flow 1s linear infinite; }
+  @keyframes flow { to { transform: translateX(12px); } }
+  @media (max-width: 620px) { #stats, #run .txt, #revert .txt { display: none; } #name { max-width: 30%; } }
+</style>
+
+<header>
+  <span id="name" title=""></span>
+  <span id="state" data-kind="waiting"><span class="dot"></span><span id="state-text">Loading</span></span>
+  <span id="stats"></span>
+  <span class="grow"></span>
+  <span id="t"></span>
+  <button class="btn" id="run" type="button" title="Pause or run the simulation (Space)"><svg viewBox="0 0 12 12"><path id="run-icon" d="M3 2h2v8H3zM7 2h2v8H7z"/></svg><span class="txt">Pause</span></button>
+  <button class="btn" id="revert" type="button" title="Load the file again — drops what you changed in the pane"><svg viewBox="0 0 12 12"><path d="M6 1.5a4.5 4.5 0 1 1-4.24 6h1.62A3 3 0 1 0 6 3v1.8L3.2 2.4 6 0z"/></svg><span class="txt">Revert</span></button>
+  <button class="btn icon" id="help-btn" type="button" title="What am I looking at? (?)" aria-pressed="false">?</button>
+</header>
+<div id="nodes" hidden><span class="label">Nodes</span></div>
+<div id="problems" hidden></div>
+<div id="stage">
+  <iframe id="sim" title="CircuitJS1"></iframe>
+  <div class="cover" id="cover"><div><div class="spinner"></div><h2>Starting the simulator</h2><div>CircuitJS1 · Paul Falstad</div></div></div>
+  <div id="help" hidden>
+    <button class="close" id="help-close" type="button" aria-label="Close">×</button>
+    <h3>Reading the simulation</h3>
+    <div class="row"><span><span class="swatch"></span></span><span>Wire colour is voltage: green is positive, grey is 0 V, red is negative.</span></div>
+    <div class="row"><span><span class="wire"></span></span><span>Moving yellow dots are current; faster dots, more current.</span></div>
+    <div class="row"><span>Scopes</span><span>The strip along the bottom plots the watched parts over time. Its gear sets the scale.</span></div>
+    <div class="row"><span>Nodes</span><span>The row above the circuit reads every labeled node's voltage, live.</span></div>
+    <h4>Inspect</h4>
+    <div class="row"><span>Hover</span><span>Point at any part: its current, voltage drop and power show in the bottom-right corner.</span></div>
+    <div class="row"><span>Click</span><span>Flip a switch or a logic input.</span></div>
+    <div class="row"><span>Sliders</span><span>The knobs in the right-hand column change a value while it runs.</span></div>
+    <div class="row"><span>Double-click</span><span>Edit a part's values.</span></div>
+    <h4>Move around</h4>
+    <div class="row"><span>Scroll</span><span>Zoom.</span></div>
+    <div class="row"><span><kbd>⌥</kbd> drag</span><span>Pan (or drag with the right button).</span></div>
+    <div class="row"><span><kbd>Space</kbd></span><span>Pause or run, when the bar has focus.</span></div>
+    <h4>Your changes</h4>
+    <div style="color:var(--muted)">What you change here is yours to try; it is not saved to the file. Ask the agent to keep it. <b>Revert</b> loads the file again, and every save the agent makes replaces the circuit.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const params = new URLSearchParams(location.search)
+  const file = params.get('file') || 'circuit.txt'
+  const fileUrl = '/' + file.split('/').map(encodeURIComponent).join('/')
+  const frame = $('sim')
+  $('name').textContent = file.split('/').pop()
+  $('name').title = file
+  document.title = file.split('/').pop() + ' · CircuitJS'
+  // Boot on an empty circuit (the page imports the file itself, so every load goes one way), wheel
+  // over a part zooms instead of silently editing its value.
+  frame.src = '/app/circuitjs.html?cct=__BLANK__&running=true&mouseWheelEdit=false'
+
+  let sim = null
+  let lastText = null          // the text last imported
+  let lastImportAt = 0
+  let problems = { check: [], runtime: [] }
+  let labels = []              // unique labeled-node names, in file order
+  let fileState = 'loading'    // loading | missing | empty | ok
+
+  // ---- formatting ----
+  const si = (v, unit) => {
+    if (!isFinite(v)) return '—'
+    const a = Math.abs(v)
+    if (a < 1e-12) return '0 ' + unit
+    const scales = [[1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p']]
+    for (const [s, p] of scales) if (a >= s * 0.9995) { const n = v / s; return (Math.abs(n) >= 100 ? n.toFixed(1) : Math.abs(n) >= 10 ? n.toFixed(2) : n.toFixed(3)) + ' ' + p + unit }
+    return v.toExponential(2) + ' ' + unit
+  }
+  const time = (v) => 't = ' + si(v, 's')
+
+  // ---- status ----
+  let flashTimer = null
+  function setState(kind, text) {
+    $('state').dataset.kind = kind
+    $('state-text').textContent = text
+  }
+  function status() {
+    const errs = Math.max(problems.check.filter((f) => f.severity === 'error').length, problems.runtime.length)
+    if (fileState === 'missing') return setState('waiting', `Waiting for ${file.split('/').pop()}`)
+    if (fileState === 'empty') return setState('waiting', 'Waiting for the first parts')
+    if (errs) return setState('problem', `${errs} line${errs === 1 ? '' : 's'} not loaded`)
+    if (Date.now() - lastImportAt < 2500 && lastImportAt) return setState('updated', 'Updated')
+    return setState('live', sim && sim.isRunning() ? 'Live' : 'Paused')
+  }
+
+  // ---- the file ----
+  async function fetchText() {
+    try {
+      const res = await fetch(fileUrl + '?t=' + Date.now(), { cache: 'no-store' })
+      if (res.status === 404) return null
+      if (!res.ok) throw new Error(String(res.status))
+      return await res.text()
+    } catch (e) { return undefined }
+  }
+
+  // Import with the app's own load log captured: CircuitJS1 reports a line it could not read with a
+  // console message and carries on, so the log is the only place those failures show up.
+  function importText(text) {
+    const w = frame.contentWindow
+    const wins = [w]
+    try { for (const f of w.document.querySelectorAll('iframe')) { try { if (f.contentWindow) wins.push(f.contentWindow) } catch {} } } catch {}
+    const logs = []
+    const originals = wins.map((x) => x.console.log)
+    wins.forEach((x, i) => { x.console.log = function (...a) { logs.push(a.join(' ')); return originals[i].apply(this, a) } })
+    const running = sim.isRunning()
+    try { sim.importCircuit(text, false) } finally { wins.forEach((x, i) => { x.console.log = originals[i] }) }
+    sim.setSimRunning(running)
+    return logs.filter((l) => /undumping|unrecognized dump type/i.test(l))
+  }
+
+  async function load({ force = false, announce = true } = {}) {
+    if (!sim) return
+    const text = await fetchText()
+    if (text === undefined) return
+    if (text === null) {
+      fileState = 'missing'; lastText = null
+      if (sim.getElements().length) sim.importCircuit('$ 1 0.000005 10.20027730826997 50 5 43 5e-11\n', false)
+      afterImport([], '')
+      return
+    }
+    if (!force && text === lastText) return
+    lastText = text
+    const runtime = importText(text)
+    fileState = /^\s*$/.test(text) || !sim.getElements().length ? 'empty' : 'ok'
+    if (announce) lastImportAt = Date.now()
+    afterImport(runtime, text)
+    fetch('/__check?file=' + encodeURIComponent(file), { method: 'POST', body: text })
+      .then((r) => r.json()).then((v) => { if (lastText === text && v.findings) { problems.check = v.findings; renderProblems(); status() } })
+      .catch(() => {})
+  }
+
+  function afterImport(runtime, text) {
+    problems = { check: problems.check, runtime }
+    if (!text) problems.check = []
+    $('cover').hidden = fileState === 'ok'
+    if (fileState !== 'ok') {
+      $('cover').innerHTML = fileState === 'missing'
+        ? `<div><div class="spinner"></div><h2>Waiting for <code>${file.replace(/[<&]/g, '')}</code></h2><div>The agent writes the circuit; it starts running here the moment the file lands.</div></div>`
+        : `<div><div class="spinner"></div><h2>Waiting for the first parts</h2><div><code>${file.replace(/[<&]/g, '')}</code> has no parts yet. They appear here as the agent adds them.</div></div>`
+    }
+    // labeled nodes, for the live row
+    const seen = new Set()
+    labels = []
+    try {
+      for (const e of sim.getElements()) {
+        if (e.getType() !== 'LabeledNodeElm') continue
+        const n = e.getLabelName()
+        if (n && !seen.has(n)) { seen.add(n); labels.push(n) }
+      }
+    } catch {}
+    renderNodes()
+    renderProblems()
+    const scopes = (text.match(/^\s*o\s/gm) || []).length
+    let parts = 0
+    try { parts = sim.getElements().length } catch {}
+    $('stats').textContent = fileState === 'ok' ? `${parts} part${parts === 1 ? '' : 's'}${scopes ? ` · ${scopes} scope${scopes === 1 ? '' : 's'}` : ''}` : ''
+    status()
+    clearTimeout(flashTimer)
+    flashTimer = setTimeout(status, 2600)
+  }
+
+  // ---- nodes row ----
+  const chips = new Map()
+  function renderNodes() {
+    const row = $('nodes')
+    for (const c of [...row.querySelectorAll('.chip')]) c.remove()
+    chips.clear()
+    row.hidden = !labels.length
+    for (const name of labels) {
+      const chip = document.createElement('span')
+      chip.className = 'chip'
+      chip.title = `Voltage at the node labeled ${name}`
+      chip.innerHTML = '<i></i><b></b><span></span>'
+      chip.querySelector('b').textContent = name
+      row.append(chip)
+      chips.set(name, chip)
+    }
+    tick()
+  }
+  function tick() {
+    if (!sim) return
+    try { $('t').textContent = time(sim.getTime()) } catch {}
+    const running = (() => { try { return sim.isRunning() } catch { return false } })()
+    $('run').querySelector('.txt').textContent = running ? 'Pause' : 'Run'
+    $('run-icon').setAttribute('d', running ? 'M3 2h2v8H3zM7 2h2v8H7z' : 'M3 1.5v9l7.5-4.5z')
+    for (const [name, chip] of chips) {
+      let v = NaN
+      try { v = sim.getNodeVoltage(name) } catch {}
+      chip.querySelector('span').textContent = si(v, 'V')
+      chip.querySelector('i').style.background = !isFinite(v) || Math.abs(v) < 1e-3 ? 'var(--zero)' : v > 0 ? 'var(--pos)' : 'var(--neg)'
+    }
+    if ($('state').dataset.kind === 'live' || $('state').dataset.kind === 'updated') status()
+  }
+  setInterval(tick, 200)
+
+  // ---- problems ----
+  let problemsOpen = null        // null: open for errors, folded for warnings; a click decides after that
+  function renderProblems() {
+    const box = $('problems')
+    const errors = problems.check.filter((f) => f.severity === 'error')
+    const warnings = problems.check.filter((f) => f.severity === 'warning')
+    const extra = Math.max(0, problems.runtime.length - errors.length)
+    if (!errors.length && !extra && !warnings.length) { box.hidden = true; return }
+    box.hidden = false
+    box.className = errors.length || extra ? '' : 'warn'
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]).replace(/`([^`]+)`/g, '<code>$1</code>')
+    const title = errors.length || extra
+      ? `${file.split('/').pop()} has ${errors.length + extra} line${errors.length + extra === 1 ? '' : 's'} the simulator could not load — the rest is running`
+      : `${warnings.length} thing${warnings.length === 1 ? '' : 's'} worth a look in ${file.split('/').pop()}`
+    const items = [
+      ...errors.map((f) => `<li>${esc(f.message)}</li>`),
+      ...(extra ? [`<li>${extra} more line${extra === 1 ? '' : 's'} failed inside CircuitJS1: <code>${esc(problems.runtime.slice(-extra).map((l) => l.replace(/^exception while undumping /, '')).join('; '))}</code></li>`] : []),
+      ...warnings.map((f) => `<li>${esc(f.message)}</li>`),
+    ]
+    const open = problemsOpen ?? Boolean(errors.length || extra)
+    box.innerHTML = `<div class="head"><span>${esc(title)}</span><button type="button" id="problems-toggle">${open ? 'Hide' : 'Show'}</button></div>${open ? `<ul>${items.join('')}</ul>` : ''}`
+    $('problems-toggle').onclick = () => { problemsOpen = !open; renderProblems() }
+  }
+
+  // ---- boot ----
+  function ready(s) {
+    if (sim === s) return
+    sim = s
+    s.onanalyze = () => {}
+    load({ force: true, announce: false })
+  }
+  // The hook has to be on the iframe's window before its GWT module finishes booting, and the
+  // window is replaced on every navigation, so plant it (and check for a sim that beat us) on a
+  // short poll rather than once.
+  const boot = setInterval(() => {
+    let w = null
+    try { w = frame.contentWindow } catch (e) { return }
+    if (!w) return
+    if (w.CircuitJS1) { ready(w.CircuitJS1); clearInterval(boot) }
+    else { try { w.oncircuitjsloaded = ready } catch (e) {} }
+  }, 120)
+
+  // ---- controls ----
+  function toggleRun() { if (sim) { sim.setSimRunning(!sim.isRunning()); tick(); status() } }
+  $('run').addEventListener('click', toggleRun)
+  $('revert').addEventListener('click', () => load({ force: true }))
+  const help = (open) => { $('help').hidden = !open; $('help-btn').setAttribute('aria-pressed', String(open)) }
+  $('help-btn').addEventListener('click', () => help($('help').hidden))
+  $('help-close').addEventListener('click', () => help(false))
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    if (e.key === '?') { help($('help').hidden); e.preventDefault() }
+    else if (e.key === 'Escape') help(false)
+    else if (e.key === ' ' && e.target === document.body) { toggleRun(); e.preventDefault() }
+  })
+
+  function connect() {
+    const es = new EventSource('/events')
+    es.addEventListener('change', (e) => {
+      let names = []
+      try { names = JSON.parse(e.data).names || [] } catch {}
+      if (names.includes(file)) load()
+    })
+    es.onerror = () => { es.close(); setTimeout(() => { connect(); load() }, 1500) }
+  }
+  connect()
+})()
+</script>
+</html>

@@ -138,13 +138,22 @@ def judge(text: str | None, rel: str) -> dict:
         if code == "38":
             if len(tokens) < 2:
                 err("slider", f"line {no}: a slider line is `38 <element> F<flags> <item> "
-                              f"<min> <max> <shared> <label> <step>`", f"line {no}")
+                              f"<min> <max> <label> <step>`", f"line {no}")
             else:
                 try:
                     sliders.append((no, int(tokens[1])))
                 except ValueError:
                     err("slider", f"line {no}: the first field of a slider line is an element "
                                   f"index, not {tokens[1]!r}", f"line {no}")
+                # CircuitJS1 reads a `sharedWith` field only when the flags say shared (F1). Written
+                # after an unshared F0/F2, the `-1` becomes the knob's label and the label is lost.
+                if len(tokens) >= 8 and tokens[2].startswith("F") and tokens[6] == "-1":
+                    flags = _int(tokens[2][1:])
+                    if not flags & 1:
+                        warn("slider_label", f"line {no}: this slider will be labelled \"-1\" — "
+                                             f"`-1` (sharedWith) is only read with flag F1; write "
+                                             f"`38 {tokens[1]} {tokens[2]} {tokens[3]} {tokens[4]} {tokens[5]} "
+                                             f"{' '.join(tokens[7:])}`", f"line {no}")
             continue
         if code in NON_ELEMENT:
             continue
