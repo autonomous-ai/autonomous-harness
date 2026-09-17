@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -409,6 +410,76 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       'deploy the ',
     );
+    session.dispose();
+    app.dispose();
+  });
+
+  /// ⌥⌫ and ⌘⌫ are the pane's word-kill and line-kill (`kTerminalOwnedKeys`), and the composer is
+  /// the same prompt wearing a Flutter field — so the two have to agree. Here they come from
+  /// Flutter's own macOS text-editing shortcuts rather than from anything this app writes, which is
+  /// exactly why they are pinned: nothing in the composer would notice if that changed.
+  testWidgets('Option+Backspace kills the word behind the caret', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final outbound = <String>[];
+    final app = _notifier(local: false);
+    final session = await _liveSession(outbound);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'deploy the service');
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.altLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace, platform: 'macos');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft, platform: 'macos');
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'deploy the ',
+    );
+    expect(outbound, isEmpty, reason: 'editing a line is not sending it');
+    debugDefaultTargetPlatformOverride = null;
+    session.dispose();
+    app.dispose();
+  });
+
+  testWidgets('Cmd+Backspace clears back to the start of the line', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final outbound = <String>[];
+    final app = _notifier(local: false);
+    final session = await _liveSession(outbound);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'deploy the service');
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.metaLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace, platform: 'macos');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft, platform: 'macos');
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      '',
+    );
+    expect(outbound, isEmpty);
+    debugDefaultTargetPlatformOverride = null;
     session.dispose();
     app.dispose();
   });

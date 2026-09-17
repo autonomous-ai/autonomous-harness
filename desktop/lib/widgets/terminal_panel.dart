@@ -966,12 +966,53 @@ class _TerminalPanelState extends State<TerminalPanel>
     widget.session.terminal.keyInput(TerminalKey.keyV, ctrl: true);
   }
 
-  /// ⌘V (Ctrl+V off Apple) — taken from xterm so the fallthrough above applies.
+  /// ⌘⌫ — kill back to the start of the line, the way a macOS text field does it.
+  ///
+  /// The pty has no Command key. What a prompt understands is readline's ^U (`\x15`), and it means
+  /// the same thing: verified against a live Claude Code and Codex, it clears back to the start of
+  /// the CURRENT line and leaves the lines composed above it standing — which is exactly what ⌘⌫
+  /// does in a Mac field. Asked of the keytab as `^U` rather than written as a byte so a terminal
+  /// carrying its own handler still answers with whatever ^U means to it.
+  ///
+  /// Taken HERE, in the pane's own hook, and not in the input handler with ⌥⌫: a ⌘ chord never
+  /// reaches `keyInput` at all. xterm hands every one of them back to the app untouched (patch 3 in
+  /// `third_party/xterm/README.autonomous.md`) — and `TerminalKeyboardEvent` has no `meta` field to
+  /// answer it with even if it did. Nothing in `app_shortcuts.dart` claims ⌘⌫ either, so the chord
+  /// went up the focus chain and off the end of it, doing nothing.
+  ///
+  /// Apple only. Elsewhere ⌘ is Super, where killing a line is not what it means, and the app's own
+  /// Super chords have to keep reaching the app.
+  KeyEventResult _onDeleteToLineStart() {
+    final keyboard = HardwareKeyboard.instance;
+    final apple =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    if (!apple || !keyboard.isMetaPressed) return KeyEventResult.ignored;
+    // ⌃ and ⌥ each carry a kill of their own to the pty (^U and Meta+⌫); a chord mixing them with
+    // ⌘ is nobody's idea of this one, so it is left for the shell to make sense of.
+    if (keyboard.isControlPressed || keyboard.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
+    if (widget.readOnly || !widget.session.acceptsInput) {
+      return KeyEventResult.ignored;
+    }
+    widget.session.terminal.keyInput(TerminalKey.keyU, ctrl: true);
+    return KeyEventResult.handled;
+  }
+
+  /// ⌘V (Ctrl+V off Apple) — taken from xterm so the fallthrough above applies. ⌘⌫ joins it here,
+  /// for the reason spelled out on [_onDeleteToLineStart].
   ///
   /// xterm binds paste itself, but only ever to its text-only action. `onKeyEvent`
   /// is the one hook that runs BEFORE its shortcut map (terminal_view.dart), so
   /// this is where the binding has to be replaced rather than added.
   KeyEventResult _onTerminalKey(FocusNode node, KeyEvent event) {
+    // A held ⌘⌫ repeats, the way a held Backspace does — unlike ⌘V, where a second paste is never
+    // what the finger that stayed down meant.
+    if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+        event.logicalKey == LogicalKeyboardKey.backspace) {
+      return _onDeleteToLineStart();
+    }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey != LogicalKeyboardKey.keyV) {
       return KeyEventResult.ignored;

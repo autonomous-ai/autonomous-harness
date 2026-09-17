@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -160,6 +161,51 @@ void main() {
     expect(out, ['\r'], reason: 'the plain Return the keytab would have sent');
   });
 
+  test('⌥⌫ reaches the engine as Meta + DEL, the word-kill a prompt reads', () {
+    final out = <String>[];
+    final terminal = _pane()..onOutput = out.add;
+
+    terminal.keyInput(TerminalKey.backspace, alt: true);
+
+    expect(out, ['\x1b\x7f']);
+  });
+
+  test('a plain ⌫ still erases one character', () {
+    final out = <String>[];
+    final terminal = _pane()..onOutput = out.add;
+
+    terminal.keyInput(TerminalKey.backspace);
+
+    expect(out, ['\x7f']);
+  });
+
+  test('⌃⌫ keeps the ^H the keytab gives it', () {
+    final out = <String>[];
+    final terminal = _pane()..onOutput = out.add;
+
+    terminal.keyInput(TerminalKey.backspace, ctrl: true);
+
+    expect(out, ['\b']);
+  });
+
+  test('⌃⌥⌫ is left to whatever is running', () {
+    final out = <String>[];
+    final terminal = _pane()..onOutput = out.add;
+
+    terminal.keyInput(TerminalKey.backspace, alt: true, ctrl: true);
+
+    expect(out, ['\x17'], reason: "the keytab's own ⌥⌫ rule, untranslated");
+  });
+
+  test('⇧⌥⌫ kills the word rather than inventing a chord', () {
+    final out = <String>[];
+    final terminal = _pane()..onOutput = out.add;
+
+    terminal.keyInput(TerminalKey.backspace, alt: true, shift: true);
+
+    expect(out, ['\x1b\x7f']);
+  });
+
   test('⌥ stays the compose key for every other letter', () {
     final out = <String>[];
     final terminal = _pane()..onOutput = out.add;
@@ -234,6 +280,132 @@ void main() {
     await tester.pump(const Duration(milliseconds: 30));
 
     expect(_typed(wire), '\r');
+    session.dispose();
+    app.dispose();
+  });
+
+  testWidgets('⌥⌫ leaves a live pane as ESC + DEL', (tester) async {
+    // Told it is on a Mac, `TerminalView` hands Backspace to the native text input client — the
+    // very rule ⌥⌫ has to be excluded from. Without this override the test runs the Linux path,
+    // where the key reaches `keyInput` no matter what, and proves nothing about the bug.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final wire = <TerminalBinaryFrame>[];
+    final app = _localNotifier();
+    final session = await _liveSession(wire);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    // macOS hands a bare Backspace to the native text input client, which answers `deleteBackward:`
+    // — a bargain that only holds for the bare key. ⌥⌫ arrives as `deleteWordBackward:`, which
+    // nothing answers, so the pane has to keep this one for itself.
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.altLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyEvent(
+      LogicalKeyboardKey.backspace,
+      character: '\b',
+      platform: 'macos',
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft, platform: 'macos');
+    await tester.pump(const Duration(milliseconds: 30));
+
+    expect(_typed(wire), '\x1b\x7f');
+    debugDefaultTargetPlatformOverride = null;
+    session.dispose();
+    app.dispose();
+  });
+
+  testWidgets('⌘⌫ leaves a live pane as ^U, the kill to the line start', (
+    tester,
+  ) async {
+    // ⌘⌫ is Apple's chord, and [TerminalPanel] asks the platform before taking it.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final wire = <TerminalBinaryFrame>[];
+    final app = _localNotifier();
+    final session = await _liveSession(wire);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.metaLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyEvent(
+      LogicalKeyboardKey.backspace,
+      character: '\b',
+      platform: 'macos',
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft, platform: 'macos');
+    await tester.pump(const Duration(milliseconds: 30));
+
+    expect(_typed(wire), '\x15');
+    debugDefaultTargetPlatformOverride = null;
+    session.dispose();
+    app.dispose();
+  });
+
+  testWidgets('a held ⌘⌫ keeps killing lines', (tester) async {
+    // ⌘⌫ is Apple's chord, and [TerminalPanel] asks the platform before taking it.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final wire = <TerminalBinaryFrame>[];
+    final app = _localNotifier();
+    final session = await _liveSession(wire);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.metaLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.backspace,
+      platform: 'macos',
+    );
+    await tester.sendKeyRepeatEvent(
+      LogicalKeyboardKey.backspace,
+      platform: 'macos',
+    );
+    await tester.sendKeyUpEvent(
+      LogicalKeyboardKey.backspace,
+      platform: 'macos',
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft, platform: 'macos');
+    await tester.pump(const Duration(milliseconds: 30));
+
+    expect(_typed(wire), '\x15\x15');
+    debugDefaultTargetPlatformOverride = null;
+    session.dispose();
+    app.dispose();
+  });
+
+  testWidgets('⌃⌘⌫ is nobody\'s idea of either kill', (tester) async {
+    // ⌘⌫ is Apple's chord, and [TerminalPanel] asks the platform before taking it.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final wire = <TerminalBinaryFrame>[];
+    final app = _localNotifier();
+    final session = await _liveSession(wire);
+    await tester.pumpWidget(_host(app, session));
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.controlLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyDownEvent(
+      LogicalKeyboardKey.metaLeft,
+      platform: 'macos',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace, platform: 'macos');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft, platform: 'macos');
+    await tester.sendKeyUpEvent(
+      LogicalKeyboardKey.controlLeft,
+      platform: 'macos',
+    );
+    await tester.pump(const Duration(milliseconds: 30));
+
+    expect(_typed(wire), isEmpty, reason: 'a ⌘ chord goes back to the app');
+    debugDefaultTargetPlatformOverride = null;
     session.dispose();
     app.dispose();
   });

@@ -550,6 +550,10 @@ const List<TerminalKey> kTerminalOwnedKeys = [
   TerminalKey(['⌘', 'A'], 'Select all'),
   TerminalKey(['esc'], 'Interrupt the engine'),
   TerminalKey(['⌥', '⏎'], "Newline in the engine's prompt"),
+  // Kept as short as the rows around them: the deck's narrowest card is 280px, where a label much
+  // past thirty characters takes a second line to itself.
+  TerminalKey(['⌥', '⌫'], 'Delete the previous word'),
+  TerminalKey(['⌘', '⌫'], "Delete to the line's start"),
   TerminalKey(['⌃', 'C'], 'Cancel / interrupt in the agent'),
 ];
 

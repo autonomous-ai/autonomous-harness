@@ -73,8 +73,14 @@ it if one is dropped.
    such channel method and names `GDK_KEY_BackSpace` explicitly to ignore it —
    correct for an `EditableText`, wrong for the bare `TextInputClient` here —
    so upstream's unconditional version dropped the key entirely on Linux and no
-   byte reached the pty. Regression: the macOS/Linux pair in
-   `test/terminal_view_interaction_test.dart`.
+   byte reached the pty. ⌥⌫ is excluded from the hand-off for the mirror-image
+   reason: AppKit answers it with `deleteWordBackward:`, a selector
+   `CustomTextEdit` does not implement, so the chord reached neither the
+   platform nor the pty and deleted nothing at all. It falls through to
+   `keyInput`, where `AltAsMetaInputHandler` makes it `ESC` + `\x7f`.
+   Regression: the macOS/Linux pair in
+   `test/terminal_view_interaction_test.dart`, and the ⌥⌫ pane tests in
+   `test/terminal_input_test.dart`.
 
 3. **A Meta chord is left for the app on every platform, not just Apple**
    (`lib/src/terminal_view.dart`). Every shortcut in

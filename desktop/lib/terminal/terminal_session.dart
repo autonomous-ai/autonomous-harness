@@ -778,8 +778,9 @@ class TerminalSession extends ChangeNotifier {
     final result = Terminal(
       maxLines: 10000,
       platform: TerminalTargetPlatform.macos,
-      // ⌥⏎ has to become a Meta-prefixed Return before it reaches the pty, or the engine's prompt
-      // reads it as the submit it is byte-identical to. See [MetaEnterInputHandler].
+      // ⌥⏎ and ⌥⌫ have to become Meta-prefixed before they reach the pty, or the engine's prompt
+      // reads the first as the submit it is byte-identical to and never hears the second at all.
+      // See [AltAsMetaInputHandler].
       inputHandler: harnessInputHandler,
       // The remote pane owns its grid and redraws after resize. Reflowing TUI
       // rows locally both changes their geometry and exercises an xterm.dart

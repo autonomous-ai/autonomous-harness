@@ -540,13 +540,22 @@ class TerminalViewState extends State<TerminalView> {
     // the keytab turns it into ^? (\x7f). Composition is not at risk either
     // way — while an IME is composing, CustomTextEdit._onKeyEvent never calls
     // this method.
+    //
+    // ⌥⌫ IS NOT THAT KEY. AppKit turns it into `deleteWordBackward:`, which
+    // CustomTextEdit does not answer — it takes `deleteBackward*` and nothing
+    // else — so handing it over dropped it on the floor and no byte reached
+    // the pty: the chord did nothing whatsoever. No IME needs it either; the
+    // internal deletes they make are plain Backspaces. It belongs to keyInput
+    // below, where ⌥ becomes the Meta prefix a prompt reads as "kill the word
+    // behind me" (see AltAsMetaInputHandler in lib/terminal/terminal_input.dart).
     final nativeClientOwnsBackspace =
         defaultTargetPlatform == TargetPlatform.macOS ||
             defaultTargetPlatform == TargetPlatform.iOS;
     if (key == TerminalKey.backspace &&
         nativeClientOwnsBackspace &&
         !widget.hardwareKeyboardOnly &&
-        !reservesTerminalKey) {
+        !reservesTerminalKey &&
+        !HardwareKeyboard.instance.isAltPressed) {
       return KeyEventResult.skipRemainingHandlers;
     }
 
