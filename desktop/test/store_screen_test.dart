@@ -1,6 +1,6 @@
 // The Harness Store: the shelf is the machines' catalog as cards, a page is
 // one harness with Get/Open/Remove per machine, and ratings and reviews come
-// from the store API. Pinned: viewers stay off the Discover shelf, Get and
+// from the store API. Pinned: viewers stay out of the Store, Get and
 // Remove reach the notifier for the right machine, Remove asks first, and a
 // posted review goes to the API with what was typed.
 import 'package:flutter/material.dart';
@@ -43,6 +43,7 @@ const _docViewer = DshEntry(
   name: 'Doc Viewer',
   engine: '',
   kind: 'viewer',
+  installed: true,
   category: 'Documents',
   author: 'Autonomous',
   tier: 2,
@@ -202,7 +203,7 @@ Future<(_Notifier, _FakeStore)> open(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('the catalog keeps real ratings and puts viewers under Manage', (
+  testWidgets('the catalog keeps real ratings and hides viewer dependencies', (
     tester,
   ) async {
     final (notifier, store) = await open(tester);
@@ -213,7 +214,7 @@ void main() {
       reason: 'and about its engines, for the Code shelf',
     );
     expect(store.ratingReads, 1);
-    await tester.tap(find.byKey(const ValueKey('store-shelf-all')));
+    await tester.tap(find.byKey(const ValueKey('store-shelf-category:Media')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('store-card:autonomous/marp')),
@@ -237,44 +238,13 @@ void main() {
       findsNothing,
     );
 
-    await tester.tap(find.byKey(const ValueKey('store-nav-manage')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('store-shelf-viewers')));
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('store-card:autonomous/doc-viewer')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('store-card:autonomous/marp')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('store-nav-manage')), findsNothing);
+    expect(find.byKey(const ValueKey('store-shelf-viewers')), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('store-shelf-installed')));
+    await tester.enterText(find.byKey(const ValueKey('store-search')), 'Doc Viewer');
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('store-card:autonomous/marp')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('store-card:autonomous/typst')),
-      findsNothing,
-    );
-
-    await tester.tap(find.byKey(const ValueKey('store-nav-categories')));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('store-shelf-category:Documents')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('store-card:autonomous/typst')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('store-card:autonomous/marp')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('store-card:autonomous/doc-viewer')), findsNothing);
+    expect(find.textContaining('No matching harnesses'), findsOneWidget);
   });
 
   testWidgets(
@@ -402,8 +372,8 @@ void main() {
       expect(find.byKey(const ValueKey('store-card:codex')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('store-shelf-category:Code')),
-        findsNothing,
-        reason: 'categories start collapsed',
+        findsOneWidget,
+        reason: 'categories are always visible',
       );
       expect(
         find.descendant(

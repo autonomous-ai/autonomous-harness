@@ -457,7 +457,7 @@ class _CollectionCard extends StatelessWidget {
   }
 }
 
-/// Compact, responsive rows shared by Discover, search, categories and Installed.
+/// Compact, responsive rows shared by Discover, search and categories.
 class StoreListing extends StatelessWidget {
   const StoreListing({
     super.key,

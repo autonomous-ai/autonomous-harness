@@ -193,7 +193,7 @@ its own and gets an entry in `registry/` instead. Nothing changes for the people
 
 ## The store in the app
 
-The app's start page has a door to the store: every package as a card, and a page per package — its
+The app's start page has a door to the store: every harness as a card, and a page per harness — its
 mark, who made it (`author`), its category and description, where it lives (`repo` and `path`,
 `homepage`, `upstream`), what it is licensed under (`license`), pictures (`screenshots`), ratings and
 reviews, and a row per machine with Get, Open or Remove. Installing is still what it always was — a
@@ -201,6 +201,15 @@ clone (for a built-in package, of its one folder) under `~/.harness/dsh` on one 
 set up beside it — so the page is honest about that: a harness is on a machine, not on an account.
 Ratings and reviews are the signed-in person's, one per package, kept in the control plane, never in
 this repository.
+
+The sidebar starts with Search, followed by Discover and six broad sections: Design, Engineering,
+Media, Science, Games and Code. Cards show Get or Open for each harness; its page manages installation
+per machine. Package manifests keep their precise domain labels, grouped only for browsing.
+
+Viewer packages are shared dependencies, not Store listings. Installing a harness installs its viewer
+on that machine when needed; another harness using the same viewer reuses the installed copy. Viewers
+stay out of Discover, search and categories. Authors can still inspect and manage them with
+`harness dsh list`, `doctor` and `remove`.
 
 ## Stewardship of packages built on other people's work
 

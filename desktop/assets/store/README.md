@@ -21,5 +21,4 @@ To regenerate the renders:
   --pcb-glb <copper>/examples/terminal-keyboard/boards/main_fab/board.glb
 ```
 
-The Store icon is original vector artwork drawn by `desktop/tool/store_artwork/icon.swift`.
-On macOS, `swift icon.swift <output.png> 256` regenerates the terminal-and-spark mark.
+Store tabs use `desktop/assets/app_icon.png`, the same icon as the app.

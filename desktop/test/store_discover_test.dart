@@ -215,6 +215,18 @@ void main() {
         find.byKey(const ValueKey('store-shelf-category:3D')),
         findsNothing,
       );
+      expect(find.byKey(const ValueKey('store-nav-categories')), findsNothing);
+      expect(find.byKey(const ValueKey('store-shelf-all')), findsNothing);
+      expect(find.byKey(const ValueKey('store-shelf-installed')), findsNothing);
+      expect(find.text('Harness Store'), findsNothing);
+      for (final category in [
+        'Design', 'Engineering', 'Media', 'Science', 'Games', 'Code',
+      ]) {
+        expect(
+          find.byKey(ValueKey('store-shelf-category:$category')),
+          findsOneWidget,
+        );
+      }
       expect(tester.takeException(), isNull);
       await _capture(
         tester,
@@ -225,9 +237,16 @@ void main() {
   }
 
   testWidgets(
-    'collections lead to their live catalog and search finds capabilities',
+    'categories group domains, collections open and search finds capabilities',
     (tester) async {
       await _open(tester);
+      await tester.tap(find.byKey(const ValueKey('store-shelf-category:Design')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('store-card:autonomous/blender')), findsOneWidget);
+      expect(find.byKey(const ValueKey('store-card:autonomous/text-to-cad')), findsOneWidget);
+      expect(find.byKey(const ValueKey('store-card:autonomous/copper')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('store-shelf-discover')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('store-collection:hardware')));
       await tester.pumpAndSettle();
       expect(
@@ -339,7 +358,7 @@ void main() {
     'Open launches the installed harness and cancel abandons only its draft',
     (tester) async {
       final (app, _) = await _open(tester);
-      await tester.tap(find.byKey(const ValueKey('store-shelf-installed')));
+      await tester.tap(find.byKey(const ValueKey('store-shelf-category:Design')));
       await tester.pumpAndSettle();
       final count = app.swarms.length;
       await tester.tap(

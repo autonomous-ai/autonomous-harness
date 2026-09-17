@@ -1,5 +1,29 @@
 import '../core/dsh_catalog.dart';
 
+/// Broad browsing sections; packages keep their own precise domain labels.
+const storeCategoryDomains = <String, Set<String>>{
+  'Design': {'3D', 'CAD', 'Diagrams'},
+  'Engineering': {'PCB', 'Circuits', 'Chips'},
+  'Media': {'Documents', 'Slides', 'Video', 'Math animation', 'Music'},
+  'Science': {'Chemistry', 'Notebooks', 'Simulation'},
+  'Games': {'Games'},
+  'Code': {'Code'},
+};
+
+String storeCategoryFor(DshEntry entry) {
+  if (entry.isEngine) return 'Code';
+  final domain = entry.category?.trim().toLowerCase();
+  for (final category in storeCategoryDomains.entries) {
+    if (category.key.toLowerCase() == domain ||
+        category.value.any((value) => value.toLowerCase() == domain)) {
+      return category.key;
+    }
+  }
+  // A community package in a new domain stays browsable without adding an
+  // ever-growing list of individual domains to the sidebar.
+  return 'Other';
+}
+
 /// Editorial copy is separate from registry identity and installation facts.
 /// A feature only appears when its package is in the machine's live catalog.
 class StoreStory {
@@ -188,6 +212,7 @@ bool storeMatches(DshEntry entry, String query) {
     entry.id,
     entry.author,
     entry.category,
+    storeCategoryFor(entry),
     entry.description,
     storeBenefit(entry),
   ].join(' ').toLowerCase();

@@ -19,8 +19,8 @@ import 'store_discover.dart';
 import 'store_editorial.dart';
 import 'store_models.dart';
 
-/// The terminal-and-spark mark, shared by the tab strip and Store navigation.
-const String kStoreMarkAsset = 'assets/engine-icons/store.png';
+/// Store tabs reuse the app icon.
+const String kStoreMarkAsset = 'assets/app_icon.png';
 
 /// The Harness Store, the content of its tab: every harness the registry
 /// knows and every built-in engine, as a shelf of cards; one becomes its page
@@ -55,8 +55,7 @@ class StoreTab extends StatefulWidget {
   State<StoreTab> createState() => _StoreTabState();
 }
 
-/// What the rail selects: the whole shelf, what is installed somewhere, the
-/// viewer packages, or one category.
+/// What the rail selects: discovery, search, or a category.
 sealed class _Shelf {
   const _Shelf();
 }
@@ -77,14 +76,6 @@ class _Search extends _Shelf {
 class _Collection extends _Shelf {
   const _Collection(this.collection);
   final StoreCollection collection;
-}
-
-class _Installed extends _Shelf {
-  const _Installed();
-}
-
-class _Viewers extends _Shelf {
-  const _Viewers();
 }
 
 class _Category extends _Shelf {
@@ -161,7 +152,7 @@ class _StoreTabState extends State<StoreTab> {
     }
     for (final state in states) {
       for (final entry in state.dsh.entries) {
-        rows.putIfAbsent(entry.id, () => entry);
+        if (!entry.isViewerPackage) rows.putIfAbsent(entry.id, () => entry);
       }
     }
     return rows;
@@ -180,10 +171,12 @@ class _StoreTabState extends State<StoreTab> {
   List<String> get _categories {
     final names = <String>{
       for (final entry in _catalog.values)
-        if (!entry.isViewerPackage)
-          entry.category ?? engineIdentity(entry.id).category ?? 'Other',
+        if (!entry.isViewerPackage) storeCategoryFor(entry),
     };
-    return names.toList()..sort();
+    return [
+      ...storeCategoryDomains.keys,
+      'Other',
+    ].where(names.contains).toList();
   }
 
   List<DshEntry> _shelved(_Shelf shelf) {
@@ -194,15 +187,12 @@ class _StoreTabState extends State<StoreTab> {
       _Search(:final query) =>
         all.where((e) => !e.isViewerPackage && storeMatches(e, query)).toList(),
       _Collection(:final collection) => all.where(collection.includes).toList(),
-      _Installed() => all.where((e) => _installedOn(e.id).isNotEmpty).toList(),
-      _Viewers() => all.where((e) => e.isViewerPackage).toList(),
       _Category(:final name) =>
         all
             .where(
               (e) =>
                   !e.isViewerPackage &&
-                  (e.category ?? engineIdentity(e.id).category ?? 'Other') ==
-                      name,
+                  storeCategoryFor(e) == name,
             )
             .toList(),
     };
@@ -265,7 +255,6 @@ class _StoreTabState extends State<StoreTab> {
                 shelf: _shelf,
                 categories: _categories,
                 onSelect: _show,
-                installedCount: _shelved(const _Installed()).length,
                 search: _search,
                 onSearch: _searchChanged,
               ),
@@ -334,12 +323,11 @@ class _StoreTabState extends State<StoreTab> {
 
 // ─── the rail ────────────────────────────────────────────────────────────────
 
-class _StoreNav extends StatefulWidget {
+class _StoreNav extends StatelessWidget {
   const _StoreNav({
     required this.shelf,
     required this.categories,
     required this.onSelect,
-    required this.installedCount,
     required this.search,
     required this.onSearch,
   });
@@ -347,22 +335,12 @@ class _StoreNav extends StatefulWidget {
   final _Shelf shelf;
   final List<String> categories;
   final ValueChanged<_Shelf> onSelect;
-  final int installedCount;
   final TextEditingController search;
   final ValueChanged<String> onSearch;
 
   @override
-  State<_StoreNav> createState() => _StoreNavState();
-}
-
-class _StoreNavState extends State<_StoreNav> {
-  bool _categoriesOpen = false;
-  bool _manageOpen = false;
-
-  @override
   Widget build(BuildContext context) {
-    final shelf = widget.shelf;
-    final expanded = _categoriesOpen || shelf is _Category;
+    final shelf = this.shelf;
     final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(
       1.0,
       1.5,
@@ -375,29 +353,10 @@ class _StoreNavState extends State<_StoreNav> {
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 22),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 0, 24),
-            child: Row(
-              children: [
-                Image.asset(kStoreMarkAsset, width: 26, height: 26),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    'Harness Store',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: grid.AppPalette.textPrimary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
           TextField(
             key: const ValueKey('store-search'),
-            controller: widget.search,
-            onChanged: widget.onSearch,
+            controller: search,
+            onChanged: onSearch,
             style: TextStyle(fontSize: 13, color: grid.AppPalette.textPrimary),
             decoration: InputDecoration(
               hintText: 'Search',
@@ -410,14 +369,14 @@ class _StoreNavState extends State<_StoreNav> {
               ),
               prefixIconConstraints: const BoxConstraints(minWidth: 32),
               suffixIconConstraints: const BoxConstraints(minWidth: 28),
-              suffixIcon: widget.search.text.isEmpty
+              suffixIcon: search.text.isEmpty
                   ? null
                   : AppIconButton(
                       icon: LucideIcons.x300,
                       tooltip: 'Clear search',
                       onPressed: () {
-                        widget.search.clear();
-                        widget.onSearch('');
+                        search.clear();
+                        onSearch('');
                       },
                     ),
             ),
@@ -428,83 +387,16 @@ class _StoreNavState extends State<_StoreNav> {
             icon: LucideIcons.sparkles300,
             label: 'Discover',
             selected: shelf is _Discover,
-            onTap: () => widget.onSelect(const _Discover()),
-          ),
-          SidebarItem(
-            key: const ValueKey('store-shelf-all'),
-            icon: LucideIcons.layoutGrid300,
-            label: 'All harnesses',
-            selected: shelf is _All,
-            onTap: () => widget.onSelect(const _All()),
-          ),
-          SidebarItem(
-            key: const ValueKey('store-shelf-installed'),
-            icon: LucideIcons.circleCheck300,
-            label: 'Installed',
-            badge: widget.installedCount == 0
-                ? null
-                : Text(
-                    '${widget.installedCount}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: grid.AppPalette.textFaint,
-                    ),
-                  ),
-            selected: shelf is _Installed,
-            onTap: () => widget.onSelect(const _Installed()),
+            onTap: () => onSelect(const _Discover()),
           ),
           const SizedBox(height: 16),
-          if (widget.categories.isNotEmpty) ...[
+          for (final name in categories)
             SidebarItem(
-              key: const ValueKey('store-nav-categories'),
-              icon: LucideIcons.shapes300,
-              label: 'Categories',
-              badge: Icon(
-                expanded
-                    ? LucideIcons.chevronDown300
-                    : LucideIcons.chevronRight300,
-                size: 13,
-                color: grid.AppPalette.textFaint,
-              ),
-              onTap: () => setState(() {
-                _categoriesOpen = !expanded;
-                if (shelf is _Category) widget.onSelect(const _All());
-              }),
-            ),
-            if (expanded)
-              for (final name in widget.categories)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: SidebarItem(
-                    key: ValueKey('store-shelf-category:$name'),
-                    icon: _categoryIcon(name),
-                    label: name,
-                    selected: shelf is _Category && shelf.name == name,
-                    onTap: () => widget.onSelect(_Category(name)),
-                  ),
-                ),
-          ],
-          const SizedBox(height: 20),
-          SidebarItem(
-            key: const ValueKey('store-nav-manage'),
-            icon: LucideIcons.settings2300,
-            label: 'Manage',
-            badge: Icon(
-              _manageOpen
-                  ? LucideIcons.chevronDown300
-                  : LucideIcons.chevronRight300,
-              size: 13,
-              color: grid.AppPalette.textFaint,
-            ),
-            onTap: () => setState(() => _manageOpen = !_manageOpen),
-          ),
-          if (_manageOpen)
-            SidebarItem(
-              key: const ValueKey('store-shelf-viewers'),
-              icon: LucideIcons.panelRight300,
-              label: 'Viewers',
-              selected: shelf is _Viewers,
-              onTap: () => widget.onSelect(const _Viewers()),
+              key: ValueKey('store-shelf-category:$name'),
+              icon: _categoryIcon(name),
+              label: name,
+              selected: shelf is _Category && shelf.name == name,
+              onTap: () => onSelect(_Category(name)),
             ),
         ],
       ),
@@ -513,20 +405,16 @@ class _StoreNavState extends State<_StoreNav> {
 }
 
 IconData _categoryIcon(String category) => switch (category) {
-  '3D' || 'CAD' => LucideIcons.box300,
-  'PCB' || 'Chips' || 'Circuits' => LucideIcons.cpu300,
+  'Design' => LucideIcons.box300,
+  'Engineering' => LucideIcons.cpu300,
+  'Media' => LucideIcons.film300,
+  'Science' => LucideIcons.flaskConical300,
   'Code' => LucideIcons.terminal300,
   'Games' => LucideIcons.gamepad2300,
-  'Music' => LucideIcons.music2300,
-  'Video' || 'Math animation' => LucideIcons.film300,
-  'Simulation' => LucideIcons.orbit300,
-  'Chemistry' => LucideIcons.flaskConical300,
-  'Slides' => LucideIcons.presentation300,
-  'Diagrams' => LucideIcons.workflow300,
-  _ => LucideIcons.file300,
+  _ => LucideIcons.shapes300,
 };
 
-// The searchable catalog, installed list and curated collections use the same
+// The searchable catalog, categories and curated collections use the same
 // rows. Discover alone has the editorial front page.
 class _Shelf$View extends StatelessWidget {
   const _Shelf$View({
@@ -552,8 +440,6 @@ class _Shelf$View extends StatelessWidget {
     _All() => 'All harnesses',
     _Search() => 'Search results',
     _Collection(:final collection) => collection.title,
-    _Installed() => 'Installed',
-    _Viewers() => 'Viewers',
     _Category(:final name) => name,
   };
 
@@ -561,8 +447,6 @@ class _Shelf$View extends StatelessWidget {
     _Discover() || _All() => 'Find something you have always wanted to make.',
     _Search() => '${entries.length} result${entries.length == 1 ? '' : 's'}',
     _Collection(:final collection) => collection.subtitle,
-    _Installed() => 'Ready on your machines.',
-    _Viewers() => 'Preview tools installed with your harnesses.',
     _Category() =>
       '${entries.length} harness${entries.length == 1 ? '' : 'es'} to explore.',
   };
