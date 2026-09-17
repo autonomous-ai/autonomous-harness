@@ -1086,6 +1086,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _newTab() {
+    // At the cap New Tab used to do nothing at all — no tab, no sound, no word — so a person (or a
+    // script) went on typing into whatever pane still had focus. Say why instead.
+    if (!app.canOpenNewTab) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            key: ValueKey('tab-limit-notice'),
+            content: Text(
+              '${AppNotifier.maxSwarms} tabs are open, the most Harness keeps. '
+              'Close a tab to open a new one.',
+            ),
+          ),
+        );
+      return;
+    }
     app.newSwarm();
     if (app.panes.isEmpty) _startSearchFocus.requestFocus();
   }
@@ -1250,7 +1266,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final number = int.tryParse(id.substring('swarm.select_'.length));
       return number != null && number >= 1 && number <= app.swarms.length;
     }
-    if (id == 'swarm.new') return app.canOpenNewTab;
+    // Always runnable: at the tab cap it explains itself rather than silently doing nothing.
+    if (id == 'swarm.new') return true;
     if (id == 'swarm.reopen') return app.canReopenLastClosed;
     if (id == 'swarm.next' || id == 'swarm.previous') {
       return app.swarms.length > 1;

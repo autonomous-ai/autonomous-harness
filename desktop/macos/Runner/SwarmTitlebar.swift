@@ -561,7 +561,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     return actionsEnabled && (action != "reopen" || canReopen) &&
       (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
-      (action != "new" || canCreateSwarm) && (action != "closePane" || canClosePane) &&
+      // "new" stays enabled at the tab cap: Flutter says why no tab opened, instead of a dead ⌘T.
+      (action != "closePane" || canClosePane) &&
       (!["findTerminal", "findNext", "findPrevious", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(action) || canFind)
   }
 
@@ -1245,7 +1246,7 @@ private final class SwarmTabStrip: NSView {
     applyShortcutBadges()
     // Moving frames alone leaves AppKit's child traversal in insertion order.
     document.setAccessibilityChildren(tabs)
-    newButton.isEnabled = actionsEnabled && (state["canOpenNewTab"] as? Bool ?? (tabs.count < 24))
+    newButton.isEnabled = actionsEnabled
     notificationButton.isEnabled = actionsEnabled
     openButton.isEnabled = actionsEnabled
     createButton.isEnabled = actionsEnabled

@@ -100,6 +100,42 @@ void main() {
   });
 
   for (final native in [false, true]) {
+    testWidgets('New Tab at the tab cap says why instead of doing nothing (native=$native)', (
+      tester,
+    ) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (_) async => true);
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+      final app = createApp();
+      for (var i = 1; i < AppNotifier.maxSwarms; i++) {
+        app.newSwarm(name: 'Project $i');
+      }
+      app.selectSwarm(app.swarms.first.id);
+      await app.addAgentToSwarm('m', 'a0');
+      expect(app.canOpenNewTab, isFalse);
+      await mount(tester, app, nativeTabs: native);
+      if (native) {
+        // What Swift sends for File ▸ New Tab, ⌘T and the strip's plus.
+        // Not awaited: the handler waits on a frame, which only the pumps below produce.
+        tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          'harness/swarm_tabs',
+          const StandardMethodCodec().encodeMethodCall(const MethodCall('new')),
+          (_) {},
+        );
+      } else {
+        await chord(tester, LogicalKeyboardKey.keyT);
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(app.swarms, hasLength(AppNotifier.maxSwarms));
+      expect(find.byKey(const ValueKey('tab-limit-notice')), findsOneWidget);
+      expect(find.textContaining('tabs are open, the most Harness keeps'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    });
+  }
+
+  for (final native in [false, true]) {
     testWidgets('the store tab wears a storefront, not New Tab\'s plus (native=$native)', (
       tester,
     ) async {
