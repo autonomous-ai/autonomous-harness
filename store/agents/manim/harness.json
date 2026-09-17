@@ -1,0 +1,31 @@
+{
+  "spec": 1,
+  "id": "autonomous/manim",
+  "name": "Manim",
+  "category": "Math animation",
+  "author": "Manim Community",
+  "description": "Describe an explanation — a proof, a transform, an algorithm, a graph — and watch it animate: scenes in Python, rendered by Manim, playing in the pane.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "scenes/intro.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "MANIM_PYTHON": "${dsh}/.venv/bin/python",
+      "MANIM": "${dsh}/.venv/bin/manim",
+      "MANIM_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/video-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

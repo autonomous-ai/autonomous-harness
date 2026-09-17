@@ -1,0 +1,13 @@
+{
+  "name": "marp-harness-toolchain",
+  "private": true,
+  "description": "The pinned Marp toolchain the Marp harness renders, checks and exports decks with.",
+  "type": "module",
+  "dependencies": {
+    "@marp-team/marp-cli": "4.2.3",
+    "@marp-team/marp-core": "4.1.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

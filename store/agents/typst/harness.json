@@ -1,0 +1,30 @@
+{
+  "spec": 1,
+  "id": "autonomous/typst",
+  "name": "Typst",
+  "category": "Documents",
+  "author": "Typst GmbH",
+  "description": "Describe a document — a paper, a spec sheet, a report, a letter — and watch the PDF take shape as Typst compiles it on every save.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "main.typ",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "TYPST": "${dsh}/bin/typst",
+      "TYPST_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/doc-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

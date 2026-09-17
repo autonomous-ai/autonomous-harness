@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/marimo",
+  "name": "marimo",
+  "category": "Notebooks",
+  "author": "marimo",
+  "description": "Describe an analysis, a model, a dashboard — and watch the reactive notebook come alive in the pane: marimo's own editor on the notebook the agent writes, cells re-running as it types.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "notebook.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "MARIMO_PYTHON": "${dsh}/.venv/bin/python",
+      "MARIMO": "${dsh}/.venv/bin/marimo",
+      "MARIMO_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}

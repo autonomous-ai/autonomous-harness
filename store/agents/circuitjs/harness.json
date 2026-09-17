@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/circuitjs",
+  "name": "CircuitJS",
+  "category": "Circuits",
+  "author": "Paul Falstad",
+  "description": "Describe a circuit — an RC filter, a 555 flasher, an amplifier — and watch it run in the pane: charge animating along the wires, scope traces drawing, every value still yours to poke at.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "circuit.txt",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "CIRCUITJS_TOOLCHAIN": "${dsh}/toolchain",
+      "CIRCUITJS_EXAMPLES": "${dsh}/skills/circuitjs/examples"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".txt"]
+  },
+  "verdict": ".harness/verdict.json"
+}

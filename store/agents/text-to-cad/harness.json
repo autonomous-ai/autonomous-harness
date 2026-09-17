@@ -1,0 +1,41 @@
+{
+  "spec": 1,
+  "id": "autonomous/text-to-cad",
+  "name": "text-to-cad",
+  "category": "CAD",
+  "author": "Jake Fitzgerald",
+  "description": "Jake Fitzgerald's text-to-cad skills (earthtojake/text-to-cad), pinned: describe a part, get STEP with mesh exports, drawings, robot files and G-code, live in the CAD Viewer.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "src/README.md",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "CADGEN": "${dsh}/.venv/bin/cadgen",
+      "TEXT_TO_CAD_VENV": "${dsh}/.venv",
+      "TEXT_TO_CAD_PYTHON": "${dsh}/.venv/bin/python",
+      "TEXT_TO_CAD_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/cad-viewer",
+    "artifactExtensions": [
+      ".step",
+      ".stp",
+      ".glb",
+      ".stl",
+      ".3mf"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}

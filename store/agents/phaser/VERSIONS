@@ -1,0 +1,5 @@
+PHASER=4.2.1
+VITE=6.4.3
+TERSER=5.51.2
+# phaserjs/phaser @ master — the commit the skills/ directory was vendored from (see PROVENANCE.md)
+SKILLS_COMMIT=02d8931b626d9764c133cbb3fbf99966c03c757c

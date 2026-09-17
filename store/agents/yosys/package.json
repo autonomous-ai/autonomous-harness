@@ -1,0 +1,9 @@
+{
+  "name": "autonomous-yosys",
+  "private": true,
+  "description": "Yosys as a Harness agent: netlistsvg turns the Yosys netlist into the schematic the pane draws",
+  "license": "MIT",
+  "dependencies": {
+    "netlistsvg": "1.0.2"
+  }
+}

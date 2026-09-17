@@ -1,0 +1,6 @@
+node_modules
+out/
+.vite/
+.harness/
+*.local
+.DS_Store

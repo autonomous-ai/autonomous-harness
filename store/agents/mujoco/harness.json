@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/mujoco",
+  "name": "MuJoCo",
+  "category": "Simulation",
+  "author": "Google DeepMind",
+  "description": "Describe a robot, a scene, a controller — a Unitree quadruped standing, a humanoid learning to walk — and watch the rollout play: MuJoCo physics, Menagerie robots, MJX for training.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "sim/hello.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "MUJOCO_PYTHON": "${dsh}/.venv/bin/python",
+      "MUJOCO_TOOLCHAIN": "${dsh}/toolchain",
+      "MENAGERIE": "${dsh}/menagerie",
+      "PYTHONPATH": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/mujoco-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

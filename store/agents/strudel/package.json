@@ -1,0 +1,9 @@
+{
+  "name": "autonomous-strudel",
+  "private": true,
+  "description": "Strudel as a Harness agent: the pane is Strudel's own REPL, self-hosted from @strudel/repl",
+  "license": "MIT",
+  "dependencies": {
+    "@strudel/repl": "1.3.0"
+  }
+}

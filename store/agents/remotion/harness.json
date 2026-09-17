@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/remotion",
+  "name": "Remotion",
+  "category": "Video",
+  "author": "Remotion",
+  "description": "Describe a video — a product launch, an explainer, a data story — and watch it play in Remotion Studio as the agent writes it in React, then render it to MP4.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "remotion.config.ts",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["upstream/skills"],
+    "env": {
+      "REMOTION": "${dsh}/node_modules/.bin/remotion",
+      "REMOTION_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".mp4", ".webm", ".gif"]
+  },
+  "verdict": ".harness/verdict.json"
+}

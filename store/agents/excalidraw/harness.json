@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/excalidraw",
+  "name": "Excalidraw",
+  "category": "Diagrams",
+  "author": "Excalidraw",
+  "description": "Describe a diagram — an architecture, a flow, a whiteboard sketch — and watch it appear hand-drawn in the pane, as an .excalidraw file you can open anywhere.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "diagram.excalidraw",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "EXCALIDRAW_TOOLCHAIN": "${dsh}/toolchain",
+      "PYTHONPATH": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".excalidraw"]
+  },
+  "verdict": ".harness/verdict.json"
+}

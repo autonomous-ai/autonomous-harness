@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/marp",
+  "name": "Marp",
+  "category": "Slides",
+  "author": "Yuki Hattori",
+  "description": "Describe a talk; get a keynote — huge type, generated art, speaker notes — live in the pane, exported to PDF, PPTX or HTML.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "deck.md",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "MARP_TOOLCHAIN": "${dsh}/toolchain",
+      "MARP_THEMES": "${dsh}/themes"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
+  "verdict": ".harness/verdict.json"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "autonomous-doc-viewer",
+  "private": true,
+  "description": "Doc Viewer for Harness: PDF pages rendered with Mozilla's pdf.js, served from this package",
+  "license": "MIT",
+  "dependencies": {
+    "pdfjs-dist": "6.3.289"
+  }
+}

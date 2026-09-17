@@ -1,0 +1,20 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/doc-viewer",
+  "name": "Doc Viewer",
+  "category": "Documents",
+  "author": "Autonomous",
+  "description": "A pane for documents: the PDF a harness is writing, every page rendered with pdf.js — scroll, zoom, page count — redrawn on every save.",
+  "toolchain": {
+    "setup": "./setup.sh",
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [
+      ".pdf"
+    ]
+  }
+}

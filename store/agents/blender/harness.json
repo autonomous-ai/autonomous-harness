@@ -1,0 +1,37 @@
+{
+  "spec": 1,
+  "id": "autonomous/blender",
+  "name": "Blender",
+  "category": "3D",
+  "author": "Blender Foundation",
+  "description": "Describe an object, a scene, a shot — and watch it take shape: modelled in Blender's Python, rendered headless, exported as glTF you can orbit and zoom in the pane.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "scenes/hello.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "BLENDER_PYTHON": "${dsh}/.venv/bin/python",
+      "BLENDER_TOOLCHAIN": "${dsh}/toolchain",
+      "PYTHONPATH": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/model-viewer",
+    "artifactExtensions": [
+      ".glb",
+      ".gltf"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}

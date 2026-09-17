@@ -1,0 +1,21 @@
+# What toolchain/setup.sh fetches, and from where. Nothing from upstream is vendored in this
+# repository: setup.sh downloads it into upstream/ (gitignored) at install time.
+#
+# CircuitJS1 is GPL-2.0 (LICENSE-circuitjs1), (c) Paul Falstad and Iain Sharp.
+# https://github.com/pfalstad/circuitjs1
+
+# 1. The static half — circuitjs.html, lz-string, canvas2svg, the fontello webfont, the docs, and
+#    the GWT public resources (setuplist.txt, circuits/*.txt, locale_*.txt, img/, style.css).
+#    A source tarball at one pinned commit of master.
+CIRCUITJS1_COMMIT=5bdb1296ce6a82f79515f4f1dd1b9a86e03236f7
+CIRCUITJS1_DATE=2026-09-05
+CIRCUITJS1_TARBALL=https://codeload.github.com/pfalstad/circuitjs1/tar.gz/${CIRCUITJS1_COMMIT}
+
+# 2. The compiled half — the GWT output (circuitjs1.nocache.js and its *.cache.js permutations).
+#    The project does not commit it and cuts no releases; compiling it needs a JDK 8 and the GWT
+#    2.8.2 SDK, which is not something to do inside an install. The project's own CI publishes the
+#    build to GitHub Pages (.github/workflows/deploy-pages.yml, from the dev branch) and the
+#    upstream README names that page as the hosted development version, so that is where the
+#    compiled module comes from. The permutation list is read out of nocache.js, not hardcoded,
+#    and every file that lands is checksummed into upstream/MANIFEST.
+CIRCUITJS1_BUILD=https://pfalstad.github.io/circuitjs1

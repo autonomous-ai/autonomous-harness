@@ -1,0 +1,31 @@
+{
+  "spec": 1,
+  "id": "autonomous/strudel",
+  "name": "Strudel",
+  "category": "Music",
+  "author": "Strudel",
+  "description": "Describe a track — a groove, a bassline, a break — and hear it in the pane. The agent writes one Strudel pattern file; Strudel's own REPL plays it live and hot-swaps on every save.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "track.strudel",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "STRUDEL_TOOLCHAIN": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".strudel"]
+  },
+  "verdict": ".harness/verdict.json"
+}

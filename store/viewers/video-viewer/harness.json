@@ -1,0 +1,17 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/video-viewer",
+  "name": "Video Viewer",
+  "category": "Video",
+  "author": "Autonomous",
+  "description": "A pane for video: the MP4, WebM or GIF a harness is rendering, replayed on every new render, with duration and size in the header.",
+  "toolchain": {
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".mp4", ".webm", ".mov", ".gif", ".png"]
+  }
+}

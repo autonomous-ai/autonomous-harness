@@ -1,0 +1,29 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/cad-viewer",
+  "name": "CAD Viewer",
+  "category": "3D",
+  "author": "Jake Fitzgerald",
+  "description": "Jake Fitzgerald's CAD Viewer (earthtojake/text-to-cad) as a Harness pane: STEP, GLB, STL, 3MF, DXF, URDF, SRDF and SDF, with MoveIt2 inverse kinematics.",
+  "toolchain": {
+    "setup": "./setup.sh",
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [
+      ".step",
+      ".stp",
+      ".glb",
+      ".gltf",
+      ".stl",
+      ".3mf",
+      ".dxf",
+      ".urdf",
+      ".srdf",
+      ".sdf"
+    ]
+  }
+}

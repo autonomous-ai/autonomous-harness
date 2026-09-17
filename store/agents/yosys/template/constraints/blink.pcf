@@ -1,0 +1,83 @@
+# blink.pcf — which FPGA pin each port of `blink` is wired to on an iCEBreaker v1.0x
+# (Lattice iCE40UP5K in the SG48 package).
+#
+# The pin numbers below are the board's, copied from the iCEBreaker project's own constraints file:
+#   https://codeberg.org/icebreaker-fpga/icebreaker-verilog-examples/src/branch/main/icebreaker/icebreaker.pcf
+# (the icebreaker-fpga project moved from GitHub to Codeberg). The full board pinout is at the end
+# of this file, commented out — uncomment the lines for the signals your design actually uses.
+#
+# `-nowarn` keeps nextpnr quiet about a constraint for a port this design does not have, so one
+# file can carry the whole board.
+
+# 12 MHz oscillator. set_frequency is nextpnr's extension to PCF, and it is what makes the timing
+# report say "Fmax vs 12 MHz" instead of guessing.
+set_io -nowarn clk        35
+set_frequency clk 12
+
+# The two LEDs and the button on the main section of the board. All three are ACTIVE LOW:
+# drive 0 to light an LED; the button reads 0 while it is pressed.
+set_io -nowarn btn_n      10
+set_io -nowarn ledr_n     11
+set_io -nowarn ledg_n     37
+
+# ---------------------------------------------------------------------------------------------
+# The rest of the board, for when the design grows. Names are the iCEBreaker's; rename the ports
+# in your RTL to match, or rename these — the left column is your port, the number is the pin.
+#
+# UART over the on-board FTDI (directions are from the FPGA's point of view):
+#   set_io -nowarn rx          6
+#   set_io -nowarn tx          9
+#
+# The RGB LED, driven through the UP5K's SB_RGBA_DRV hard block (active low):
+#   set_io -nowarn led_red_n  39
+#   set_io -nowarn led_grn_n  40
+#   set_io -nowarn led_blu_n  41
+#
+# SPI flash:
+#   set_io -nowarn flash_sck  15
+#   set_io -nowarn flash_ssb  16
+#   set_io -nowarn flash_io0  14
+#   set_io -nowarn flash_io1  17
+#   set_io -nowarn flash_io2  12
+#   set_io -nowarn flash_io3  13
+#
+# PMOD 1A (pins 1-4, 7-10):
+#   set_io -nowarn p1a1        4
+#   set_io -nowarn p1a2        2
+#   set_io -nowarn p1a3       47
+#   set_io -nowarn p1a4       45
+#   set_io -nowarn p1a7        3
+#   set_io -nowarn p1a8       48
+#   set_io -nowarn p1a9       46
+#   set_io -nowarn p1a10      44
+#
+# PMOD 1B:
+#   set_io -nowarn p1b1       43
+#   set_io -nowarn p1b2       38
+#   set_io -nowarn p1b3       34
+#   set_io -nowarn p1b4       31
+#   set_io -nowarn p1b7       42
+#   set_io -nowarn p1b8       36
+#   set_io -nowarn p1b9       32
+#   set_io -nowarn p1b10      28
+#
+# PMOD 2 (the snap-off section):
+#   set_io -nowarn p2_1       27
+#   set_io -nowarn p2_2       25
+#   set_io -nowarn p2_3       21
+#   set_io -nowarn p2_4       19
+#   set_io -nowarn p2_7       26
+#   set_io -nowarn p2_8       23
+#   set_io -nowarn p2_9       20
+#   set_io -nowarn p2_10      18
+#
+# The five LEDs and three buttons on that snap-off section. Unlike the two on the main board these
+# are ACTIVE HIGH — drive 1 to light. Note LED1 and LED2 are not in pin order.
+#   set_io -nowarn led1       26
+#   set_io -nowarn led2       27
+#   set_io -nowarn led3       25
+#   set_io -nowarn led4       23
+#   set_io -nowarn led5       21
+#   set_io -nowarn btn1       20
+#   set_io -nowarn btn2       19
+#   set_io -nowarn btn3       18

@@ -1,0 +1,9 @@
+{
+  "name": "autonomous-rdkit",
+  "private": true,
+  "description": "RDKit as a Harness agent: the pane is a 3Dmol.js viewer of the newest conformer, from this package's own node_modules",
+  "license": "MIT",
+  "dependencies": {
+    "3dmol": "2.5.5"
+  }
+}

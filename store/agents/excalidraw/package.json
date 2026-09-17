@@ -1,0 +1,11 @@
+{
+  "name": "autonomous-excalidraw",
+  "private": true,
+  "description": "Excalidraw as a Harness agent: the pane is Excalidraw's own editor in view mode, from its UMD build",
+  "license": "MIT",
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.17.6",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "remotion-workspace",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Main out/main.mp4"
+  }
+}

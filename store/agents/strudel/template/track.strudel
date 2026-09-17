@@ -1,0 +1,50 @@
+// track.strudel — the Strudel pane plays this file.
+//
+// Click Play in the pane to start: a browser only begins audio on a click. After that every save
+// hot-swaps the pattern on the next cycle, so the groove keeps running while it changes.
+//
+// Everything below is a built-in oscillator — sine, sawtooth, square, triangle, supersaw, pulse,
+// the noises (white pink brown crackle) and sbd, a synthesised bass drum — so this track plays
+// with no network at all. Sample names like bd / sd / hh live in banks the pane downloads when it
+// starts, and those need the internet.
+//
+// Check it:  python3 "$STRUDEL_TOOLCHAIN/verdict.py"
+
+setcpm(120 / 4) // 120 bpm in 4/4: one cycle is one bar
+
+stack(
+
+  // Kick — four on the floor. sbd is a synth kick, no sample needed.
+  s("sbd*4").decay(0.24).gain(1).lpf(280),
+
+  // Backbeat — a short burst of white noise on 2 and 4, filtered up into snare territory.
+  s("~ white ~ white").decay(0.11).sustain(0).hpf(1200).gain(0.5),
+
+  // Hats — very short noise on an 8th grid, the offbeat quieter, drifting across the stereo.
+  s("white*8").decay(0.03).sustain(0).hpf(7000).gain("[0.3 0.14]*4")
+    .pan(sine.range(0.35, 0.65).slow(3)),
+
+  // Bass — sawtooth, three pulses in eight, the filter opening and closing over four bars.
+  note("<c2!2 g1!2 as1!2 f1!2>(3,8)")
+    .s("sawtooth")
+    .attack(0.005).decay(0.18).sustain(0.25).release(0.06)
+    .lpf(sine.range(220, 1600).slow(8)).lpq(9)
+    .gain(0.85),
+
+  // Pad — a supersaw chord every two bars, slow, wide, and wet. Eight bars go round once.
+  note("<[c3,ds3,g3]!2 [g2,as2,d3]!2 [as2,d3,f3]!2 [f2,gs2,c3]!2>")
+    .s("supersaw").unison(5).spread(0.45)
+    .attack(0.5).release(1.2).sustain(0.8)
+    .lpf(1100).gain(0.3)
+    .room(0.6).roomsize(4),
+
+  // Lead — a triangle line in C minor, mirrored and reversed in the right ear, with a 16th delay.
+  n("<0 3 7 5>(5,8)").scale("c4:minor")
+    .s("triangle")
+    .decay(0.14).sustain(0.04)
+    .jux(rev)
+    .sometimes(add(note("12")))
+    .delay(0.35).delaytime(0.125).delayfeedback(0.45)
+    .gain(0.32)
+
+)

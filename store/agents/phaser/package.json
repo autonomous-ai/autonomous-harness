@@ -1,0 +1,14 @@
+{
+  "name": "autonomous-phaser",
+  "private": true,
+  "description": "Phaser as a Harness agent: one node_modules for every workspace, a Vite dev server as the pane",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "phaser": "4.2.1"
+  },
+  "devDependencies": {
+    "terser": "^5.39.0",
+    "vite": "^6.3.1"
+  }
+}

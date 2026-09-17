@@ -1,0 +1,17 @@
+{
+  "name": "autonomous-remotion",
+  "private": true,
+  "description": "Remotion as a Harness agent: one node_modules for every workspace, Remotion Studio as the pane",
+  "license": "MIT",
+  "dependencies": {
+    "@remotion/cli": "4.0.525",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.525"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}

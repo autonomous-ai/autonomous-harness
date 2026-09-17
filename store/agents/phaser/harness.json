@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/phaser",
+  "name": "Phaser",
+  "category": "Games",
+  "author": "Phaser Studio",
+  "description": "Describe a game — a breakout, a platformer, a shooter, a puzzle — and play it in the pane as the agent writes it in Phaser 4, reloading on every save.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "vite.config.mjs",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "PHASER_TOOLCHAIN": "${dsh}/toolchain",
+      "PHASER_SKILLS": "${workspace}/.agents/skills",
+      "VITE": "${dsh}/node_modules/.bin/vite"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}

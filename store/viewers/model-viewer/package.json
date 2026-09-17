@@ -1,0 +1,9 @@
+{
+  "name": "autonomous-model-viewer",
+  "private": true,
+  "description": "3D Viewer for Harness: Google's <model-viewer> served from this package",
+  "license": "MIT",
+  "dependencies": {
+    "@google/model-viewer": "4.3.1"
+  }
+}

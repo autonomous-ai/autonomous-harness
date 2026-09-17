@@ -1,0 +1,13 @@
+{
+  "name": "autonomous-mujoco-viewer",
+  "private": true,
+  "description": "MuJoCo Viewer for Harness: MuJoCo's official WASM build and three.js served from this package",
+  "license": "MIT",
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "dependencies": {
+    "@mujoco/mujoco": "3.13.0",
+    "three": "0.186.0"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/mujoco-viewer",
+  "name": "MuJoCo Viewer",
+  "category": "Simulation",
+  "author": "Autonomous",
+  "description": "A pane for robots in motion: the MJCF scene a harness simulates, rendered live in the browser by MuJoCo's own WebAssembly build — orbit it, scrub the recorded rollout, or step the physics yourself.",
+  "toolchain": {
+    "setup": "./setup.sh",
+    "doctor": "./doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".json"]
+  }
+}

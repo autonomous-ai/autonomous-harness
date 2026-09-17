@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/rdkit",
+  "name": "RDKit",
+  "category": "Chemistry",
+  "author": "RDKit",
+  "description": "Describe a molecule — a drug, an analogue, a scaffold — and get it designed, its properties computed and a 3D conformer you can rotate in the pane.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "molecules/hello.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "RDKIT_PYTHON": "${dsh}/.venv/bin/python",
+      "RDKIT_TOOLCHAIN": "${dsh}/toolchain",
+      "PYTHONPATH": "${dsh}/toolchain"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/?file=${artifact}",
+    "artifactExtensions": [".sdf", ".mol", ".pdb"]
+  },
+  "verdict": ".harness/verdict.json"
+}
