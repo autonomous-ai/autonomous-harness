@@ -294,7 +294,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
     final payload = {
       'enabled': _routeIsCurrent && !_dialogOpen && !_spokenPaletteOpen,
       'activeId': app.activeSwarmId,
-      'canOpenNewTab': app.canOpenNewTab,
       'palette': grid.AppTheme.palette.value.nativeColors,
       'canReopen': app.canReopenLastClosed,
       'canFind': _canFindTerminal,
@@ -1086,22 +1085,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
   }
 
   void _newTab() {
-    // At the cap New Tab used to do nothing at all — no tab, no sound, no word — so a person (or a
-    // script) went on typing into whatever pane still had focus. Say why instead.
-    if (!app.canOpenNewTab) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            key: ValueKey('tab-limit-notice'),
-            content: Text(
-              '${AppNotifier.maxSwarms} tabs are open, the most Harness keeps. '
-              'Close a tab to open a new one.',
-            ),
-          ),
-        );
-      return;
-    }
     app.newSwarm();
     if (app.panes.isEmpty) _startSearchFocus.requestFocus();
   }
@@ -1266,7 +1249,6 @@ class _SwarmScreenState extends State<SwarmScreen> {
       final number = int.tryParse(id.substring('swarm.select_'.length));
       return number != null && number >= 1 && number <= app.swarms.length;
     }
-    // Always runnable: at the tab cap it explains itself rather than silently doing nothing.
     if (id == 'swarm.new') return true;
     if (id == 'swarm.reopen') return app.canReopenLastClosed;
     if (id == 'swarm.next' || id == 'swarm.previous') {
@@ -1574,8 +1556,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                   child: Row(
                                     children: [
                                       if (swarm.isStore)
-                                        // The store's own mark: a shelf of
-                                        // four tiles, one lifted.
+                                        // The Store shares the app's icon.
                                         Image.asset(
                                           kStoreMarkAsset,
                                           key: ValueKey('tab-store:${swarm.id}'),
@@ -1642,7 +1623,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             ),
             IconButton(
               key: const ValueKey('swarm-new-tab-button'),
-              onPressed: app.canOpenNewTab ? _newTab : null,
+              onPressed: _newTab,
               icon: const Icon(Icons.add, size: 18, semanticLabel: 'New Tab'),
             ),
             _harnessButton(create: true, compact: compact),

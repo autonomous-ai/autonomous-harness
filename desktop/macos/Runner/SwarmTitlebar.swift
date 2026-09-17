@@ -15,7 +15,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   private var canReopen = false
   private var canFind = false
   private var canClosePane = false
-  private var canCreateSwarm = false
   private let historyMenu = NSMenu(title: "History")
   private var canGoBack = false
   private var canGoForward = false
@@ -53,8 +52,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         self.canClosePane = state["canClosePane"] as? Bool == true
         self.canGoBack = state["canGoBack"] as? Bool == true
         self.canGoForward = state["canGoForward"] as? Bool == true
-        self.canCreateSwarm = state["canOpenNewTab"] as? Bool
-          ?? ((state["tabs"] as? [Any] ?? []).count < 24)
         self.updateHistory(state["history"] as? [[String: Any]] ?? [], closed: state["closedHistory"] as? [[String: Any]] ?? [])
         self.strip.update(state)
         self.window?.backgroundColor = self.strip.palette.tabBar
@@ -561,7 +558,6 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     return actionsEnabled && (action != "reopen" || canReopen) &&
       (action != "historyBack" || canGoBack) && (action != "historyForward" || canGoForward) &&
-      // "new" stays enabled at the tab cap: Flutter says why no tab opened, instead of a dead ⌘T.
       (action != "closePane" || canClosePane) &&
       (!["findTerminal", "findNext", "findPrevious", "splitRight", "splitDown", "zoomPane", "pinPane"].contains(action) || canFind)
   }

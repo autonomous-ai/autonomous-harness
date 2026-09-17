@@ -100,23 +100,23 @@ void main() {
   });
 
   for (final native in [false, true]) {
-    testWidgets('New Tab at the tab cap says why instead of doing nothing (native=$native)', (
+    testWidgets('New Tab keeps opening tabs past two dozen, as Chrome does (native=$native)', (
       tester,
     ) async {
       const channel = MethodChannel('harness/swarm_tabs');
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (_) async => true);
       addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
       final app = createApp();
-      for (var i = 1; i < AppNotifier.maxSwarms; i++) {
+      for (var i = 1; i < 30; i++) {
         app.newSwarm(name: 'Project $i');
       }
       app.selectSwarm(app.swarms.first.id);
       await app.addAgentToSwarm('m', 'a0');
-      expect(app.canOpenNewTab, isFalse);
+      expect(app.swarms, hasLength(30));
       await mount(tester, app, nativeTabs: native);
       if (native) {
-        // What Swift sends for File ▸ New Tab, ⌘T and the strip's plus.
-        // Not awaited: the handler waits on a frame, which only the pumps below produce.
+        // What Swift sends for File ▸ New Tab, ⌘T and the strip's plus. Not awaited: the handler
+        // waits on a frame, which only the pumps below produce.
         tester.binding.defaultBinaryMessenger.handlePlatformMessage(
           'harness/swarm_tabs',
           const StandardMethodCodec().encodeMethodCall(const MethodCall('new')),
@@ -127,16 +127,16 @@ void main() {
       }
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(app.swarms, hasLength(AppNotifier.maxSwarms));
-      expect(find.byKey(const ValueKey('tab-limit-notice')), findsOneWidget);
-      expect(find.textContaining('tabs are open, the most Harness keeps'), findsOneWidget);
+      expect(app.swarms, hasLength(31));
+      expect(app.activeSwarm.name, 'New Tab');
+      expect(app.panes, isEmpty);
       await tester.pumpWidget(const SizedBox());
       app.dispose();
     });
   }
 
   for (final native in [false, true]) {
-    testWidgets('the store tab wears a storefront, not New Tab\'s plus (native=$native)', (
+    testWidgets('the store tab uses the app icon (native=$native)', (
       tester,
     ) async {
       const channel = MethodChannel('harness/swarm_tabs');
@@ -163,7 +163,7 @@ void main() {
         final row = (updates.last['tabs'] as List).single as Map;
         expect(row['kind'], 'store');
         expect(row['agentCount'], 0);
-        expect(row['iconAsset'], 'assets/engine-icons/store.png');
+        expect(row['iconAsset'], 'assets/app_icon.png');
       } else {
         expect(find.byKey(ValueKey('tab-store:${tab.id}')), findsOneWidget);
       }

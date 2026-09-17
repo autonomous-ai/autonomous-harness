@@ -159,7 +159,7 @@ void main() {
   });
 
   test(
-    'history is bounded, newest-first and retained while capacity is full',
+    'history is bounded, newest-first, and reopens however many tabs are open',
     () async {
       final app = createApp();
       addTearDown(app.dispose);
@@ -167,15 +167,13 @@ void main() {
         app.renameSwarm(app.activeSwarmId, 'Closed $i');
         await app.closeSwarm(app.activeSwarmId);
       }
-      for (var i = 0; i < AppNotifier.maxSwarms - 1; i++) {
+      for (var i = 0; i < 30; i++) {
         app.newSwarm(name: 'Occupied $i');
       }
-      expect(app.canReopenClosedSwarm, isFalse);
-      app.reopenClosedSwarm();
-      expect(app.swarms, hasLength(AppNotifier.maxSwarms));
-      await app.closeSwarm(app.swarms.first.id);
+      expect(app.canReopenClosedSwarm, isTrue);
       app.reopenClosedSwarm();
       expect(app.activeSwarm.name, 'Closed 26');
+      expect(app.swarms, hasLength(32));
       // Free slots directly without adding newer close records to this check.
       app.swarms.removeRange(1, app.swarms.length);
       app.selectSwarm(app.swarms.single.id);

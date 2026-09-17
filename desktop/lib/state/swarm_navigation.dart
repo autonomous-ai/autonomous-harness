@@ -693,13 +693,8 @@ bool canOpenSwarmGroup(
   SwarmDestination destination, {
   required String destinationSwarmId,
 }) =>
-    destination.isGroup &&
-    destination.members.length <= AppNotifier.maxPanes &&
-    (_matchingGroupSwarm(app, destination) != null ||
-        app.swarms.any(
-          (swarm) => swarm.id == destinationSwarmId && swarm.panes.isEmpty,
-        ) ||
-        app.swarms.length < AppNotifier.maxSwarms);
+    // With no tab cap a group always has somewhere to open; only its size is bounded.
+    destination.isGroup && destination.members.length <= AppNotifier.maxPanes;
 
 Swarm? _matchingGroupSwarm(AppNotifier app, SwarmDestination destination) {
   bool matches(Swarm swarm) =>

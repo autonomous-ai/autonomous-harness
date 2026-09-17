@@ -470,7 +470,8 @@ class AppNotifier extends ChangeNotifier {
   final List<Swarm> swarms = [Swarm(id: 'swarm-1')];
   String _activeSwarmId = 'swarm-1';
   int _nextSwarmId = 2;
-  static const maxSwarms = 24;
+  // No tab cap, as in Chrome: only the visible tab's panes are built, so a background tab costs its
+  // terminal streams and nothing else — its web panes are unloaded until it is shown again.
   static const maxClosedSwarms = 24;
   final List<ClosedWork> _closedHistory = [];
   int _nextClosedHistoryId = 1;
@@ -495,9 +496,8 @@ class AppNotifier extends ChangeNotifier {
     if (entry is ClosedSwarm) return _canReopenSwarm(entry);
     if (entry is! ClosedAgent) return false;
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
-    return target == null
-        ? swarms.length < maxSwarms
-        : target.panes.length < maxPanes ||
+    return target == null ||
+        target.panes.length < maxPanes ||
               target.panes.any(
                 (p) =>
                     p.machineId == entry.machineId &&
@@ -508,7 +508,7 @@ class AppNotifier extends ChangeNotifier {
   bool _canReopenSwarm(ClosedSwarm saved) {
     if (_disposed) return false;
     final target = swarms.where((swarm) => swarm.id == saved.id).firstOrNull;
-    if (target == null) return swarms.length < maxSwarms;
+    if (target == null) return true;
     final present = {
       for (final pane in target.panes) (pane.machineId, pane.agentId),
     };
@@ -540,8 +540,6 @@ class AppNotifier extends ChangeNotifier {
   List<TerminalPane> get panes => activeSwarm.panes;
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
-  bool get canOpenNewTab =>
-      swarms.length < maxSwarms || swarms.any((swarm) => swarm.isEmptyStarter);
 
   // A New Tab remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
@@ -569,7 +567,6 @@ class AppNotifier extends ChangeNotifier {
         return;
       }
     }
-    if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
     }
@@ -604,7 +601,6 @@ class AppNotifier extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (swarms.length >= maxSwarms) return;
     while (swarms.any((s) => s.id == 'swarm-$_nextSwarmId')) {
       _nextSwarmId++;
     }
@@ -5830,7 +5826,7 @@ class AppNotifier extends ChangeNotifier {
         activeSwarm == initialSwarm) {
       final restored = <Swarm>[];
       final pool = <String, TerminalPane>{};
-      for (final raw in (saved['swarms'] as List).take(maxSwarms)) {
+      for (final raw in (saved['swarms'] as List)) {
         if (raw is! Map || raw['id'] is! String || raw['panes'] is! List) {
           continue;
         }
