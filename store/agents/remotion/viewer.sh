@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# The pane: Remotion Studio on the workspace, on the port Harness hands it, without opening a browser
-# of its own (BROWSER=none is how Remotion is told). Studio reloads as the source changes.
+# The pane. Harness runs this here with HARNESS_VIEWER_PORT and HARNESS_WORKSPACE. viewer.mjs starts
+# Remotion Studio on the workspace (on a private loopback port, BROWSER=none) and serves the pane on
+# HARNESS_VIEWER_PORT: Studio itself, plus the renders in out/ and the render in progress.
 set -euo pipefail
 : "${HARNESS_VIEWER_PORT:?}"; : "${HARNESS_WORKSPACE:?}"
-DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$HARNESS_WORKSPACE"
-[ -e node_modules ] || ln -s "$DIR/node_modules" node_modules
-export BROWSER=none
-exec "$DIR/node_modules/.bin/remotion" studio --port "$HARNESS_VIEWER_PORT" --disable-keyboard-shortcuts=false src/index.ts
+exec node "$(cd "$(dirname "$0")" && pwd)/viewer.mjs"

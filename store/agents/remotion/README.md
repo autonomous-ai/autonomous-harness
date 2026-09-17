@@ -5,7 +5,16 @@
 Studio pane as the agent writes it in React, then render it to MP4. Runs on Claude Code.
 
 - `harness.json` — engine, template, skills, toolchain, and this package's own viewer (Remotion Studio).
-- `viewer.sh` — `remotion studio` on the workspace, on the port Harness hands it, `BROWSER=none`.
+- `viewer.sh` → `viewer.mjs` + `viewer.html` — the pane. Remotion Studio runs on a private loopback
+  port (`toolchain/loopback.cjs` keeps it off the network: Remotion binds every interface and has no
+  flag for it) and is proxied on the port Harness hands the pane, under a slim bar: **Studio** —
+  opened on the composition whose source changed last, with a nudge when the agent registers a new
+  one — and **Renders** — every video, GIF and still in `out/`, newest first, with a player
+  (Space, ← →, `,` `.` frame steps, L loop, F full screen), stale renders marked, and the render in
+  progress as a progress bar that the bar mirrors from either tab.
+- `toolchain/remotion` — `$REMOTION` for the agent: Remotion's CLI unchanged, except that `render`
+  and `still` write their progress to `.harness/render.json` for the pane and print it every tenth
+  of the way instead of every frame.
 - `toolchain/setup.sh` — one `node_modules` (pinned in `package.json`) that every workspace links to,
   the headless browser Remotion renders with, and Remotion's own agent skills **fetched** at the
   commit in `VERSIONS` — not copied into this package, because
@@ -32,4 +41,5 @@ the wrapper belong here, and a newer Remotion is a bump of `package.json` and `V
 harness dsh check .                                # conformance (warns: skills arrive with setup)
 harness dsh install "$PWD" --link                  # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py      # the verdict, without remotion
+node --test toolchain/test_remotion.mjs            # $REMOTION's progress parsing
 ```

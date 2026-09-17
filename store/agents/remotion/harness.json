@@ -15,7 +15,7 @@
     "instructions": "AGENTS.md",
     "skills": ["upstream/skills"],
     "env": {
-      "REMOTION": "${dsh}/node_modules/.bin/remotion",
+      "REMOTION": "${dsh}/toolchain/remotion",
       "REMOTION_TOOLCHAIN": "${dsh}/toolchain"
     }
   },
@@ -25,7 +25,7 @@
   },
   "viewer": {
     "command": "./viewer.sh",
-    "url": "http://127.0.0.1:${port}/",
+    "url": "http://127.0.0.1:${port}/__harness/",
     "artifactExtensions": [".mp4", ".webm", ".gif"]
   },
   "verdict": ".harness/verdict.json"

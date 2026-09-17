@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# `$REMOTION`: Remotion's CLI, with render progress written to .harness/render.json for the pane.
+exec node "$(cd "$(dirname "$0")" && pwd)/remotion.mjs" "$@"

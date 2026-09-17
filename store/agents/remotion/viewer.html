@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remotion</title>
+<style>
+  /* Remotion Studio's own palette (studio/dist/helpers/colors.js), so the bar reads as part of it. */
+  :root {
+    color-scheme: dark;
+    --bg: #1f2428; --raise: #262b30; --input: #2f363d; --hover: #3a424a; --line: #363a3e;
+    --text: #e6e6e6; --muted: #a6a7a9; --faint: #6f757b; --blue: #0b84f3; --fail: #ff3232; --warn: #f1c40f; --ok: #37c77f;
+  }
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 12px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:focus:not(:focus-visible) { outline: none; }
+  button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+  kbd { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 4px; border-radius: 3px; background: var(--input); color: var(--muted); }
+
+  #bar { position: relative; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--bg); z-index: 3; }
+  .seg { display: flex; flex: none; padding: 2px; gap: 2px; background: var(--input); border-radius: 7px; }
+  .seg button { height: 24px; padding: 0 10px; border-radius: 5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-selected="true"] { background: var(--hover); color: var(--text); }
+  .count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--bg); color: var(--muted); font-size: 10px; display: inline-grid; place-items: center; font-variant-numeric: tabular-nums; }
+  .seg button[aria-selected="true"] .count { background: var(--blue); color: #fff; }
+  #status { flex: 1; min-width: 0; display: flex; justify-content: flex-end; align-items: center; gap: 8px; color: var(--muted); }
+  #status .text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #status .pill { flex: none; height: 24px; padding: 0 10px; border-radius: 12px; background: var(--input); color: var(--text); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  #status .pill:hover { background: var(--hover); }
+  #status .pill.primary { background: var(--blue); color: #fff; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .dot.live { background: var(--blue); animation: pulse 1.2s ease-in-out infinite; }
+  .dot.ok { background: var(--ok); } .dot.fail { background: var(--fail); } .dot.warn { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  #progress { position: absolute; left: 0; bottom: -1px; height: 2px; width: 0; background: var(--blue); transition: width .35s ease; }
+
+  main { position: absolute; inset: 37px 0 0 0; }
+  #studio { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+  .cover { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: var(--bg); color: var(--muted); z-index: 2; }
+  .cover h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--text); }
+  .cover pre { margin: 12px auto 0; max-width: 640px; max-height: 40vh; overflow: auto; text-align: left; padding: 10px 12px; border-radius: 6px; background: #15191c; color: #c9cdd1; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+  .spinner { width: 18px; height: 18px; margin: 0 auto 12px; border-radius: 50%; border: 2px solid var(--input); border-top-color: var(--blue); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #renders { position: absolute; inset: 0; overflow: auto; }
+  #stage { background: #000; display: grid; place-items: center; height: min(56vh, calc(100vw * 9 / 16)); min-height: 180px; position: relative; }
+  #stage video, #stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; outline: none; }
+  #stage audio { width: min(90%, 480px); }
+  #meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  #meta .name { font-size: 13px; font-weight: 600; color: var(--text); }
+  #meta .facts { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #meta .keys { margin-left: auto; color: var(--faint); display: flex; gap: 8px; align-items: center; }
+  .badge { font-size: 10px; font-weight: 600; letter-spacing: .02em; padding: 1px 6px; border-radius: 4px; background: var(--input); color: var(--muted); text-transform: uppercase; }
+  .badge.stale { background: rgba(241,196,15,.14); color: var(--warn); }
+  .badge.new { background: rgba(11,132,243,.18); color: #5fb0ff; }
+  #job { margin: 12px 14px 0; padding: 10px 12px; border-radius: 8px; background: var(--raise); border: 1px solid var(--line); }
+  #job .row { display: flex; align-items: center; gap: 8px; }
+  #job .title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #job .pct { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #job .track { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--input); overflow: hidden; }
+  #job .fill { height: 100%; width: 0; background: var(--blue); transition: width .35s ease; }
+  #job.failed .fill { background: var(--fail); }
+  #job .sub { margin-top: 6px; color: var(--muted); white-space: pre-wrap; font-variant-numeric: tabular-nums; }
+  #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; padding: 12px 14px 20px; }
+  .card { text-align: left; border-radius: 8px; overflow: hidden; background: var(--raise); border: 1px solid var(--line); padding: 0; }
+  .card:hover { border-color: #4a525a; }
+  .card[aria-current="true"] { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+  .thumb { aspect-ratio: 16 / 9; background: #000; display: grid; place-items: center; overflow: hidden; position: relative; }
+  .thumb video, .thumb img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  .thumb .len { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 4px; background: rgba(0,0,0,.7); color: #fff; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .card .info { padding: 7px 9px 8px; }
+  .card .n { display: flex; gap: 6px; align-items: center; font-weight: 600; }
+  .card .n span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .m { margin-top: 2px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  #empty { padding: 48px 24px; text-align: center; color: var(--muted); }
+  #empty h2 { margin: 0 0 6px; font-size: 14px; color: var(--text); font-weight: 600; }
+  #empty code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--input); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  @media (max-width: 560px) { #meta .keys { display: none; } .seg button { padding: 0 8px; } }
+</style>
+
+<div id="bar">
+  <div class="seg" role="tablist">
+    <button id="tab-studio" role="tab" aria-selected="true" title="Remotion Studio — the video as it is being written">Studio</button>
+    <button id="tab-renders" role="tab" aria-selected="false" title="Rendered files in out/ (R)">Renders <span class="count" id="count">0</span></button>
+  </div>
+  <div id="status"></div>
+  <div id="progress"></div>
+</div>
+<main>
+  <section id="studio-view">
+    <iframe id="studio" title="Remotion Studio" allow="fullscreen; autoplay; clipboard-read; clipboard-write"></iframe>
+    <div class="cover" id="studio-cover"><div><div class="spinner"></div><h2>Starting Remotion Studio</h2><div>Bundling the project — a few seconds the first time.</div><pre id="studio-log" hidden></pre></div></div>
+  </section>
+  <section id="renders" hidden>
+    <div id="player" hidden>
+      <div id="stage"></div>
+      <div id="meta"></div>
+    </div>
+    <div id="job" hidden></div>
+    <div id="empty" hidden>
+      <h2>No renders yet</h2>
+      <div>When the agent renders — <code>$REMOTION render Main out/main.mp4</code> — the progress shows up here and in the bar, and the video plays here when it is done.</div>
+    </div>
+    <div id="list"></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const params = new URLSearchParams(location.search)
+  const el = (tag, attrs = {}, kids = []) => {
+    const n = document.createElement(tag)
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'class') n.className = v
+      else if (k === 'text') n.textContent = v
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2), v)
+      else if (v !== false && v != null) n.setAttribute(k, v === true ? '' : v)
+    }
+    for (const kid of [].concat(kids)) if (kid != null) n.append(kid)
+    return n
+  }
+  const bytes = (n) => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n >= 1e3 ? Math.round(n / 1e3) + ' kB' : n + ' B'
+  const ago = (ms) => {
+    const s = Math.max(0, (Date.now() - ms) / 1000)
+    if (s < 10) return 'just now'
+    if (s < 60) return Math.floor(s) + ' s ago'
+    if (s < 3600) return Math.floor(s / 60) + ' min ago'
+    if (s < 86400) return Math.floor(s / 3600) + ' h ago'
+    return new Date(ms).toLocaleDateString()
+  }
+  const clock = (t) => { if (!isFinite(t)) return ''; const m = Math.floor(t / 60), s = t - m * 60; return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}` }
+  const media = (r) => `/__harness/media/${r.path.split('/').map(encodeURIComponent).join('/')}?v=${Math.round(r.mtime)}`
+
+  let S = null                 // the last state from the server
+  let tab = location.hash === '#renders' ? 'renders' : 'studio'
+  let selected = null          // path of the render in the player
+  let studioSrc = null
+  let seenJobEnd = null        // finishedAt of the render the user has already been told about
+  let knownComps = null
+  const meta = new Map()       // path@mtime -> { w, h, d }
+
+  // ---- tabs --------------------------------------------------------------------------------------
+  function setTab(next) {
+    tab = next
+    $('tab-studio').setAttribute('aria-selected', String(tab === 'studio'))
+    $('tab-renders').setAttribute('aria-selected', String(tab === 'renders'))
+    $('studio-view').hidden = tab !== 'studio'
+    $('renders').hidden = tab !== 'renders'
+    history.replaceState(null, '', location.pathname + location.search + (tab === 'renders' ? '#renders' : ''))
+    const v = $('stage').querySelector('video')
+    if (tab !== 'renders' && v && !v.paused) v.pause()
+    if (tab === 'renders') { if (S?.job?.finishedAt) seenJobEnd = S.job.finishedAt; renderRenders(); if (S) renderBar() }
+  }
+  $('tab-studio').onclick = () => setTab('studio')
+  $('tab-renders').onclick = () => setTab('renders')
+
+  // ---- Studio ------------------------------------------------------------------------------------
+  function renderStudio() {
+    const st = S.studio
+    const cover = $('studio-cover')
+    if (st.state === 'ready') {
+      if (!studioSrc) {
+        const want = params.get('composition') || S.active
+        studioSrc = want ? '/' + encodeURIComponent(want) : '/'
+        $('studio').src = studioSrc
+        $('studio').addEventListener('load', () => { cover.hidden = true }, { once: true })
+        setTimeout(() => { cover.hidden = true }, 8000)
+      } else cover.hidden = true
+    } else {
+      cover.hidden = false
+      cover.querySelector('h2').textContent = st.state === 'stopped' ? 'Remotion Studio stopped — restarting' : 'Starting Remotion Studio'
+      const log = $('studio-log')
+      log.hidden = !(st.state === 'stopped' && st.log.length)
+      log.textContent = st.log.join('\n')
+      if (st.state === 'stopped') studioSrc = null
+    }
+    // A composition the agent just registered: offer it, never yank the view away.
+    const ids = S.compositions
+    if (knownComps) {
+      const fresh = ids.filter((id) => !knownComps.includes(id))
+      if (fresh.length) freshComp = fresh[fresh.length - 1]
+    }
+    if (freshComp && !ids.includes(freshComp)) freshComp = null
+    knownComps = ids
+  }
+  let freshComp = null
+  function openComposition(id) {
+    freshComp = null
+    setTab('studio')
+    studioSrc = '/' + encodeURIComponent(id)
+    $('studio').src = studioSrc
+    renderBar()
+  }
+
+  // ---- the bar -----------------------------------------------------------------------------------
+  function renderBar() {
+    const status = $('status')
+    status.textContent = ''
+    const job = S.job
+    const running = job && job.state === 'running'
+    const newest = S.renders[0]
+    $('count').textContent = S.renders.length
+    $('progress').style.width = running ? Math.round((job.progress || 0) * 100) + '%' : '0'
+    if (running) {
+      const what = job.stage === 'bundling' ? 'Bundling' : job.stage === 'encoding' ? 'Encoding' : job.stage === 'rendering' ? 'Rendering' : 'Preparing'
+      const frames = job.frames ? ` · ${job.frame}/${job.frames}` : ''
+      status.append(el('button', { class: 'pill', title: 'Show the render', onclick: () => setTab('renders') }, [
+        el('span', { class: 'dot live' }), el('span', { text: `${what} ${job.composition ?? ''}${frames} · ${Math.round((job.progress || 0) * 100)}%` }),
+      ]))
+    } else if (job && job.finishedAt && job.finishedAt !== seenJobEnd && Date.now() - Date.parse(job.finishedAt) < 10 * 60e3) {
+      if (job.state === 'done') {
+        status.append(el('button', { class: 'pill primary', title: 'Play the render', onclick: () => { seenJobEnd = job.finishedAt; if (job.output) selected = job.output; setTab('renders'); play(); renderBar() } }, [
+          el('span', { text: `▶ ${job.output ? job.output.split('/').pop() : 'Render'} is ready` }),
+        ]))
+      } else {
+        status.append(el('button', { class: 'pill', title: 'What went wrong', onclick: () => { seenJobEnd = job.finishedAt; setTab('renders'); renderBar() } }, [
+          el('span', { class: 'dot fail' }), el('span', { text: job.state === 'interrupted' ? 'Render stopped' : 'Render failed' }),
+        ]))
+      }
+    } else if (newest) {
+      const r = newest
+      status.append(el('span', { class: 'text', title: r.path }, [`${r.name} · ${ago(r.mtime)}`]))
+      if (r.stale) status.append(el('span', { class: 'badge stale', title: 'The source changed after this render' , text: 'stale' }))
+    } else {
+      status.append(el('span', { class: 'text', title: 'Renders land in out/ and play in the Renders tab', text: 'No render yet' }))
+    }
+    if (freshComp) status.prepend(el('button', { class: 'pill', title: 'Open it in Studio', onclick: () => openComposition(freshComp) }, [el('span', { class: 'dot ok' }), el('span', { text: `New: ${freshComp}` })]))
+  }
+
+  // ---- renders -----------------------------------------------------------------------------------
+  function current() { return S.renders.find((r) => r.path === selected) || S.renders[0] || null }
+
+  function renderRenders() {
+    if (!S) return
+    const r = current()
+    if (r && selected !== r.path) selected = r.path
+    // the player
+    $('player').hidden = !r
+    const stage = $('stage')
+    const src = r ? media(r) : null
+    const existing = stage.firstElementChild
+    if (r && (!existing || existing.dataset.src !== src)) {
+      const samePath = existing && existing.dataset.path === r.path
+      const at = samePath && existing.currentTime && !existing.ended ? existing.currentTime : 0
+      const wasPlaying = samePath && existing.tagName === 'VIDEO' && !existing.paused
+      stage.textContent = ''
+      let m
+      if (r.kind === 'video') {
+        m = el('video', { controls: true, playsinline: true, preload: 'metadata', src })
+        m.loop = loop
+        m.addEventListener('loadedmetadata', () => {
+          if (at) m.currentTime = at
+          else if (isFinite(m.duration) && m.duration > 2) {
+            // a first frame is often black (a fade-in): show a frame from a moment in, start from 0
+            const posterAt = Math.min(1.5, m.duration * 0.15)
+            m.currentTime = posterAt
+            m.addEventListener('play', () => { if (Math.abs(m.currentTime - posterAt) < 0.05) m.currentTime = 0 }, { once: true })
+          }
+          if (wasPlaying) m.play().catch(() => {})
+          note(r, m.videoWidth, m.videoHeight, m.duration)
+        })
+      } else if (r.kind === 'audio') {
+        m = el('audio', { controls: true, preload: 'metadata', src })
+      } else {
+        m = el('img', { src, alt: r.name })
+        m.addEventListener('load', () => note(r, m.naturalWidth, m.naturalHeight, null))
+      }
+      m.dataset.src = src; m.dataset.path = r.path
+      stage.append(m)
+    }
+    renderMeta()
+    // the job
+    const job = S.job
+    const box = $('job')
+    const showJob = job && (job.state === 'running' || ((job.state === 'failed' || job.state === 'interrupted') && Date.now() - Date.parse(job.finishedAt || job.updatedAt || 0) < 30 * 60e3))
+    box.hidden = !showJob
+    if (showJob) {
+      box.className = job.state === 'running' ? '' : 'failed'
+      const pct = Math.round((job.progress || 0) * 100)
+      const stage = { starting: 'Starting', bundling: 'Bundling the project', preparing: 'Getting the composition', rendering: 'Rendering frames', encoding: 'Encoding', finishing: 'Finishing' }[job.stage] || job.stage
+      box.textContent = ''
+      box.append(
+        el('div', { class: 'row' }, [
+          el('span', { class: 'dot ' + (job.state === 'running' ? 'live' : 'fail') }),
+          el('span', { class: 'title', text: job.state === 'running' ? `Rendering ${job.composition ?? ''}${job.output ? ' → ' + job.output : ''}` : `Render ${job.state === 'interrupted' ? 'stopped' : 'failed'}: ${job.composition ?? ''}` }),
+          el('span', { class: 'pct', text: job.state === 'running' ? pct + '%' : '' }),
+        ]),
+        el('div', { class: 'track' }, el('div', { class: 'fill', style: `width:${job.state === 'running' ? pct : 100}%` })),
+        el('div', { class: 'sub', text: job.state === 'running'
+          ? `${stage}${job.frames ? ` · frame ${job.frame} of ${job.frames}` : ''}${job.remaining ? ` · ${job.remaining} left` : ''}`
+          : (job.error || 'The render did not finish.') }),
+      )
+    }
+    // the list
+    $('empty').hidden = S.renders.length > 0 || showJob
+    const list = $('list')
+    const cards = new Map([...list.children].map((c) => [c.dataset.key, c]))
+    const order = []
+    for (const [i, item] of S.renders.entries()) {
+      const key = item.path + '@' + Math.round(item.mtime)
+      let card = cards.get(key)
+      if (!card) card = makeCard(item, key)
+      cards.delete(key)
+      card.setAttribute('aria-current', String(item.path === selected))
+      const n = card.querySelector('.n')
+      n.querySelector('.badge')?.remove()
+      if (item.stale) n.append(el('span', { class: 'badge stale', text: 'stale' }))
+      else if (i === 0 && Date.now() - item.mtime < 5 * 60e3) n.append(el('span', { class: 'badge new', text: 'new' }))
+      card.querySelector('.m').textContent = `${bytes(item.size)} · ${ago(item.mtime)}`
+      order.push(card)
+    }
+    for (const stale of cards.values()) stale.remove()
+    order.forEach((card, i) => { if (list.children[i] !== card) list.insertBefore(card, list.children[i] || null) })
+  }
+
+  function makeCard(item, key) {
+    const src = media(item)
+    let thumb
+    if (item.kind === 'video') {
+      thumb = el('video', { muted: true, playsinline: true, preload: 'metadata', src: src + '#t=0.8' })
+      thumb.muted = true
+      thumb.addEventListener('loadedmetadata', () => { note(item, thumb.videoWidth, thumb.videoHeight, thumb.duration); const len = card.querySelector('.len'); if (len) len.textContent = clock(thumb.duration) })
+    } else if (item.kind === 'audio') thumb = el('span', { text: '♪', style: 'font-size:28px;color:#a6a7a9' })
+    else thumb = el('img', { src, alt: '' })
+    const card = el('button', { class: 'card', title: item.path, onclick: () => { selected = item.path; renderRenders(); play() } }, [
+      el('div', { class: 'thumb' }, [thumb, item.kind === 'video' ? el('span', { class: 'len' }) : null]),
+      el('div', { class: 'info' }, [el('div', { class: 'n' }, [el('span', { text: item.name })]), el('div', { class: 'm' })]),
+    ])
+    card.dataset.key = key
+    if (item.kind === 'video') {
+      card.addEventListener('mouseenter', () => { thumb.currentTime = 0; thumb.play().catch(() => {}) })
+      card.addEventListener('mouseleave', () => { thumb.pause(); thumb.currentTime = 0.8 })
+    }
+    return card
+  }
+
+  function note(r, w, h, d) { meta.set(r.path + '@' + Math.round(r.mtime), { w, h, d }); if (current()?.path === r.path) renderMeta() }
+
+  function renderMeta() {
+    const r = current()
+    const box = $('meta')
+    box.textContent = ''
+    if (!r) return
+    const m = meta.get(r.path + '@' + Math.round(r.mtime))
+    const facts = [m && m.w ? `${m.w}×${m.h}` : null, m && isFinite(m.d) && m.d ? clock(m.d) : null, bytes(r.size), ago(r.mtime)].filter(Boolean).join(' · ')
+    box.append(el('span', { class: 'name', text: r.path }), el('span', { class: 'facts', text: facts }))
+    if (r.stale) box.append(el('span', { class: 'badge stale', title: 'The source changed after this render; ask the agent to render again', text: 'older than the source' }))
+    if (r.kind === 'video') box.append(el('span', { class: 'keys' }, [el('kbd', { text: 'Space' }), 'play', el('kbd', { text: '← →' }), 'seek', el('kbd', { text: ', .' }), 'frame', el('kbd', { text: 'L' }), loop ? 'loop on' : 'loop']))
+  }
+
+  let loop = true
+  function video() { return tab === 'renders' ? $('stage').querySelector('video') : null }
+  function play() { requestAnimationFrame(() => { const v = video(); if (v) v.play().catch(() => {}) }) }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return
+    if (e.key === 'r' || e.key === 'R') { setTab(tab === 'renders' ? 'studio' : 'renders'); e.preventDefault(); return }
+    if (tab !== 'renders') return
+    const v = video()
+    if (e.key === 'Escape') { setTab('studio'); return }
+    if (!v) return
+    const fps = 30
+    if (e.key === ' ' || e.key === 'k') { v.paused ? v.play() : v.pause(); e.preventDefault() }
+    else if (e.key === 'ArrowLeft') { v.currentTime = Math.max(0, v.currentTime - (e.shiftKey ? 5 : 1)); e.preventDefault() }
+    else if (e.key === 'ArrowRight') { v.currentTime = Math.min(v.duration || 0, v.currentTime + (e.shiftKey ? 5 : 1)); e.preventDefault() }
+    else if (e.key === ',') { v.pause(); v.currentTime = Math.max(0, v.currentTime - 1 / fps) }
+    else if (e.key === '.') { v.pause(); v.currentTime = Math.min(v.duration || 0, v.currentTime + 1 / fps) }
+    else if (e.key === 'l' || e.key === 'L') { loop = !loop; v.loop = loop; renderMeta() }
+    else if (e.key === 'f' || e.key === 'F') { (v.requestFullscreen || v.webkitEnterFullscreen || (() => {})).call(v) }
+    else if (e.key === 'Home') { v.currentTime = 0 }
+  })
+
+  // ---- state -------------------------------------------------------------------------------------
+  let prevJob = null
+  function apply(next) {
+    S = next
+    const job = S.job
+    // a render that finishes while the pane is open: select it, so Renders opens on it
+    if (prevJob && prevJob.state === 'running' && job && job.state === 'done' && job.output) selected = job.output
+    if (tab === 'renders' && job && job.finishedAt && prevJob && prevJob.state === 'running') seenJobEnd = job.finishedAt
+    if (!prevJob && job && job.state !== 'running') seenJobEnd = job.finishedAt   // old news at open
+    prevJob = job
+    renderStudio()
+    renderBar()
+    if (tab === 'renders') renderRenders()
+  }
+  function connect() {
+    const es = new EventSource('/__harness/events')
+    es.addEventListener('state', (e) => apply(JSON.parse(e.data)))
+    es.onerror = () => { es.close(); setTimeout(connect, 1500) }
+  }
+  setTab(tab)
+  connect()
+  setInterval(() => { if (S) { renderBar(); if (tab === 'renders') renderMeta() } }, 15000)
+})()
+</script>
+</html>
