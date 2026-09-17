@@ -5,8 +5,12 @@
 hand-drawn in the Excalidraw pane as the agent writes the `.excalidraw` file. Runs on Claude Code.
 
 - `harness.json` — engine, template, skill, toolchain, and this package's own viewer.
-- `viewer.mjs` — the pane: Excalidraw's editor in view mode, from the package's own `node_modules`
-  (`@excalidraw/excalidraw` UMD build with React 18), no CDN, redrawn on every save.
+- `viewer.mjs` + `viewer/` — the pane: Excalidraw's own canvas in view mode, from the package's own
+  `node_modules` (`@excalidraw/excalidraw` UMD build with React 18, its hand-drawn fonts), no CDN.
+  It opens fitted to the pane, follows every save without taking the reader's zoom or scroll (and
+  rings what the save changed), and adds click-to-inspect (label, connections in and out, frame,
+  colours, size), an outline with search, presenting frame by frame with a
+  laser pointer, PNG/SVG export to `exports/`, a dark canvas, and keyboard shortcuts (`?`).
 - `toolchain/scene.py` — the helper the agent draws with: boxes, arrows bound at both ends, frames,
   notes, Excalidraw's palette; `verdict.py` validates the scene; `setup.sh` is `npm ci`.
 - `skills/excalidraw/` — the Excalidraw skill (ours). `template/` — a starter diagram and its script.

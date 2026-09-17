@@ -1,106 +1,113 @@
-// The Excalidraw pane: Excalidraw's own editor, in view mode, showing the .excalidraw file named by
-// ?file= (workspace-relative) and redrawn the moment it changes. React and Excalidraw come from this
-// package's node_modules (UMD builds), never from a CDN, so the pane works offline. Any other path is
-// a file from the workspace, never outside it.
+// The Excalidraw pane: Excalidraw's own canvas, in view mode, showing the .excalidraw file named by
+// ?file= (workspace-relative) and following every save without losing the reader's zoom and scroll.
+// React and Excalidraw come from this package's node_modules (UMD builds), never from a CDN, so the
+// pane works offline. The page itself is viewer/ (index.html, app.js, app.css).
+//
+//   GET  /                     the page
+//   GET  /viewer/<file>        the page's script and style
+//   GET  /vendor/<file>        React, ReactDOM, Excalidraw; /vendor/excalidraw-assets/* its fonts
+//   GET  /files.json           the workspace's .excalidraw files, newest first
+//   GET  /events               server-sent events: `change` with {path} per save, `: ping` every 20 s
+//   POST /export?name=<file>   an exported PNG or SVG, written to <workspace>/exports/<file>
+//   GET  /<anything else>      a file from the workspace, never outside it
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, statSync, watch } from 'node:fs'
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs'
+import { basename, dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.HARNESS_VIEWER_PORT)
 const workspace = resolve(process.env.HARNESS_WORKSPACE)
 const clients = new Set()
-const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.json': 'application/json', '.excalidraw': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' }
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.json': 'application/json', '.excalidraw': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
 const VENDOR = {
   'react.production.min.js': join(here, 'node_modules/react/umd/react.production.min.js'),
   'react-dom.production.min.js': join(here, 'node_modules/react-dom/umd/react-dom.production.min.js'),
   'excalidraw.production.min.js': join(here, 'node_modules/@excalidraw/excalidraw/dist/excalidraw.production.min.js'),
 }
+// Excalidraw resolves its lazy chunks and fonts as EXCALIDRAW_ASSET_PATH + "excalidraw-assets/…";
+// the page sets that to /vendor/, so this is where they are served from.
 const ASSETS = join(here, 'node_modules/@excalidraw/excalidraw/dist/excalidraw-assets')
-
-const page = `<!doctype html><meta charset="utf-8"><title>Excalidraw</title>
-<style>
-  :root { color-scheme: dark; }
-  /* An id rule with its own display beats the UA's [hidden]; say it outright. */
-  [hidden] { display: none !important; }
-  html, body { margin: 0; height: 100%; background: #f8f9fa; color: #e5e5ea; font: 12px -apple-system, system-ui, sans-serif; }
-  #bar { position: absolute; top: 0; left: 0; right: 0; height: 30px; display: flex; gap: 12px; align-items: center; padding: 0 12px; background: #1c1c1e; border-bottom: 1px solid #333; z-index: 5; }
-  #bar .muted { color: #8e8e93; }
-  #app { position: absolute; top: 30px; left: 0; right: 0; bottom: 0; }
-  #empty { position: absolute; inset: 30px 0 0 0; display: grid; place-items: center; color: #8e8e93; }
-</style>
-<div id="bar"><span id="name">…</span><span class="muted" id="meta"></span></div>
-<div id="app"></div>
-<div id="empty">No diagram yet. The pane shows the .excalidraw file the harness writes.</div>
-<script>window.EXCALIDRAW_ASSET_PATH = '/vendor/excalidraw-assets/';</script>
-<script src="/vendor/react.production.min.js"></script>
-<script src="/vendor/react-dom.production.min.js"></script>
-<script src="/vendor/excalidraw.production.min.js"></script>
-<script>
-  const params = new URLSearchParams(location.search); const file = params.get('file') || '';
-  const empty = document.getElementById('empty');
-  let api = null, root = null;
-  async function scene() {
-    const res = await fetch('/' + file + '?t=' + Date.now());
-    if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-    if (data.type !== 'excalidraw' || !Array.isArray(data.elements)) throw new Error('not an excalidraw file');
-    return data;
-  }
-  function describe(data) {
-    const live = data.elements.filter((e) => !e.isDeleted);
-    document.getElementById('name').textContent = file;
-    document.getElementById('meta').textContent = live.length + ' element' + (live.length === 1 ? '' : 's');
-  }
-  async function load() {
-    if (!file) return;
-    let data;
-    try { data = await scene(); } catch (e) { empty.hidden = false; empty.textContent = file + ' is not there yet (' + e.message + ').'; return; }
-    empty.hidden = true; describe(data);
-    // The scene's own canvas colour; Excalidraw's dark theme is an inversion filter, so the file is
-    // shown in the light theme exactly as its colours were written.
-    const appState = { ...(data.appState || {}), viewBackgroundColor: (data.appState && data.appState.viewBackgroundColor) || '#f8f9fa', collaborators: new Map() };
-    if (api) {
-      api.updateScene({ elements: data.elements, appState });
-      if (data.files) api.addFiles(Object.values(data.files));
-      setTimeout(() => api.scrollToContent(undefined, { fitToContent: true, animate: false }), 30);
-      return;
-    }
-    root = ReactDOM.createRoot(document.getElementById('app'));
-    root.render(React.createElement(ExcalidrawLib.Excalidraw, {
-      initialData: { elements: data.elements, appState: { ...appState, zenModeEnabled: true }, files: data.files || {}, scrollToContent: true },
-      viewModeEnabled: true, zenModeEnabled: true, theme: 'light', UIOptions: { canvasActions: { toggleTheme: false } },
-      excalidrawAPI: (a) => { api = a; },
-    }));
-  }
-  new EventSource('/events').addEventListener('change', load);
-  load();
-</script>`
+const PAGE = join(here, 'viewer')
+const SKIP = new Set(['node_modules', '.git', '.harness', 'exports', '.venv', '__pycache__'])
 
 function safe(root, rel) { const full = normalize(join(root, rel)); return full === root || full.startsWith(root + sep) ? full : null }
-function file(res, full, req) {
+function send(res, full, req) {
   if (!full || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
   const type = TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream'
   if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': type, 'content-length': statSync(full).size }); res.end(); return }
-  res.writeHead(200, { 'content-type': type, 'cache-control': full.startsWith(here) ? 'max-age=3600' : 'no-store' }); res.end(readFileSync(full))
+  // Vendor bundles are immutable per install; the page and the workspace are not.
+  const cache = full.startsWith(join(here, 'node_modules')) ? 'max-age=3600' : 'no-store'
+  res.writeHead(200, { 'content-type': type, 'cache-control': cache }); res.end(readFileSync(full))
 }
-createServer((req, res) => {
+function json(res, status, body) { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)) }
+
+/** Every .excalidraw file under the workspace (skipping dependency and state folders), newest first. */
+function diagrams(dir = workspace, depth = 0, out = []) {
+  if (depth > 4) return out
+  let entries = []
+  try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return out }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) { if (!SKIP.has(entry.name)) diagrams(full, depth + 1, out); continue }
+    if (entry.isFile() && entry.name.endsWith('.excalidraw')) {
+      try { out.push({ path: relative(workspace, full).split(sep).join('/'), mtime: statSync(full).mtimeMs }) } catch { /* gone */ }
+    }
+  }
+  return depth === 0 ? out.sort((a, b) => b.mtime - a.mtime) : out
+}
+
+function readBody(req, limit = 64 * 1024 * 1024) {
+  return new Promise((ok, fail) => {
+    const chunks = []; let size = 0
+    req.on('data', (c) => { size += c.length; if (size > limit) { fail(new Error('too large')); req.destroy() } else chunks.push(c) })
+    req.on('end', () => ok(Buffer.concat(chunks)))
+    req.on('error', fail)
+  })
+}
+
+createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   const path = decodeURIComponent(url.pathname)
-  if (path === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(page); return }
-  if (path === '/events') { res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' }); res.write(': hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return }
-  if (path.startsWith('/vendor/excalidraw-assets/')) { file(res, safe(ASSETS, path.slice('/vendor/excalidraw-assets/'.length)), req); return }
-  if (path.startsWith('/vendor/')) { file(res, VENDOR[path.slice('/vendor/'.length)] ?? null, req); return }
-  file(res, safe(workspace, path.replace(/^\/+/, '')), req)
+  if (path === '/') { send(res, join(PAGE, 'index.html'), req); return }
+  if (path.startsWith('/viewer/')) { send(res, safe(PAGE, path.slice('/viewer/'.length)), req); return }
+  if (path === '/events') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
+    res.write(': hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return
+  }
+  if (path === '/files.json') { json(res, 200, { files: diagrams() }); return }
+  if (path === '/export' && req.method === 'POST') {
+    // Exports land in the workspace, where the agent and the user can both find them: a WebKit pane
+    // has no download manager, so a Save link would go nowhere.
+    const name = basename(String(url.searchParams.get('name') || ''))
+    if (!/^[\w.@ -]+\.(png|svg)$/i.test(name)) { json(res, 400, { error: 'name must be a .png or .svg file name' }); return }
+    try {
+      const body = await readBody(req)
+      mkdirSync(join(workspace, 'exports'), { recursive: true })
+      writeFileSync(join(workspace, 'exports', name), body)
+      json(res, 200, { path: `exports/${name}`, bytes: body.length })
+    } catch (error) { json(res, 500, { error: error.message }) }
+    return
+  }
+  if (path.startsWith('/vendor/excalidraw-assets/')) { send(res, safe(ASSETS, path.slice('/vendor/excalidraw-assets/'.length)), req); return }
+  if (path.startsWith('/vendor/')) { send(res, VENDOR[path.slice('/vendor/'.length)] ?? null, req); return }
+  send(res, safe(workspace, path.replace(/^\/+/, '')), req)
 }).listen(port, '127.0.0.1', () => console.log(`[excalidraw] listening on http://127.0.0.1:${port}/ (workspace: ${workspace})`))
 
-let timer = null
+// One `change` per burst of writes, per path, so the page reloads only for the file it shows (a
+// PNG landing in exports/ or build.py being edited is not a new diagram).
+const pending = new Map()
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
-    const n = String(name ?? ''); if (!n || n.startsWith('.harness') || n.includes('node_modules')) return
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => { for (const c of clients) c.write('event: change\ndata: {}\n\n') }, 200)
+    const n = String(name ?? '').split(sep).join('/')
+    if (!n || n.split('/').some((part) => SKIP.has(part))) return
+    clearTimeout(pending.get(n))
+    pending.set(n, setTimeout(() => {
+      pending.delete(n)
+      const data = JSON.stringify({ path: n })
+      for (const c of clients) c.write(`event: change\ndata: ${data}\n\n`)
+    }, 120))
   })
 } catch (error) { console.log(`[excalidraw] watch failed: ${error.message}`) }
 setInterval(() => { for (const c of clients) c.write(': ping\n\n') }, 20_000).unref()

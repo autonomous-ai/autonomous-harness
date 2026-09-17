@@ -39,6 +39,10 @@ Fonts: `font=1` hand-drawn (default), `2` sans, `3` mono (code, paths, hostnames
 - One idea per box, two or three words. The verb goes on the arrow ("SQL", "publishes", "HTTPS").
 - Frames for boundaries (a service, a network, a team); notes for the one fact that matters
   (a limit, a retry, a port). At most ~12 boxes per diagram — split otherwise.
+- Name every frame: the pane's Present mode steps through frames in reading order (top to bottom,
+  left to right) with the frame name as the step title, so frames double as the walkthrough.
+- `exports/` is where the pane saves PNG/SVG exports when the user asks for them; do not write
+  diagrams there.
 - Sequence diagrams: actors as boxes in a row at y=0, lifelines as `s.arrow(a, b, "…")` rows
   stepping down 100 px; sketches: the hand font, few colours.
 

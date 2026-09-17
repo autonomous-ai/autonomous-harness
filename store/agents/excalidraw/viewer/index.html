@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excalidraw</title>
+<link rel="stylesheet" href="/viewer/app.css">
+</head>
+<body>
+<header id="bar">
+  <div class="side">
+    <button id="file" class="chip file" title="Diagrams in this workspace"><i data-icon="doc"></i><span id="fileName">…</span><i data-icon="chevron" class="chev"></i></button>
+    <span id="meta" class="meta"></span>
+    <span id="live" class="live" title="Live: redraws on every save"><b></b><span id="liveText">Live</span></span>
+  </div>
+  <div class="side tools">
+    <button id="outlineBtn" class="tool" title="Outline: frames, boxes, connections (O)"><i data-icon="list"></i></button>
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button id="zoomOut" class="tool" title="Zoom out (−)"><i data-icon="minus"></i></button>
+      <button id="zoomPct" class="pct" title="Actual size (0)">100%</button>
+      <button id="zoomIn" class="tool" title="Zoom in (+)"><i data-icon="plus"></i></button>
+    </div>
+    <button id="fitBtn" class="tool labelled" title="Fit the diagram (F)"><i data-icon="fit"></i><span>Fit</span></button>
+    <button id="presentBtn" class="tool labelled" title="Present: step through frames with the arrow keys (P)"><i data-icon="play"></i><span>Present</span></button>
+    <button id="exportBtn" class="tool" title="Export PNG or SVG (E)"><i data-icon="download"></i></button>
+    <button id="themeBtn" class="tool" title="Dark canvas (T)"><i data-icon="moon"></i></button>
+  </div>
+</header>
+<main id="stage">
+  <div id="app"></div>
+  <div id="rings"></div>
+  <canvas id="laser" hidden></canvas>
+  <div id="inspect" class="inspect" hidden></div>
+  <aside id="outline" hidden>
+    <div class="search"><i data-icon="search"></i><input id="find" type="search" placeholder="Find a box, label or arrow" autocomplete="off" spellcheck="false"></div>
+    <div id="outlineList" class="list"></div>
+  </aside>
+  <div id="menu" class="menu" hidden></div>
+  <section id="empty" class="empty" hidden>
+    <div class="card">
+      <svg class="doodle" viewBox="0 0 120 64" aria-hidden="true"><path d="M6 14c10-2 26-3 34-1 2 8 3 26 1 37-11 2-25 2-35 0-2-11-2-25 0-36z"/><path d="M78 12c11-1 25 0 36 2 1 12 1 25-1 36-12 2-24 2-36 0-1-12-1-26 1-38z"/><path d="M44 32c9-1 20-1 30 0"/><path d="M67 26l8 6-8 6"/></svg>
+      <h1 id="emptyTitle">Waiting for the first stroke</h1>
+      <p id="emptyText">Ask the agent for a diagram. It writes an <code>.excalidraw</code> file in this workspace, and every save draws in here: boxes first, then arrows, then frames.</p>
+    </div>
+  </section>
+  <div id="toast" class="toast" hidden></div>
+  <nav id="deck" class="deck" hidden>
+    <button id="prevStep" class="tool" title="Previous (←)"><i data-icon="left"></i></button>
+    <span id="stepText" class="step"></span>
+    <button id="nextStep" class="tool" title="Next (→ or Space)"><i data-icon="right"></i></button>
+    <span class="sep"></span>
+    <button id="laserBtn" class="tool" title="Laser pointer (L)"><i data-icon="laser"></i></button>
+    <button id="fullBtn" class="tool" title="Full screen"><i data-icon="expand"></i></button>
+    <button id="exitPresent" class="tool" title="Stop presenting (Esc)"><i data-icon="close"></i></button>
+  </nav>
+  <div id="help" class="help" hidden>
+    <div class="card">
+      <h2>Keyboard</h2>
+      <dl>
+        <dt>F</dt><dd>Fit the whole diagram</dd>
+        <dt>+ / −</dt><dd>Zoom in / out</dd>
+        <dt>0</dt><dd>Actual size</dd>
+        <dt>O</dt><dd>Outline and find</dd>
+        <dt>P</dt><dd>Present, frame by frame</dd>
+        <dt>← →</dt><dd>Previous / next frame</dd>
+        <dt>L</dt><dd>Laser pointer while presenting</dd>
+        <dt>E</dt><dd>Export PNG or SVG</dd>
+        <dt>T</dt><dd>Dark canvas</dd>
+        <dt>Click</dt><dd>Inspect a box or arrow</dd>
+        <dt>Drag, pinch</dt><dd>Pan and zoom</dd>
+      </dl>
+      <p class="faint">Edits happen by asking the agent; this pane follows every save without moving your view.</p>
+    </div>
+  </div>
+</main>
+<script>window.EXCALIDRAW_ASSET_PATH = '/vendor/';</script>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/excalidraw.production.min.js"></script>
+<script src="/viewer/app.js"></script>
+</body>
+</html>
