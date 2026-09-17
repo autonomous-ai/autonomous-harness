@@ -1,19 +1,20 @@
-// MuJoCo Viewer: one loopback server per pane. It serves three things and nothing else.
+// MuJoCo Viewer: one loopback server per pane. Dependency-free Node; everything it serves is local.
 //
-//   the page          GET /            the shell, and GET /app.js the browser app
-//   the engine        GET /vendor/…    MuJoCo's official WASM build and three.js, from this
-//                                      package's node_modules — never a CDN, so the pane is offline
-//   the model         GET /ws/…        a file from the harness's workspace
-//                     GET /menagerie/… a file from the harness's Menagerie checkout
-//                     GET /list?dir=…  every model file under one directory of those two roots,
-//                                      which the page copies into MuJoCo's in-memory filesystem
+//   the page      GET /                    public/index.html; GET /static/… the rest of public/
+//   the engine    GET /vendor/mujoco/…     MuJoCo's official WASM build   } from this package's
+//                 GET /vendor/three/…      three.js                       } node_modules, never a CDN
+//   files         GET /ws/…                a file from the harness's workspace (Range-aware: videos)
+//                 GET /menagerie/…         a file from the harness's Menagerie checkout
+//   the model     GET /api/resolve?file=…  what the pane should open: model, snapshot, rollout, video
+//                 GET /api/files?model=…   every file that model needs, for MuJoCo's in-memory FS
+//                 GET /api/models          MJCF in the workspace and the Menagerie robots, for the picker
+//   liveness      GET /api/events          server-sent events: the workspace paths that just changed
 //
-// The two roots are one namespace, the same one the trajectory's `model` field uses: a path that
-// starts with `menagerie/` is a robot from the harness, anything else is workspace-relative.
-// GET /events is server-sent events; the page reloads the trajectory on every workspace change.
+// One namespace for model paths, the same one the rollout's `model` field uses: `menagerie/…` is a
+// robot from the harness, anything else is workspace-relative.
 import { createServer } from 'node:http'
-import { createReadStream, existsSync, readdirSync, statSync, watch } from 'node:fs'
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { createReadStream, existsSync, readdirSync, readFileSync, statSync, watch } from 'node:fs'
+import { dirname, extname, join, normalize, posix, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -23,91 +24,320 @@ const workspace = resolve(process.env.HARNESS_WORKSPACE)
 // the harness's install dir even while this process runs in its own.
 const dshDir = process.env.HARNESS_DSH_DIR ? resolve(process.env.HARNESS_DSH_DIR) : null
 const menagerie = resolve(process.env.MENAGERIE || (dshDir ? join(dshDir, 'menagerie') : join(workspace, 'menagerie')))
-const clients = new Set()
-
-const TYPES = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript',
-  '.css': 'text/css', '.json': 'application/json', '.map': 'application/json',
-  '.wasm': 'application/wasm', '.xml': 'text/xml', '.obj': 'text/plain', '.mtl': 'text/plain',
-  '.stl': 'application/octet-stream', '.msh': 'application/octet-stream', '.skn': 'application/octet-stream',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ppm': 'image/x-portable-pixmap',
-}
-// What MuJoCo can open. A directory listing is a fetch list for the page, so it carries model files
-// and nothing else — no READMEs, no videos, no notebooks.
-const MODEL_EXTENSIONS = new Set(['.xml', '.mjcf', '.urdf', '.sdf', '.obj', '.mtl', '.stl', '.msh', '.skn', '.png', '.ppm', '.jpg', '.jpeg', '.dae', '.bin'])
-const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', '.harness', '.claude', '.agents', '.codex', 'out', 'dist', 'build', '.cache'])
-const LIST_MAX_FILES = 4000
-const LIST_MAX_BYTES = 512 * 1024 * 1024
-
+const PUBLIC = join(here, 'public')
 const VENDOR = { three: join(here, 'node_modules/three'), mujoco: join(here, 'node_modules/@mujoco/mujoco') }
 
-const page = `<!doctype html><meta charset="utf-8"><title>MuJoCo Viewer</title>
-<style>
-  :root { color-scheme: dark; }
-  [hidden] { display: none !important; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #111114; color: #e5e5ea; font: 12px -apple-system, system-ui, sans-serif; }
-  #bar { position: absolute; top: 0; left: 0; right: 0; height: 30px; display: flex; gap: 10px; align-items: center; padding: 0 10px; border-bottom: 1px solid #303036; background: #1c1c1e; z-index: 3; }
-  #bar .muted { color: #8e8e93; }
-  #bar .spacer { flex: 1; }
-  #name { max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #hud { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  button, select { font: inherit; color: #e5e5ea; background: #2c2c30; border: 1px solid #3a3a42; border-radius: 5px; padding: 2px 8px; cursor: pointer; }
-  button:hover, select:hover { background: #35353b; }
-  button:disabled { opacity: .4; cursor: default; }
-  label.toggle { display: flex; gap: 5px; align-items: center; cursor: pointer; user-select: none; }
-  canvas { position: absolute; inset: 30px 0 0 0; width: 100%; display: block; touch-action: none; }
-  #transport { position: absolute; left: 0; right: 0; bottom: 0; height: 34px; display: flex; gap: 10px; align-items: center; padding: 0 10px; background: rgba(28, 28, 30, .86); border-top: 1px solid #303036; backdrop-filter: blur(8px); z-index: 2; }
-  #transport #play { width: 30px; text-align: center; }
-  #scrub { flex: 1; accent-color: #0a84ff; }
-  #clock { font-variant-numeric: tabular-nums; color: #8e8e93; min-width: 96px; text-align: right; }
-  #overlay { position: absolute; inset: 30px 0 0 0; display: grid; place-items: center; padding: 24px; text-align: center; color: #8e8e93; line-height: 1.6; z-index: 1; pointer-events: none; }
-  #overlay b { color: #e5e5ea; font-weight: 500; }
-  #overlay code { color: #c7c7cc; background: #26262c; border-radius: 4px; padding: 1px 5px; }
-</style>
-<div id="bar">
-  <span id="name">MuJoCo</span>
-  <span class="muted" id="hud"></span>
-  <span class="spacer"></span>
-  <button id="reset" title="Back to the model's first keyframe (R)" disabled>Reset</button>
-  <label class="toggle" title="Step physics from the pose on screen (L)"><input type="checkbox" id="live" disabled> Live</label>
-</div>
-<canvas id="view"></canvas>
-<div id="transport" hidden>
-  <button id="play" title="Play / pause (space)">▮▮</button>
-  <input type="range" id="scrub" min="0" max="0" value="0" step="1" title="Scrub the rollout">
-  <span id="clock">0.00 s</span>
-  <select id="speed" title="Playback speed">
-    <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
-    <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
-  </select>
-</div>
-<div id="overlay">Starting MuJoCo…</div>
-<script type="importmap">
-{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
-</script>
-<script type="module" src="/app.js"></script>
-`
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.map': 'application/json',
+  '.wasm': 'application/wasm', '.xml': 'text/xml', '.obj': 'text/plain', '.mtl': 'text/plain', '.py': 'text/plain',
+  '.stl': 'application/octet-stream', '.msh': 'application/octet-stream', '.skn': 'application/octet-stream',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ppm': 'image/x-portable-pixmap', '.svg': 'image/svg+xml',
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.gif': 'image/gif',
+}
+const VIDEO = new Set(['.mp4', '.m4v', '.webm', '.mov'])
+const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', '.harness', '.claude', '.agents', '.codex', 'dist', 'build', '.cache', 'menagerie'])
+const ROLLOUT = 'out/rollout.qpos.json'
+const REPORT = 'out/rollout.json'
+
+// ─── Paths ──────────────────────────────────────────────────────────────────────────────────────
 
 function safe(root, rel) {
   const full = normalize(join(root, rel))
   return full === root || full.startsWith(root + sep) ? full : null
 }
 
-/** A path in the model namespace → the file on disk. `menagerie/…` is the harness's, the rest the workspace's. */
-function modelFile(path) {
-  const clean = path.replace(/^\/+/, '')
+/** A namespace path → the file on disk, or null when it escapes both roots. */
+function nsFile(path) {
+  const clean = String(path ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
   if (clean === 'menagerie') return menagerie
   if (clean.startsWith('menagerie/')) return safe(menagerie, clean.slice('menagerie/'.length))
   return safe(workspace, clean)
 }
 
-function send(res, req, full, cacheable) {
-  if (!full || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); return }
-  const size = statSync(full).size
+function nsClean(path) {
+  const clean = posix.normalize(String(path ?? '').replace(/\\/g, '/').replace(/^\/+/, ''))
+  return clean === '.' || clean.startsWith('../') || clean === '..' ? null : clean
+}
+
+function statOf(path) {
+  const full = nsFile(path)
+  if (!full) return null
+  try { const st = statSync(full); return st.isFile() ? { path, size: st.size, mtime: Math.round(st.mtimeMs) } : null } catch { return null }
+}
+
+function readJson(path) {
+  const full = nsFile(path)
+  if (!full) return null
+  try { return JSON.parse(readFileSync(full, 'utf8')) } catch { return null }
+}
+
+// ─── What to open ───────────────────────────────────────────────────────────────────────────────
+
+/** A trajectory is `{ model, qpos: [[…]] }`; anything else named *.json is not one. */
+function readTrajectoryHead(path) {
+  const body = readJson(path)
+  if (!body || typeof body.model !== 'string' || !Array.isArray(body.qpos)) return null
+  return {
+    model: nsClean(body.model), modelXml: typeof body.model_xml === 'string' ? nsClean(body.model_xml) : null,
+    video: typeof body.video === 'string' ? nsClean(body.video) : null,
+    status: typeof body.status === 'string' ? body.status : 'done', frames: body.qpos.length,
+  }
+}
+
+function newestUnder(dir, test, depth = 0, best = null) {
+  const full = nsFile(dir || '.')
+  if (!full || depth > 4) return best
+  let entries = []
+  try { entries = readdirSync(full, { withFileTypes: true }) } catch { return best }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const rel = dir ? `${dir}/${entry.name}` : entry.name
+    if (entry.isDirectory()) { if (!SKIP_DIRS.has(entry.name)) best = newestUnder(rel, test, depth + 1, best); continue }
+    if (!entry.isFile() || !test(rel)) continue
+    const st = statOf(rel)
+    if (st && (!best || st.mtime > best.mtime)) best = st
+  }
+  return best
+}
+
+function isMjcf(path) {
+  const full = nsFile(path)
+  if (!full || extname(full).toLowerCase() !== '.xml') return false
+  try {
+    const fd = readFileSync(full, 'utf8').slice(0, 4096).replace(/<!--[\s\S]*?-->/g, '').replace(/<\?[\s\S]*?\?>/g, '')
+    return /^\s*<mujoco[\s>]/.test(fd)
+  } catch { return false }
+}
+
+const PY_LITERAL = /(?:r|b|rb|br|u)?("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')/gi
+
+/**
+ * The model a simulation script loads, read off its source: `load_menagerie("unitree_go2")`,
+ * `load_xml("scenes/arm.xml")`, or any string literal naming a Menagerie robot followed by an XML
+ * file (`Path(os.environ["MENAGERIE"]) / "unitree_go2" / "scene.xml"`). A guess, used only before
+ * the script has recorded a rollout, so the pane opens on the right robot instead of a blank.
+ */
+function modelFromScript(path) {
+  let text = ''
+  try { text = readFileSync(nsFile(path), 'utf8') } catch { return null }
+  const menagerieCall = /load_menagerie\(\s*["']([\w.-]+)["'](?:\s*,\s*(?:scene\s*=\s*)?["']([\w./-]+)["'])?/.exec(text)
+  if (menagerieCall) {
+    const candidate = `menagerie/${menagerieCall[1]}/${menagerieCall[2] || 'scene.xml'}`
+    if (statOf(candidate)) return candidate
+  }
+  const literals = [...text.matchAll(PY_LITERAL)].map((m) => m[1].replace(/^("""|'''|"|')|("""|'''|"|')$/g, ''))
+  for (let i = 0; i < literals.length; i++) {
+    const lit = literals[i]
+    if (/^[\w.-]+$/.test(lit) && existsSync(join(menagerie, lit))) {
+      const next = literals.slice(i + 1, i + 3).find((l) => /\.xml$/i.test(l))
+      const candidate = `menagerie/${lit}/${next ? next.replace(/^\/+/, '') : 'scene.xml'}`
+      if (statOf(candidate)) return candidate
+    }
+    if (/\.xml$/i.test(lit)) {
+      const rel = nsClean(lit)
+      if (rel && statOf(rel) && isMjcf(rel)) return rel
+      const menagerieRel = nsClean(lit.replace(/^.*?menagerie\//, 'menagerie/'))
+      if (menagerieRel?.startsWith('menagerie/') && statOf(menagerieRel)) return menagerieRel
+    }
+  }
+  return null
+}
+
+/**
+ * What the pane opens, from the artifact Harness passed (`?file=`), an explicit model (`?model=`),
+ * and the workspace. The artifact is a hint, never the only way in: a verdict that names a video,
+ * a report, a rollout mid-write or nothing at all still lands on the simulation.
+ */
+export function resolveOpen(file, wantedModel) {
+  const out = { trajectory: null, trajectoryStatus: null, model: null, modelXml: null, video: null, report: null, source: null, stamps: {} }
+  const hint = nsClean(file || '')
+  const ext = hint ? extname(hint).toLowerCase() : ''
+
+  let trajectory = null
+  const tryTrajectory = (path) => {
+    if (trajectory || !path || !statOf(path)) return
+    const head = readTrajectoryHead(path)
+    if (head) { trajectory = { path, ...head } }
+  }
+  if (hint && ext === '.json') {
+    tryTrajectory(hint)
+    if (!trajectory) {
+      const report = readJson(hint)
+      if (report && (report.trajectory || report.model_path)) {
+        out.report = hint
+        tryTrajectory(typeof report.trajectory === 'string' ? nsClean(report.trajectory) : null)
+      }
+    }
+  }
+  if (hint && VIDEO.has(ext)) {
+    out.video = statOf(hint) ? hint : null
+    const dir = posix.dirname(hint)
+    const stem = posix.basename(hint, extname(hint))
+    tryTrajectory(`${dir}/${stem}.qpos.json`)
+    tryTrajectory(`${dir}/rollout.qpos.json`)
+  }
+  if (hint && ext === '.xml' && isMjcf(hint)) { out.model = hint; out.source = 'artifact' }
+  tryTrajectory(ROLLOUT)
+
+  const report = readJson(out.report || REPORT)
+  if (report && !out.report && statOf(REPORT)) out.report = REPORT
+
+  if (trajectory && (!wantedModel || wantedModel === trajectory.model)) {
+    out.trajectory = trajectory.path
+    out.trajectoryStatus = trajectory.status
+    if (!out.model) { out.model = trajectory.model; out.modelXml = trajectory.modelXml && statOf(trajectory.modelXml) ? trajectory.modelXml : null; out.source = 'rollout' }
+    if (!out.video && trajectory.video && statOf(trajectory.video)) out.video = trajectory.video
+  }
+  if (wantedModel) { out.model = nsClean(wantedModel); out.source = 'picked'; if (out.model !== trajectory?.model) out.modelXml = null }
+  if (!out.model && report && typeof report.model_path === 'string' && statOf(nsClean(report.model_path))) {
+    out.model = nsClean(report.model_path); out.source = 'report'
+  }
+  if (!out.video && report && typeof report.video === 'string' && statOf(nsClean(report.video))) out.video = nsClean(report.video)
+  if (!out.video) out.video = newestUnder('out', (p) => VIDEO.has(extname(p).toLowerCase()))?.path ?? null
+  if (!out.model) {
+    const scripts = []
+    const collect = (dir) => { const full = nsFile(dir); try { for (const e of readdirSync(full, { withFileTypes: true })) if (e.isFile() && e.name.endsWith('.py')) scripts.push(statOf(`${dir}/${e.name}`)) } catch { /* none */ } }
+    collect('sim')
+    for (const script of scripts.filter(Boolean).sort((a, b) => b.mtime - a.mtime)) {
+      const guess = modelFromScript(script.path)
+      if (guess) { out.model = guess; out.source = 'script'; break }
+    }
+  }
+  if (!out.model) {
+    const scene = newestUnder('scenes', (p) => isMjcf(p)) || newestUnder('', (p) => p.endsWith('.xml') && !p.startsWith('out/') && isMjcf(p))
+    if (scene) { out.model = scene.path; out.source = 'workspace' }
+  }
+  if (out.model && !statOf(out.model)) { out.missing = out.model; out.model = null }
+
+  for (const key of ['trajectory', 'model', 'modelXml', 'video']) {
+    const st = out[key] ? statOf(out[key]) : null
+    out.stamps[key] = st ? `${st.size}:${st.mtime}` : null
+  }
+  if (out.model && !out.model.startsWith('menagerie/')) {
+    // A workspace model is live source: any XML beside it may be an <include>, so its stamp is theirs too.
+    const deps = modelDeps(out.model, out.modelXml)
+    out.stamps.model = deps.files.filter((f) => f.path.endsWith('.xml')).map((f) => `${f.path}:${f.size}:${f.mtime}`).join('|')
+  }
+  return out
+}
+
+// ─── A model's files ────────────────────────────────────────────────────────────────────────────
+
+const FILE_ATTRS = new Set(['file', 'fileright', 'fileleft', 'fileup', 'filedown', 'filefront', 'fileback'])
+
+/**
+ * Every file a model needs, found by reading its MJCF the way the compiler would: `<include>`,
+ * `<compiler meshdir|texturedir|assetdir>`, and every `file*=` attribute, recursively. A snapshot
+ * (`xml`, the compiled model record() saved) is read instead of the model but resolves against the
+ * model's directory, which is where the pane will put it.
+ */
+export function modelDeps(model, snapshot) {
+  const files = new Map()
+  const baseDir = posix.dirname(model)
+  const dirs = { mesh: new Set(['']), texture: new Set(['']) }
+  const add = (path) => {
+    const clean = nsClean(path)
+    if (!clean || files.has(clean)) return files.get(clean) ?? null
+    const st = statOf(clean)
+    if (st) files.set(clean, st)
+    return st
+  }
+  const scan = (path, text) => {
+    if (text === undefined) {
+      try { text = readFileSync(nsFile(path), 'utf8') } catch { return }
+    }
+    text = text.replace(/<!--[\s\S]*?-->/g, '')
+    const tags = [...text.matchAll(/<([A-Za-z_][\w-]*)\b([^>]*)>/g)]
+    for (const [, tag, body] of tags) {
+      if (tag !== 'compiler') continue
+      for (const [, name, value] of body.matchAll(/([\w-]+)\s*=\s*["']([^"']*)["']/g)) {
+        if (name === 'meshdir' || name === 'assetdir') dirs.mesh.add(value)
+        if (name === 'texturedir' || name === 'assetdir') dirs.texture.add(value)
+      }
+    }
+    const here = posix.dirname(path)
+    for (const [, tag, body] of tags) {
+      for (const [, name, value] of body.matchAll(/([\w-]+)\s*=\s*["']([^"']*)["']/g)) {
+        if (!FILE_ATTRS.has(name) || !value || value.startsWith('/')) continue
+        const kind = tag === 'mesh' || tag === 'skin' ? 'mesh' : tag === 'texture' || tag === 'hfield' ? 'texture' : 'plain'
+        const candidates = []
+        if (kind !== 'plain') for (const dir of dirs[kind]) candidates.push(posix.join(baseDir, dir, value), posix.join(here, dir, value))
+        candidates.push(posix.join(here, value), posix.join(baseDir, value))
+        for (const candidate of candidates) {
+          const hit = add(candidate)
+          if (hit) { if (candidate.toLowerCase().endsWith('.xml') && !scanned.has(hit.path)) { scanned.add(hit.path); scan(hit.path) } break }
+        }
+      }
+    }
+  }
+  const scanned = new Set()
+  if (!add(model)) return { files: [], error: `${model} does not exist` }
+  scanned.add(nsClean(model))
+  if (snapshot && statOf(snapshot)) {
+    add(snapshot)
+    let text = ''
+    try { text = readFileSync(nsFile(snapshot), 'utf8') } catch { /* unreadable */ }
+    scan(model)                    // the source's own includes and compiler dirs, for meshdir
+    scan(model, text)              // then the snapshot's assets, resolved from the model's directory
+  } else {
+    scan(model)
+  }
+  return { files: [...files.values()], error: null }
+}
+
+/** Menagerie robots and workspace MJCF, for the model picker and the empty state. */
+function listModels() {
+  const robots = []
+  try {
+    for (const entry of readdirSync(menagerie, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      for (const scene of ['scene.xml', `${entry.name}.xml`]) {
+        if (existsSync(join(menagerie, entry.name, scene))) { robots.push({ path: `menagerie/${entry.name}/scene.xml`.replace('scene.xml', scene), name: entry.name }); break }
+      }
+    }
+  } catch { /* no menagerie */ }
+  const scenes = []
+  const walk = (dir, depth) => {
+    if (depth > 3 || scenes.length > 40) return
+    const full = nsFile(dir || '.')
+    let entries = []
+    try { entries = readdirSync(full, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      const rel = dir ? `${dir}/${entry.name}` : entry.name
+      if (entry.isDirectory()) { if (!SKIP_DIRS.has(entry.name) && entry.name !== 'out') walk(rel, depth + 1); continue }
+      if (entry.name.endsWith('.xml') && isMjcf(rel)) scenes.push({ path: rel, name: rel })
+    }
+  }
+  walk('', 0)
+  return { robots: robots.sort((a, b) => a.name.localeCompare(b.name)), scenes }
+}
+
+// ─── HTTP ───────────────────────────────────────────────────────────────────────────────────────
+
+function sendFile(req, res, full, { cache = false } = {}) {
+  let st
+  try { st = full && statSync(full) } catch { st = null }
+  if (!st || !st.isFile()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); return }
   const type = TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream'
-  const headers = { 'content-type': type, 'content-length': size, 'cache-control': cacheable ? 'max-age=3600' : 'no-store' }
-  if (req.method === 'HEAD') { res.writeHead(200, headers); res.end(); return }
-  res.writeHead(200, headers)
+  const headers = {
+    'content-type': type, 'accept-ranges': 'bytes', 'last-modified': st.mtime.toUTCString(),
+    'cache-control': cache ? 'max-age=3600' : 'no-store',
+  }
+  // WebKit will not play a video from a server that ignores Range, so every file honours it.
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+  if (range && (range[1] || range[2])) {
+    let start = range[1] ? Number(range[1]) : Math.max(0, st.size - Number(range[2]))
+    let end = range[1] && range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1
+    if (start >= st.size || start > end) { res.writeHead(416, { 'content-range': `bytes */${st.size}` }); res.end(); return }
+    res.writeHead(206, { ...headers, 'content-length': end - start + 1, 'content-range': `bytes ${start}-${end}/${st.size}` })
+    if (req.method === 'HEAD') { res.end(); return }
+    createReadStream(full, { start, end }).pipe(res)
+    return
+  }
+  res.writeHead(200, { ...headers, 'content-length': st.size })
+  if (req.method === 'HEAD') { res.end(); return }
   createReadStream(full).pipe(res)
 }
 
@@ -117,72 +347,90 @@ function json(res, value, status = 200) {
   res.end(body)
 }
 
-/** Every model file under one directory of the namespace, as namespace paths the page can fetch. */
-function listModelFiles(dir) {
-  const clean = dir.replace(/^\/+/, '').replace(/\/+$/, '')
-  const root = modelFile(clean || '.')
-  if (!root || !existsSync(root) || !statSync(root).isDirectory()) return null
-  const prefix = clean && clean !== '.' ? clean + '/' : ''
-  const files = []
-  let bytes = 0
-  const walk = (abs, rel, depth) => {
-    if (depth > 8 || files.length >= LIST_MAX_FILES || bytes >= LIST_MAX_BYTES) return
-    let names
-    try { names = readdirSync(abs, { withFileTypes: true }) } catch { return }
-    for (const entry of names) {
-      if (entry.name.startsWith('.')) continue
-      const child = join(abs, entry.name)
-      if (entry.isDirectory()) { if (!SKIP_DIRS.has(entry.name)) walk(child, rel + entry.name + '/', depth + 1) ; continue }
-      if (!entry.isFile()) continue
-      if (!MODEL_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue
-      let size = 0
-      try { size = statSync(child).size } catch { continue }
-      if (files.length >= LIST_MAX_FILES || bytes + size > LIST_MAX_BYTES) return
-      bytes += size
-      files.push({ path: prefix + rel + entry.name, size })
-    }
-  }
-  walk(root, '', 0)
-  return { dir: clean, files, bytes }
-}
+const clients = new Set()
 
-createServer((req, res) => {
+export const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
-  const path = decodeURIComponent(url.pathname)
-  if (path === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(page); return }
-  if (path === '/app.js') { send(res, req, join(here, 'app.js'), false); return }
+  let path
+  try { path = decodeURIComponent(url.pathname) } catch { res.writeHead(400); res.end(); return }
+  if (path === '/' || path === '/index.html') { sendFile(req, res, join(PUBLIC, 'index.html')); return }
+  if (path.startsWith('/static/')) { sendFile(req, res, safe(PUBLIC, path.slice('/static/'.length))); return }
   if (path === '/favicon.ico') { res.writeHead(204); res.end(); return }
-  if (path === '/events') {
+  if (path === '/api/events' || path === '/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
-    res.write(': hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return
+    res.write('retry: 1000\n: hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return
   }
-  if (path === '/list') {
-    const listing = listModelFiles(url.searchParams.get('dir') ?? '')
-    if (!listing) { json(res, { error: 'no such directory', dir: url.searchParams.get('dir') ?? '' }, 404); return }
-    json(res, listing); return
+  if (path === '/api/resolve') {
+    json(res, resolveOpen(url.searchParams.get('file') ?? '', url.searchParams.get('model') || null)); return
   }
+  if (path === '/api/files') {
+    const model = nsClean(url.searchParams.get('model') ?? '')
+    if (!model) { json(res, { error: 'no model' }, 400); return }
+    const deps = modelDeps(model, nsClean(url.searchParams.get('xml') ?? '') || null)
+    json(res, deps, deps.error ? 404 : 200); return
+  }
+  if (path === '/api/list') {
+    // The whole directory of a model, for a model whose files the MJCF scan could not find.
+    const dir = nsClean(url.searchParams.get('dir') ?? '')
+    const files = []
+    const walk = (rel, depth) => {
+      if (depth > 6 || files.length > 4000) return
+      let entries = []
+      try { entries = readdirSync(nsFile(rel || '.'), { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue
+        const child = rel ? `${rel}/${e.name}` : e.name
+        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name) && e.name !== 'out') walk(child, depth + 1) } else if (e.isFile() && /\.(xml|obj|stl|msh|skn|png|ppm|jpe?g|dae|bin|mtl)$/i.test(e.name)) {
+          const st = statOf(child); if (st) files.push(st)
+        }
+      }
+    }
+    walk(dir && dir !== '.' ? dir : '', 0)
+    json(res, { files }); return
+  }
+  if (path === '/api/models') { json(res, listModels()); return }
   if (path.startsWith('/vendor/')) {
     const rest = path.slice('/vendor/'.length)
     const slash = rest.indexOf('/')
     const root = VENDOR[slash < 0 ? rest : rest.slice(0, slash)]
-    send(res, req, root && slash > 0 ? safe(root, rest.slice(slash + 1)) : null, true); return
+    sendFile(req, res, root && slash > 0 ? safe(root, rest.slice(slash + 1)) : null, { cache: true }); return
   }
-  if (path === '/ws' || path.startsWith('/ws/')) { send(res, req, safe(workspace, path.slice(3).replace(/^\/+/, '')), false); return }
-  if (path === '/menagerie' || path.startsWith('/menagerie/')) { send(res, req, safe(menagerie, path.slice('/menagerie'.length).replace(/^\/+/, '')), true); return }
+  if (path === '/ws' || path.startsWith('/ws/')) { sendFile(req, res, safe(workspace, path.slice(3).replace(/^\/+/, ''))); return }
+  if (path === '/menagerie' || path.startsWith('/menagerie/')) { sendFile(req, res, safe(menagerie, path.slice('/menagerie'.length).replace(/^\/+/, '')), { cache: true }); return }
   res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found')
-}).listen(port, '127.0.0.1', () => {
-  console.log(`[mujoco-viewer] listening on http://127.0.0.1:${port}/`)
-  console.log(`[mujoco-viewer] workspace: ${workspace}`)
-  console.log(`[mujoco-viewer] menagerie: ${menagerie}${existsSync(menagerie) ? '' : ' (not there — only workspace MJCF will load)'}`)
 })
 
-let timer = null
-try {
-  watch(workspace, { recursive: true }, (_event, name) => {
-    const n = String(name ?? '')
-    if (!n || n.startsWith('.harness') || n.includes('node_modules') || n.endsWith('.mp4')) return
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => { for (const c of clients) c.write('event: change\ndata: {}\n\n') }, 300)
+// ─── Watching the agent work ────────────────────────────────────────────────────────────────────
+
+const IGNORED = /(^|\/)(node_modules|\.git|\.venv|venv|__pycache__|\.claude|\.agents|\.codex|\.cache)(\/|$)/
+let pending = new Set()
+let flushTimer = null
+function flush() {
+  flushTimer = null
+  const paths = [...pending]
+  pending = new Set()
+  const message = `event: change\ndata: ${JSON.stringify({ paths })}\n\n`
+  for (const client of clients) client.write(message)
+}
+
+export function startWatching() {
+  try {
+    const watcher = watch(workspace, { recursive: true }, (_event, name) => {
+      const rel = String(name ?? '').split(sep).join('/')
+      if (!rel || IGNORED.test(rel) || /\.tmp$|~$|\.swp$/.test(rel)) return
+      pending.add(rel)
+      if (!flushTimer) flushTimer = setTimeout(flush, 120)
+    })
+    watcher.on('error', (error) => console.log(`[mujoco-viewer] watch error: ${error.message}`))
+  } catch (error) { console.log(`[mujoco-viewer] watch failed: ${error.message}`) }
+  setInterval(() => { for (const client of clients) client.write(': ping\n\n') }, 20_000).unref()
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  server.listen(port, '127.0.0.1', () => {
+    console.log(`[mujoco-viewer] listening on http://127.0.0.1:${port}/`)
+    console.log(`[mujoco-viewer] workspace: ${workspace}`)
+    console.log(`[mujoco-viewer] menagerie: ${menagerie}${existsSync(menagerie) ? '' : ' (not there — only workspace MJCF will load)'}`)
   })
-} catch (error) { console.log(`[mujoco-viewer] watch failed: ${error.message}`) }
-setInterval(() => { for (const c of clients) c.write(': ping\n\n') }, 20_000).unref()
+  startWatching()
+}

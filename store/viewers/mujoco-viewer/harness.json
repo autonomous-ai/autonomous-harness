@@ -5,7 +5,7 @@
   "name": "MuJoCo Viewer",
   "category": "Simulation",
   "author": "Autonomous",
-  "description": "A pane for robots in motion: the MJCF scene a harness simulates, rendered live in the browser by MuJoCo's own WebAssembly build — orbit it, scrub the recorded rollout, or step the physics yourself.",
+  "description": "MuJoCo's own simulate, in the pane: live physics you can push, pull and pause, every actuator on a slider, contacts and forces drawn, sensors plotted, and the agent's recording replayed frame by frame — on MuJoCo's WebAssembly build.",
   "toolchain": {
     "setup": "./setup.sh",
     "doctor": "./doctor.sh"

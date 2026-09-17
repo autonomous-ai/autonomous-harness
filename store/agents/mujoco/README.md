@@ -2,17 +2,22 @@
 
 [Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
 [MuJoCo](https://mujoco.org): describe a robot, a scene, a controller, a policy in the chat pane;
-watch the rollout in the MuJoCo Viewer pane — the scene itself, in 3D, MuJoCo's WebAssembly build
-running in the browser: orbit it, scrub it, or let it keep simulating. Menagerie robots (Unitree
-Go2, G1, H1, Berkeley Humanoid, Booster T1) come with it; MJX and MuJoCo Playground are one script
-away for training. Runs on Claude Code.
+the MuJoCo Viewer pane runs it — MuJoCo's own WebAssembly build, live in the browser, like
+`simulate`: push the robot, drive its actuators, inspect contacts and sensors, replay the recording
+frame by frame. Menagerie robots (Unitree Go2, G1, H1, Berkeley Humanoid, Booster T1) come with it;
+MJX and MuJoCo Playground are one script away for training. Runs on Claude Code.
 
 - `harness.json` — engine, template, skill, toolchain, `viewer.use: autonomous/mujoco-viewer`.
 - `toolchain/setup.sh` — one venv with the pinned MuJoCo (`VERSIONS`) and a sparse checkout of the
   Menagerie robots at a pinned commit; `install-training.sh` adds JAX, MJX and Playground;
-  `harness_mujoco.py` loads, records (mp4 + `rollout.qpos.json`, the trajectory the pane replays, +
-  report) and holds poses; `verdict.py` judges the rollout and names the trajectory as the artifact.
-- `skills/mujoco/` — the MuJoCo skill (ours). `template/` — a Go2 standing, and a pendulum MJCF.
+  `harness_mujoco.py` loads (`servos=` turns torque motors into position servos), records and holds
+  poses; `verdict.py` judges the rollout and names the trajectory as the artifact — never the video.
+- **What a rollout is** (`record`, all under `out/`): `rollout.qpos.json` — per frame `time`, `qpos`,
+  `qvel`, `ctrl`, written while it runs (`status: recording → done`) — which the pane re-simulates
+  live; `rollout.model.xml`, the compiled model when it was built with `MjSpec`, plus `model_patch`
+  for runtime edits, so the pane runs the model that was simulated; `rollout.json`, the report; and
+  `rollout.mp4` (optional, `video=False`) for sharing.
+- `skills/mujoco/` — the MuJoCo skill (ours). `template/` — a Go2 standing on position servos, and a pendulum MJCF.
 
 **On a Mac, training runs JAX on the CPU** — enough for a smoke test, hours for a policy. A GPU machine
 in Harness's Machines menu is where a real run belongs; the same workspace works there.
@@ -33,7 +38,8 @@ repository of yours and point the registry entry at it. Until then: bugs in MuJo
 wrapper belong here, and a newer MuJoCo or Menagerie is a bump of `VERSIONS`.
 
 ```sh
-harness dsh check .                                # conformance
-harness dsh install "$PWD" --link                  # this checkout as the installed agent
-python3 -m unittest toolchain/test_verdict.py      # the verdict, without mujoco
+harness dsh check .                                        # conformance
+harness dsh install "$PWD" --link                          # this checkout as the installed agent
+python3 -m unittest toolchain/test_verdict.py              # the verdict, without mujoco
+.venv/bin/python -m unittest toolchain/test_record.py      # what record() writes for the pane
 ```

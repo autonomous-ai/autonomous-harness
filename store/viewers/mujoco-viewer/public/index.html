@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MuJoCo</title>
+<link rel="stylesheet" href="/static/style.css">
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<header id="bar">
+  <button type="button" id="title" title="Open another model">
+    <span id="model-name">MuJoCo</span>
+    <svg class="chev" viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"/></svg>
+    <span id="model-sub"></span>
+  </button>
+  <nav id="modes" class="segmented" aria-label="View">
+    <button type="button" data-mode="sim" class="on" title="Live physics (S)"><span class="dot"></span>Simulate</button>
+    <button type="button" data-mode="replay" title="The rollout the agent recorded (R)" disabled>Replay</button>
+    <button type="button" data-mode="video" title="The rollout's video (V)" hidden>Video</button>
+  </nav>
+  <div id="agent" hidden><span class="pulse"></span><span id="agent-text"></span></div>
+  <div class="tools">
+    <button type="button" class="icon" id="btn-show" title="Show: contacts, forces, joints, frames… " aria-haspopup="true">
+      <svg viewBox="0 0 20 20"><path d="M1.5 10s3-5.5 8.5-5.5S18.5 10 18.5 10s-3 5.5-8.5 5.5S1.5 10 1.5 10Z"/><circle cx="10" cy="10" r="2.6"/></svg>
+    </button>
+    <button type="button" class="icon" id="btn-camera" title="Camera" aria-haspopup="true">
+      <svg viewBox="0 0 20 20"><rect x="2" y="5.5" width="11.5" height="9" rx="2"/><path d="m13.5 9 4.5-2.5v7L13.5 11"/></svg>
+    </button>
+    <button type="button" class="icon" id="btn-panel" title="Controls and model (Tab)">
+      <svg viewBox="0 0 20 20"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/></svg>
+    </button>
+    <button type="button" class="icon" id="btn-help" title="Shortcuts (?)">
+      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.9a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.8-1.1 1.5v.4"/><circle cx="10" cy="14.2" r=".4" class="fill"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="stage">
+  <canvas id="view" tabindex="0"></canvas>
+  <video id="video" playsinline muted loop hidden preload="metadata"></video>
+  <div id="hud" hidden>
+    <span id="hud-time">0.00 s</span>
+    <span id="hud-rtf" title="Real-time factor: simulated seconds per wall-clock second"></span>
+    <span id="hud-extra"></span>
+  </div>
+  <div id="camera-chip" hidden></div>
+  <div id="chip" hidden>
+    <span class="swatch"></span>
+    <span id="chip-name"></span>
+    <span id="chip-meta"></span>
+    <span id="chip-hint"></span>
+    <button type="button" id="chip-track" title="Follow this body with the camera">Track</button>
+    <button type="button" id="chip-close" title="Deselect (Esc)" aria-label="Deselect">×</button>
+  </div>
+  <div id="notice" hidden></div>
+  <div id="toasts"></div>
+  <div id="overlay"><div class="card"><div class="spinner"></div><div id="overlay-text">Starting MuJoCo…</div><div class="progress"><i id="overlay-bar"></i></div></div></div>
+
+  <div class="popover" id="menu-show" hidden>
+    <div class="group">
+      <div class="label">Physics</div>
+      <label><input type="checkbox" data-vis="contactpoint"> Contact points <kbd>C</kbd></label>
+      <label><input type="checkbox" data-vis="contactforce"> Contact forces <kbd>F</kbd></label>
+      <label><input type="checkbox" data-vis="joint"> Joint axes <kbd>J</kbd></label>
+      <label><input type="checkbox" data-vis="actuator"> Actuators <kbd>U</kbd></label>
+      <label><input type="checkbox" data-vis="tendon"> Tendons <kbd>V</kbd></label>
+      <label><input type="checkbox" data-vis="com"> Center of mass <kbd>M</kbd></label>
+      <label><input type="checkbox" data-vis="inertia"> Inertia boxes <kbd>I</kbd></label>
+    </div>
+    <div class="group">
+      <div class="label">Frames</div>
+      <div class="radios" data-radio="frame">
+        <button type="button" data-value="none">None</button><button type="button" data-value="body">Body</button><button type="button" data-value="site">Site</button><button type="button" data-value="world">World</button>
+      </div>
+      <label><input type="checkbox" data-vis="sites"> Sites</label>
+    </div>
+    <div class="group">
+      <div class="label">Rendering</div>
+      <label><input type="checkbox" data-vis="transparent"> Transparent bodies <kbd>T</kbd></label>
+      <label><input type="checkbox" data-vis="wireframe"> Wireframe <kbd>W</kbd></label>
+      <label><input type="checkbox" data-vis="shadows"> Shadows <kbd>H</kbd></label>
+      <label><input type="checkbox" data-vis="reflections"> Reflections <kbd>E</kbd></label>
+      <label><input type="checkbox" data-vis="skybox"> Skybox <kbd>K</kbd></label>
+    </div>
+    <div class="group">
+      <div class="label">Geom groups</div>
+      <div class="radios multi" data-groups>
+        <button type="button" data-group="0">0</button><button type="button" data-group="1">1</button><button type="button" data-group="2">2</button><button type="button" data-group="3" title="Group 3 is collision geometry in most models">3</button><button type="button" data-group="4">4</button><button type="button" data-group="5">5</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="popover left" id="menu-model" hidden></div>
+
+  <div class="popover" id="menu-camera" hidden>
+    <div class="group" id="camera-list"></div>
+    <div class="group">
+      <button type="button" class="row" id="camera-reset">Reset view <kbd>0</kbd></button>
+    </div>
+  </div>
+</main>
+
+<aside id="panel" hidden>
+  <nav class="tabs" role="tablist">
+    <button type="button" data-tab="controls" class="on">Controls</button>
+    <button type="button" data-tab="model">Model</button>
+    <button type="button" data-tab="sensors">Sensors</button>
+  </nav>
+  <section id="tab-controls" class="tab on"></section>
+  <section id="tab-model" class="tab"></section>
+  <section id="tab-sensors" class="tab"></section>
+  <section id="plot">
+    <div class="plot-head">
+      <select id="plot-signal" aria-label="Signal to plot"></select>
+      <span id="plot-readout"></span>
+    </div>
+    <canvas id="plot-canvas"></canvas>
+  </section>
+</aside>
+
+<footer id="transport">
+  <div class="cluster">
+    <button type="button" class="icon" id="btn-play" title="Play / pause (Space)">
+      <svg viewBox="0 0 20 20" class="i-pause"><rect x="5" y="4" width="3.2" height="12" rx="1" class="fill"/><rect x="11.8" y="4" width="3.2" height="12" rx="1" class="fill"/></svg>
+      <svg viewBox="0 0 20 20" class="i-play"><path d="M6 4.2v11.6c0 .6.7 1 1.2.7l9.2-5.8a.8.8 0 0 0 0-1.4L7.2 3.5c-.5-.3-1.2.1-1.2.7Z" class="fill"/></svg>
+    </button>
+    <button type="button" class="icon" id="btn-step" title="Step (→)">
+      <svg viewBox="0 0 20 20"><path d="M5 4.5v11l8-5.5-8-5.5Z" class="fill"/><rect x="14" y="4.5" width="2" height="11" rx=".8" class="fill"/></svg>
+    </button>
+    <button type="button" class="icon" id="btn-reset" title="Reset (Backspace)">
+      <svg viewBox="0 0 20 20"><path d="M4 10a6 6 0 1 0 1.8-4.3"/><path d="M4 3.5v3.8h3.8"/></svg>
+    </button>
+  </div>
+  <div id="timeline">
+    <div id="track">
+      <div id="track-recorded"></div>
+      <div id="track-progress"></div>
+      <div id="track-head"></div>
+    </div>
+    <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="Rollout frame">
+  </div>
+  <span id="clock">0.00 s</span>
+  <button type="button" id="btn-from-here" class="accent" title="Continue live physics from this frame (Enter)" hidden>Simulate from here</button>
+  <div class="cluster right">
+    <label class="select" id="key-wrap" title="Keyframes in the model">
+      <select id="keyframe" aria-label="Keyframe"></select>
+    </label>
+    <label class="select" title="Speed (− / =)">
+      <select id="speed" aria-label="Speed">
+        <option value="4">4×</option><option value="2">2×</option><option value="1" selected>1×</option>
+        <option value="0.5">½×</option><option value="0.25">¼×</option><option value="0.125">⅛×</option><option value="0.0625">1/16×</option>
+      </select>
+    </label>
+  </div>
+</footer>
+
+<div id="help" hidden>
+  <div class="card">
+    <div class="help-head"><b>MuJoCo Viewer</b><button type="button" id="help-close" aria-label="Close">×</button></div>
+    <div class="help-grid">
+      <div><kbd>Space</kbd> play / pause</div>
+      <div><kbd>→</kbd> step (frame in replay)</div>
+      <div><kbd>←</kbd> previous frame (replay)</div>
+      <div><kbd>⌫</kbd> reset</div>
+      <div><kbd>−</kbd> <kbd>=</kbd> slower / faster</div>
+      <div><kbd>S</kbd> <kbd>R</kbd> <kbd>V</kbd> simulate / replay / video</div>
+      <div><kbd>Enter</kbd> simulate from this frame</div>
+      <div><kbd>Tab</kbd> controls panel</div>
+      <div>double-click: select a body</div>
+      <div><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + drag: push it</div>
+      <div><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>⇧</kbd> + drag: twist it</div>
+      <div><kbd>⌥</kbd> + double-click: look at a point</div>
+      <div>drag / scroll: orbit, zoom · right-drag: pan</div>
+      <div><kbd>[</kbd> <kbd>]</kbd> cycle cameras · <kbd>Esc</kbd> free camera</div>
+      <div><kbd>C</kbd> contacts · <kbd>F</kbd> forces · <kbd>J</kbd> joints</div>
+      <div><kbd>M</kbd> COM · <kbd>I</kbd> inertia · <kbd>U</kbd> actuators</div>
+      <div><kbd>T</kbd> transparent · <kbd>W</kbd> wireframe · <kbd>B</kbd> frames</div>
+      <div><kbd>H</kbd> shadows · <kbd>E</kbd> reflections · <kbd>K</kbd> skybox</div>
+    </div>
+    <p class="muted">Editing happens in the chat: ask the agent to change the model or the controller, and this pane reloads in place.</p>
+  </div>
+</div>
+
+<script type="module" src="/static/main.js"></script>
+</body>
+</html>

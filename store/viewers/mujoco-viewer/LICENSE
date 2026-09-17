@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Autonomous (harness.json, setup.sh, doctor.sh, viewer.sh, viewer.mjs, app.js, test/). MuJoCo itself is Google DeepMind's under LICENSE-mujoco; three.js is the three.js authors' under LICENSE-three; the mesh-buffer reading in app.js follows zalo/mujoco_wasm under LICENSE-mujoco-wasm.
+Copyright (c) 2026 Autonomous (harness.json, setup.sh, doctor.sh, viewer.sh, viewer.mjs, public/, test/). MuJoCo itself is Google DeepMind's under LICENSE-mujoco; three.js is the three.js authors' under LICENSE-three; the mesh-buffer reading in public/scene.js follows zalo/mujoco_wasm under LICENSE-mujoco-wasm. See THIRD_PARTY_NOTICES.md.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
