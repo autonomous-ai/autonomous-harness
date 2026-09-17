@@ -523,7 +523,7 @@
     <button class="b-chip" aria-pressed="false">Enabled</button>
     <button class="b-chip" aria-pressed="false">Router on</button>
     <span class="b-spacer"></span>
-    <span class="b-who">tony@autonomous.ai</span>
+    <span class="b-who">avery@example.com</span>
     <button class="b-btn" title="Reload providers">⟳</button>
     <button class="b-btn b-btn--primary">+ New provider</button>
   </div>
@@ -537,7 +537,7 @@
 <section id="dir-c" role="tabpanel" aria-labelledby="tab-c" hidden>
   <div class="c-head">
     <h1 class="c-h1">Providers</h1>
-    <span class="c-count">5 providers · 4 enabled · tony@autonomous.ai</span>
+    <span class="c-count">5 providers · 4 enabled · avery@example.com</span>
   </div>
   <p class="c-sub">Every provider this account can reach. Enabled providers are available to your agents; the default is the one new agents launch against. Agents already running stay where they are.</p>
 
@@ -570,7 +570,7 @@
     },
     {
       id: 'grid-e25bf7fbbb214cab', name: 'DDDD', enabled: true, isDefault: false,
-      owned: true, owner: 'tony@autonomous.ai', join: 'Invite only',
+      owned: true, owner: 'avery@example.com', join: 'Invite only',
       joinNote: 'Only the people you invite can use this provider, or start an AI node to power it.',
       router: true, models: ['claude/sonnet-5'],
       status: 'active', type: 'permissioned', signaling: 'wss://relay.autonomous.ai/grid',
@@ -578,7 +578,7 @@
     },
     {
       id: 'grid-f8b91113662d45ad', name: 'BBB', enabled: false, isDefault: false,
-      owned: true, owner: 'tony@autonomous.ai', join: 'domain-restricted',
+      owned: true, owner: 'avery@example.com', join: 'domain-restricted',
       joinNote: 'Anyone with a matching email domain can use this provider, as well as the people you invite.',
       router: false, models: [],
       status: 'active', type: 'private-domain', signaling: 'wss://relay.autonomous.ai/grid',
@@ -586,7 +586,7 @@
     },
     {
       id: 'grid-98d3bff06b0c44ed', name: 'AAA', enabled: true, isDefault: false,
-      owned: true, owner: 'tony@autonomous.ai', join: 'Invite only',
+      owned: true, owner: 'avery@example.com', join: 'Invite only',
       joinNote: 'Only the people you invite can use this provider, or start an AI node to power it.',
       router: true, models: ['claude/haiku-4-5'],
       status: 'active', type: 'permissioned', signaling: 'wss://relay.autonomous.ai/grid',
@@ -671,7 +671,7 @@
       + '<div class="a-stat"><span class="a-stat__k">Router models</span><span class="a-stat__v">'
         + modelCount + ' across ' + routerOn.length + ' provider' + (routerOn.length === 1 ? '' : 's') + '</span></div>'
       + '<div class="a-stat"><span class="a-stat__k">Signed in as</span>'
-        + '<span class="a-stat__v" style="font-size:13px;font-weight:400;color:var(--a-fg-2)">tony@autonomous.ai</span></div>';
+        + '<span class="a-stat__v" style="font-size:13px;font-weight:400;color:var(--a-fg-2)">avery@example.com</span></div>';
 
     var head = document.querySelector('#dir-a .a-count');
     if (head) head.textContent = providers.length + ' providers \u00b7 ' + enabledCount() + ' enabled';
@@ -795,7 +795,7 @@
         + '<div class="c-alloff__d">' + ALLOFF_BODY + '</div></div></div>'
       : '';
     var cc = document.querySelector('#dir-c .c-count');
-    if (cc) cc.textContent = providers.length + ' providers \u00b7 ' + enabledCount() + ' enabled \u00b7 tony@autonomous.ai';
+    if (cc) cc.textContent = providers.length + ' providers \u00b7 ' + enabledCount() + ' enabled \u00b7 avery@example.com';
     var list = document.getElementById('c-list');
     list.innerHTML = providers.map(function (p, i) {
       return '<button class="c-item' + (p.enabled ? '' : ' c-item--off') + '" role="listitem" aria-current="' + (i === cSel) + '" data-c-pick="' + i + '">'

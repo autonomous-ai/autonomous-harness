@@ -59,7 +59,7 @@ describe('runtime pane parsing', () => {
       ...composer.map((line) => `  ┃${line}`),
       '  ┃  Build · DeepSeek-V4-Flash-0731 autonomous.ai',
       '  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
-      '   /Users/macbook/Downloads/20260907',
+      '   /Users/example/Downloads/20260907',
     ].join('\n')
 
     expect(inspectRuntimePane('opencode', box(['', '', '']))).toMatchObject({ idle: true, draft: false })

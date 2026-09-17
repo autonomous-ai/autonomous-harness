@@ -230,6 +230,6 @@ header, the search preview drawing the base engine. Left for a decision:
 - **Clickable phases.** A done phase with an artifact could swap the viewer to it; the URL
   template lives in the daemon, so it is a `dsh_view { agentId, artifact }` request, not a desktop
   change alone.
-- **Marp's repo** is local only (`/Users/ab/code/autonomous-marp`, branch `harness-dsh`); the
+- **Marp's repo** is local only at the time (its own checkout, branch `harness-dsh`); the
   registry entry names `github.com/autonomous-ai/autonomous-marp`, which must exist before a
   git-URL install can work.

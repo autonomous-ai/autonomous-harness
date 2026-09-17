@@ -38,8 +38,8 @@ AppNotifier makeNotifier(AppStatus status) {
   app.status = status;
   app.currentUser = const CurrentUserProfile(
     id: 'user-1',
-    name: 'Diego',
-    email: 'diego@autonomous.ai',
+    name: 'Sam',
+    email: 'sam@example.com',
   );
   return app;
 }
@@ -874,8 +874,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
-    expect(find.text('Diego'), findsOneWidget);
-    expect(find.text('diego@autonomous.ai'), findsOneWidget);
+    expect(find.text('Sam'), findsOneWidget);
+    expect(find.text('sam@example.com'), findsOneWidget);
     await tester.tap(find.byKey(const Key('settings-sign-out-button')));
     // The login relay diagram keeps animating after sign-out.
     await tester.pump();

@@ -29,16 +29,16 @@ void main() {
     final profile = CurrentUserProfile.fromMe({
       'user': {
         'id': 'user-1',
-        'name': 'Diego Nguyen',
-        'email': 'diego@autonomous.ai',
+        'name': 'Sam Example',
+        'email': 'sam@example.com',
       },
       'avatarUrl': null,
     });
 
     expect(profile.id, 'user-1');
-    expect(profile.displayName, 'Diego Nguyen');
-    expect(profile.email, 'diego@autonomous.ai');
-    expect(profile.initials, 'DN');
+    expect(profile.displayName, 'Sam Example');
+    expect(profile.email, 'sam@example.com');
+    expect(profile.initials, 'SE');
   });
 
   test('CurrentUserProfile rejects a response without an email', () {

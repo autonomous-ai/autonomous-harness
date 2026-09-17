@@ -57,7 +57,7 @@ describe('deriveTurnSummary', () => {
 
   it('does not let one unbroken token collapse the line to nothing', () => {
     // A word-boundary cut would leave almost nothing here, so the budget wins over the boundary.
-    const p = parts('/Users/duynguyen/go/src/github.com/autonomous-ai/autonomous-harness/cli/src/lib/x.ts')!
+    const p = parts('/Users/example/go/src/github.com/autonomous-ai/autonomous-harness/cli/src/lib/x.ts')!
     expect(p.recap.length).toBeGreaterThan(RECAP_MAX_CHARS - 5)
   })
 

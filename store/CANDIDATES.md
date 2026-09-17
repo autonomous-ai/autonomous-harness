@@ -1,6 +1,6 @@
 # The harness store: candidates
 
-> **Built (2026-09-16), on branch `viewer-packages`, local repos under `/Users/ab/code/autonomous-*`:**
+> **Built (2026-09-16), on branch `viewer-packages`, now folders under `store/agents/` and `store/viewers/`:**
 > Typst (+ Doc Viewer), Manim (+ Video Viewer), Excalidraw, marimo, Remotion, Blender (+ 3D Viewer), MuJoCo
 > (+ MuJoCo Viewer, live WebAssembly physics), Phaser, Strudel, RDKit, Yosys, CircuitJS — each
 > registered in the store (now `store/agents` and `store/viewers`), installed with `harness dsh install --link`, and proven

@@ -29,7 +29,7 @@ import 'package:harness/widgets/new_agent_dialog.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const pickedFolder = '/Users/macbook/Downloads/20260907';
+  const pickedFolder = '/Users/example/Downloads/20260907';
   setUp(() => FileSelectorPlatform.instance = _StubFileSelector(pickedFolder));
 
   const machine = Machine(
