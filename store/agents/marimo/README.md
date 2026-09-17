@@ -6,7 +6,11 @@ reactive notebook come alive in the marimo pane — marimo's own editor on the n
 writes, cells re-running as the file changes. Runs on Claude Code.
 
 - `harness.json` — engine, template, skills, toolchain, and this package's own viewer (marimo's server).
-- `viewer.sh` — `marimo edit --headless --watch` on the workspace's notebook, on the port Harness hands it.
+- `viewer.sh` → `viewer.py` — `marimo edit --headless --no-token --watch` on the workspace's notebook, on
+  the port Harness hands it, opened in marimo's app view (`?view-as=present`: outputs first, code a
+  click away). Three settings are layered over the user's marimo config for this server only — run
+  on open, re-run the cells a save changed, never autosave over the agent's file — through marimo's
+  own `with_overrides`; `toolchain/test_viewer.py` checks they still take on the pinned marimo.
 - `skills/` — marimo's own agent skills, verbatim (`PROVENANCE.md`).
 - `toolchain/setup.sh` — one venv with the pinned marimo (`MARIMO_VERSION`) and the usual libraries;
   `verdict.py` runs `marimo check` and then the notebook as a script.
@@ -31,4 +35,5 @@ upstream, bugs in the wrapper belong here, and a newer marimo is a bump of `MARI
 harness dsh check .                                # conformance
 harness dsh install "$PWD" --link                  # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py      # the verdict, without marimo
+.venv/bin/python -m unittest toolchain/test_viewer.py   # the pane's marimo settings, on the pinned marimo
 ```

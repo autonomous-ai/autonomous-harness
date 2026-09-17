@@ -26,7 +26,7 @@
   },
   "viewer": {
     "command": "./viewer.sh",
-    "url": "http://127.0.0.1:${port}/"
+    "url": "http://127.0.0.1:${port}/?view-as=present"
   },
   "verdict": ".harness/verdict.json"
 }
