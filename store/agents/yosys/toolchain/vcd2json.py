@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Turn Icarus Verilog's VCD dump into the small JSON the pane draws waves from.
+"""Turn Icarus Verilog's VCD dump into a small JSON of lanes.
 
     python3 toolchain/vcd2json.py out/sim.vcd out/waves.json
 
-A VCD is a stream of value changes against a shared clock of integer ticks. The pane does not need
-a waveform viewer for that — it needs the lanes. So this reads the whole file once and writes:
+The verdict counts its signals and any script can read it without a VCD parser. The pane itself
+reads out/sim.vcd whole (viewer/lib/vcd.mjs), since a capped summary would cut the clock short.
+A VCD is a stream of value changes against a shared clock of integer ticks; this reads it once and
+writes:
 
     { "timescale": "1ps", "tickFs": 1000, "end": 985000,
       "signals": [ { "name": "blink_tb.clk", "width": 1, "aliases": [...],

@@ -9,8 +9,14 @@
 #   synth      yosys synth_ice40                          -> out/<top>.json      (the PnR netlist)
 #   schematic  yosys prep                                 -> out/<top>_schematic.json
 #   svg        netlistsvg                                 -> out/<top>.svg       (the drawing)
-#   pnr        nextpnr-ice40                              -> out/<top>.asc, out/<top>_pnr.json
+#   pnr        nextpnr-ice40                              -> out/<top>.asc, out/<top>_pnr.json,
+#                                                            out/<top>_routed.json (placement + routing)
 #   pack       icepack                                    -> out/<top>.bin       (the bitstream)
+#
+# Beside every step's log, out/logs/ gets <step>.start (epoch ms, written before the step runs),
+# <step>.time ("start end", epoch ms) and <step>.exit, and out/logs/run.json says which run this is
+# and whether it has finished. The pane reads those to draw the pipeline live: which step is
+# running right now, for how long, and which ones this run skipped.
 #
 # `set -e` is deliberately NOT on: a step that fails must still leave the ones before it standing,
 # and the verdict — not this script's exit code — is how failure reaches the user. The verdict is
@@ -54,18 +60,35 @@ TB="tb/${TOP}_tb.v"
 PCF="constraints/${TOP}.pcf"
 
 mkdir -p out "$LOGS"
-rm -f "$LOGS"/*.log "$LOGS"/*.exit
-printf '%s\n' "$TOP" > out/.top
 
 verdict() { python3 "$HERE/verdict.py" "$TOP" >/dev/null 2>&1; }
+
+# Milliseconds since the epoch. perl starts in a few ms and is on every Mac and most Linuxes;
+# `date +%s` (seconds) is the fallback.
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000' 2>/dev/null || echo "$(date +%s)000"; }
+
+RUN_START="$(now_ms)"
+run_record() { # run_record <finishedAt|null>
+  printf '{"top": "%s", "pid": %s, "startedAt": %s, "finishedAt": %s, "device": "%s", "package": "%s"}\n' \
+    "$TOP" "$$" "$RUN_START" "$1" "$DEVICE" "$PACKAGE" > "$LOGS/run.json"
+}
+# The run record first, then the old step files go: the pane never sees a finished run with no steps.
+run_record null
+rm -f "$LOGS"/*.log "$LOGS"/*.exit "$LOGS"/*.start "$LOGS"/*.time
+printf '%s\n' "$TOP" > out/.top
 
 # run <step> — runs step_<step> with everything it prints captured, records the exit code, and
 # refreshes the verdict so the pane moves. Returns the step's own status.
 run() {
-  local step="$1" code
+  local step="$1" code start
   printf '\n\033[2m→ %s\033[0m\n' "$step"
-  "step_$step" >"$LOGS/$step.log" 2>&1
+  start="$(now_ms)"
+  printf '%s\n' "$start" > "$LOGS/$step.start"
+  : > "$LOGS/$step.log"
+  verdict  # the step reads as running in the pane before it has printed a line
+  "step_$step" >>"$LOGS/$step.log" 2>&1
   code=$?
+  printf '%s %s\n' "$start" "$(now_ms)" > "$LOGS/$step.time"
   printf '%s\n' "$code" > "$LOGS/$step.exit"
   verdict
   if [ "$code" -eq 0 ]; then
@@ -108,9 +131,11 @@ step_svg() {
 step_pnr() {
   command -v nextpnr-ice40 >/dev/null 2>&1 || { echo "nextpnr-ice40 is not installed — run toolchain/setup.sh"; return 127; }
   [ -f "$PCF" ] || { echo "no pin constraints at $PCF — every port needs a set_io line"; return 1; }
+  # --write keeps the placed and routed design: every cell's BEL and every net's wires, which is
+  # what the pane's floorplan draws. --report is utilisation, Fmax and the critical paths.
   nextpnr-ice40 "$DEVICE" --package "$PACKAGE" \
     --json "out/$TOP.json" --pcf "$PCF" \
-    --asc "out/$TOP.asc" --report "out/${TOP}_pnr.json"
+    --asc "out/$TOP.asc" --report "out/${TOP}_pnr.json" --write "out/${TOP}_routed.json"
 }
 
 step_pack() {
@@ -124,5 +149,6 @@ verdict  # a verdict with everything pending, before the first step
 run sim  && run waves
 run synth && { run schematic && run svg; run pnr && run pack; }
 
+run_record "$(now_ms)"
 echo
 python3 "$HERE/verdict.py" "$TOP"

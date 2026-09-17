@@ -1,7 +1,7 @@
 MIT License
 
 Copyright (c) 2026 Autonomous (the Harness wrapper: harness.json, AGENTS.md, viewer.mjs, viewer.sh,
-skills/, template/, toolchain/). The tools this wrapper drives are their authors' and keep their own
+viewer/, skills/, template/, toolchain/). The tools this wrapper drives are their authors' and keep their own
 licences: Yosys (LICENSE-yosys, ISC), nextpnr (LICENSE-nextpnr, ISC), Project IceStorm
 (LICENSE-icestorm, ISC), Icarus Verilog (LICENSE-iverilog, GPL-2.0-or-later) and netlistsvg
 (LICENSE-netlistsvg, MIT). None of them is modified or redistributed here; setup.sh installs them

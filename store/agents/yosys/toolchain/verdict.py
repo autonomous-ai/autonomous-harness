@@ -154,7 +154,7 @@ def parse_pnr_log(text: str) -> list[dict]:
 
 def assemble(top: str, steps: dict, rtl: list[str], sim: dict, synth: dict, pnr: dict,
              bitstream: dict | None, waves: dict | None, device: str, package: str,
-             schematic: str | None) -> dict:
+             schematic: str | None, run: dict | None = None) -> dict:
     """Everything parsed, into the one report the pane reads. Pure — the tests drive it directly."""
     findings: list[dict] = []
     ok = lambda name: steps.get(name, {}).get("state") == "done"
@@ -280,7 +280,10 @@ def assemble(top: str, steps: dict, rtl: list[str], sim: dict, synth: dict, pnr:
             "state": steps.get("pnr", {}).get("state", "pending"),
             "utilization": pnr.get("utilization", []),
             "clocks": pnr.get("clocks", []),
+            "report": pnr.get("report"),
+            "routed": pnr.get("routed"),
         },
+        "run": run,
         "bitstream": bitstream,
         "findings": findings,
         "phases": phases,
@@ -316,6 +319,31 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
+def read_step(logs: Path, sid: str, finished: bool) -> dict:
+    """One step's state from the files flow.sh leaves beside its log: <sid>.exit when it is over,
+    <sid>.start while it runs, <sid>.time (start and end, epoch ms) for how long it took. A step
+    with none of them in a run that has finished was skipped — an earlier step failed."""
+    exit_file, log_file = logs / f"{sid}.exit", logs / f"{sid}.log"
+    rel = os.path.relpath(log_file, WS)
+    times = read(logs / f"{sid}.time").split()
+    started = read(logs / f"{sid}.start").strip() or (times[0] if times else "")
+    if exit_file.exists():
+        code = read(exit_file).strip()
+        step = {"state": "done" if code == "0" else "failed", "exit": int(code or 1), "log": rel}
+        if step["state"] == "failed":
+            lines = [l.strip() for l in read(log_file).splitlines() if l.strip()]
+            step["tail"] = lines[-1][:300] if lines else ""
+    elif log_file.exists() or started:
+        step = {"state": "running", "log": rel}
+    else:
+        return {"state": "skipped" if finished else "pending"}
+    if started.isdigit():
+        step["startedAt"] = int(started)
+    if len(times) == 2 and all(t.isdigit() for t in times):
+        step["seconds"] = round((int(times[1]) - int(times[0])) / 1000.0, 3)
+    return step
+
+
 def main(argv: list[str]) -> int:
     top = argv[1] if len(argv) > 1 else None
     if not top:
@@ -325,22 +353,11 @@ def main(argv: list[str]) -> int:
         top = tbs[0].name[: -len("_tb.v")] if tbs else "top"
 
     logs = WS / "out" / "logs"
+    run = load_json(logs / "run.json")
+    finished = bool(run and run.get("finishedAt"))
     steps: dict[str, dict] = {}
     for sid, _ in STEPS:
-        exit_file = logs / f"{sid}.exit"
-        log_file = logs / f"{sid}.log"
-        if exit_file.exists():
-            code = read(exit_file).strip()
-            step = {"state": "done" if code == "0" else "failed", "exit": int(code or 1),
-                    "log": os.path.relpath(log_file, WS)}
-            if step["state"] == "failed":
-                lines = [l.strip() for l in read(log_file).splitlines() if l.strip()]
-                step["tail"] = lines[-1][:300] if lines else ""
-            steps[sid] = step
-        elif log_file.exists():
-            steps[sid] = {"state": "running", "log": os.path.relpath(log_file, WS)}
-        else:
-            steps[sid] = {"state": "pending"}
+        steps[sid] = read_step(logs, sid, finished)
 
     rtl = sorted(os.path.relpath(p, WS) for p in (WS / "rtl").glob("*.v")) if (WS / "rtl").is_dir() else []
     sim = parse_sim_log(read(logs / "sim.log"))
@@ -349,6 +366,9 @@ def main(argv: list[str]) -> int:
     pnr_report = load_json(WS / "out" / f"{top}_pnr.json") or {}
     pnr = parse_pnr_report(pnr_report)
     pnr["diagnostics"] = parse_pnr_log(read(logs / "pnr.log")) if steps.get("pnr", {}).get("state") == "failed" else []
+    for key, name in (("report", f"{top}_pnr.json"), ("routed", f"{top}_routed.json")):
+        if (WS / "out" / name).exists():
+            pnr[key] = f"out/{name}"
 
     svg = WS / "out" / f"{top}.svg"
     schematic = os.path.relpath(svg, WS) if svg.exists() else None
@@ -363,7 +383,7 @@ def main(argv: list[str]) -> int:
     device = os.environ.get("YOSYS_DEVICE", "--up5k")
     package = os.environ.get("YOSYS_PACKAGE", "sg48")
 
-    report = assemble(top, steps, rtl, sim, synth, pnr, bitstream, waves, device, package, schematic)
+    report = assemble(top, steps, rtl, sim, synth, pnr, bitstream, waves, device, package, schematic, run)
     out = WS / "out"
     out.mkdir(exist_ok=True)
     (out / f"{top}.report.json").write_text(json.dumps(report, indent=2) + "\n")

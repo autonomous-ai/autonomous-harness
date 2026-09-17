@@ -1,11 +1,12 @@
 """The judge, without a toolchain: every fixture below is real output from iverilog, yosys or
 nextpnr, trimmed. `python3 -m unittest discover -s toolchain`."""
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from verdict import assemble, parse_pnr_report, parse_sim_log, parse_yosys_log, to_verdict  # noqa: E402
+from verdict import assemble, parse_pnr_report, parse_sim_log, parse_yosys_log, read_step, to_verdict  # noqa: E402
 
 DONE = {"state": "done", "exit": 0}
 FAILED = {"state": "failed", "exit": 1}
@@ -216,6 +217,39 @@ class Verdict(unittest.TestCase):
     def test_summary_is_capped(self):
         sim = {"checks": [], "failures": ["FAIL " + "x" * 400], "asserted": True, "diagnostics": []}
         self.assertLessEqual(len(to_verdict(build(sim=sim), "a")["summary"]), 200)
+
+
+class Steps(unittest.TestCase):
+    """What flow.sh leaves beside each log: <step>.start, <step>.time, <step>.exit."""
+
+    def test_running_done_failed_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            logs = Path(d)
+            (logs / "sim.start").write_text("1000\n")
+            (logs / "sim.time").write_text("1000 1750\n")
+            (logs / "sim.exit").write_text("0\n")
+            (logs / "sim.log").write_text("PASS\n")
+            (logs / "synth.start").write_text("2000\n")
+            (logs / "synth.log").write_text("")
+            (logs / "pnr.exit").write_text("1\n")
+            (logs / "pnr.log").write_text("Info: placing\nERROR: IO 'tx' is unconstrained\n")
+            sim = read_step(logs, "sim", finished=False)
+            self.assertEqual((sim["state"], sim["startedAt"], sim["seconds"]), ("done", 1000, 0.75))
+            self.assertEqual(read_step(logs, "synth", finished=False)["state"], "running")
+            pnr = read_step(logs, "pnr", finished=True)
+            self.assertEqual((pnr["state"], pnr["tail"]), ("failed", "ERROR: IO 'tx' is unconstrained"))
+            self.assertEqual(read_step(logs, "pack", finished=False), {"state": "pending"})
+            self.assertEqual(read_step(logs, "pack", finished=True), {"state": "skipped"})
+
+    def test_a_skipped_step_is_a_pending_phase(self):
+        steps = dict(ALL_DONE)
+        steps["synth"] = dict(FAILED)
+        steps["pnr"] = {"state": "skipped"}
+        steps["pack"] = {"state": "skipped"}
+        r = build(steps=steps, bitstream=None)
+        phases = {p["id"]: p["state"] for p in r["phases"]}
+        self.assertEqual((phases["synthesize"], phases["pnr"], phases["bitstream"]), ("failed", "pending", "pending"))
+        self.assertFalse(r["ready"])
 
 
 if __name__ == "__main__":

@@ -18,6 +18,13 @@ if command -v iceprog >/dev/null 2>&1; then echo "ok   iceprog, to flash a board
 
 if [ -x node_modules/.bin/netlistsvg ]; then echo "ok   netlistsvg $(node -p "require('netlistsvg/package.json').version" 2>/dev/null), the schematic"; else echo "miss node_modules — run toolchain/setup.sh"; bad=1; fi
 if command -v node >/dev/null 2>&1; then echo "ok   node $(node -v) for the viewer"; else echo "miss node for the viewer"; bad=1; fi
+# The pane's Board and Chip tabs map package pins to the die with IceStorm's chip database.
+chipdb=""
+if command -v icepack >/dev/null 2>&1; then
+  real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$(command -v icepack)" 2>/dev/null)"
+  [ -n "$real" ] && [ -f "$(dirname "$real")/../share/icestorm/chipdb/chipdb-5k.txt" ] && chipdb=yes
+fi
+if [ -n "$chipdb" ]; then echo "ok   IceStorm chipdb, for the pane's pin maps"; else echo "info IceStorm chipdb not found — the pane falls back to its built-in iCE40UP5K-SG48 pin table"; fi
 if command -v python3 >/dev/null 2>&1; then echo "ok   $(python3 --version) for the waveforms and the verdict"; else echo "miss python3"; bad=1; fi
 
 exit $bad

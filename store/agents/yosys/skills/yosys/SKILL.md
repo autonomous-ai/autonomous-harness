@@ -17,15 +17,17 @@ passes through Icarus Verilog, Yosys, nextpnr and icepack — not what the stand
 | step | tool | in | out |
 |---|---|---|---|
 | sim | `iverilog -g2012` + `vvp` | `rtl/*.v` + `tb/blink_tb.v` | `out/sim.vcd`, PASS/FAIL on stdout |
-| waves | `vcd2json.py` | `out/sim.vcd` | `out/waves.json` — the pane's lanes |
+| waves | `vcd2json.py` | `out/sim.vcd` | `out/waves.json` — a signal summary for the verdict (the pane reads the VCD itself) |
 | synth | `yosys synth_ice40` | `rtl/*.v` | `out/blink.json` — the iCE40 netlist, and cell counts |
 | schematic | `yosys prep` | `rtl/*.v` | `out/blink_schematic.json` — technology-independent |
-| svg | `netlistsvg` | that JSON | `out/blink.svg` — the drawing in the pane |
-| pnr | `nextpnr-ice40 --up5k --package sg48` | netlist + `constraints/blink.pcf` | `out/blink.asc`, `out/blink_pnr.json` (utilisation, Fmax) |
+| svg | `netlistsvg` | that JSON | `out/blink.svg` — the top module drawn (the pane draws every module of the hierarchy) |
+| pnr | `nextpnr-ice40 --up5k --package sg48` | netlist + `constraints/blink.pcf` | `out/blink.asc`, `out/blink_pnr.json` (utilisation, Fmax, critical paths), `out/blink_routed.json` (placement and routing — the pane's floorplan) |
 | pack | `icepack` | `.asc` | **`out/blink.bin`** — the bitstream |
 
-Each step's full output is at `out/logs/<step>.log`. The flow does not stop the world on a failure:
-synthesis still runs when simulation fails, so you see every problem at once.
+Each step's full output is at `out/logs/<step>.log`, with `<step>.start`, `<step>.time` and
+`<step>.exit` beside it and `out/logs/run.json` for the run as a whole — the pane reads those to show
+which step is running. The flow does not stop the world on a failure: synthesis still runs when
+simulation fails, so you see every problem at once.
 
 Single steps, when you are iterating on one thing:
 
@@ -150,8 +152,11 @@ endmodule
 - **Simulate in shrunken time.** A 1 Hz blink off a 12 MHz clock is 12 million cycles. Parameterise
   the design (`CLK_HZ`) and override it in the testbench (`.CLK_HZ(16)`), so the same RTL runs in a
   hundred clocks. Never change the RTL to make the test fast.
-- `$dumpvars(0, tb)` dumps everything including the DUT's internals — that is what you want, and
-  the pane filters out parameters and task arguments for you.
+- `$dumpvars(0, tb)` dumps everything including the DUT's internals — that is what you want: the
+  pane's Waves tab browses every scope, shows parameters with their values, and opens on the DUT's
+  ports and registers. A line named `tx`/`rx` is decoded as UART (baud measured off the line); an
+  8-bit bus named `data`/`byte`/`char` starts in ASCII. Keep a dump under a few tens of millions of
+  changes — `$dumpoff` around a long quiet stretch, as `hello_uart`-style testbenches do.
 - The word `FAIL` anywhere in the output fails the verdict. Do not print it in passing messages.
 
 ## The board: iCEBreaker, iCE40UP5K-SG48
@@ -193,6 +198,8 @@ Another board: change `constraints/<top>.pcf` and set `YOSYS_DEVICE` / `YOSYS_PA
 - **`pnr.clocks[].achievedMHz` vs `constraintMHz`** — the design closes at the first, the PCF's
   `set_frequency` asks for the second. `pass: false` means the critical path is too long: the fix
   is to break it with a pipeline register, not to lower the clock, unless lowering it is honest.
+  The path itself, hop by hop with the RTL line of each net, is `critical_paths` in
+  `out/<top>_pnr.json` — and drawn on the floorplan in the pane's Chip tab.
 - **`bitstream.path`** — `out/<top>.bin`, and `iceprog out/<top>.bin` flashes a board over USB
   (install `icestorm`'s `iceprog`; the user needs the board plugged in).
 

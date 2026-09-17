@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yosys</title>
+<link rel="stylesheet" href="/app/app.css">
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-row">
+    <div class="hdr-title">
+      <svg class="hdr-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="4.5" y="4.5" width="11" height="11" rx="1.6"/><path d="M7.5 1.5v3M10 1.5v3M12.5 1.5v3M7.5 15.5v3M10 15.5v3M12.5 15.5v3M1.5 7.5h3M1.5 10h3M1.5 12.5h3M15.5 7.5h3M15.5 10h3M15.5 12.5h3"/></svg>
+      <h1 id="top-name">Yosys</h1>
+      <span class="hdr-sub" id="top-sub"></span>
+    </div>
+    <span class="status" id="status" data-kind="idle"><i></i><span>Waiting</span></span>
+  </div>
+  <ol class="pipeline" id="pipeline" aria-label="Flow"></ol>
+  <div class="banner" id="banner" hidden></div>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist">
+  <button role="tab" data-tab="waves" title="Waveforms (1)"><svg viewBox="0 0 16 16"><path d="M1 11h3V5h3v6h3V5h3v6h2"/></svg><span>Waves</span><i class="dot"></i></button>
+  <button role="tab" data-tab="schematic" title="Schematic (2)"><svg viewBox="0 0 16 16"><path d="M1 5h4M1 11h4M11 8h4M5 3.5h2.5a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H5z"/></svg><span>Schematic</span><i class="dot"></i></button>
+  <button role="tab" data-tab="chip" title="Chip: floorplan, utilisation, timing (3)"><svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/><path d="M6 1v2.5M10 1v2.5M6 12.5V15M10 12.5V15M1 6h2.5M1 10h2.5M12.5 6H15M12.5 10H15"/></svg><span>Chip</span><i class="dot"></i></button>
+  <button role="tab" data-tab="board" title="Board: pins and what they are wired to (4)"><svg viewBox="0 0 16 16"><rect x="1.5" y="3.5" width="13" height="9" rx="1.5"/><circle cx="4.5" cy="6.5" r="1"/><path d="M8 6h4M8 9h4"/></svg><span>Board</span><i class="dot"></i></button>
+  <button role="tab" data-tab="flow" title="Flow: steps, logs, findings (5)"><svg viewBox="0 0 16 16"><path d="M2 3.5h7M2 8h12M2 12.5h9"/></svg><span>Flow</span><i class="dot"></i></button>
+  <span class="tabs-spacer"></span>
+  <button class="icon-btn" id="help-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+</nav>
+
+<main id="main">
+  <section class="panel" id="panel-waves" data-panel="waves" hidden></section>
+  <section class="panel" id="panel-schematic" data-panel="schematic" hidden></section>
+  <section class="panel" id="panel-chip" data-panel="chip" hidden></section>
+  <section class="panel" id="panel-board" data-panel="board" hidden></section>
+  <section class="panel" id="panel-flow" data-panel="flow" hidden></section>
+</main>
+
+<div class="drawer" id="drawer" hidden>
+  <div class="drawer-head">
+    <span class="drawer-title" id="drawer-title"></span>
+    <span class="drawer-sub" id="drawer-sub"></span>
+    <button class="icon-btn" id="drawer-close" title="Close (Esc)" aria-label="Close">×</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</div>
+
+<div class="help" id="help" hidden>
+  <div class="help-card" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="help-head"><b>Keyboard shortcuts</b><button class="icon-btn" id="help-close" aria-label="Close">×</button></div>
+    <div class="help-grid" id="help-grid"></div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip" hidden></div>
+<div class="menu" id="menu" hidden></div>
+
+<script type="module" src="/app/app.js"></script>
+</body>
+</html>
