@@ -2129,6 +2129,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const result = await installDsh({
       source: resolved.source,
       ref: ref ?? resolved.ref,
+      path: 'path' in resolved ? resolved.path : undefined,
       onProgress: (p) => {
         if (timer) { clearTimeout(timer); timer = null }
         pendingLine = null

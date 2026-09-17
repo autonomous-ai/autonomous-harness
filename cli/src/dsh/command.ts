@@ -4,15 +4,16 @@
  */
 import { listDshState, installedDsh } from './installed.js'
 import { dshTier } from './manifest.js'
-import { bundledDshRegistry } from './registry.js'
+import { bundledDshRegistry, registrySourceUrl } from './registry.js'
 import { installDsh, removeDsh, resolveInstallSource, runDshDoctor } from './install.js'
 import { checkDsh, formatCheck } from './check.js'
 
 export function dshUsage(): string {
   return `Domain-specific harnesses (a DSH turns Harness into a product for one domain — see dsh/README.md):
   harness dsh list                 what is installed on this computer, and what the registry offers
-  harness dsh install <id|url|path> [--ref <ref>] [--link]
-                                   install by registry id (autonomous/copper), git URL, or local path;
+  harness dsh install <id|url|path> [--ref <ref>] [--path <folder>] [--link]
+                                   install by registry id (autonomous/typst), git URL, or local path;
+                                   --path installs one folder of that repo (store/agents/typst);
                                    --link symlinks a local checkout instead of cloning it
   harness dsh doctor <id>          re-run the harness's own readiness check
   harness dsh remove <id>          uninstall (a --link install removes only the link)
@@ -26,7 +27,9 @@ function flagValue(argv: readonly string[], flag: string): string | undefined {
 
 /** `verb` is the word after `dsh`; `rest` is everything after THAT, flags included. */
 export async function dshCommand(verb: string | undefined, rest: readonly string[]): Promise<number> {
-  const args = rest.filter((arg) => !arg.startsWith('-'))
+  // Positional words only: a flag and the value it takes (`--ref main`) are not arguments.
+  const valued = new Set(['--ref', '--path'])
+  const args = rest.filter((arg, at) => !arg.startsWith('-') && !valued.has(rest[at - 1] ?? ''))
   switch (verb) {
     case 'list': {
       const { installed, broken } = listDshState()
@@ -43,7 +46,7 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       }
       for (const entry of registry) {
         if (seen.has(entry.id)) continue
-        rows.push(`  ${entry.id.padEnd(28)} ${entry.name.padEnd(12)} ${(entry.kind === 'viewer' ? 'viewer' : `on ${entry.engine}`).padEnd(11)} tier ${entry.tier ?? '?'}  available · ${entry.repo}`)
+        rows.push(`  ${entry.id.padEnd(28)} ${entry.name.padEnd(12)} ${(entry.kind === 'viewer' ? 'viewer' : `on ${entry.engine}`).padEnd(11)} tier ${entry.tier ?? '?'}  available · ${registrySourceUrl(entry)}`)
       }
       console.log(rows.length ? rows.join('\n') : '  (nothing installed, registry empty)')
       return 0
@@ -55,9 +58,11 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       if (!resolved) { console.error(`harness dsh install: ${target} is not an id, URL or path`); return 1 }
       const link = rest.includes('--link')
       const ref = flagValue(rest, '--ref') ?? resolved.ref
+      const path = flagValue(rest, '--path') ?? resolved.path
       const result = await installDsh({
         source: resolved.source,
         ref: link ? undefined : ref,
+        path: link ? undefined : path,
         link,
         onProgress: (p) => console.log(`[dsh] ${p.id ?? target} · ${p.phase}${p.detail ? ` · ${p.detail}` : ''}`),
         onLine: (line) => console.log(`    ${line}`),

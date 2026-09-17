@@ -61,6 +61,7 @@ export function checkDsh(path: string): CheckResult {
   const ws = manifest.workspace
   if (ws?.template) {
     if (isDir(join(dir, ws.template))) add('ok', `workspace.template ${ws.template}/`)
+    else if (manifest.toolchain?.setup) add('warn', `workspace.template ${ws.template} is not in the checkout; toolchain.setup must create it`)
     else add('fail', `workspace.template ${ws.template} is not a directory`)
     if (!ws.marker) add('warn', 'workspace.template without workspace.marker: the template is copied on EVERY create')
   }
@@ -77,6 +78,9 @@ export function checkDsh(path: string): CheckResult {
   const agent = manifest.agent
   if (agent?.instructions) {
     if (isFile(join(dir, agent.instructions))) add('ok', `agent.instructions ${agent.instructions}`)
+    // A wrapper that fetches its upstream at setup (the project's own AGENTS.md, template and skills
+    // arrive with it) has none of them on a plain checkout — by design, the same as fetched skills.
+    else if (manifest.toolchain?.setup) add('warn', `agent.instructions ${agent.instructions} is not in the checkout; toolchain.setup must create it`)
     else add('fail', `agent.instructions ${agent.instructions} does not exist`)
   } else {
     add('warn', 'no agent.instructions — the agent gets no AGENTS.md from this harness')

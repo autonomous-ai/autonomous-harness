@@ -18,6 +18,8 @@ export interface InstalledDshRecord {
   /** The git URL or local path it came from. */
   source: string
   ref: string | null
+  /** The folder of `source` that was installed, for a package that is one folder of a repo. */
+  path?: string | null
   commit: string | null
   /** True when `dir` is a symlink to a checkout — the development loop. */
   linked: boolean

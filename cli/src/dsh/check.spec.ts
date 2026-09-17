@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cpSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +34,24 @@ describe('checkDsh', () => {
     expect(fails.some((w) => w.includes('agent.env.HARNESS_DSH is reserved'))).toBe(true)
     expect(fails.some((w) => w.includes('toolchain.doctor toolchain/missing.sh'))).toBe(true)
     expect(fails.some((w) => w.includes('viewer.url has no ${port}'))).toBe(true)
+  })
+
+  it('a wrapper whose setup fetches the upstream has its instructions, template and skills only after setup: warned, not failed', () => {
+    writeFileSync(join(copy, 'harness.json'), JSON.stringify({
+      spec: 1, id: 'acme/wrapper', name: 'Wrapper', engine: 'codex', author: 'Acme', description: 'wraps a project',
+      workspace: { template: 'upstream/harness/template', marker: 'model.py' },
+      agent: { instructions: 'upstream/harness/AGENTS.md', skills: ['upstream/skills'] },
+      toolchain: { setup: 'toolchain/setup.sh' },
+    }))
+    mkdirSync(join(copy, 'toolchain'), { recursive: true })
+    writeFileSync(join(copy, 'toolchain', 'setup.sh'), '#!/bin/sh\n', { mode: 0o755 })
+    const result = checkDsh(copy)
+    const warns = result.lines.filter((l) => l.level === 'warn').map((l) => l.what)
+    expect(result.lines.filter((l) => l.level === 'fail')).toEqual([])
+    expect(result.ok).toBe(true)
+    for (const path of ['workspace.template upstream/harness/template', 'agent.instructions upstream/harness/AGENTS.md', 'agent.skills upstream/skills']) {
+      expect(warns.some((w) => w.startsWith(path) && w.includes('toolchain.setup must create it')), path).toBe(true)
+    }
   })
 
   it('reports an unparseable manifest as the one failure', () => {

@@ -237,6 +237,10 @@ const envSchema = z.object({
   // Where domain-specific harnesses are installed (`harness dsh install`): one directory per
   // `<owner>/<name>` plus `installed.json`. Product-root state like the SSO session, not daemon data.
   DSH_DIR: z.string().default(join(adapterRootDir, 'dsh')),
+  // The ref the built-in shelf (`store/*` of the Harness monorepo) installs from, instead of the one
+  // its registry entries name (`main`). For trying a store change end to end BEFORE it merges: push
+  // the branch, run the daemon with HARNESS_STORE_REF=<branch>, and Get in the store fetches from it.
+  HARNESS_STORE_REF: z.string().regex(/^[A-Za-z0-9._\/-]{1,200}$/).optional().catch(undefined),
   // This computer's stable id, minted once and never regenerated (see computerIdFile above). Pin it
   // explicitly on a box with no durable home — a container or CI job that gets a fresh ~/.harness on
   // every boot would otherwise look like a NEW computer each time and collect a machine per start.

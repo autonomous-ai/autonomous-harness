@@ -38,7 +38,7 @@ import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
 import { installedDsh, listInstalledDsh } from './dsh/installed.js'
 import { DSH_ID_RE, dshTier } from './dsh/manifest.js'
-import { bundledDshRegistry } from './dsh/registry.js'
+import { bundledDshRegistry, registrySourceUrl } from './dsh/registry.js'
 import type { DshInstallProgress } from './dsh/install.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
@@ -1480,7 +1480,8 @@ export class BackendSocket {
             const known = bundledDshRegistry().find((entry) => entry.id === id)
             return {
               verified: known?.verified === true,
-              repo: known?.repo ?? null,
+              // Where a person can read the package: its folder page for a built-in (store/…) one.
+              repo: known ? registrySourceUrl(known) : null,
               homepage: known?.homepage ?? null,
               upstream: known?.upstream ?? null,
               license: known?.license ?? null,
