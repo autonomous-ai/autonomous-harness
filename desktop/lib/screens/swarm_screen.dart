@@ -277,16 +277,28 @@ class _SwarmScreenState extends State<SwarmScreen> {
     if (_native) _syncNative();
   }
 
+  /// The agents a tab holds, once each: a harness's viewer belongs to the agent beside it, so an
+  /// agent and its pane are one agent — and one mark on the tab — not a two-pane group.
+  Set<(String, String)> _tabAgents(Swarm tab) => {
+    for (final pane in tab.panes)
+      if ((pane.isWeb ? pane.ownerAgentId : pane.agentId) case final id?)
+        (pane.machineId, id),
+  };
+
   String? _tabEngine(Swarm tab) {
-    if (tab.panes.length != 1) return null;
-    final pane = tab.panes.single;
+    final agents = _tabAgents(tab);
+    if (agents.length != 1) return null;
+    final (machineId, agentId) = agents.single;
+    final terminal = tab.panes
+        .where((pane) => !pane.isWeb && pane.agentId == agentId)
+        .firstOrNull;
     return app
-            .stateOf(pane.machineId)
+            .stateOf(machineId)
             ?.agents
-            .where((agent) => agent.id == pane.agentId)
+            .where((agent) => agent.id == agentId)
             .firstOrNull
             ?.identityEngine ??
-        pane.session?.engineId;
+        terminal?.session?.engineId;
   }
 
   void _syncNative() {
@@ -335,7 +347,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
             'id': swarm.id,
             'name': swarm.name,
             'kind': swarm.kind,
-            'agentCount': swarm.panes.length,
+            'agentCount': _tabAgents(swarm).length,
             'engine': swarm.isStore ? 'store' : _tabEngine(swarm),
             'iconAsset': swarm.isStore
                 ? kStoreMarkAsset
@@ -1563,7 +1575,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                           width: 16,
                                           height: 16,
                                         )
-                                      else if (swarm.panes.length == 1)
+                                      else if (_tabAgents(swarm).length == 1)
                                         EngineMark(
                                           key: ValueKey(
                                             'tab-engine:${swarm.id}',
@@ -1571,7 +1583,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                           engine: _tabEngine(swarm),
                                           size: 16,
                                         )
-                                      else if (swarm.panes.length > 1)
+                                      else if (_tabAgents(swarm).length > 1)
                                         SwarmIcon(
                                           key: ValueKey(
                                             'tab-group:${swarm.id}',

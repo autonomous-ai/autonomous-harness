@@ -10,6 +10,7 @@ import 'package:harness/shared/theme/app_theme.dart' as grid;
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/state/swarm_navigation.dart';
+import 'package:harness/state/terminal_pane.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/terminal/terminal_session.dart';
 import 'package:harness/widgets/pane_grid.dart';
@@ -205,6 +206,22 @@ void main() {
       } else {
         expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
       }
+
+      // A harness's viewer beside its agent is the same agent: still its mark, not a group.
+      tab.panes.add(
+        TerminalPane(id: 900, machineId: 'm', kind: PaneKind.web, ownerAgentId: 'a0', url: 'http://127.0.0.1:1/'),
+      );
+      app.renameSwarm(tab.id, 'New Tab');
+      await tester.pump();
+      if (native) {
+        final row = (updates.last['tabs'] as List).single as Map;
+        expect(row['agentCount'], 1);
+        expect(row['engine'], 'codex');
+      } else {
+        expect(find.byKey(ValueKey('tab-engine:${tab.id}')), findsOneWidget);
+        expect(find.byKey(ValueKey('tab-group:${tab.id}')), findsNothing);
+      }
+      tab.panes.removeWhere((pane) => pane.id == 900);
 
       await app.addAgentToSwarm('m', 'a1');
       await tester.pump();
