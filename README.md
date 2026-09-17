@@ -1,130 +1,197 @@
-# Harness
+# OpenHarness
 
-Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. CAD
-with Autonomous Workshop and text-to-cad. PCBs with Autonomous Circuit. Keynotes with Marp. Every agent runs in a persistent terminal on
-any machine you own, and the domains beyond code get a viewer beside it that shows the work as it
-is made.
+**An open-source framework for building, sharing, and running AI harnesses. Built by everyone, for everyone.**
+
+Design your first 3D model. Make a circuit board. Build a game. Create something you couldn't make
+before. **Agent + viewer = harness.** The agent gets the instructions, tools, and workspace for a new craft;
+the viewer lets you watch the result take shape.
+
+Choose your engine. Install the harnesses you need. Run them on your own computers. Build the next
+one and share it with everyone. The app, framework, and device firmware are open source under [MIT](LICENSE).
+
+[Get started](#get-started) · [Build your first harness](#build-your-first-harness) ·
+[Contribute](CONTRIBUTING.md) · [Documentation](#documentation)
 
 <p align="center">
-  <img src=".github/assets/screenshots/harness.gif" width="960" alt="One window, nine moments: two coding agents side by side, three in columns, an Autonomous Workshop tab with the 3D case beside the Codex agent that made it, an Autonomous Circuit board as schematic, as routed PCB and in 3D beside its Claude Code agent, four panes of Autonomous Workshop and Autonomous Circuit together, and a Marp keynote beside its agent">
+  <img src=".github/assets/screenshots/harness.gif" width="960" alt="Coding agents side by side, a 3D case taking shape in CAD, a circuit board shown as a schematic and in 3D, and a live slide deck—all beside the terminals creating them">
 </p>
 
-## One app, every agent
+## More harnesses. More superpowers.
 
-An agent is the who: Claude Code, Codex, Cursor and eleven more for code, and the specialized ones,
-Autonomous Workshop, Autonomous Circuit, Yosys, MuJoCo, RDKit, Phaser and more, each an agent plus the skills, toolchain
-and viewer of its domain: a printable toy, a routed board, a chip for an FPGA, a robot in live physics,
-a molecule you can rotate, a game you play in the pane. Harness
-never wraps an agent; it reads the transcript each one already writes and installs the vendor's own
-hooks, so your credentials stay in your `~/.claude`, `~/.codex`, and so on. A harness is one
-session of an agent running somewhere: a machine, a project, a pane, and for the domains beyond
-code, the viewer beside it. Pick an agent, and yours is a git repository away.
+The [Harness Store](store/README.md) already includes these capabilities. Pick one, give it a
+project, and start making. Add and remove harnesses as your interests change.
 
-| Category | Agents |
+| What would you like to make? | Harnesses to explore |
 |---|---|
-| **Code** | <img src=".github/assets/engines/claude.png" height="28" alt="Claude Code"> Claude Code &nbsp;&nbsp; <img src=".github/assets/engines/codex.png" height="28" alt="Codex"> Codex &nbsp;&nbsp; <img src=".github/assets/engines/cursor.png" height="28" alt="Cursor"> Cursor &nbsp;&nbsp; <img src=".github/assets/engines/opencode.png" height="28" alt="OpenCode"> OpenCode &nbsp;&nbsp; <img src=".github/assets/engines/pi.png" height="28" alt="Pi"> Pi &nbsp;&nbsp; <img src=".github/assets/engines/hermes.png" height="28" alt="Hermes"> Hermes &nbsp;&nbsp; <img src=".github/assets/engines/commandcode.png" height="28" alt="Command Code"> Command Code &nbsp;&nbsp; <img src=".github/assets/engines/devin.png" height="28" alt="Devin"> Devin &nbsp;&nbsp; <img src=".github/assets/engines/muse.png" height="28" alt="Muse Code"> Muse Code &nbsp;&nbsp; <img src=".github/assets/engines/amp.png" height="28" alt="Amp"> Amp &nbsp;&nbsp; <img src=".github/assets/engines/kilo.png" height="28" alt="Kilo"> Kilo &nbsp;&nbsp; <img src=".github/assets/engines/grok.png" height="28" alt="Grok"> Grok &nbsp;&nbsp; <img src=".github/assets/engines/agy.png" height="28" alt="Antigravity"> Antigravity &nbsp;&nbsp; <img src=".github/assets/engines/copilot.png" height="28" alt="GitHub Copilot"> GitHub Copilot |
-| **CAD** | <img src=".github/assets/engines/autonomous-workshop.png" height="28" alt="Autonomous Workshop"> Autonomous Workshop &nbsp;&nbsp; <img src=".github/assets/engines/text-to-cad.png" height="28" alt="text-to-cad"> text-to-cad, by Jake Fitzgerald |
-| **PCB** | <img src=".github/assets/engines/autonomous-circuit.png" height="28" alt="Autonomous Circuit"> Autonomous Circuit |
-| **Slides** | <img src=".github/assets/engines/marp.png" height="28" alt="Marp"> Marp |
-| **Documents** | <img src=".github/assets/engines/typst.png" height="28" alt="Typst"> Typst |
-| **Diagrams** | <img src=".github/assets/engines/excalidraw.png" height="28" alt="Excalidraw"> Excalidraw |
-| **Notebooks** | <img src=".github/assets/engines/marimo.png" height="28" alt="marimo"> marimo |
-| **Video** | <img src=".github/assets/engines/remotion.png" height="28" alt="Remotion"> Remotion &nbsp;&nbsp; <img src=".github/assets/engines/manim.png" height="28" alt="Manim"> Manim |
-| **3D** | <img src=".github/assets/engines/blender.png" height="28" alt="Blender"> Blender |
-| **Simulation** | <img src=".github/assets/engines/mujoco.png" height="28" alt="MuJoCo"> MuJoCo |
-| **Circuits** | <img src=".github/assets/engines/circuitjs.png" height="28" alt="CircuitJS"> CircuitJS, by Paul Falstad |
-| **Chips** | <img src=".github/assets/engines/yosys.png" height="28" alt="Yosys"> Yosys |
-| **Chemistry** | <img src=".github/assets/engines/rdkit.png" height="28" alt="RDKit"> RDKit |
-| **Games** | <img src=".github/assets/engines/phaser.png" height="28" alt="Phaser"> Phaser |
-| **Music** | <img src=".github/assets/engines/strudel.png" height="28" alt="Strudel"> Strudel |
+| A printable part or a product prototype | [Autonomous Workshop](store/agents/autonomous-workshop/), [text-to-cad](store/agents/text-to-cad/) |
+| A 3D scene or animation | [Blender](store/agents/blender/) |
+| A circuit board, simulated circuit, or digital chip | [Autonomous Circuit](store/agents/autonomous-circuit/), [CircuitJS](store/agents/circuitjs/), [Yosys](store/agents/yosys/) |
+| A game you can play | [Phaser](store/agents/phaser/) |
+| A keynote, document, or diagram | [Marp](store/agents/marp/), [Typst](store/agents/typst/), [Excalidraw](store/agents/excalidraw/) |
+| A video, mathematical animation, or music | [Remotion](store/agents/remotion/), [Manim](store/agents/manim/), [Strudel](store/agents/strudel/) |
+| A robot simulation, molecular model, or interactive notebook | [MuJoCo](store/agents/mujoco/), [RDKit](store/agents/rdkit/), [marimo](store/agents/marimo/) |
 
-All of them, and every coding agent, are in the **Harness Store**: a tab in the app with a page per
-agent, where it is installed, Get, Open and Remove per machine, ratings and reviews.
+Use **Codex, Claude Code, OpenCode**, or another [supported coding engine](docs/engines.md).
+Each specialized harness declares the engine it uses. Your engine keeps its own login, configuration,
+and model access; OpenHarness adds the workspace around it. Shared viewers are installed as
+dependencies and reused by other harnesses on the same machine.
 
-## Every machine you own
+These capabilities build on the work of upstream open-source communities. The Store credits their
+authors and links to their projects. Each project's own license still applies.
 
-Your laptop, the Mac mini at home, the box in the rack, in one window, side by side. Each machine
-runs a small daemon that dials out; nothing to open, no SSH, no VPN. The relay in between forwards
-ciphertext and holds no keys, and terminal traffic goes machine to machine over WebRTC when it can.
+## Get started
 
-Sessions live on the machine, not in the window. Every agent is a tmux pane there. Close the laptop,
-open it on the train: same pane, same scrollback. After a reboot the daemon brings each agent back
-with the engine's own `--resume` and the same id. Start an agent on another machine by browsing its
-folders from New Harness, or clone a repository there first.
+1. [Download the app](https://harness.autonomous.ai/desktop).
+2. Open the Harness Store and choose something you want to make. Set up the coding engine it uses
+   with your own subscription, API key, or supported local model configuration.
+3. Press **⌘N**, choose a harness, machine, and project, then create your session.
 
-<p align="center">
-  <img src=".github/assets/screenshots/machines-menu.png" width="960" alt="The Machines menu: a MacBook, this Mac with 27 agents, a ThinkPad, an iMac at home with 4 agents and an iMac at the office with 6, and the agents on the iMac at home listed in a submenu">
-</p>
+**macOS first.** macOS is our primary supported and tested desktop experience. Linux builds exist,
+but feature parity is still in progress; Windows support is planned. Embedded harness viewers
+currently work on macOS. Individual harnesses may have additional toolchain requirements.
 
-## A device for the desk
+**Current limitation:** startup still requires sign-in. [Account-free local use is an outstanding
+requirement](docs/development.md#account-free-local-use): sign-in should only be needed when you
+link remote machines. Your coding engine's own authentication is separate.
 
-A round USB display with a microphone. Your agents are tiles in the order of the window's panes,
-each with what it is doing and for how long. When an agent asks a question, it is on the face,
-answerable with a tap. When a turn finishes, the recap, with one quiet tone. Double-tap and speak, and
-Boss mode routes the task to the agent already on it. No WiFi, no credential: plugging it in is the
-authorization, and the daemon on that computer serves it over the cable.
+<details>
+<summary>Build and run from source</summary>
+
+You will need Node.js 20+, tmux, Xcode, and Flutter 3.47+ with Dart 3.13+ for macOS.
+The repository currently lives at the URL below; clone it into a folder called `openharness`.
+
+```bash
+git clone https://github.com/autonomous-ai/autonomous-harness.git openharness
+cd openharness
+(cd cli && npm ci)
+make install-cli
+cd desktop
+flutter config --enable-swift-package-manager
+flutter pub get
+flutter run -d macos
+```
+
+`make install-cli` installs this checkout's CLI and restarts the local daemon. See the
+[development guide](docs/development.md) for isolated testing and the other packages.
+
+</details>
+
+## Build your first harness
+
+**Your first harness can be a greeting in a live preview.** You don't need to change the desktop
+app or learn its codebase. The [Hello World example](store/examples/hello-world/) contains:
+
+```text
+hello-world/
+  harness.json          the agent, instructions, and shared viewer
+  AGENTS.md             what this harness helps someone do
+  template/index.html   the page you will see beside the terminal
+```
+
+From a checkout, with the `harness` CLI installed:
+
+```bash
+harness dsh install "$PWD/store/viewers/web-viewer" --link
+cp -R store/examples/hello-world ../my-first-harness
+harness dsh check ../my-first-harness
+harness dsh install ../my-first-harness --link
+```
+
+The first command links the shared viewer from this checkout; Store installs resolve viewer
+dependencies automatically. The connection is declared in `harness.json`:
+
+```json
+"viewer": { "use": "autonomous/web-viewer" }
+```
+
+Open **⌘N → Hello World**, choose a new project, and ask **“Say hello to Ada.”** Codex edits
+`index.html`, and the greeting changes in the built-in Web Viewer beside it. Change the instructions
+to teach it your own craft, then start a fresh session to try them. Add skills, setup scripts, or
+checks when you need them; the viewer is already shared with other harnesses.
+
+The terms describe different parts of the same experience:
+
+| Term | Meaning | Example |
+|---|---|---|
+| **Engine** | The coding agent that does the work | Codex |
+| **Viewer** | The preview that shows what the agent makes | A 3D viewport |
+| **Harness** | An agent and viewer packaged for a craft | Autonomous Workshop for CAD |
+| **Session** | One running instance in a project, on a machine | Designing your phone stand |
+
+The [`harness dsh` commands](store/README.md) keep their existing name; DSH means domain-specific
+harness. [The contribution guide](CONTRIBUTING.md#your-first-harness) takes you from Hello World to
+a harness other people can install from your repository or find in the Store.
+
+## A terminal you already know
+
+Native Flutter, real terminals, persistent tmux sessions. Keep your familiar CLI workflows and
+bring several agents together in one window, with their outputs beside them.
+
+| Shortcut | What it does |
+|---|---|
+| **⌘N** | Start a harness: choose what, where, and which project |
+| **⌘O** | Fuzzy-find sessions, projects, tabs, and machines; type `>` for commands |
+| **⌘H / J / K / L** | Move between panes |
+| **⌘Enter** | Zoom a pane, then return to the layout |
+| **⌘R / ⌘D** | Split right / down |
+| **⌘S** | Choose a layout |
+| **⇧⌘I** | Find agents waiting for your attention |
+
+Your sessions live on the machine, independently of the window. Close the app and return to your
+work. [Customize your keybindings](docs/keyboard.md) or explore the [workspace guide](docs/app.md).
+
+## Your machines, together
+
+Use your laptop, the Mac mini at home, and a remote workstation from the same window. Each machine
+runs a daemon that connects outward: no SSH setup, VPN, or inbound port forwarding.
+
+Linked machines use end-to-end encryption for terminal traffic. The relay forwards ciphertext;
+direct WebRTC connections are used when available. Sign in and explicitly link the machines you
+want to use. [How the connection works](docs/architecture.md).
+
+On another supported machine:
+
+```bash
+curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
+harness login
+harness start
+```
+
+Then use **Machines → Link Machine** in the app.
+
+## Open firmware. Your hardware.
+
+A round USB display brings your agents onto your desk: see their progress, answer questions, and
+speak a task. It connects to the host daemon over the cable, with no Wi-Fi setup or credentials
+stored on the device.
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
-## Install
+The [ESP32-S3 firmware](device/esp32-circle/) is available now. Build and flash it onto a supported
+board, or contribute support for yours. **Schematics and enclosure designs are coming**; they are
+not included yet. The [hardware guide](device/esp32-circle/README.md) covers the current boards and build.
 
-1. **The app**, macOS 12+ or Ubuntu 22.04+: [harness.autonomous.ai/desktop](https://harness.autonomous.ai/desktop).
-2. **Another machine**, a server, a Mac mini, a container, with Node ≥ 20 and tmux:
+## Help build OpenHarness
 
-   ```bash
-   curl -fsSL https://harness.autonomous.ai/cli/install.sh | bash
-   harness login
-   harness start
-   ```
+The community's building block is a **harness**. Bring a tool you love, a workflow you know well,
+or a craft you want more people to try. Someone else's first PCB, game, or animation could start
+with what you contribute.
 
-   It shows up in the app within a minute.
+- **Add a harness:** [start with Hello World](CONTRIBUTING.md#your-first-harness), then share a
+  working example. It can live here or in your own repository.
+- **Improve one:** better instructions, a sample project, a clearer error, a new viewer, or support
+  for another operating system all help.
+- **Improve the platform:** engines, terminal behavior, accessibility, keyboard workflows, and
+  hardware ports are welcome too. [Find your starting point](CONTRIBUTING.md#other-ways-to-contribute).
+- **Tell us what was confusing:** documentation fixes and reproducible bug reports are contributions.
 
-## First five minutes
+You can use OpenHarness, build a harness privately, or fork the whole platform. Sharing yours
+helps the next person do more. [Contribute](CONTRIBUTING.md) · [Report a security issue](SECURITY.md).
 
-- **⌘N** New Harness: an agent, a machine, a folder, Create.
-- **⌘O** Open Harness: find any session, tab, project or machine; `>` runs a command.
-- **⌘B** takes a task in plain words and routes it to the agent already on it.
-- **⌘R** and **⌘D** split right and down.
-- **⌘S** picks a layout.
-- **⌘⏎** zooms a pane.
-- **⇧⌘I** lists the agents waiting on you.
+## Documentation
 
-The full keymap, and how to remap it: [docs/keyboard.md](docs/keyboard.md). The window in detail:
-[docs/app.md](docs/app.md).
-
-## Extend and contribute
-
-Every layer has a contract, a starter and a check, and most ways in never touch this repo's code.
-
-| You could | Start at | The bar |
-|---|---|---|
-| **Build a harness** for your domain, or bring your own project in | [`store/README.md`](store/README.md), [`store/starter/`](store/starter/), then a folder in [`store/agents/`](store/agents/) or a file in [`store/registry/`](store/registry/) | `harness dsh check` green; an afternoon from the starter. Marp and text-to-cad are wrappers Autonomous wrote to show the shape; their maintainers can take them over |
-| **Bring your agent** as a CLI engine | [`cli/src/engines/README.md`](cli/src/engines/README.md) | a recorded session of the real binary; the fixtures pass |
-| **Bring your agent** as an API provider | [`provider/README.md`](provider/README.md) | eight JSON-RPC methods; the conformance runner, zero failures |
-| **A terminal multiplexer** | [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-multiplexer) | `npm run test:tmux-real`; open an issue first |
-| **A palette or terminal theme** | [`docs/extending.md`](docs/extending.md#palettes-and-appearance) | one Dart value; `flutter test` |
-| **A keymap** | `~/.config/harness/keybindings.jsonc` | no code; it reloads on save |
-| **Automation** over the daemon | [`docs/cli.md`](docs/cli.md#automation) | the loopback socket answers |
-| **A bug report** | an issue | an engine bug is fixed from a real transcript; attach one and it is half done |
-| **Docs** | this file and [`docs/`](docs/) | what confused you in the first five minutes is the next fix |
-
-A domain harness is a git repository: a manifest, an `AGENTS.md`, skills, a workspace template, a
-toolchain that installs itself, and for the pane a viewer server and a verdict file. Harness reads
-the manifest and nothing else. Copy the starter, `harness dsh check .`, `harness dsh install . --link`,
-and your tile is in New Harness. [Marp](https://github.com/autonomous-ai/autonomous-marp) is the
-smallest complete one and the place to start.
-
-[CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, [SECURITY.md](SECURITY.md) takes security
-reports, and the licence is [MIT](LICENSE).
-
-## Docs
-
-- [docs/app.md](docs/app.md) — sessions, panes, layouts, terminal, attention, machines
-- [docs/keyboard.md](docs/keyboard.md) — the full keymap and the keymap file
-- [docs/engines.md](docs/engines.md) — the fourteen engines: how each is followed, resume, bypass, grids
-- [docs/architecture.md](docs/architecture.md) — daemon, session model, transport and encryption, relay, providers, the device
-- [docs/cli.md](docs/cli.md) — every `harness` command, the dashboard, the loopback socket
-- [docs/extending.md](docs/extending.md) — agents, multiplexers, palettes, keys, automation
-- [docs/development.md](docs/development.md) — repository layout, build, test, release
-- [store/README.md](store/README.md) — the Harness Store: build a harness or a viewer; [store/spec/](store/spec/README.md) is the contract
-- [cli/](cli/README.md), [desktop/](desktop/README.md), [backend/](backend/README.md), [provider/](provider/README.md) — per-package detail
+- [Build and share harnesses](store/README.md) · [Package specification](store/spec/README.md)
+- [Workspace](docs/app.md) · [Keyboard shortcuts](docs/keyboard.md) · [Coding engines](docs/engines.md)
+- [Architecture and encryption](docs/architecture.md) · [CLI and automation](docs/cli.md)
+- [Build, test, and develop](docs/development.md) · [Extension points](docs/extending.md)
+- [Desktop](desktop/README.md) · [Daemon](cli/README.md) · [Relay](backend/README.md) · [Provider API](provider/README.md)

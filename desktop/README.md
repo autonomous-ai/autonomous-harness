@@ -1,8 +1,9 @@
 # Harness Desktop
 
 Harness Desktop is the native Flutter client for browsing Harness machines and
-interacting with their terminal-backed agents. It runs natively on **macOS
-and Linux (Ubuntu)** and includes an unexercised Windows runner.
+interacting with their terminal-backed agents. **macOS is the primary supported and tested
+experience.** Linux builds exist, with feature parity still in progress; Windows support is
+planned and its runner is unexercised. Embedded harness viewers currently require macOS.
 
 ## Development
 
@@ -10,6 +11,7 @@ Install a compatible Flutter SDK, then run the project from this repository
 root:
 
 ```bash
+cd desktop
 flutter pub get
 flutter test
 flutter run -d macos   # or: flutter run -d linux

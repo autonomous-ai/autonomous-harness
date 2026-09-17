@@ -1,66 +1,172 @@
-# Contributing
+# Contributing to OpenHarness
 
-Two kinds of contribution land here, and they have different bars.
+Welcome! OpenHarness grows when someone shares a new capability. A harness for a tool you love,
+a better example, a small fix, or a clearer sentence can be your first contribution.
 
-**The CLI** is the code path — a new agent framework, or a second terminal multiplexer — and it is
-welcome. What to run and what the bar is: [The CLI](#the-cli-cli--engines-and-multiplexers) below.
-Open an issue first; for an engine, bring a recorded session from the real binary, because that
-recording decides most of the design and is the difference between an engine that works and one that
-fails silently.
+**Start with a harness.** You can build one without changing the app, writing a provider, or
+learning the platform internals. Keep it in your own repository or contribute it here. Both are
+first-class ways to participate, and both use the same package format.
 
-**Everything about the provider spec** is after that, where the most useful contributions are usually
-not code at all.
+[Your first harness](#your-first-harness) · [Share it](#share-your-harness) ·
+[Other contributions](#other-ways-to-contribute) · [Pull requests](#how-a-change-lands)
+
+## Your first harness
+
+You'll need the OpenHarness app and `harness` CLI. This example uses an installed, configured
+Codex engine; the package checks themselves do not need a model or account.
+
+### 1. Copy Hello World
+
+From a checkout of this repository:
+
+```bash
+harness dsh install "$PWD/store/viewers/web-viewer" --link
+cp -R store/examples/hello-world ../my-first-harness
+cd ../my-first-harness
+```
+
+The first command links the shared viewer from this checkout. Store installations normally install
+that dependency automatically; this also lets you try a new viewer before it reaches a release.
+
+**Agent + viewer = harness.** This example has three working files:
+
+- [`harness.json`](store/examples/hello-world/harness.json) declares the agent and its viewer.
+- [`AGENTS.md`](store/examples/hello-world/AGENTS.md) teaches the agent to change the greeting.
+- [`template/index.html`](store/examples/hello-world/template/index.html) is copied into the new project.
+
+```json
+{
+  "spec": 1,
+  "id": "examples/hello-world",
+  "name": "Hello World",
+  "description": "Your first OpenHarness package: make a greeting in a live HTML preview.",
+  "category": "Example",
+  "author": "OpenHarness contributors",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "index.html"
+  },
+  "agent": {
+    "instructions": "AGENTS.md"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer"
+  }
+}
+```
+
+`viewer.use` links to the shared **Web Viewer**. OpenHarness runs it beside the agent and reuses an
+existing installation. You write ordinary HTML; no viewer implementation, SDK, or build step is
+needed. The preview reloads when the agent saves the page.
+
+### 2. Check it and try it
+
+```bash
+harness dsh check .
+harness dsh install "$PWD" --link
+```
+
+The check should end with `examples/hello-world conforms to spec 1`. Warnings about optional
+skills and a doctor command are expected in this minimal example. It validates the package;
+it does not ask a model to perform the task.
+
+In the app, press **⌘N**, choose **Hello World** (look under **More** if needed), and use a new
+project on the machine where you installed it. Ask:
+
+> Say hello to Ada.
+
+The agent should change `index.html` to say `Hello, Ada!`. Watch it update in the viewer beside
+the terminal. You have now run an agent and a viewer together as your own harness.
+
+`--link` keeps the installed package connected to your checkout. Edit the instructions and start
+a fresh session in a new project to try them; instructions already copied into an existing
+project are preserved. You can remove this example with `harness dsh remove examples/hello-world`;
+your source folder and projects remain.
+
+### 3. Make it yours
+
+Change `id` to `your-handle/your-harness`, give it a useful `name` and `description`, and put your
+name in `author`. Use lowercase letters, digits, and dashes in the two parts of the ID. Remove
+the old linked installation before changing the ID, then check and install the new one.
+
+Teach one concrete workflow in `AGENTS.md`: what someone asks for, what the agent produces, and
+how it checks the result. For example, turn meeting notes into a decision log or teach a CLI
+CAD tool to build a printable part. You can use `claude` instead of `codex` if that better fits
+your workflow; install and configure that engine, then test it too.
+
+Add only what your harness needs:
+
+| When you need… | Add… |
+|---|---|
+| Reusable techniques or commands | `skills/<name>/SKILL.md` |
+| Starting files for a project | `workspace.template` and a marker file |
+| Extra software | `toolchain.setup` and a `toolchain.doctor` readiness check |
+| A visible result beside the terminal | An existing `viewer.use` dependency, or your own viewer |
+| Progress and validation in the pane | A check that writes `.harness/verdict.json` |
+
+The [full starter](store/starter/) demonstrates skills, a template, and setup hooks. The
+[Store guide](store/README.md#build-one) explains these optional pieces. For a complete visual
+example, see [Marp](store/agents/marp/) or [Blender](store/agents/blender/).
+
+## Share your harness
+
+You do not need permission to build a harness or share its repository. Choose the route that fits:
+
+- **Your own repository:** publish the package with a README and license. Anyone can install it
+  with `harness dsh install https://github.com/YOUR-HANDLE/YOUR-HARNESS`. To list it in the Store,
+  submit a small entry at `store/registry/<owner>/<name>.json`. You keep the code and its maintenance.
+- **This repository:** contribute a folder at `store/agents/<name>/` with a `harness.json` and
+  `store.json`. Built-in package IDs use `autonomous/<name>`; the `author` field credits the actual
+  author or upstream project. The CLI build generates the listing from those files.
+
+The [publishing examples](store/README.md#publish-a-harness) show the exact metadata for both routes.
+A Store listing reaches users with a CLI release after it is merged.
+
+For a first pull request, give reviewers a short path to the same result you saw:
+
+- What can someone make with it? Include one copyable prompt and its output or a screenshot.
+- Which engine, operating system, and tool versions did you try?
+- Does `harness dsh check` pass? If there are setup or doctor commands, show a clean install too.
+- Credit upstream authors, include the appropriate license, and state required accounts or paid tools.
+
+One useful, tested workflow is a good first contribution. An issue is optional for a new harness;
+open one if you want feedback or help choosing an approach. AI-assisted contributions are welcome:
+read what you submit and run the example yourself.
+
+## Other ways to contribute
+
+| You want to… | Start here |
+|---|---|
+| Improve an existing harness | Its folder in [store/agents](store/agents/) and its own README |
+| Share a viewer other harnesses can reuse | [Store guide](store/README.md), [viewer packages](store/viewers/) |
+| Add a coding engine | [Engine integration guide](cli/src/engines/README.md) |
+| Add an API provider | [Provider guide](provider/README.md) |
+| Improve terminal behavior, shortcuts, or accessibility | [Development guide](docs/development.md), [keyboard guide](docs/keyboard.md) |
+| Help with Linux or Windows compatibility | [Development guide](docs/development.md#platform-support) |
+| Support another hardware board | [Firmware guide](device/esp32-circle/README.md) |
+| Fix documentation or report a bug | A small PR, or an issue with steps to reproduce |
+
+For a new engine, multiplexer, or a change to a shared protocol, open an issue first so we can agree
+on the interface. A new harness using an existing engine does not need that platform work.
+Security reports go through [SECURITY.md](SECURITY.md).
 
 ## How a change lands
 
-1. **Open an issue first.** For an engine, attach the recorded session; for a multiplexer, answer the
-   pane-identity question below before writing code. Both save you from building the wrong shape.
-2. **Fork, then branch.** Work on a branch in your fork — nobody pushes to `main` directly.
-
-   ```bash
-   gh repo fork autonomous-ai/autonomous-harness --clone   # or fork on the web, then clone your fork
-   cd autonomous-harness
-   git remote add upstream https://github.com/autonomous-ai/autonomous-harness.git
-   git checkout -b herdr-support
-   ```
-
-3. **Run the checks for whichever package you touched** (see the two sections below) and keep the
-   change to one package where you can. Then push and open the request:
-
-   ```bash
-   git push -u origin herdr-support
-   gh pr create --base main            # or open it from the web UI
-   ```
-
-   To pick up changes from `main` while your branch is open, **rebase — do not merge**:
-
-   ```bash
-   git fetch upstream && git rebase upstream/main
-   ```
-
-   A merge commit in the branch is not fatal (the squash flattens it anyway), but rebasing keeps the
-   diff readable, which is the whole review.
-4. **Open a pull request against `main`,** and say in the description **which checks you ran and what
-   you ran them against** — "`npm test` plus `test:tmux-real` on tmux 3.5a, macOS" is worth more than
-   a green checkbox.
-
-   That last part is not politeness. Nothing runs automatically on a pull request: the CI workflow
-   (`npm run typecheck` and `npm test` on Ubuntu, on the same pinned Node the released bundle is
-   built with) is started by hand — Actions -> CI -> Run workflow — when a maintainer wants a
-   second opinion on your branch, and even then a green run means those two passed and **nothing
-   more**. The suites that need real software are gated behind `RUN_*` env vars precisely because a
-   hosted runner has no tmux server, no Herdr and no Cursor, so `test:tmux-real`, `test:herdr-real`
-   and `test:cursor-e2e` are only ever run by you and by the maintainer reviewing you. For an engine
-   or a multiplexer, that is the half of the verdict that matters, and it starts from what you
-   report.
-5. **Review is manual, and hands-on.** A maintainer pulls the branch and runs the suites locally. For
-   an engine or a multiplexer that also means installing the real software, so tell us exactly what to
-   install and how you exercised it — a change nobody can reproduce cannot be merged, however good it
-   looks.
-6. **Merges are squashed.** The history here is linear on purpose; write the commit message for
-   someone reading `git log` in a year, not for the diff.
-7. **Merging is not shipping.** The CLI self-distributes, so a change reaches users on the next
-   release, which a maintainer cuts. Expect a gap between "merged" and "my machine has it".
+1. **Fork and branch.** Fork this repository on GitHub, clone your fork, and create a branch such
+   as `add-my-harness`. Open a pull request against `main` when it is ready; a draft is welcome if
+   you need help. No separate issue is required for a small fix or documentation change.
+2. **Run the checks relevant to your change.** A harness contribution starts with its package
+   check and a real example. Platform changes use the package checks below and in the
+   [development guide](docs/development.md). Say exactly what ran and what did not.
+3. **Make it reproducible.** Use the PR template to describe the result, how to try it, and the
+   validation. Remove credentials and private project content from logs and recordings.
+4. **Review together.** A maintainer checks the change and may ask you to refine it. CI is
+   currently run manually through **Actions → CI → Run workflow**; a PR does not automatically
+   exercise the app, real engines, or hardware. Report those checks separately.
+5. **Merge and release.** PRs are squash-merged. Rebase on the latest `main` when needed to keep
+   the diff readable. Merging and publishing are separate: app, CLI, and firmware releases have
+   their own schedules.
 
 ## Conventions across this repository
 
@@ -146,7 +252,7 @@ dialogs and the model pickers are driven with.
 
 Say so. The profile is written against one product's needs, and the first partners to implement it
 will find things it does not answer. An operation that is neither Tier 0, nor a named extension, nor
-explicitly out of scope is a **gap**, not an implicit "no" — Appendix C of `spec/README.md` is the
+explicitly out of scope is a **gap**, not an implicit "no" — Appendix C of [`provider/spec/README.md`](provider/spec/README.md) is the
 audit that is supposed to catch those, and it is not infallible.
 
 Open an issue quoting the clause id (`HP-xxx`), or the absence of one.
@@ -165,13 +271,13 @@ It is a compatibility contract, and the rules in §12 are binding:
 - Anything else needs a new revision, served alongside its predecessor for a deprecation window.
 
 Every normative statement gets a stable `HP-xxx` id, and a new one needs a matching check in
-`reference-provider/src/conformance.ts` — or an explicit SKIP saying why it cannot be verified from
+`provider/reference-provider/src/conformance.ts` — or an explicit SKIP saying why it cannot be verified from
 outside. Silence is not an option; that rule is the reason the suite is trustworthy.
 
 ## Provider code (`provider/`)
 
 ```bash
-cd reference-provider && npm install && npm run typecheck && npm test
+cd provider/reference-provider && npm ci && npm run typecheck && npm test
 ```
 
 Both packages have **no runtime dependencies** and that is a constraint, not an accident: a partner
