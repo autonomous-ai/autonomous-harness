@@ -310,6 +310,9 @@ function applyTrajectory(traj, { fresh, initial, reloaded }) {
     if (state.mode !== 'replay') { resetSim(); state.playing = !recording || true }
     else showFrame(state.cursor)
   } else if (fresh) {
+    // A notice about an older rollout is about a recording that no longer exists: the agent's first
+    // 3 s take stayed on screen ("New 3.06 s rollout") over the 21 s run that replaced it.
+    notice(null)
     const wasRecording = previous?.status === 'recording'
     if (recording) {
       if (!wasRecording) toast('The agent is recording a new rollout')
