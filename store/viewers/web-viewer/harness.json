@@ -1,0 +1,17 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/web-viewer",
+  "name": "Web Viewer",
+  "category": "Code",
+  "author": "OpenHarness contributors",
+  "description": "A live preview for HTML, CSS, and JavaScript in a harness workspace. Reloads when files change.",
+  "toolchain": {
+    "doctor": "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)\""
+  },
+  "viewer": {
+    "command": "node viewer.mjs",
+    "url": "http://127.0.0.1:${port}/?file=index.html",
+    "artifactExtensions": [".html"]
+  }
+}

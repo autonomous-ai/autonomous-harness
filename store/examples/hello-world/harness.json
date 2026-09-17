@@ -1,0 +1,19 @@
+{
+  "spec": 1,
+  "id": "examples/hello-world",
+  "name": "Hello World",
+  "description": "Your first OpenHarness package: make a greeting in a live HTML preview.",
+  "category": "Example",
+  "author": "OpenHarness contributors",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "index.html"
+  },
+  "agent": {
+    "instructions": "AGENTS.md"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer"
+  }
+}
