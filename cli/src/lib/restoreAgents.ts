@@ -212,12 +212,7 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
   return summary
 }
 
-/**
- * Exported for `repointAgent`'s wiring in cli.ts: a repointed pane needs exactly this — the settle
- * window, the held route, the resume → fresh fallback and the `launch: ready` hand-over. A second
- * copy of it would be a second place for those four things to drift.
- */
-export async function watchRestoredPane(
+async function watchRestoredPane(
   deps: RestoreAgentsDeps,
   entry: RegisteredSession,
   runtime: TmuxRuntimeRef,

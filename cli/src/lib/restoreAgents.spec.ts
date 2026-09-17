@@ -324,7 +324,7 @@ describe('restoreAgents — waiting for the engine', () => {
   })
 
   it('never opens a pane for a row whose folder is gone, and keeps its session binding', async () => {
-    const detail = 'its folder /tmp/demo/.claude/worktrees/feat-org-links no longer exists — choose another folder to start it there'
+    const detail = 'its folder /tmp/demo/.claude/worktrees/feat-org-links no longer exists — put it back, or create the agent again somewhere else'
     const h = harness([row({ cwd: '/tmp/demo/.claude/worktrees/feat-org-links' })], {
       refuseLaunchWith: { error: 'CWD_NOT_FOUND', detail },
     })
@@ -342,7 +342,7 @@ describe('restoreAgents — waiting for the engine', () => {
   })
 
   it('keeps the session binding when the fresh relaunch cannot even be built', async () => {
-    const detail = 'its folder /tmp/demo no longer exists — choose another folder to start it there'
+    const detail = 'its folder /tmp/demo no longer exists — put it back, or create the agent again somewhere else'
     // The first build succeeds (the folder was there at restore); the pane then dies, and by the time
     // the fresh retry is built the folder is gone — a folder deleted while the agent was running.
     const h = harness([row()], { refuseLaunchWith: { error: 'CWD_NOT_FOUND', detail }, refuseLaunchFromCall: 2 })
