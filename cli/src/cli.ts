@@ -4600,6 +4600,9 @@ async function runForeground(session: AuthSession): Promise<void> {
     requestAppFocus: (agentId, expiresAt, focusRevision) => backend.sendFirstLocal({
       type: 'device_focus', payload: { machineId: backend.machineId, agentId, expiresAt, focusRevision },
     }),
+    // The dial's own carousel tick, borrowed: ring order and wrap from the cable host, `dial_focus` to
+    // the window, `app_focus` back. Without a window the forward is a no-op, so say so up front.
+    stepFocus: (direction, currentAgentId) => backend.hasLocalClient() ? cableHost.stepFocus(direction, currentAgentId) : Promise.resolve('no_app'),
     agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
       state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
     submit: submitAgent,

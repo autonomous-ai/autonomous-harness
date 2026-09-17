@@ -301,3 +301,71 @@ export async function migrateMachineRename(): Promise<void> {
     logger.error('machine-rename migration failed — continuing (legacy data stays in harness_* collections)', err)
   }
 }
+
+// ── machine_daily_presence.turnsStarted backfill (idempotent) ──────────────────────────────────────
+// `turnsStarted` was added to `MachineDailyPresence` after the collection already had rows. On Mongo,
+// Prisma's `{ increment: 1 }` is a pipeline `$add` — applied to a document WITHOUT the field it
+// stores `null` (missing + 1 = null), and every later increment keeps it null, silently: the read
+// side still reports the schema default 0, so nothing ever errored. Measured on prod 2026-09-16: the
+// 15 rows created before the field shipped had every turn of the day swallowed, while rows created
+// afterwards matched the per-agent counts exactly. `agent_daily_presence` is written in the same
+// call as the machine increment (dailyTracking.recordTurnStarted), so its per-(machine, day) sum is
+// the authoritative value to restore. Mongo's `{ turnsStarted: null }` matches BOTH null and absent,
+// which is exactly the set that needs fixing; once stamped, the row never matches again.
+/** Read a `find`/`aggregate` result in ONE batch. The default first batch is capped at 101 documents
+ *  and reading `firstBatch` alone silently truncates — for a backfill that means stamping rows with
+ *  a wrong value the idempotency guard never revisits. `getMore` is not an option through
+ *  `$runCommandRaw`: the 64-bit cursor id loses precision in the JSON round-trip (measured:
+ *  CursorNotFound on the first getMore). So ask for everything in the first batch and REFUSE (throw)
+ *  if the server still left a cursor open — a bounded backfill can afford a retry on the next boot,
+ *  it cannot afford a partial write. */
+const RAW_SINGLE_BATCH = 100_000
+async function readSingleBatchRaw<T>(command: Record<string, unknown>): Promise<T[]> {
+  type Batch = { cursor?: { id?: number | { $numberLong?: string }; firstBatch?: T[] } }
+  const res = (await prisma.$runCommandRaw(command as never)) as Batch
+  const id = res.cursor?.id
+  const open = typeof id === 'number' ? id !== 0 : !!id && id.$numberLong !== '0'
+  if (open) throw new Error(`raw ${Object.keys(command)[0]} exceeded a single batch of ${RAW_SINGLE_BATCH} — refusing partial read`)
+  return res.cursor?.firstBatch ?? []
+}
+
+export async function backfillMachinePresenceTurnsStarted(): Promise<void> {
+  try {
+    const rows = await readSingleBatchRaw<{ _id: unknown; machineId: string; dayUtc: unknown }>({
+      find: 'machine_daily_presence',
+      filter: { turnsStarted: null },
+      projection: { _id: 1, machineId: 1, dayUtc: 1 },
+      batchSize: RAW_SINGLE_BATCH,
+      singleBatch: true,
+    })
+    if (rows.length === 0) return
+
+    const sums = await readSingleBatchRaw<{ _id: { machineId: string; dayUtc: { $date?: string } | string }; turns: number }>({
+      aggregate: 'agent_daily_presence',
+      pipeline: [
+        { $match: { machineId: { $in: [...new Set(rows.map((r) => r.machineId))] } } },
+        { $group: { _id: { machineId: '$machineId', dayUtc: '$dayUtc' }, turns: { $sum: '$turnsStarted' } } },
+      ],
+      cursor: { batchSize: RAW_SINGLE_BATCH },
+    })
+    const dayKey = (d: unknown): string => {
+      const v = d as { $date?: string } | string
+      return typeof v === 'string' ? v : (v?.$date ?? String(v))
+    }
+    const byKey = new Map<string, number>()
+    for (const s of sums) byKey.set(`${s._id.machineId}|${dayKey(s._id.dayUtc)}`, s.turns)
+
+    const updates = rows.map((r) => ({
+      q: { _id: r._id, turnsStarted: null },
+      u: { $set: { turnsStarted: byKey.get(`${r.machineId}|${dayKey(r.dayUtc)}`) ?? 0 } },
+    }))
+    const res = (await prisma.$runCommandRaw({ update: 'machine_daily_presence', updates } as never)) as { nModified?: number }
+    logger.info('machine_daily_presence.turnsStarted backfilled', {
+      rows: rows.length,
+      modified: res.nModified ?? 0,
+      restoredTurns: updates.reduce((a, u) => a + u.u.$set.turnsStarted, 0),
+    })
+  } catch (err) {
+    logger.error('machine_daily_presence.turnsStarted backfill failed — continuing (retried next boot)', err)
+  }
+}

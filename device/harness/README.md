@@ -30,7 +30,7 @@ for the shared pin definitions. Other ESP32 boards need a port; matching the MCU
 Install and activate ESP-IDF 5.5 or newer. From the repository root:
 
 ```bash
-cd device/esp32-circle
+cd device/harness
 idf.py set-target esp32s3
 idf.py build
 idf.py -p PORT flash monitor

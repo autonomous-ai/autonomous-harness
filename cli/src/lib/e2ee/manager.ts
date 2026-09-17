@@ -234,8 +234,9 @@ export class E2eeManager {
   /** Revoke every paired browser. Signals all online sessions to re-pair + rotates the group key. */
   revokeAll(): { count: number } {
     const count = this.store.count()
-    for (const s of [...this.sessions.entries()]) { this.deny(s[0]); this.sessions.delete(s[0]) }
+    // Device cleanup first: it needs the live session to seal a pair.revoke frame before deny drops it.
     for (const paired of this.store.list()) { try { this.deps.onIdentityRevoked?.(paired.identityPub) } catch { /* Continue revoking every stored identity. */ } }
+    for (const s of [...this.sessions.entries()]) { this.deny(s[0]); this.sessions.delete(s[0]) }
     this.store.clear()
     this.rotateGroupKey()
     return { count }

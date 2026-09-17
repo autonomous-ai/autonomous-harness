@@ -1,6 +1,6 @@
 // The machine-wheel ingest gate, on a laptop.
 //
-//   device/esp32-circle/test/run.sh
+//   device/harness/test/run.sh
 //
 // What is under test is one question — "did anything actually change?" — and every case here is a way of
 // getting that wrong that would look completely normal on the screen. An over-eager `true` costs a wheel

@@ -15,6 +15,12 @@ export const prisma = new PrismaClient({
  *  `binding.deletedAt` instead. */
 export const machineAlive: Prisma.MachineWhereInput = { OR: [{ deletedAt: null }, { deletedAt: { isSet: false } }] }
 
+/* Second Mongo-Prisma gotcha, sibling of the one above: an atomic `{ increment: n }` on a document
+ * that LACKS the field stores `null` (it is a pipeline `$add`, and missing + n = null), and stays
+ * null on every later increment — no error, and reads still return the schema default. So a numeric
+ * counter added to an existing collection needs a one-time raw `$set` backfill for legacy rows
+ * before any code increments it (see lib/db/migrate.ts backfillMachinePresenceTurnsStarted). */
+
 const gracefulShutdown = async () => {
   logger.info('Disconnecting Prisma client...')
   await prisma.$disconnect().catch(() => { /* ignore */ })

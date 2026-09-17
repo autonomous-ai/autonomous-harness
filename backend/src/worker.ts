@@ -3,6 +3,7 @@ import { closeBus } from './lib/bus.js'
 import { backfillMachineFreeEntitlements } from './lib/db/freeEntitlement.js'
 import {
   backfillMachineAuthMode,
+  backfillMachinePresenceTurnsStarted,
   ensureSchema,
   migrateAutonomousEnvironment,
   migrateMachineRename,
@@ -31,6 +32,7 @@ async function start(): Promise<void> {
   await backfillMachineAuthMode()
   await pruneLegacyDeviceBindings()
   await backfillMachineFreeEntitlements()
+  await backfillMachinePresenceTurnsStarted()
 
   const shutdown = (signal: string): void => {
     logger.info(`Received ${signal}, stopping backend worker...`)

@@ -43,6 +43,17 @@ describe('Autonomous device existing E2EE relay seam', () => {
     })
     expect(f.remoteRevoke).toHaveBeenCalledWith('trusted-device')
   })
+  it('app-side revoke sends exactly one sealed pair.revoke to the connected device, then drops it', async () => {
+    const f = fixture(); await f.request({ type: 'hello', proto: 1, requestId: randomUUID() })
+    f.send.mockClear()
+    f.relay.revoke('trusted-device')
+    const revokes = f.send.mock.calls.filter(([, frame]) => (frame as { payload: { __e2e: { type: string } } }).payload.__e2e.type === 'pair.revoke')
+    expect(revokes).toHaveLength(1)
+    expect(revokes[0][1]).toEqual({ type: 'autonomous_device_event', payload: { __e2e: { type: 'pair.revoke', machineId: 'machine' } } })
+    // Client state is gone: the next request needs a fresh application hello.
+    await f.request({ type: 'turn.send', requestId: randomUUID() })
+    expect(f.send.mock.calls.at(-1)?.[1]).toMatchObject({ payload: { __e2e: { error: { code: 'HELLO_REQUIRED' } } } })
+  })
   it('does not revoke when the request is malformed', async () => {
     const f = fixture(); await f.request({ type: 'hello', proto: 1, requestId: randomUUID() })
     await f.request({ type: 'pair.revoke', requestId: randomUUID(), extra: true })

@@ -66,5 +66,14 @@ export class AutonomousDeviceRelay {
   }
   emit(event: AutonomousDeviceFrame): void { for (const [connId, client] of this.clients) this.sendEvent(connId, client.identity, event) }
   drop(connId: string): void { this.clients.delete(connId) }
-  revoke(identity: string): void { for (const [connId, client] of this.clients) if (client.identity === identity) this.clients.delete(connId); this.service.revoke(identity) }
+  /** App-side revoke: tell the device while its authenticated session still exists (the E2eeManager drops
+   *  the session right after), so it clears its own pin instead of showing "paired / disconnected" forever.
+   *  Best-effort: a device that is offline learns it on reconnect, when its e2e_hello gets e2e_denied. */
+  revoke(identity: string): void {
+    for (const [connId, client] of this.clients) if (client.identity === identity) {
+      try { this.sendTo(connId, identity, 'autonomous_device_event', { type: 'pair.revoke', machineId: this.machineId }) } catch { /* Local removal must proceed regardless. */ }
+      this.clients.delete(connId)
+    }
+    this.service.revoke(identity)
+  }
 }

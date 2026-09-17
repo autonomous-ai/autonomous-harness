@@ -7,7 +7,7 @@ desktop/    the app (Flutter; macOS first). third_party/xterm is the patched ter
 cli/        the harness daemon and CLI (TypeScript, one bundle). src/engines/ is one folder per engine
 backend/    the relay (Node, Prisma/MongoDB, Redis)
 provider/   the API-provider spec, reference and example providers, conformance runner
-device/     firmware for the Harness device (ESP-IDF, esp32-circle)
+device/     firmware for the Harness device (ESP-IDF, device/harness)
 store/      harnesses, shared viewers, the registry, Hello World, starter, schemas, and author tools
 ```
 

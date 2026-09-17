@@ -1,9 +1,8 @@
 // The message layer: what the daemon and the dial SAY to each other, on top of the bytes serial.ts moves.
 //
-// Written twice — here and in apps/esp32-circle/main/cable_client.c of the autonomous-code repository —
-// with no shared code, because the two halves ship from different repositories. The framing underneath
-// agrees by shared vectors; this layer agrees by docs/cable-protocol.md and by being small enough to read
-// in one sitting.
+// Written twice — here and in device/harness/main/cable_client.c — with no shared code, because one half
+// is TypeScript on a laptop and the other is C on an MCU. The framing underneath agrees by shared vectors;
+// this layer agrees by docs/cable-protocol.md and by being small enough to read in one sitting.
 //
 // THE VOCABULARY IS THE PRODUCT'S: machine → agent → session. The machine is this computer, the agents
 // are what the registry holds, and a session is one conversation underneath an agent.

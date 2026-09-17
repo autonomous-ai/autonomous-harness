@@ -81,7 +81,8 @@ export class AutonomousDeviceDirect {
   revoked(fingerprint: string): void {
     const ids = this.associations.filter(a => a.fingerprint === fingerprint).map(a => a.discoveryId)
     this.associations = this.associations.filter(a => a.fingerprint !== fingerprint)
-    for (const id of ids) { this.links.get(id)?.ws.terminate(); this.links.delete(id) }
+    // close(), not terminate(): the pair.revoke frame just queued by the relay must flush before the socket goes.
+    for (const id of ids) { this.links.get(id)?.ws.close(1000); this.links.delete(id) }
     this.save()
   }
   private async reconnect(): Promise<void> {

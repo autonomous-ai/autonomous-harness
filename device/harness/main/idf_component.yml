@@ -18,6 +18,6 @@ dependencies:
   # tcp_transport does not provide (no HTTP-redirect support).
   espressif/esp_websocket_client: "~1.2.0"
   # libsodium — the E2EE crypto stack (Ed25519, X25519, ristretto255 CPace, ChaCha20-Poly1305,
-  # SHA-2, HKDF/HMAC). Backs device/esp32-circle/main/e2ee/e2ee_core.c (byte-identical twin of the web/adapter
+  # SHA-2, HKDF/HMAC). Backs device/harness/main/e2ee/e2ee_core.c (byte-identical twin of the web/adapter
   # TS core). The Espressif port wires randombytes to the hardware RNG. See e2ee_core.h.
   espressif/libsodium: "^1.0.20"

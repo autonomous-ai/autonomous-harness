@@ -167,9 +167,9 @@ stored on the device.
 
 https://github.com/user-attachments/assets/97848065-61c6-40df-be66-a8247f69aa4c
 
-The [ESP32-S3 firmware](device/esp32-circle/) is available now. Build and flash it onto a supported
+The [ESP32-S3 firmware](device/harness/) is available now. Build and flash it onto a supported
 board, or contribute support for yours. **Schematics and enclosure designs are coming**; they are
-not included yet. The [hardware guide](device/esp32-circle/README.md) covers the current boards and build.
+not included yet. The [hardware guide](device/harness/README.md) covers the current boards and build.
 
 ## Help build OpenHarness
 

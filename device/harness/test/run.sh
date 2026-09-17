@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Host tests for the parts of the firmware that do not need the board.
 #
-#   device/esp32-circle/test/run.sh
+#   device/harness/test/run.sh
 #
 # No ESP-IDF, no flash cycle, no cable: cable_frame.c compiles with a plain compiler on purpose, so the
 # framing both halves of the link depend on can be checked in milliseconds. Run it before touching either

@@ -646,6 +646,23 @@ export class DaemonCableHost implements CableHost {
     this.wiring.focused?.(machineId, agentId)
   }
 
+  /**
+   * One tick of the carousel, for a device that has no ring of its own: the paired Autonomous device
+   * asks for "next"/"previous" and this picks the neighbour the USB dial's thumb would land on — the same
+   * walk (`listAgents()` ring order), the same wrap at either end, and the same `focus()` forward to the
+   * app. With no current agent on the ring the walk starts at its first (next) or last (previous) tile.
+   */
+  async stepFocus(direction: 'next' | 'previous', currentAgentId?: string): Promise<{ machineId: string; agentId: string } | 'no_agents'> {
+    const walk = (await this.listAgents()).filter((a) => !a.offRing).map((a) => a.id)
+    if (walk.length === 0) return 'no_agents'
+    const at = currentAgentId ? walk.indexOf(currentAgentId) : -1
+    const agentId = at < 0
+      ? walk[direction === 'next' ? 0 : walk.length - 1]
+      : walk[(at + (direction === 'next' ? 1 : walk.length - 1)) % walk.length]
+    this.focus(agentId)
+    return { machineId: this.machineOf(agentId), agentId }
+  }
+
   scrolled(phase: 'down' | 'move' | 'up', dy: number, velocity: number): void {
     // THE ENDS ARE LOGGED, THE MIDDLE IS NOT. A stroke is a `down`, a dozen `move`s and an `up`, several
     // times a second: logging the middle buries every other line in the file. But the failure this

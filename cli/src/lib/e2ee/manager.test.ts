@@ -153,9 +153,9 @@ class PwPeer {
   }
 }
 
-function machine() {
+function machine(extra: Partial<ConstructorParameters<typeof makeManager>[0]> = {}) {
   const sent: Array<{ connId: string; frame: Frame }> = []
-  const mgr = new makeManager({ machineId: AGENT, sendTo: (connId, frame) => sent.push({ connId, frame }), isConnected: () => true })
+  const mgr = new makeManager({ machineId: AGENT, sendTo: (connId, frame) => sent.push({ connId, frame }), isConnected: () => true, ...extra })
   const takeLast = (type: string): Frame => {
     for (let i = sent.length - 1; i >= 0; i--) if (sent[i].frame.type === type) return sent[i].frame
     throw new Error(`no ${type} sent`)
@@ -367,6 +367,24 @@ describe('E2eeManager revoke', () => {
     const newEnv = (after.payload as import('./core.js').WrappedPayload).__e2e
     expect(newEnv.epoch).not.toBe(oldEpoch)
     expect(C.unwrapPayload(oldGroupKey, newEnv, 'text_delta', 's')).toBeNull()
+  })
+
+  it('a reconnect hello from a revoked identity is answered with e2e_denied (unpaired)', async () => {
+    const h = machine()
+    const web = await fullPair(h, 'cr')
+    expect(h.mgr.revoke(C.fingerprint(web.identity.pub)).ok).toBe(true)
+    h.mgr.handleFrame('cr2', web.hello())
+    expect((h.lastFor('cr2', 'e2e_denied')!.payload as Record<string, unknown>).reason).toBe('unpaired')
+    expect(h.mgr.hasSession('cr2')).toBe(false)
+  })
+
+  it('revoke-all runs onIdentityRevoked while the session is still live, so a device frame can be sealed', async () => {
+    const live: boolean[] = []
+    const h = machine({ onIdentityRevoked: () => live.push(h.mgr.hasSession('ra')) })
+    await fullPair(h, 'ra')
+    h.mgr.revokeAll()
+    expect(live).toEqual([true])
+    expect(h.mgr.hasSession('ra')).toBe(false)
   })
 
   it('revoke re-keys the REMAINING browsers so they keep decrypting', async () => {

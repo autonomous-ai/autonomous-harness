@@ -78,5 +78,5 @@ and Boss mode routes it. A voice turn can carry a mode — `/goal` runs an instr
 
 Firmware updates travel over the same cable in 16 KB credit windows, offered from the published
 metadata and never for a dev build. `harness flash` re-flashes a device from a USB port. The firmware
-is ESP-IDF ≥ 5.5 under [`device/esp32-circle/`](device/esp32-circle/) (`idf.py set-target esp32s3 &&
+is ESP-IDF ≥ 5.5 under [`device/harness/`](device/harness/) (`idf.py set-target esp32s3 &&
 idf.py build`); `make device-test` runs the host-side tests with no board attached.

@@ -15,6 +15,12 @@ export interface AutonomousDeviceServiceOptions {
   machineId: string; serverInstanceId?: string; now?: () => number
   agents: () => AutonomousDeviceAgent[]
   requestAppFocus?: (agentId: string, expiresAt: number, focusRevision: string) => boolean
+  /**
+   * Turn the app's focus one agent along the desk, the way the USB dial does — same ring, same wrap,
+   * same `dial_focus` forward. Resolves to the agent it asked the app to show; the app's own `app_focus`
+   * acknowledgment is what makes the move real. `'no_app'` when no Desktop window is connected.
+   */
+  stepFocus?: (direction: 'next' | 'previous', currentAgentId: string | undefined) => Promise<{ machineId: string; agentId: string } | 'no_agents' | 'no_app'>
   submit: (agentId: string, text: string, deliveryId: string) => void
   cancelDelivery: (deliveryId: string) => boolean
   stop: (agentId: string) => Promise<boolean>
@@ -32,9 +38,11 @@ export interface AutonomousDeviceServiceOptions {
   emit?: (frame: AutonomousDeviceFrame) => void
 }
 interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt }
-const CAPABILITIES = ['focus.get', 'focus.ensure', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
+const CAPABILITIES = ['focus.get', 'focus.ensure', 'focus.step', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
 export const AUTONOMOUS_DEVICE_CAPABILITIES: string[] = [...CAPABILITIES]
 const MUTATIONS = new Set(['turn.send', 'turn.stop', 'question.answer'])
+const STEP_RESULTS_MAX = 512
+const APP_FOCUS_WAIT_MS = 2000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const KEY = /^[A-Za-z0-9_-]{1,64}$/
 const TTL = 30 * 60_000
@@ -85,6 +93,39 @@ export class AutonomousDeviceService {
       focusRevision: `${this.serverInstanceId}:${this.focusCounter}` }
   }
   private ensuringFocus: Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> | undefined
+  /** Settled `focus.step` outcomes by (device, idempotencyKey): a retried gesture is one tick, not two. */
+  private readonly steps = new Map<string, { deviceId: string; digest: string; result: Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> }>()
+
+  private stepFocus(deviceId: string, req: Record<string, unknown>): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
+    if (req.direction !== 'next' && req.direction !== 'previous') fail('INVALID_REQUEST', 'direction must be next or previous')
+    if (!KEY.test(String(req.idempotencyKey ?? ''))) fail('INVALID_REQUEST', 'Invalid idempotencyKey')
+    if (typeof req.focusRevision !== 'string' || !req.focusRevision) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
+    const digest = createHash('sha256').update(canonical({ ...req, requestId: null, idempotencyKey: null })).digest('hex')
+    const key = this.key(deviceId, String(req.idempotencyKey))
+    const previous = this.steps.get(key)
+    if (previous) {
+      if (previous.digest !== digest) fail('IDEMPOTENCY_CONFLICT', 'Key already belongs to a different operation or payload')
+      return previous.result
+    }
+    const result = this.performStep(req.direction, req.focusRevision)
+    result.catch(() => undefined) // settled either way; the retry re-awaits it
+    this.steps.set(key, { deviceId, digest, result })
+    // ponytail: FIFO eviction, no TTL — a step result is a snapshot, nothing waits on it like a receipt.
+    if (this.steps.size > STEP_RESULTS_MAX) this.steps.delete(this.steps.keys().next().value as string)
+    return result
+  }
+
+  private async performStep(direction: 'next' | 'previous', focusRevision: string): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
+    const before = this.focusSnapshot()
+    if (focusRevision !== before.focusRevision) fail('FOCUS_CHANGED', 'App focus changed before the step; nothing was moved')
+    if (!this.options.stepFocus) fail('FOCUS_UNAVAILABLE', 'Stepping focus is not wired on this machine')
+    const target = await this.options.stepFocus(direction, before.focus?.agentId)
+    if (target === 'no_agents') fail('NO_AGENTS', 'No agent is on the desk to step to')
+    if (target === 'no_app') fail('FOCUS_UNAVAILABLE', 'Open Harness Desktop to select an agent')
+    // A desk of one: the only neighbour is the agent already in front — nothing to move, nothing to await.
+    if (before.focus?.machineId === target.machineId && before.focus.agentId === target.agentId) return before
+    return this.waitForAppFocus(Date.now() + APP_FOCUS_WAIT_MS, s => s.focusRevision !== before.focusRevision)
+  }
 
   /** Enable-time fallback only. The desktop must acknowledge its selected pane. */
   private ensureFocus(): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
@@ -93,18 +134,18 @@ export class AutonomousDeviceService {
     if (this.ensuringFocus) return this.ensuringFocus
     const first = this.options.agents()[0]
     if (!first) fail('NO_AGENTS', 'No local agent is available')
-    const expiresAt = Date.now() + 2000
+    const expiresAt = Date.now() + APP_FOCUS_WAIT_MS
     if (!this.options.requestAppFocus?.(first.agentId, expiresAt, current.focusRevision)) {
       fail('FOCUS_UNAVAILABLE', 'Open Harness Desktop to select an agent')
     }
-    this.ensuringFocus = this.waitForAppFocus(expiresAt).finally(() => { this.ensuringFocus = undefined })
+    this.ensuringFocus = this.waitForAppFocus(expiresAt, s => !!s.focus).finally(() => { this.ensuringFocus = undefined })
     return this.ensuringFocus
   }
 
-  private async waitForAppFocus(expiresAt: number): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
+  private async waitForAppFocus(expiresAt: number, done: (s: ReturnType<AutonomousDeviceService['focusSnapshot']>) => boolean): Promise<ReturnType<AutonomousDeviceService['focusSnapshot']>> {
     for (;;) {
       const snapshot = this.focusSnapshot()
-      if (snapshot.focus) return snapshot
+      if (done(snapshot)) return snapshot
       if (Date.now() >= expiresAt) fail('FOCUS_UNAVAILABLE', 'Harness Desktop did not acknowledge focus')
       await new Promise(resolve => setTimeout(resolve, 20))
     }
@@ -167,6 +208,7 @@ export class AutonomousDeviceService {
       if (this.turns.get(entry.receipt.agentId) === entry) this.turns.delete(entry.receipt.agentId)
       this.entries.delete(key)
     }
+    for (const [key, step] of this.steps) if (step.deviceId === deviceId) this.steps.delete(key)
     // A newly paired identity cannot replay the previous device's request receipts.
     this.events = []
   }
@@ -223,7 +265,7 @@ export class AutonomousDeviceService {
     try {
       if (!UUID.test(String(req.requestId))) fail('INVALID_REQUEST', 'requestId must be a UUIDv4')
       if (!AUTONOMOUS_DEVICE_CAPABILITIES.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
-      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get', 'focus.ensure'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : ['machineId', 'agentId']),
+      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get', 'focus.ensure'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : type === 'focus.step' ? ['direction', 'idempotencyKey', 'focusRevision'] : ['machineId', 'agentId']),
         ...(MUTATIONS.has(type) ? ['idempotencyKey'] : []), ...(type === 'turn.send' ? ['text', 'focusRevision'] : type === 'question.answer' ? ['questionRequestId', 'answers', 'focusRevision'] : type === 'recap' ? ['n'] : [])]
       if (Object.keys(req).some(k => !allowed.includes(k))) fail('INVALID_REQUEST', 'Unknown request field')
       if (type === 'receipt.get') {
@@ -232,6 +274,7 @@ export class AutonomousDeviceService {
       }
       if (type === 'focus.get') return response(this.focusSnapshot())
       if (type === 'focus.ensure') return response(await this.ensureFocus())
+      if (type === 'focus.step') return response(await this.stepFocus(deviceId, req))
       if ('focusRevision' in req && (typeof req.focusRevision !== 'string' || !req.focusRevision)) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
       if (type === 'agents.list') {
         return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => {

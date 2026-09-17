@@ -371,6 +371,42 @@ describe('DaemonCableHost.listAgents across machines', () => {
     expect(focused).toHaveBeenCalledWith('other', 'r1')
   })
 
+  it('steps focus along the ring, wrapping at both ends, with the same forward the dial uses', async () => {
+    AGENTS.length = 0
+    for (const agentId of ['a1', 'a2', 'a3']) {
+      AGENTS.push({ agentId, registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    }
+    const focused = vi.fn()
+    const host = new DaemonCableHost(wiring({ focused }))
+    await settled(host)
+    // Tiles in the window's order, not registration order; a3 has no tile and is never stepped onto.
+    host.setDesk(['a2', 'a1'])
+
+    expect(await host.stepFocus('next', 'a2')).toEqual({ machineId: 'mine', agentId: 'a1' })
+    expect(await host.stepFocus('next', 'a1')).toEqual({ machineId: 'mine', agentId: 'a2' })
+    expect(await host.stepFocus('previous', 'a2')).toEqual({ machineId: 'mine', agentId: 'a1' })
+    // Off the ring, or nothing focused: the walk starts at the first (next) or last (previous) tile.
+    expect(await host.stepFocus('next', 'a3')).toMatchObject({ agentId: 'a2' })
+    expect(await host.stepFocus('previous', undefined)).toMatchObject({ agentId: 'a1' })
+    expect(focused.mock.calls.map((c) => c[1])).toEqual(['a1', 'a2', 'a1', 'a2', 'a1'])
+  })
+
+  it('steps onto a remote tile with that machine’s id, and reports an empty desk', async () => {
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'a1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    const focused = vi.fn()
+    const host = new DaemonCableHost(wiring({ focused }), crossFleet({ other: [{ id: 'r1', name: 'api' }] }))
+    await settled(host)
+    host.setDesk(['a1', 'r1'])
+    expect(await host.stepFocus('next', 'a1')).toEqual({ machineId: 'other', agentId: 'r1' })
+    expect(focused).toHaveBeenLastCalledWith('other', 'r1')
+
+    AGENTS.length = 0
+    const empty = new DaemonCableHost(wiring({ focused }))
+    await settled(empty)
+    expect(await empty.stepFocus('next', undefined)).toBe('no_agents')
+  })
+
   it('reports a focus with no edge, on or off the desk', async () => {
     // `edge` is gone with the arcs. It answered "which tile does this replace" for an agent the window
     // had none for, which the carousel could reach by walking past the end of the desk; it walks only

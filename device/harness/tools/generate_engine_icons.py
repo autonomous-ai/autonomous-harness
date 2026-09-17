@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # to be pointed at a checkout of it:
 #
 #   HARNESS_ENGINE_ICONS=~/src/autonomous-code/apps/web/public/engine-icons \
-#     python3 device/esp32-circle/tools/generate_engine_icons.py
+#     python3 device/harness/tools/generate_engine_icons.py
 #
 # The SHA-256 table below is what makes that safe to do across two repos: an icon
 # that has changed on the web side fails the check rather than silently
@@ -27,7 +27,7 @@ ASSET_DIR = Path(
     os.environ.get("HARNESS_ENGINE_ICONS")
     or REPO_ROOT / "../autonomous-code/apps/web/public/engine-icons"
 ).expanduser()
-TARGET = REPO_ROOT / "device/esp32-circle/main/ui/icons_engine.c"
+TARGET = REPO_ROOT / "device/harness/main/ui/icons_engine.c"
 ICON_SIZE = 20
 EXPECTED_SHA256 = {
     "codex.png": "8e82b26c98a10e45798ce48124515720657f7735fb8d0853b3f087eaa8a6b74e",

@@ -144,7 +144,7 @@ read what you submit and run the example yourself.
 | Add an API provider | [Provider guide](provider/README.md) |
 | Improve terminal behavior, shortcuts, or accessibility | [Development guide](docs/development.md), [keyboard guide](docs/keyboard.md) |
 | Help with Linux or Windows compatibility | [Development guide](docs/development.md#platform-support) |
-| Support another hardware board | [Firmware guide](device/esp32-circle/README.md) |
+| Support another hardware board | [Firmware guide](device/harness/README.md) |
 | Fix documentation or report a bug | A small PR, or an issue with steps to reproduce |
 
 For a new engine, multiplexer, or a change to a shared protocol, open an issue first so we can agree

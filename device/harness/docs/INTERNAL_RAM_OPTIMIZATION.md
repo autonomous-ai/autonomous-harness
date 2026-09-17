@@ -81,7 +81,7 @@ implied by the RAM-focused tests.
 Build command:
 
 ```bash
-cd device/esp32-circle
+cd device/harness
 source ~/esp/esp-idf/export.sh
 idf.py -B build-arm build
 idf.py -B build-arm size
