@@ -38,7 +38,8 @@ def judge(source: str, diagnostics: str, code: int, pdf: str | None, pages: int 
 
 def page_count(pdf: Path) -> int | None:
     try:
-        return len(re.findall(rb"/Type\s*/Page[^s]", pdf.read_bytes())) or None
+        # /Type/Page, not /Pages and not /PageLabel (Typst writes one per page, which doubled the count).
+        return len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", pdf.read_bytes())) or None
     except OSError:
         return None
 

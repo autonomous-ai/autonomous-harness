@@ -1,3 +1,4 @@
+#set document(title: [Title of the document])
 #set page(paper: "a4", margin: 2.2cm)
 #set text(font: "Helvetica Neue", size: 11pt)
 #set heading(numbering: "1.")

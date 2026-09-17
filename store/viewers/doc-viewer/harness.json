@@ -5,7 +5,7 @@
   "name": "Doc Viewer",
   "category": "Documents",
   "author": "Autonomous",
-  "description": "A pane for documents: the PDF a harness is writing, every page rendered with pdf.js — scroll, zoom, page count — redrawn on every save.",
+  "description": "A reader for the PDF a harness is writing: thumbnails, the outline, find, zoom and two-page spreads on pdf.js — redrawn in place on every compile, changed pages marked, compile errors shown over the last good pages.",
   "toolchain": {
     "setup": "./setup.sh",
     "doctor": "./doctor.sh"

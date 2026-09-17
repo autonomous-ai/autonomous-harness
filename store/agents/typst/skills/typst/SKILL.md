@@ -41,4 +41,8 @@ The verdict is what the pane header shows. Typst's own errors and warnings come 
 - Fonts: name system fonts (`"Helvetica Neue"`, `"Georgia"`) or ship a `.ttf` under `fonts/` and pass
   `--font-path fonts`. Typst falls back silently if a font is missing — check the PDF.
 - One document per `.typ` at the workspace root; shared pieces go in `lib/*.typ` and are `#import`ed.
-- Save early: the first compile within a minute, then refine. The pane redraws on every save.
+- Save early: the first compile within a minute, then refine. The pane redraws on every save, keeps the
+  reader's page and marks the pages that changed.
+- **For the pane**: `#set document(title: [...])` names the document in the pane's toolbar; every heading
+  becomes a PDF bookmark, which is the pane's outline, so structure with real `=` headings (not bold
+  text); compile errors show there with the source line from the verdict's `file:line:col`.

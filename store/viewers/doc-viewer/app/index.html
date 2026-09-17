@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Doc Viewer</title>
+<link rel="stylesheet" href="/vendor/web/pdf_viewer.css">
+<link rel="stylesheet" href="/app/app.css">
+<script>
+  // Theme before first paint, so a dark pane never flashes white.
+  try { const t = JSON.parse(localStorage.getItem('dv:theme') || '"auto"'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}
+</script>
+</head>
+<body>
+<div id="app" class="booting">
+  <header id="toolbar" role="toolbar" aria-label="Document">
+    <div class="tb-left">
+      <button id="btn-sidebar" class="icon-btn" data-icon="sidebar" data-tip="Sidebar" data-key="S" aria-pressed="false" aria-label="Toggle sidebar"></button>
+      <button id="doc-title" class="title-btn" aria-haspopup="menu">
+        <span class="title-text">Doc Viewer</span>
+        <span class="title-caret" data-icon="chevron-down" hidden></span>
+      </button>
+    </div>
+    <div class="tb-center" id="page-nav">
+      <button id="btn-prev" class="icon-btn" data-icon="chevron-up" data-tip="Previous page" data-key="←" aria-label="Previous page"></button>
+      <label class="page-box"><input id="page-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="Page number" value="–"><span id="page-count">/ –</span></label>
+      <button id="btn-next" class="icon-btn" data-icon="chevron-down" data-tip="Next page" data-key="→" aria-label="Next page"></button>
+    </div>
+    <div class="tb-right">
+      <button id="build-pill" class="pill" hidden></button>
+      <div class="zoom-group">
+        <button id="btn-zoom-out" class="icon-btn" data-icon="minus" data-tip="Zoom out" data-key="−" aria-label="Zoom out"></button>
+        <button id="btn-zoom" class="zoom-btn" aria-haspopup="menu" data-tip="Zoom">100%</button>
+        <button id="btn-zoom-in" class="icon-btn" data-icon="plus" data-tip="Zoom in" data-key="+" aria-label="Zoom in"></button>
+      </div>
+      <button id="btn-find" class="icon-btn" data-icon="search" data-tip="Find" data-key="⌘F" aria-label="Find in document"></button>
+      <button id="btn-present" class="icon-btn" data-icon="present" data-tip="Present" data-key="F" aria-label="Present"></button>
+      <button id="btn-more" class="icon-btn" data-icon="more" data-tip="More" aria-haspopup="menu" aria-label="More"></button>
+    </div>
+    <div id="busy-bar" hidden></div>
+  </header>
+
+  <div id="main">
+    <aside id="sidebar" aria-label="Sidebar" hidden>
+      <div class="seg" role="tablist">
+        <button role="tab" data-tab="pages" aria-selected="true">Pages</button>
+        <button role="tab" data-tab="outline" aria-selected="false">Outline</button>
+      </div>
+      <div id="thumbs" class="side-scroll" role="tabpanel"></div>
+      <div id="outline" class="side-scroll" role="tabpanel" hidden></div>
+    </aside>
+    <div id="sidebar-scrim" hidden></div>
+
+    <section id="stage">
+      <div id="findbar" class="floating" hidden>
+        <span class="find-icon" data-icon="search"></span>
+        <input id="find-input" type="search" placeholder="Find in document" autocomplete="off" spellcheck="false" aria-label="Find in document">
+        <span id="find-count" aria-live="polite"></span>
+        <button id="find-case" class="icon-btn text-toggle" data-tip="Match case" aria-pressed="false">Aa</button>
+        <button id="find-word" class="icon-btn text-toggle" data-tip="Whole words" aria-pressed="false"><u>ab</u></button>
+        <span class="find-sep"></span>
+        <button id="find-prev" class="icon-btn" data-icon="chevron-up" data-tip="Previous match" data-key="⇧↵" aria-label="Previous match"></button>
+        <button id="find-next" class="icon-btn" data-icon="chevron-down" data-tip="Next match" data-key="↵" aria-label="Next match"></button>
+        <button id="find-close" class="icon-btn" data-icon="close" data-tip="Close" data-key="Esc" aria-label="Close find"></button>
+      </div>
+
+      <div id="error-card" class="floating" hidden></div>
+      <div id="empty" hidden></div>
+
+      <button id="back-chip" class="chip floating" hidden></button>
+      <div id="link-status" hidden></div>
+      <div id="toasts" aria-live="polite"></div>
+      <div id="present-hud">
+        <button id="hud-prev" class="icon-btn" data-icon="chevron-left" aria-label="Previous page"></button>
+        <span id="hud-page"></span>
+        <button id="hud-next" class="icon-btn" data-icon="chevron-right" aria-label="Next page"></button>
+        <span class="hud-sep"></span>
+        <button id="hud-exit" class="icon-btn" data-icon="close" aria-label="Exit presentation"></button>
+      </div>
+    </section>
+  </div>
+
+  <div id="menu" role="menu" hidden></div>
+  <div id="tooltip" role="tooltip" hidden></div>
+  <div id="help" hidden>
+    <div class="help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div class="help-head"><h2 id="help-title">Keyboard shortcuts</h2><button id="help-close" class="icon-btn" data-icon="close" aria-label="Close"></button></div>
+      <div id="help-body"></div>
+    </div>
+  </div>
+</div>
+<script type="module" src="/app/app.js"></script>
+</body>
+</html>
