@@ -9,18 +9,39 @@ Manim (Manim Community edition) renders animations from Python: a `Scene` subcla
 `construct()` plays animations on mobjects. The render lands as MP4 under `out/`. Tools: `$MANIM`
 (the pinned CLI), `$MANIM_PYTHON` (its interpreter). Never install another.
 
-## Render, then the verdict
+## Render (the verdict comes with it)
 
 ```bash
-$MANIM render -ql --media_dir out scenes/intro.py Intro       # quick: 480p15, seconds
-$MANIM render -qm --media_dir out scenes/intro.py Intro       # medium: 720p30
-$MANIM render -qh --media_dir out scenes/intro.py Intro       # final: 1080p60
-$MANIM render -ql --media_dir out --format gif scenes/x.py Name   # a gif instead
-"$MANIM_PYTHON" "$MANIM_TOOLCHAIN/verdict.py"                 # judge the newest render → pane header
+"$MANIM_PYTHON" "$MANIM_TOOLCHAIN/render.py" scenes/intro.py Intro            # quick: 480p15, the default
+"$MANIM_PYTHON" "$MANIM_TOOLCHAIN/render.py" -qm scenes/intro.py Intro        # medium: 720p30
+"$MANIM_PYTHON" "$MANIM_TOOLCHAIN/render.py" -qh scenes/intro.py Intro        # final: 1080p60
+"$MANIM_PYTHON" "$MANIM_TOOLCHAIN/render.py" --format gif scenes/x.py Name    # a gif instead
 ```
 
-Renders go to `out/videos/<file>/<quality>/<Scene>.mp4`. Render at `-ql` while iterating (fast), `-qh`
-once at the end. Run the verdict after every render.
+`render.py` is `manim render` with the same flags, output and tracebacks, plus what the pane needs:
+`--media_dir out --save_sections`, a live progress file (the pane plays each animation as it is
+written and shows a failure with its line), a record of the render's animations and chapters, and
+the verdict at the end. Use it for every render; plain `$MANIM render` still works but the pane sees
+less. Renders go to `out/videos/<file>/<quality>/<Scene>.mp4`. Render at `-ql` while iterating
+(fast), `-qh` once at the end.
+
+## Chapters
+
+The pane shows a scene's sections as chapters — on the timeline, in a list, as `1`…`9` keys. Mark
+every beat of the storyboard with a section, named the way a chapter title reads:
+
+```python
+def construct(self):
+    self.next_section("The question")
+    ...
+    self.next_section("Squares on the sides")
+    ...
+    self.next_section("9 + 16 = 25")
+```
+
+Three to eight sections for a 20–60 s scene; a name is two to five words; the first call comes before
+the first `play`. A section with no animation is dropped. Keep names stable between renders: the pane
+marks a chapter "changed" or "new" by its name.
 
 ## Writing scenes
 
@@ -44,7 +65,9 @@ once at the end. Run the verdict after every render.
 ## Rules
 
 - Save early: a first render within the first minute (title + one beat), then add beats.
+- Every beat is a section (see Chapters): a proof or an explainer arrives chaptered.
 - Every request that says "explain" is a sequence: what it is, why it matters, the mechanism, the
   result. One scene, or one scene per section for long ones.
 - Assets (images, data) live under `assets/`; reference them relatively.
-- A render that fails prints a Python traceback; fix the line it names, render again.
+- A render that fails prints a Python traceback (and the pane shows the error and its line); fix
+  the line it names, render again. The pane keeps playing the last good render meanwhile.

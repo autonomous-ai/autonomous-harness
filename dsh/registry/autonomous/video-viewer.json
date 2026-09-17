@@ -4,7 +4,7 @@
   "name": "Video Viewer",
   "category": "Video",
   "author": "Autonomous",
-  "description": "A pane for video: the MP4, WebM or GIF a harness is rendering, replayed on every new render, with duration and size in the header.",
+  "description": "An editor-grade player for what a harness renders: every render listed, chapters on the timeline, frame-accurate scrubbing with a filmstrip, loops and stills — and the render in progress playable as it is made.",
   "repo": "https://github.com/autonomous-ai/autonomous-harness",
   "ref": "main",
   "path": "store/viewers/video-viewer",

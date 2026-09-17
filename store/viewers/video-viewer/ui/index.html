@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Viewer</title>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<div id="app" class="app booting">
+  <header class="top">
+    <div class="title-block">
+      <span class="title-icon" data-icon="film"></span>
+      <div class="title-text">
+        <div class="title-row"><span id="title" class="title">Video Viewer</span><span id="variants" class="variants"></span></div>
+        <div id="subtitle" class="subtitle"></div>
+      </div>
+    </div>
+    <div class="top-right">
+      <button id="follow" class="pill pill-follow" hidden title="Go back to following the newest render (N)"><span class="dot"></span>Follow latest</button>
+      <div id="status" class="pill status" hidden></div>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="player" id="player">
+      <div class="stage" id="stage">
+        <video id="video" playsinline muted preload="auto" disablepictureinpicture></video>
+        <canvas id="freeze" class="freeze" hidden></canvas>
+        <img id="still" class="still" hidden alt="">
+        <div class="progress" id="render-progress" hidden><i></i></div>
+        <div class="stage-badges">
+          <span id="live-badge" class="badge live" hidden><span class="rec"></span>LIVE</span>
+          <span id="chapter-flash" class="chapter-flash"></span>
+        </div>
+        <div id="flash" class="flash"></div>
+        <div id="edge" class="edge" hidden><span class="spinner"></span><span id="edge-text">Rendering the next animation…</span></div>
+        <div id="notice" class="notice" hidden></div>
+        <div id="empty" class="empty" hidden></div>
+        <div id="toast" class="toast" hidden></div>
+      </div>
+
+      <div class="timeline" id="timeline">
+        <div class="track" id="track">
+          <div class="chapters-row" id="chapters-row"></div>
+          <div class="strip" id="strip">
+            <canvas id="film" class="film"></canvas>
+            <div id="pending" class="pending" hidden></div>
+            <div id="changes" class="changes"></div>
+            <div id="ticks" class="ticks"></div>
+            <div id="loopband" class="loopband" hidden><i class="in"></i><i class="out"></i></div>
+            <div id="hoverline" class="hoverline" hidden></div>
+          </div>
+          <div id="playhead" class="playhead"><i></i></div>
+          <div id="preview" class="preview" hidden>
+            <canvas id="preview-canvas" width="192" height="108"></canvas>
+            <div class="preview-meta"><span id="preview-tc" class="tc"></span><span id="preview-label" class="preview-label"></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="transport" id="transport">
+        <div class="group">
+          <button class="icon-btn" id="b-prev" title="Previous chapter (↑)" data-icon="chapterPrev"></button>
+          <button class="icon-btn" id="b-back" title="Back one frame (←)" data-icon="frameBack"></button>
+          <button class="icon-btn play" id="b-play" title="Play / pause (space, K)" data-icon="play"></button>
+          <button class="icon-btn" id="b-fwd" title="Forward one frame (→)" data-icon="frameFwd"></button>
+          <button class="icon-btn" id="b-next" title="Next chapter (↓)" data-icon="chapterNext"></button>
+        </div>
+        <button class="timecode" id="timecode" title="Timecode · click for seconds or frames">
+          <span id="tc-now" class="now">00:00:00</span><span class="sep">/</span><span id="tc-dur" class="dur">00:00:00</span>
+          <span id="tc-frame" class="frame">f 0</span>
+        </button>
+        <div class="spacer"></div>
+        <div class="group wide-only">
+          <button class="text-btn" id="b-in" title="Set loop in point (I)">In</button>
+          <button class="text-btn" id="b-out" title="Set loop out point (O)">Out</button>
+        </div>
+        <div class="menu-wrap"><button class="text-btn speed" id="b-speed" title="Speed (− / +)">1×</button></div>
+        <button class="icon-btn toggle" id="b-loop" title="Loop (L = forward shuttle; \ toggles loop)" data-icon="loop"></button>
+        <button class="icon-btn" id="b-mute" title="Sound (M)" data-icon="volumeOff" hidden></button>
+        <div class="menu-wrap">
+          <button class="icon-btn" id="b-frame" title="This frame as PNG (C copies, S saves)" data-icon="camera"></button>
+          <div class="menu" id="frame-menu" hidden>
+            <button data-act="copy"><span data-icon="copy"></span>Copy frame<kbd>C</kbd></button>
+            <button data-act="save"><span data-icon="save"></span>Save frame to workspace<kbd>S</kbd></button>
+          </div>
+        </div>
+        <button class="icon-btn" id="b-full" title="Fullscreen (F)" data-icon="expand"></button>
+        <button class="icon-btn" id="b-help" title="Keyboard shortcuts (?)" data-icon="help"></button>
+      </div>
+    </section>
+
+    <aside class="side" id="side">
+      <section class="panel" id="outline-panel">
+        <div class="panel-head">
+          <div class="tabs" id="outline-tabs"></div>
+          <span class="count" id="outline-count"></span>
+        </div>
+        <ol class="outline" id="outline"></ol>
+        <p class="hint" id="outline-hint" hidden></p>
+      </section>
+      <section class="panel" id="renders-panel">
+        <div class="panel-head"><h2>Renders</h2><span class="count" id="renders-count"></span></div>
+        <ul class="renders" id="renders"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <div class="help" id="help" hidden>
+    <div class="help-card" role="dialog" aria-label="Keyboard shortcuts">
+      <div class="help-head"><h2>Keyboard</h2><button class="icon-btn" id="help-close" data-icon="x" title="Close (Esc)"></button></div>
+      <div class="help-grid">
+        <section>
+          <h3>Play</h3>
+          <dl>
+            <dt><kbd>Space</kbd></dt><dd>Play / pause</dd>
+            <dt><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></dt><dd>Shuttle back · stop · forward (press again: faster)</dd>
+            <dt><kbd>−</kbd><kbd>+</kbd></dt><dd>Speed 0.25× … 2×</dd>
+            <dt><kbd>\</kbd></dt><dd>Loop on / off</dd>
+            <dt><kbd>M</kbd></dt><dd>Sound on / off</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Move</h3>
+          <dl>
+            <dt><kbd>←</kbd><kbd>→</kbd></dt><dd>One frame (also <kbd>,</kbd> <kbd>.</kbd>, or <kbd>K</kbd> held with <kbd>J</kbd> <kbd>L</kbd>)</dd>
+            <dt><kbd>⇧</kbd> <kbd>←</kbd><kbd>→</kbd></dt><dd>One second</dd>
+            <dt><kbd>↑</kbd><kbd>↓</kbd></dt><dd>Previous / next chapter</dd>
+            <dt><kbd>[</kbd><kbd>]</kbd></dt><dd>Previous / next animation</dd>
+            <dt><kbd>1</kbd>…<kbd>9</kbd></dt><dd>Chapter n</dd>
+            <dt><kbd>Home</kbd><kbd>End</kbd></dt><dd>Start / end</dd>
+            <dt><kbd>G</kbd></dt><dd>Next change since the last render</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>Range &amp; frames</h3>
+          <dl>
+            <dt><kbd>I</kbd><kbd>O</kbd></dt><dd>Loop in / out point</dd>
+            <dt><kbd>X</kbd></dt><dd>Clear the range</dd>
+            <dt><kbd>C</kbd></dt><dd>Copy this frame (PNG)</dd>
+            <dt><kbd>S</kbd></dt><dd>Save this frame to <code>.harness/stills/</code></dd>
+          </dl>
+        </section>
+        <section>
+          <h3>View</h3>
+          <dl>
+            <dt><kbd>⇧</kbd> <kbd>↑</kbd><kbd>↓</kbd></dt><dd>Newer / older render</dd>
+            <dt><kbd>N</kbd></dt><dd>Follow the newest render</dd>
+            <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
+            <dt><kbd>?</kbd></dt><dd>This sheet</dd>
+          </dl>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+<video id="thumb-video" class="offscreen" muted playsinline preload="auto"></video>
+<video id="peek-video" class="offscreen" muted playsinline preload="auto"></video>
+<script src="/ui/app.js"></script>
+</body>
+</html>

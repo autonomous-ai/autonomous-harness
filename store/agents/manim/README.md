@@ -8,6 +8,12 @@ animate in the Video Viewer pane as the scenes render. Runs on Claude Code.
 - `skills/manim/` — the Manim skill (ours): the library, the commands, the rules of a good scene.
 - `toolchain/setup.sh` makes one venv with the pinned Manim (`MANIM_VERSION`); `doctor.sh` checks
   ffmpeg and LaTeX; `init-workspace.sh` renders the starter; `verdict.py` judges the newest render.
+- `toolchain/render.py` is how the agent renders: `manim render` with `--media_dir out
+  --save_sections`, plus `.harness/render.json` while it runs (scene, animation n of ~m, section,
+  clips so far, the error and its line on failure) and `.harness/renders/<video>.json` when a scene
+  lands (animations, sections, the clips before) — what the Video Viewer needs to play a render as it
+  is made, show chapters, and mark what changed. It wraps a handful of Manim methods, each call
+  through first, so a Manim it does not know still renders.
 - `template/` — a fresh workspace with a starter scene.
 
 ## Credit and stewardship
@@ -26,5 +32,5 @@ wrapper belong here, and a newer Manim is a bump of `MANIM_VERSION`.
 ```sh
 harness dsh check .                                # conformance
 harness dsh install "$PWD" --link                  # this checkout as the installed agent
-python3 -m unittest toolchain/test_verdict.py      # the verdict, without manim
+python3 -m unittest toolchain/test_verdict.py toolchain/test_render.py   # verdict and wrapper, without manim
 ```
