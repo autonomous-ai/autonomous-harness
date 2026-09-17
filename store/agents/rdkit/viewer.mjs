@@ -1,10 +1,21 @@
-// The RDKit pane: 3Dmol.js showing the conformer named by ?file= (workspace-relative .sdf/.mol/.pdb),
-// with the molecule's properties beside it and its 2D depiction in the corner, redrawn the moment any
-// of them changes. 3Dmol.js comes from this package's node_modules (its UMD build), never from a CDN,
-// so the pane works offline. Any other path is a file from the workspace, never outside it.
+// The RDKit pane's server. Harness runs it (viewer.sh) with HARNESS_VIEWER_PORT and HARNESS_WORKSPACE and
+// opens /?file=<the verdict's SDF>. It serves the pane (pane/), 3Dmol.js from this package's own
+// node_modules (never a CDN), the workspace's files, and three small APIs:
+//
+//   /api/series?dir=out          every molecule in that folder: series.json, plus any SDF it does not list
+//   /api/molecule?path=out/x.sdf the molecule's record — <name>.molecule.json when the toolchain wrote a
+//                                fresh one, otherwise computed by `harness_rdkit.py serve` (a Python worker
+//                                with the package's RDKit), so SDFs written by hand still get charges,
+//                                groups, a depiction and a parent
+//   /api/mol?path=out/x.sdf      the first record as a MOL file, for download
+//   /events                      server-sent `change` (the files that changed) and `progress` (out/.progress.json)
+//
+// Read-only: nothing here writes into the workspace. Any path outside the workspace is refused.
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, readdirSync, statSync, watch } from 'node:fs'
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, statSync, watch } from 'node:fs'
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, normalize, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -12,167 +23,226 @@ const port = Number(process.env.HARNESS_VIEWER_PORT)
 const workspace = resolve(process.env.HARNESS_WORKSPACE)
 const clients = new Set()
 const TYPES = {
-  '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png',
-  '.svg': 'image/svg+xml', '.sdf': 'chemical/x-mdl-sdfile', '.mol': 'chemical/x-mdl-molfile',
-  '.mol2': 'chemical/x-mol2', '.pdb': 'chemical/x-pdb', '.xyz': 'chemical/x-xyz', '.smi': 'text/plain',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.sdf': 'chemical/x-mdl-sdfile',
+  '.mol': 'chemical/x-mdl-molfile', '.mol2': 'chemical/x-mol2', '.pdb': 'chemical/x-pdb', '.xyz': 'chemical/x-xyz',
+  '.smi': 'text/plain; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
 }
+const PANE = { '/': 'index.html', '/app.js': 'app.js', '/app.css': 'app.css' }
 const VENDOR = { '3Dmol-min.js': join(here, 'node_modules/3dmol/build/3Dmol-min.js') }
+const STRUCTURE = new Set(['.sdf', '.mol', '.pdb', '.mol2'])
 
-const page = `<!doctype html><meta charset="utf-8"><title>RDKit</title>
-<style>
-  :root { color-scheme: dark; }
-  [hidden] { display: none !important; }
-  html, body { margin: 0; height: 100%; background: #0e0e11; color: #e5e5ea; font: 12px -apple-system, system-ui, sans-serif; overflow: hidden; }
-  #bar { position: absolute; top: 0; left: 0; right: 0; height: 30px; display: flex; gap: 10px; align-items: center; padding: 0 12px; background: #1c1c1e; border-bottom: 1px solid #333; z-index: 5; }
-  #bar .muted { color: #8e8e93; }
-  #bar .grow { flex: 1; }
-  #formula sub { font-size: 9px; }
-  button { appearance: none; background: #2c2c2e; color: #e5e5ea; border: 1px solid #3a3a3c; border-radius: 5px; padding: 3px 9px; font: inherit; cursor: pointer; }
-  button:hover { background: #3a3a3c; }
-  button[aria-pressed="true"] { background: #0a84ff; border-color: #0a84ff; color: #fff; }
-  #app { position: absolute; top: 30px; left: 0; right: 0; bottom: 0; }
-  #props { position: absolute; top: 42px; right: 12px; width: 186px; padding: 9px 11px; background: rgba(28,28,30,.86); border: 1px solid #333; border-radius: 8px; z-index: 4; backdrop-filter: blur(6px); }
-  #props h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: #8e8e93; font-weight: 600; }
-  #props .row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
-  #props .row span:first-child { color: #8e8e93; }
-  #props .row b { font-weight: 500; font-variant-numeric: tabular-nums; }
-  #props .lipinski { margin-top: 7px; padding-top: 7px; border-top: 1px solid #333; color: #8e8e93; }
-  #props .lipinski.bad { color: #ff9f0a; }
-  #thumb { position: absolute; left: 12px; bottom: 12px; width: 190px; padding: 6px; background: #fff; border-radius: 8px; border: 1px solid #333; z-index: 4; }
-  #thumb img { display: block; width: 100%; }
-  #empty { position: absolute; inset: 30px 0 0 0; display: grid; place-items: center; color: #8e8e93; padding: 0 24px; text-align: center; }
-  @media (max-width: 560px) { #props, #thumb { display: none; } }
-</style>
-<div id="bar">
-  <span id="name">…</span><span class="muted" id="formula"></span><span class="grow"></span>
-  <button id="spin" aria-pressed="false">Spin</button>
-  <button id="surface" aria-pressed="false">Surface</button>
-</div>
-<div id="app"></div>
-<div id="props" hidden><h2>Properties</h2><div id="rows"></div><div class="lipinski" id="lipinski"></div></div>
-<div id="thumb" hidden><img id="thumbimg" alt="2D depiction"></div>
-<div id="empty">No conformer yet. The pane shows the newest <code>out/*.sdf</code> the harness writes.</div>
-<script src="/vendor/3Dmol-min.js"></script>
-<script>
-  const Mol = window.$3Dmol || window['3Dmol'];
-  const params = new URLSearchParams(location.search);
-  const file = params.get('file') || '';
-  const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : '';
-  const stem = file.slice(dir.length).replace(/\\.[^.]+$/, '');
-  const FORMAT = { sdf: 'sdf', mol: 'sdf', pdb: 'pdb', xyz: 'xyz', mol2: 'mol2' };
-  const empty = document.getElementById('empty');
-  const spin = document.getElementById('spin');
-  const surface = document.getElementById('surface');
-  let viewer = null, framed = false, lastText = null;
-
-  // Stick and ball, Jmol's element colours — the way a chemist expects a small molecule to look.
-  const STYLE = { stick: { radius: 0.13, colorscheme: 'Jmol' }, sphere: { scale: 0.26, colorscheme: 'Jmol' } };
-
-  function subscripted(formula) {
-    return String(formula || '').replace(/([0-9]+)/g, '<sub>$1</sub>');
-  }
-  function paintSurface() {
-    if (!viewer) return;
-    viewer.removeAllSurfaces();
-    if (surface.getAttribute('aria-pressed') === 'true') {
-      // The VDW surface is marching cubes in a worker; a molecule the size of a protein can take a
-      // moment, and a browser that refuses the worker must not take the rest of the pane with it.
-      try {
-        const done = viewer.addSurface(Mol.SurfaceType.VDW, { opacity: 0.6, color: '#8ab4ff' });
-        if (done && done.catch) done.catch(() => surface.setAttribute('aria-pressed', 'false'));
-      } catch { surface.setAttribute('aria-pressed', 'false'); }
-    }
-    viewer.render();
-  }
-  async function structure() {
-    const res = await fetch('/' + file + '?t=' + Date.now());
-    if (!res.ok) throw new Error(res.status);
-    const text = await res.text();
-    if (!text.trim()) throw new Error('empty');
-    return text;
-  }
-  async function facts() {
-    try {
-      const res = await fetch('/' + dir + 'properties.json?t=' + Date.now());
-      return res.ok ? await res.json() : null;
-    } catch { return null; }
-  }
-  function panel(p) {
-    const box = document.getElementById('props');
-    if (!p) { box.hidden = true; return; }
-    box.hidden = false;
-    const rows = [['MW', p.mw], ['cLogP', p.logp], ['TPSA', p.tpsa], ['HBD', p.hbd], ['HBA', p.hba],
-                  ['Rot. bonds', p.rotatable_bonds], ['Rings', p.rings], ['QED', p.qed]];
-    document.getElementById('rows').innerHTML = rows
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => '<div class="row"><span>' + k + '</span><b>' + v + '</b></div>').join('');
-    const n = p.lipinski_violations || 0;
-    const lip = document.getElementById('lipinski');
-    lip.className = 'lipinski' + (n ? ' bad' : '');
-    lip.textContent = n ? 'Lipinski: ' + (p.lipinski || []).join(', ') : 'Lipinski: passes all four';
-  }
-  async function load() {
-    if (!file) return;
-    let text;
-    try { text = await structure(); }
-    catch (e) { empty.hidden = false; empty.textContent = file + ' is not there yet (' + e.message + ').'; return; }
-    empty.hidden = true;
-    const props = await facts();
-    document.getElementById('name').textContent = (props && props.name) || stem || file;
-    document.getElementById('formula').innerHTML = subscripted(props && props.formula);
-    panel(props);
-    const thumb = document.getElementById('thumb');
-    const img = document.getElementById('thumbimg');
-    img.onerror = () => { thumb.hidden = true; };
-    img.onload = () => { thumb.hidden = false; };
-    img.src = '/' + dir + stem + '.png?t=' + Date.now();
-    if (text === lastText) return;
-    lastText = text;
-    if (!viewer) viewer = Mol.createViewer(document.getElementById('app'), { backgroundColor: '#0e0e11' });
-    viewer.removeAllSurfaces();
-    viewer.removeAllLabels();
-    viewer.removeAllModels();
-    viewer.addModel(text, FORMAT[(file.split('.').pop() || '').toLowerCase()] || 'sdf');
-    viewer.setStyle({}, STYLE);
-    if (!framed) { viewer.zoomTo(); framed = true; }
-    viewer.render();
-    paintSurface();
-    viewer.spin(spin.getAttribute('aria-pressed') === 'true');
-  }
-  function toggle(button, after) {
-    button.addEventListener('click', () => {
-      button.setAttribute('aria-pressed', button.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
-      after();
-    });
-  }
-  toggle(spin, () => viewer && viewer.spin(spin.getAttribute('aria-pressed') === 'true'));
-  toggle(surface, paintSurface);
-  new EventSource('/events').addEventListener('change', load);
-  load();
-</script>`
-
-function safe(root, rel) { const full = normalize(join(root, rel)); return full === root || full.startsWith(root + sep) ? full : null }
-function file(res, full, req) {
-  if (!full || !existsSync(full) || !statSync(full).isFile()) { res.writeHead(404); res.end('not found'); return }
-  const type = TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream'
-  if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': type, 'content-length': statSync(full).size }); res.end(); return }
-  res.writeHead(200, { 'content-type': type, 'cache-control': full.startsWith(here) ? 'max-age=3600' : 'no-store' }); res.end(readFileSync(full))
+function safe(rel) {
+  const full = normalize(join(workspace, String(rel || '').replace(/^\/+/, '')))
+  return full === workspace || full.startsWith(workspace + sep) ? full : null
 }
-createServer((req, res) => {
+function stat(full) { try { return statSync(full) } catch { return null } }
+function readJson(full) { try { return JSON.parse(readFileSync(full, 'utf8')) } catch { return null } }
+function send(res, code, body, type = 'application/json') {
+  res.writeHead(code, { 'content-type': type, 'cache-control': 'no-store' })
+  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
+}
+function file(req, res, full, { download = false, cache = false } = {}) {
+  const st = full && stat(full)
+  if (!st || !st.isFile()) { send(res, 404, { error: 'not found' }); return }
+  const headers = { 'content-type': TYPES[extname(full).toLowerCase()] ?? 'application/octet-stream', 'cache-control': cache ? 'max-age=3600' : 'no-store' }
+  if (download) headers['content-disposition'] = `attachment; filename="${basename(full).replace(/"/g, '')}"`
+  if (req.method === 'HEAD') { res.writeHead(200, { ...headers, 'content-length': st.size }); res.end(); return }
+  res.writeHead(200, headers); res.end(readFileSync(full))
+}
+
+// ---- the Python worker: one long-lived `harness_rdkit.py serve`, started on the first question ----
+function pythonPath() {
+  for (const candidate of [process.env.RDKIT_PYTHON, process.env.HARNESS_DSH_DIR && join(process.env.HARNESS_DSH_DIR, '.venv/bin/python'), join(here, '.venv/bin/python')]) {
+    if (candidate && existsSync(candidate)) return candidate
+  }
+  return null
+}
+let worker = null
+let nextId = 1
+const pending = new Map()
+function startWorker() {
+  const python = pythonPath()
+  if (!python) return null
+  const child = spawn(python, ['-u', join(here, 'toolchain/harness_rdkit.py'), 'serve'], {
+    cwd: workspace, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, PYTHONPATH: join(here, 'toolchain'), PYTHONDONTWRITEBYTECODE: '1' },
+  })
+  let buffer = ''
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk
+    let at
+    while ((at = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, at); buffer = buffer.slice(at + 1)
+      let reply; try { reply = JSON.parse(line) } catch { continue }
+      const waiter = pending.get(reply.id); if (!waiter) continue
+      pending.delete(reply.id)
+      reply.ok ? waiter.resolve(reply.result) : waiter.reject(new Error(reply.error || 'describe failed'))
+    }
+  })
+  child.stderr.on('data', (chunk) => { const text = String(chunk).trim(); if (text) console.log(`[rdkit] worker: ${text.slice(0, 300)}`) })
+  child.on('exit', () => {
+    if (worker === child) worker = null
+    for (const [id, waiter] of pending) { pending.delete(id); waiter.reject(new Error('the RDKit worker stopped')) }
+  })
+  return child
+}
+function ask(op, payload) {
+  if (!worker) worker = startWorker()
+  if (!worker) return Promise.reject(new Error('RDKit is not installed for the pane (run toolchain/setup.sh)'))
+  const id = nextId++
+  return new Promise((resolvePromise, reject) => {
+    pending.set(id, { resolve: resolvePromise, reject })
+    worker.stdin.write(JSON.stringify({ id, op, ...payload }) + '\n')
+    setTimeout(() => { if (pending.delete(id)) reject(new Error('RDKit took longer than 60 s')) }, 60_000).unref()
+  })
+}
+
+// ---- molecules ----------------------------------------------------------------------------------
+const described = new Map() // abs path → { key, promise }
+function stemOf(name) { return name.endsWith('.conformers.sdf') ? name.slice(0, -'.conformers.sdf'.length) : name.replace(/\.[^.]+$/, '') }
+function sha1(full) { try { return createHash('sha1').update(readFileSync(full)).digest('hex') } catch { return null } }
+
+async function molecule(rel) {
+  const full = safe(rel)
+  const st = full && stat(full)
+  if (!st || !st.isFile() || !STRUCTURE.has(extname(full).toLowerCase())) throw Object.assign(new Error(`${rel} is not there`), { code: 404 })
+  const stem = stemOf(basename(full))
+  const main = join(dirname(full), `${stem}.sdf`)
+  const sidecar = join(dirname(full), `${stem}.molecule.json`)
+  const record = readJson(sidecar)
+  if (record && record.spec === 'rdkit-molecule/1' && (!record.sdfSha1 || record.sdfSha1 === sha1(existsSync(main) ? main : full))) {
+    const svg = join(dirname(full), record.svg || `${stem}.svg`)
+    try { record.svgText = readFileSync(svg, 'utf8') } catch { /* the depiction is optional */ }
+    record.computedBy = 'toolchain'
+    return record
+  }
+  const ensemble = join(dirname(full), `${stem}.conformers.sdf`)
+  const key = [full, ensemble].map((p) => { const s = stat(p); return s ? `${s.mtimeMs}:${s.size}` : '-' }).join('|')
+  const cached = described.get(full)
+  if (cached && cached.key === key) return cached.promise
+  const promise = ask('describe', { path: full })
+  described.set(full, { key, promise })
+  promise.catch(() => { if (described.get(full)?.promise === promise) described.delete(full) })
+  return promise
+}
+
+function series(dirRel) {
+  const dir = safe(dirRel)
+  const st = dir && stat(dir)
+  if (!st || !st.isDirectory()) return { dir: dirRel, molecules: [] }
+  const index = readJson(join(dir, 'series.json'))
+  const listed = Array.isArray(index?.molecules) ? index.molecules.filter((m) => m && m.name) : []
+  const out = []
+  const seen = new Set()
+  for (const entry of listed) {
+    const sdf = join(dir, entry.sdf || `${entry.name}.sdf`)
+    const s = stat(sdf)
+    if (!s) continue
+    seen.add(basename(sdf))
+    const fresh = !entry.legacy && Date.parse(entry.updatedAt || 0) >= s.mtimeMs - 60_000
+    out.push({ ...entry, sdf: rel(sdf), mtime: s.mtimeMs, stale: !fresh, legacy: !!entry.legacy || !entry.properties })
+  }
+  let names = []
+  try { names = readdirSync(dir) } catch { /* empty */ }
+  const stems = new Set(out.map((m) => m.name))
+  const rank = (name) => ['.sdf', '.mol', '.mol2', '.pdb'].indexOf(extname(name).toLowerCase())
+  for (const name of names.filter((n) => rank(n) >= 0).sort((a, b) => rank(a) - rank(b))) {
+    if (name.startsWith('.') || name.endsWith('.conformers.sdf') || seen.has(name) || stems.has(stemOf(name))) continue
+    const s = stat(join(dir, name)); if (!s?.isFile()) continue
+    stems.add(stemOf(name))
+    const stamp = new Date(s.mtimeMs).toISOString()
+    out.push({ name: stemOf(name), sdf: rel(join(dir, name)), createdAt: stamp, updatedAt: stamp, mtime: s.mtimeMs, legacy: true })
+  }
+  out.sort((a, b) => (Date.parse(a.createdAt) || a.mtime) - (Date.parse(b.createdAt) || b.mtime))
+  return { dir: dirRel, molecules: out }
+}
+function rel(full) { return relative(workspace, full).split(sep).join('/') }
+
+function newestStructure() {
+  let best = null
+  const walk = (dir, depth) => {
+    if (depth > 4) return
+    let names; try { names = readdirSync(dir) } catch { return }
+    for (const name of names) {
+      if (name.startsWith('.') || ['node_modules', '__pycache__', '.venv', 'molecules'].includes(name)) continue
+      const full = join(dir, name); const s = stat(full); if (!s) continue
+      if (s.isDirectory()) walk(full, depth + 1)
+      else if (STRUCTURE.has(extname(name).toLowerCase()) && !name.endsWith('.conformers.sdf') && (!best || s.mtimeMs > best.mtime)) best = { path: rel(full), mtime: s.mtimeMs }
+    }
+  }
+  walk(workspace, 0)
+  return best?.path ?? null
+}
+
+function progressIn(dirRel) {
+  const full = safe(`${dirRel || 'out'}/.progress.json`)
+  const p = full && readJson(full)
+  if (!p) return null
+  if (!['done', 'failed'].includes(p.stage)) {
+    let alive = true
+    try { if (p.pid) process.kill(p.pid, 0) } catch (error) { alive = error.code === 'EPERM' }
+    if (!alive || Date.now() / 1000 - (p.at || 0) > 1800) p.stage = 'stopped'
+  }
+  return p
+}
+
+function molBlock(text) {
+  const end = text.indexOf('M  END')
+  return end < 0 ? text : text.slice(0, end) + 'M  END\n'
+}
+
+createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   const path = decodeURIComponent(url.pathname)
-  if (path === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); res.end(page); return }
-  if (path === '/events') { res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' }); res.write(': hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return }
-  if (path.startsWith('/vendor/')) { file(res, VENDOR[path.slice('/vendor/'.length)] ?? null, req); return }
-  file(res, safe(workspace, path.replace(/^\/+/, '')), req)
+  try {
+    if (PANE[path]) { file(req, res, join(here, 'pane', PANE[path])); return }
+    if (path === '/events') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
+      res.write(': hello\n\n'); clients.add(res); req.on('close', () => clients.delete(res)); return
+    }
+    if (path.startsWith('/vendor/')) { file(req, res, VENDOR[path.slice('/vendor/'.length)] ?? null, { cache: true }); return }
+    if (path === '/api/series') {
+      const dirRel = url.searchParams.get('dir') || dirname(newestStructure() || 'out/x.sdf')
+      send(res, 200, { ...series(dirRel), progress: progressIn(dirRel), newest: newestStructure(), python: !!pythonPath() }); return
+    }
+    if (path === '/api/molecule') {
+      try { send(res, 200, await molecule(url.searchParams.get('path'))) }
+      catch (error) { send(res, error.code === 404 ? 404 : 422, { error: error.message }) }
+      return
+    }
+    if (path === '/api/mol') {
+      const full = safe(url.searchParams.get('path'))
+      if (!full || !stat(full)?.isFile()) { send(res, 404, { error: 'not found' }); return }
+      res.writeHead(200, { 'content-type': 'chemical/x-mdl-molfile', 'content-disposition': `attachment; filename="${stemOf(basename(full))}.mol"`, 'cache-control': 'no-store' })
+      res.end(molBlock(readFileSync(full, 'utf8'))); return
+    }
+    file(req, res, safe(path), { download: url.searchParams.has('download') })
+  } catch (error) {
+    send(res, 500, { error: String(error?.message || error) })
+  }
 }).listen(port, '127.0.0.1', () => console.log(`[rdkit] listening on http://127.0.0.1:${port}/ (workspace: ${workspace})`))
 
+// ---- live: tell the pane which files changed, and what the toolchain is doing ----------------------
+let changed = new Set()
 let timer = null
+function broadcast(event, data) { for (const c of clients) c.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }
 try {
   watch(workspace, { recursive: true }, (_event, name) => {
-    const n = String(name ?? ''); if (!n || n.startsWith('.harness') || n.includes('node_modules') || n.includes('__pycache__')) return
+    const n = String(name ?? '').split(sep).join('/')
+    if (!n || n.startsWith('.harness') || n.includes('node_modules') || n.includes('__pycache__') || n.startsWith('.git/')) return
+    if (n.endsWith('.progress.json')) {
+      const dirRel = dirname(n)
+      setTimeout(() => broadcast('progress', { dir: dirRel, progress: progressIn(dirRel) }), 20)
+      return
+    }
+    if (basename(n).startsWith('.') && n.endsWith('.tmp')) return
+    changed.add(n)
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => { for (const c of clients) c.write('event: change\ndata: {}\n\n') }, 200)
+    timer = setTimeout(() => { const files = [...changed]; changed = new Set(); timer = null; broadcast('change', { files }) }, 180)
   })
 } catch (error) { console.log(`[rdkit] watch failed: ${error.message}`) }
 setInterval(() => { for (const c of clients) c.write(': ping\n\n') }, 20_000).unref()
+function stop() { try { worker?.kill() } catch { /* gone */ } process.exit(0) }
+process.on('SIGTERM', stop)
+process.on('SIGINT', stop)

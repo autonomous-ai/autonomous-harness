@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDKit</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header id="top">
+  <div class="ident">
+    <div class="title-row"><h1 id="name">RDKit</h1><span id="formula" class="formula"></span><span id="ruleChips" class="chips"></span></div>
+    <div class="lineage" id="lineage"></div>
+  </div>
+  <div id="status" class="status" title="The pane follows the workspace: it redraws when the agent writes a file"><i class="dot"></i><span>Live</span></div>
+  <div class="menu-anchor">
+    <button id="exportBtn" class="btn" aria-haspopup="true" title="Export (E)"><svg viewBox="0 0 16 16"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 13h10"/></svg><span>Export</span></button>
+    <div id="exportMenu" class="menu down" hidden></div>
+  </div>
+  <button id="helpBtn" class="btn icon" title="Keyboard shortcuts (?)"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.3a1.7 1.7 0 1 1 2.4 1.6c-.5.3-.8.6-.8 1.2M8 11.2v.1"/></svg></button>
+</header>
+<nav id="strip" hidden></nav>
+<main id="main">
+  <section id="stage">
+    <div id="gl"></div>
+    <div id="legend" class="overlay legend" hidden></div>
+    <div id="ghostChip" class="overlay ghost-chip" hidden></div>
+    <div id="measures" class="overlay measures" hidden></div>
+    <div id="player" class="overlay player" hidden></div>
+    <div id="toolbar" class="toolbar"></div>
+    <div id="tip" class="tip" hidden></div>
+    <div id="busy" class="busy" hidden><i class="spinner"></i><span></span></div>
+    <div id="empty" class="empty" hidden></div>
+  </section>
+  <aside id="side">
+    <section id="depictCard" class="card depict">
+      <div class="card-head"><span class="card-title">Structure</span><span class="grow"></span><span id="depictHint" class="hint"></span></div>
+      <div id="depict" class="depict-body"></div>
+      <div id="groups" class="groups"></div>
+    </section>
+    <section id="tabs" class="card tabs">
+      <div class="tabbar" role="tablist">
+        <button role="tab" data-tab="props" aria-selected="true">Properties</button>
+        <button role="tab" data-tab="confs">Conformers <b id="confCount"></b></button>
+        <button role="tab" data-tab="series">Series <b id="seriesCount"></b></button>
+      </div>
+      <div class="tabpanel" id="panel-props"></div>
+      <div class="tabpanel" id="panel-confs" hidden></div>
+      <div class="tabpanel" id="panel-series" hidden></div>
+    </section>
+  </aside>
+</main>
+<div id="help" class="help" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<script src="/vendor/3Dmol-min.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

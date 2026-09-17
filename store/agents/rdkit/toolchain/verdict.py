@@ -4,8 +4,10 @@
     "$RDKIT_PYTHON" "$RDKIT_TOOLCHAIN/verdict.py"
 
 Phases: Design (a script under molecules/ and an out/report.json), Embed (the newest out/*.sdf parses
-and carries a conformer), Review (Lipinski and the force-field energy — warnings, never a gate).
-Ready = designed, embedded and reviewed. The artifact is the newest SDF, which is what the pane shows.
+and carries a conformer; `<name>.conformers.sdf` beside it is its ensemble, counted, never the
+artifact), Review (Lipinski, Veber, PAINS/Brenk alerts, unspecified stereocentres and the force-field
+energy — warnings and notes, never a gate). Ready = designed, embedded and reviewed. The artifact is
+the newest SDF, which is what the pane shows.
 """
 from __future__ import annotations
 
@@ -24,8 +26,8 @@ ENERGY_PER_ATOM_WARN = 10.0
 def judge(has_design: bool, report: dict | None, sdf: dict | None) -> dict:
     """The whole verdict as a pure function of three facts, so it can be tested without RDKit.
 
-    `sdf` is `{"path": str, "conformers": int, "atoms": int, "error": str | None}` for the newest SDF,
-    or None when there is none yet."""
+    `sdf` is `{"path": str, "conformers": int, "atoms": int, "error": str | None}` for the newest SDF
+    (`conformers` counting its ensemble file), or None when there is none yet."""
     findings: list[dict] = []
     designed = has_design and report is not None
     embedded = False
@@ -39,9 +41,17 @@ def judge(has_design: bool, report: dict | None, sdf: dict | None) -> dict:
         else:
             embedded = True
     props = (report or {}).get("properties") or {}
+    name = (report or {}).get("name")
     for violation in (report or {}).get("violations") or []:
-        findings.append({"severity": "warning", "kind": "lipinski", "message": f"Lipinski: {violation}",
-                         "ref": (report or {}).get("name")})
+        findings.append({"severity": "warning", "kind": "lipinski", "message": f"Lipinski: {violation}", "ref": name})
+    for violation in (report or {}).get("veber") or []:
+        findings.append({"severity": "warning", "kind": "veber", "message": f"Veber: {violation}", "ref": name})
+    for alert in (report or {}).get("alerts") or []:
+        findings.append({"severity": "warning", "kind": "alert", "message": f"structural alert — {alert}", "ref": name})
+    unspecified = (report or {}).get("unspecified_stereocenters") or 0
+    if unspecified:
+        findings.append({"severity": "info", "kind": "stereo", "ref": name,
+                         "message": f"{unspecified} stereocentre{'s' if unspecified > 1 else ''} unspecified in the SMILES — the conformer shows one arbitrary configuration"})
     energies = (report or {}).get("energies") or {}
     final, atoms = energies.get("final"), (report or {}).get("atoms") or 0
     if embedded and final is None:
@@ -56,7 +66,11 @@ def judge(has_design: bool, report: dict | None, sdf: dict | None) -> dict:
         {"id": "review", "name": "Review", "state": ("done" if reviewed else "active") if embedded else "pending"},
     ]
     if report:
-        bits = [report.get("name") or "molecule", report.get("formula") or "?"]
+        parent = report.get("parent") or {}
+        label = report.get("name") or "molecule"
+        if parent.get("name") and parent.get("change"):
+            label += f" ({parent['change']} vs {parent['name']})"
+        bits = [label, report.get("formula") or "?"]
         if props.get("mw") is not None:
             bits.append(f"MW {props['mw']}")
         if props.get("logp") is not None:
@@ -76,7 +90,9 @@ def judge(has_design: bool, report: dict | None, sdf: dict | None) -> dict:
 
 
 def newest_sdf(ws: Path) -> Path | None:
-    files = sorted((p for p in ws.glob("out/**/*.sdf") if p.is_file()), key=lambda p: p.stat().st_mtime)
+    files = sorted((p for p in ws.glob("out/**/*.sdf")
+                    if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".conformers.sdf")),
+                   key=lambda p: p.stat().st_mtime)
     return files[-1] if files else None
 
 
@@ -92,6 +108,11 @@ def inspect(path: Path) -> dict:
             return info
         info["atoms"] = sum(m.GetNumAtoms() for m in mols)
         info["conformers"] = sum(1 for m in mols if m.GetNumConformers() and m.GetConformer().Is3D())
+        ensemble = path.with_name(path.name[:-4] + ".conformers.sdf")
+        if info["conformers"] and ensemble.exists():
+            more = [m for m in Chem.SDMolSupplier(str(ensemble), removeHs=False) if m is not None]
+            if more and all(m.GetNumAtoms() == mols[0].GetNumAtoms() for m in more):
+                info["conformers"] = len(more)
         if not info["conformers"]:
             info["error"] = None  # judged as "no conformer", which says more than a parse error
     except ImportError:

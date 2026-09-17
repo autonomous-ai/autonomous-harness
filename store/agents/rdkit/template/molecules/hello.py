@@ -1,6 +1,7 @@
-"""The starter: ibuprofen from its SMILES, embedded in 3D, minimised, and written out — the SDF the
-pane rotates, the 2D depiction in its corner, the properties in its panel, the report the verdict
-reads. Replace it: another molecule, an analogue of this one, a whole series under molecules/."""
+"""The starter: ibuprofen from its SMILES, its conformers searched and minimised, and written out — the
+SDFs the pane turns and plays, the 2D depiction linked to them, the charges, groups and properties it
+shows, the series it starts, the report the verdict reads. Replace it: another molecule, an analogue of
+this one (`design(smiles, name, parent="ibuprofen")`), a whole series under molecules/."""
 from harness_rdkit import design, similarity
 
 report = design("CC(C)Cc1ccc(cc1)C(C)C(=O)O", "ibuprofen")

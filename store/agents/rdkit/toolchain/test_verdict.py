@@ -62,6 +62,21 @@ class Judge(unittest.TestCase):
         self.assertTrue(v["ready"])
         self.assertEqual(v["findings"][0]["severity"], "info")
 
+    def test_veber_alerts_and_stereo_are_reported_not_gated(self):
+        report = {**REPORT, "veber": ["rotatable_bonds 17 > 10"], "alerts": ["Brenk: Aliphatic long chain"],
+                  "unspecified_stereocenters": 1}
+        v = judge(True, report, SDF)
+        self.assertTrue(v["ready"])
+        self.assertEqual([(f["kind"], f["severity"]) for f in v["findings"]],
+                         [("veber", "warning"), ("alert", "warning"), ("stereo", "info")])
+        self.assertTrue(v["summary"].endswith("2 warnings"))
+
+    def test_an_analogue_names_its_parent_and_the_change(self):
+        report = {**REPORT, "name": "caffeine_ethyl", "parent": {"name": "caffeine", "change": "+C", "similarity": 0.55}}
+        v = judge(True, report, {**SDF, "conformers": 6})
+        self.assertTrue(v["summary"].startswith("caffeine_ethyl (+C vs caffeine) · C8H10N4O2"))
+        self.assertIn("6 conformers", v["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()
