@@ -1,8 +1,9 @@
 # Domain-specific harnesses
 
 A **domain-specific harness (DSH)** turns Harness into a product for one domain: PCB design,
-3D CAD, short drama, robot training. It is a git repo that Harness installs on a machine. Users see
-it as one more tile in New Harness — pick **Copper**, choose a folder, prompt — and get
+3D CAD, short drama, robot training. It is a folder with a manifest — its own git repo, or one folder of
+a bigger one — that Harness installs on a machine. Users see it as one more tile in New Harness — pick
+**Autonomous Circuit**, choose a folder, prompt — and get
 the domain's skills in the agent, its toolchain on the machine, its viewer in a pane next to the
 terminal, and its verdict in the pane header.
 
@@ -98,7 +99,13 @@ is what lets hundreds of DSHs exist without any of them touching this repo.
 
    CI clones the repo at that ref and runs the conformance check. Once merged, the app offers the
    tile before the harness is installed and installs it on Create; `verified: true` is for
-   first-party entries, everything else shows its git URL on install.
+   first-party entries, everything else shows its git URL on install. A package that is one folder
+   of a bigger repository names it with `"path"`; install then fetches that folder alone.
+
+   The packages Autonomous maintains are the built-in shelf, one folder each in
+   [`store/`](../store/) of this repository (`store/agents/<name>`, `store/viewers/<name>`), listed
+   here with `"repo"` this repository and `"path"` their folder. [`store/README.md`](../store/README.md)
+   has the rules that shelf keeps.
 
 ## Tiers
 
@@ -112,9 +119,10 @@ is what lets hundreds of DSHs exist without any of them touching this repo.
 
 | Harness | Base | What it shows |
 |---|---|---|
-| [Marp](https://github.com/autonomous-ai/autonomous-marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
-| [Copper](https://github.com/autonomous-ai/autonomous-circuit) (PCB) | Claude Code | a Python toolchain vendored by `setup.sh`, a board viewer, phases Build / Checks / Fab written by the generation pipeline |
-| [Toymaker](https://github.com/autonomous-ai/autonomous-workshop) (CAD) | Codex | a Codex base, CAD scripts as skills, a STEP viewer found through `artifactExtensions`, phases Build / Fit / Print / Motion / Review |
+| [Marp](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
+| [Blender](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/blender) (3D) | Claude Code | a pinned `bpy` in a venv set up by `setup.sh`, a helper module the skill teaches, and a viewer package it shares through `viewer.use` |
+| [Autonomous Circuit](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/autonomous-circuit) (PCB) | Claude Code | a wrapper of another team's project: setup fetches it at a pinned commit and runs its own setup, doctor, init and board viewer |
+| [Autonomous Workshop](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/autonomous-workshop) (CAD) | Codex | the same shape on a Codex base, with the store's CAD Viewer as its pane, phases Build / Fit / Print / Motion / Review |
 
 Two rules hold across all of them. The pane is progressive: a harness that only produces a final
 file is not one. And the domain stays in the harness: if adding yours needs a change in this repo,
@@ -125,9 +133,9 @@ contract lives. Changes to it are appended to [`spec/CHANGES.md`](spec/CHANGES.m
 
 The app's start page has a door to the store: every package in this registry as a card, and a page
 per package — its mark, who made it (`author`), its category and description, where it lives
-(`repo`, `homepage`, `upstream`), what it is licensed under (`license`), pictures (`screenshots`),
+(`repo` and `path`, `homepage`, `upstream`), what it is licensed under (`license`), pictures (`screenshots`),
 ratings and reviews, and a row per machine with Get, Open or Remove. Installing is still what it
-always was — a clone under `~/.harness/dsh` on one machine, its toolchain set up beside it — so the
+always was — a clone (for a built-in package, of its one folder) under `~/.harness/dsh` on one machine, its toolchain set up beside it — so the
 page is honest about that: a harness is on a machine, not on an account.
 
 To appear in the store, a package needs nothing beyond its registry entry. The optional fields
@@ -141,7 +149,11 @@ team), text-to-cad and the CAD Viewer (Jake Fitzgerald). Each carries the upstre
 `THIRD_PARTY_NOTICES.md`, changes nothing upstream, names the author on its tile (`author` in the
 manifest), and says in its README that Autonomous wrote the wrapper on the project's behalf to
 bootstrap the catalogue. The ideal end state is that maintainers own their own Harness package: any
-upstream maintainer can ask, on this repository's issues, to have the wrapper repository transferred
-and the registry entry pointed at theirs. Until then bugs in the project go upstream and bugs in the
-wrapper come here.
+upstream maintainer can ask, on this repository's issues, to have the wrapper's folder moved into a
+repository of theirs and the registry entry pointed at it. Until then bugs in the project go upstream
+and bugs in the wrapper come here.
+
+Other Autonomous projects are upstreams too. Autonomous Circuit and Autonomous Workshop live in their
+teams' own repositories; their store packages are wrappers that fetch them read-only at a pinned
+commit and change nothing there, exactly as the MuJoCo package fetches Menagerie.
 

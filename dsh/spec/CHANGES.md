@@ -81,3 +81,32 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
 - **Why:** a project that publishes skills without a licence to copy them (Remotion's, for one) can
   still be wrapped — its skills are fetched at install time, at a pinned commit, never vendored.
 
+## 2026-09-17 — Autonomous Circuit and Autonomous Workshop
+- **Change:** the harnesses known as Copper (`autonomous/copper`) and Toymaker (`autonomous/toymaker`)
+  are `autonomous/autonomous-circuit`, "Autonomous Circuit", and `autonomous/autonomous-workshop`,
+  "Autonomous Workshop" (category "CAD"). Their `formerly` lists carry every id either answered to
+  (`copper`, `circuit`; `toymaker`, `solid`, `workshop`).
+- **Why:** both are other Autonomous teams' projects. The store treats them like any upstream it
+  wraps — under the project's own name, fetched read-only from its own repository — rather than
+  renaming them.
+- **Backward compatible:** yes, through `formerly`.
+
+## 2026-09-17 — A package may be one folder of a repository; the built-in shelf
+- **Change:** a registry entry may name `path`, a relative folder inside `repo` that is the package.
+  Install makes a blob-less, sparse clone of `repo` at `ref`, keeps that folder alone and lays it out
+  exactly like a whole-repo install (the manifest at the install root, no `.git`); `installed.json`
+  records `path`. `harness dsh install <url> --path <folder>` does the same by hand, and a
+  `viewer.use` dependency resolves through its own entry's `path`. `dsh_list`'s `repo` for such an
+  entry is the folder's browsable URL. The packages Autonomous maintains live in the Harness
+  monorepo at `store/agents/<name>` and `store/viewers/<name>`, with `kind` matching the folder and
+  the id `autonomous/<name>`; `cli/src/dsh/store.spec.ts` holds folders and registry to each other.
+  `HARNESS_STORE_REF` makes the daemon install the built-in shelf from another ref, to try a store
+  branch before it merges.
+- **Also:** `harness dsh check` warns instead of failing when `agent.instructions` or
+  `workspace.template` is missing but `toolchain.setup` is declared — the shape of a wrapper whose
+  setup fetches its upstream — as it already did for skills.
+- **Why:** one repository for the shelf keeps a CLI change and the packages that need it in one
+  review, and a package that grows up can still leave for a repository of its own.
+- **Backward compatible:** yes — `path` is optional, and a record without it is a whole-repo install.
+- **Mechanism:** `cli/src/dsh/install.ts` (`cloneInstall`), `registry.ts` (`path`,
+  `registrySourceUrl`, `HARNESS_STORE_REF`), `command.ts` (`--path`), `check.ts`, `store/README.md`.

@@ -2,7 +2,8 @@
 
 Frozen 2026-09-14. Changes go to [CHANGES.md](CHANGES.md), append-only.
 
-A DSH is a git repo. Harness reads `harness.json` at its root and nothing else about its code.
+A DSH is a git repo, or one folder of one (a registry entry's `path`; see CHANGES.md 2026-09-17).
+Harness reads `harness.json` at its root and nothing else about its code.
 
 
 ## `harness.json`
@@ -10,8 +11,8 @@ A DSH is a git repo. Harness reads `harness.json` at its root and nothing else a
 ```jsonc
 {
   "spec": 1,
-  "id": "autonomous/copper",             // owner/name; the install dir and the wire id
-  "name": "Circuit",                      // the picker tile
+  "id": "autonomous/autonomous-circuit", // owner/name; the install dir and the wire id
+  "name": "Autonomous Circuit",           // the picker tile
   "description": "Chat with AI → a board you can order",
   "engine": "claude",                     // base engine, one of ENGINES
   "workspace": {
@@ -129,12 +130,12 @@ and `dsh_list` rows forward them from the registry whether or not the package is
 
 ```
 ~/.harness/dsh/
-  installed.json                # [{ id, dir, source, ref, commit, installedAt }]
-  autonomous/copper/           # clone, or a symlink when installed with --link (dev loop)
-  autonomous/toymaker/
+  installed.json                # [{ id, dir, source, ref, path?, commit, linked, installedAt }]
+  autonomous/typst/             # clone (of one folder, for a store package), or a symlink with --link
+  autonomous/doc-viewer/
 ```
 
-CLI: `harness dsh install <git-url|path> [--link] [--ref <ref>]`, `harness dsh list`,
+CLI: `harness dsh install <id|git-url|path> [--link] [--ref <ref>] [--path <folder>]`, `harness dsh list`,
 `harness dsh doctor <id>`, `harness dsh remove <id>`.
 
 ## In the monorepo

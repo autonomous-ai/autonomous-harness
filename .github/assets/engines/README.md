@@ -39,11 +39,11 @@ The domain harnesses' tiles. Two are Harness's own; Marp's is Marp's.
 
 | File | Source | Source px |
 |---|---|---|
-| `copper.png` | Copper's mark, drawn for Harness (a copper trace on a board-brown tile); the 512px render the app's `desktop/assets/engine-icons/copper.png` was reduced from | 512 |
-| `toymaker.png` | Toymaker's mark (formerly Solid's), drawn for Harness (a white cube on an indigo tile); same origin as Copper's | 512 |
+| `autonomous-circuit.png` | Autonomous Circuit's mark (drawn as Copper's), a copper trace on a board-brown tile; the 512px render the app's `desktop/assets/engine-icons/autonomous-circuit.png` was reduced from | 512 |
+| `autonomous-workshop.png` | Autonomous Workshop's mark (drawn as Solid's, then Toymaker's), a white cube on an indigo tile; same origin as Autonomous Circuit's | 512 |
 | `marp.png` | Marp's official mark — the `marp-team` GitHub organisation avatar at `?size=512`, fetched 2026-09-16; upstream SHA-256 `bb98b851038e212421c1d6f6c24a9002afbb010d83ba759e315368c11ed0045f`. Nominative use, as for the engine marks above | 460 |
 
-Copper and Toymaker are opaque tiles. Marp's is a transparent glyph in Marp's own blue (71% transparent, ink `(103,184,227)`), dark enough to read on the light ground, so it needs no tile; the contrast check above passes all three. The app's own Marp tile (`desktop/assets/engine-icons/marp.png`) is a stand-in drawn for the picker, not this mark.
+Autonomous Circuit and Autonomous Workshop are opaque tiles. Marp's is a transparent glyph in Marp's own blue (71% transparent, ink `(103,184,227)`), dark enough to read on the light ground, so it needs no tile; the contrast check above passes all three. The app's own Marp tile (`desktop/assets/engine-icons/marp.png`) is a stand-in drawn for the picker, not this mark.
 
 Open items, recorded rather than left implicit:
 

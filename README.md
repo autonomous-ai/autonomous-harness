@@ -1,18 +1,18 @@
 # Harness
 
 Agents that build things, in one window. Code with Claude Code, Codex, Cursor and eleven more. CAD
-with Toymaker and text-to-cad. PCBs with Copper. Keynotes with Marp. Every agent runs in a persistent terminal on
+with Autonomous Workshop and text-to-cad. PCBs with Autonomous Circuit. Keynotes with Marp. Every agent runs in a persistent terminal on
 any machine you own, and the domains beyond code get a viewer beside it that shows the work as it
 is made.
 
 <p align="center">
-  <img src=".github/assets/screenshots/harness.gif" width="960" alt="One window, nine moments: two coding agents side by side, three in columns, a Toymaker tab with the 3D case beside the Codex agent that made it, a Copper board as schematic, as routed PCB and in 3D beside its Claude Code agent, four panes of Toymaker and Copper together, and a Marp keynote beside its agent">
+  <img src=".github/assets/screenshots/harness.gif" width="960" alt="One window, nine moments: two coding agents side by side, three in columns, an Autonomous Workshop tab with the 3D case beside the Codex agent that made it, an Autonomous Circuit board as schematic, as routed PCB and in 3D beside its Claude Code agent, four panes of Autonomous Workshop and Autonomous Circuit together, and a Marp keynote beside its agent">
 </p>
 
 ## One app, every agent
 
 An agent is the who: Claude Code, Codex, Cursor and eleven more for code, and the specialized ones,
-Toymaker, Copper, Yosys, MuJoCo, RDKit, Phaser and more, each an agent plus the skills, toolchain
+Autonomous Workshop, Autonomous Circuit, Yosys, MuJoCo, RDKit, Phaser and more, each an agent plus the skills, toolchain
 and viewer of its domain: a printable toy, a routed board, a chip for an FPGA, a robot in live physics,
 a molecule you can rotate, a game you play in the pane. Harness
 never wraps an agent; it reads the transcript each one already writes and installs the vendor's own
@@ -23,8 +23,8 @@ code, the viewer beside it. Pick an agent, and yours is a git repository away.
 | Category | Agents |
 |---|---|
 | **Code** | <img src=".github/assets/engines/claude.png" height="28" alt="Claude Code"> Claude Code &nbsp;&nbsp; <img src=".github/assets/engines/codex.png" height="28" alt="Codex"> Codex &nbsp;&nbsp; <img src=".github/assets/engines/cursor.png" height="28" alt="Cursor"> Cursor &nbsp;&nbsp; <img src=".github/assets/engines/opencode.png" height="28" alt="OpenCode"> OpenCode &nbsp;&nbsp; <img src=".github/assets/engines/pi.png" height="28" alt="Pi"> Pi &nbsp;&nbsp; <img src=".github/assets/engines/hermes.png" height="28" alt="Hermes"> Hermes &nbsp;&nbsp; <img src=".github/assets/engines/commandcode.png" height="28" alt="Command Code"> Command Code &nbsp;&nbsp; <img src=".github/assets/engines/devin.png" height="28" alt="Devin"> Devin &nbsp;&nbsp; <img src=".github/assets/engines/muse.png" height="28" alt="Muse Code"> Muse Code &nbsp;&nbsp; <img src=".github/assets/engines/amp.png" height="28" alt="Amp"> Amp &nbsp;&nbsp; <img src=".github/assets/engines/kilo.png" height="28" alt="Kilo"> Kilo &nbsp;&nbsp; <img src=".github/assets/engines/grok.png" height="28" alt="Grok"> Grok &nbsp;&nbsp; <img src=".github/assets/engines/agy.png" height="28" alt="Antigravity"> Antigravity &nbsp;&nbsp; <img src=".github/assets/engines/copilot.png" height="28" alt="GitHub Copilot"> GitHub Copilot |
-| **CAD** | <img src=".github/assets/engines/toymaker.png" height="28" alt="Toymaker"> Toymaker &nbsp;&nbsp; <img src=".github/assets/engines/text-to-cad.png" height="28" alt="text-to-cad"> text-to-cad, by Jake Fitzgerald |
-| **PCB** | <img src=".github/assets/engines/copper.png" height="28" alt="Copper"> Copper |
+| **CAD** | <img src=".github/assets/engines/autonomous-workshop.png" height="28" alt="Autonomous Workshop"> Autonomous Workshop &nbsp;&nbsp; <img src=".github/assets/engines/text-to-cad.png" height="28" alt="text-to-cad"> text-to-cad, by Jake Fitzgerald |
+| **PCB** | <img src=".github/assets/engines/autonomous-circuit.png" height="28" alt="Autonomous Circuit"> Autonomous Circuit |
 | **Slides** | <img src=".github/assets/engines/marp.png" height="28" alt="Marp"> Marp |
 | **Documents** | <img src=".github/assets/engines/typst.png" height="28" alt="Typst"> Typst |
 | **Diagrams** | <img src=".github/assets/engines/excalidraw.png" height="28" alt="Excalidraw"> Excalidraw |

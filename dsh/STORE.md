@@ -32,14 +32,14 @@ folder, show them in a pane. Numbers are GitHub stars on 2026-09-16.
 | **Strudel** (tidalcycles/strudel, 3k) | Music | live-coded music playing in the pane. AGPL-3.0: fine to run, worth a licence line. |
 | **Unity** (CoplayDev/unity-mcp, 14k) | Games | needs the Unity editor open; not headless. Later. |
 | **Security audit** (trailofbits/skills, 7.1k) | Security | a report, not an artifact; CC-BY-SA. A doc-viewer harness if wanted. |
-| **KiCad** (mixelpixx/KiCAD-MCP-Server, 2.3k) | PCB | overlaps Copper; only if users ask for KiCad files. |
+| **KiCad** (mixelpixx/KiCAD-MCP-Server, 2.3k) | PCB | overlaps Autonomous Circuit; only if users ask for KiCad files. |
 | **img2obj** (vinhhien112/img2obj, 1.7k, Codex plugin) | 3D art | image → procedural Three.js; web-viewer. Small, fun. |
 
 ## Viewer packages this implies
 
 | Package | Draws | Used by |
 |---|---|---|
-| `autonomous/cad-viewer` (built) | STEP, GLB, STL, 3MF, DXF, URDF | Toymaker, text-to-cad, Blender |
+| `autonomous/cad-viewer` (built) | STEP, GLB, STL, 3MF, DXF, URDF | Autonomous Workshop, text-to-cad |
 | `autonomous/video-viewer` | MP4, WebM, a frame strip while rendering | Remotion, Manim |
 | `autonomous/web-viewer` | a folder served as a page, or a named local app | Excalidraw, Godot web export, img2obj, Strudel |
 | `autonomous/doc-viewer` | PDF, and docx/pptx/xlsx through LibreOffice | Typst, Office, Science, Security |
