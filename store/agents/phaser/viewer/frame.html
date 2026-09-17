@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phaser</title>
+<link rel="stylesheet" href="/__harness/frame.css">
+</head>
+<body>
+<header id="bar">
+  <div class="who">
+    <span id="dot" class="dot is-loading" title="Starting"></span>
+    <span id="title">Phaser</span>
+    <span id="fps" class="fps" title="Frames per second"></span>
+  </div>
+  <div class="tools">
+    <div class="menu-wrap">
+      <button id="preset" class="btn select" aria-haspopup="menu" title="Screen size (1–5)"><span data-icon="monitor"></span><span id="presetName">Fit pane</span><span data-icon="chevron"></span></button>
+      <div id="presetMenu" class="menu" role="menu" hidden></div>
+    </div>
+    <button id="rotate" class="btn icon" title="Rotate device (O)" hidden><span data-icon="rotate"></span></button>
+    <span class="sep"></span>
+    <button id="pause" class="btn" title="Pause (P)"><span data-icon="pause"></span><span class="label">Pause</span></button>
+    <button id="restart" class="btn icon" title="Restart the scene (R)"><span data-icon="restart"></span></button>
+    <button id="reload" class="btn icon" title="Reload the game from its first scene (Shift R)"><span data-icon="reload"></span></button>
+    <button id="debug" class="btn" title="Debug: physics bodies and stats (D)" aria-pressed="false"><span data-icon="bug"></span><span class="label">Debug</span></button>
+    <button id="full" class="btn icon" title="Full screen (F)"><span data-icon="maximize"></span></button>
+    <button id="help" class="btn icon" title="Shortcuts (?)"><span data-icon="keyboard"></span></button>
+  </div>
+</header>
+
+<main id="stage">
+  <div id="box"><iframe id="game" title="Game" allow="autoplay; fullscreen; gamepad"></iframe></div>
+  <div id="device" hidden></div>
+
+  <div id="loading" class="overlay center">
+    <div class="spinner"></div>
+    <div id="loadingText">Starting the game…</div>
+  </div>
+
+  <button id="paused" class="overlay center paused" hidden>
+    <span class="big" data-icon="play"></span>
+    <span class="big-label">Paused</span>
+    <span class="small">Click to resume</span>
+  </button>
+
+  <div id="debugHud" class="hud" hidden></div>
+
+  <section id="error" class="error" hidden>
+    <div class="error-card">
+      <div class="error-head">
+        <span data-icon="alert"></span>
+        <div class="error-titles">
+          <div id="errorKind" class="error-kind">Build error</div>
+          <div id="errorWhere" class="error-where"></div>
+        </div>
+        <span class="grow"></span>
+        <button id="errorDismiss" class="btn icon ghost" title="Dismiss"><span data-icon="x"></span></button>
+      </div>
+      <pre id="errorMessage" class="error-message"></pre>
+      <pre id="errorFrame" class="error-frame" hidden></pre>
+      <details id="errorStackWrap" hidden><summary>Stack</summary><pre id="errorStack"></pre></details>
+      <div class="error-foot">
+        <span id="errorHint">The game reloads on the next save.</span>
+        <span class="grow"></span>
+        <button id="errorRestart" class="btn" hidden>Restart scene</button>
+        <button id="errorReload" class="btn primary">Reload now</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" hidden></div>
+  <button id="exitFull" class="exit-full" hidden><span data-icon="minimize"></span> Exit full screen <kbd>Esc</kbd></button>
+
+  <div id="helpCard" class="help" hidden>
+    <div class="help-title">Shortcuts <span class="muted">— when the pane, not the game, has the keyboard</span></div>
+    <dl>
+      <dt><kbd>P</kbd></dt><dd>Pause / resume</dd>
+      <dt><kbd>R</kbd></dt><dd>Restart the scene</dd>
+      <dt><kbd>Shift</kbd> <kbd>R</kbd></dt><dd>Reload from the first scene</dd>
+      <dt><kbd>D</kbd></dt><dd>Debug: bodies and stats</dd>
+      <dt><kbd>F</kbd></dt><dd>Full screen</dd>
+      <dt><kbd>1</kbd>–<kbd>5</kbd></dt><dd>Fit · Game size · Phone · Tablet · 1×</dd>
+      <dt><kbd>O</kbd></dt><dd>Rotate phone or tablet</dd>
+      <dt><kbd>G</kbd></dt><dd>Give the game the keyboard</dd>
+    </dl>
+    <div class="muted">Click the game to play; click the bar above to use these.</div>
+  </div>
+</main>
+
+<footer id="status">
+  <button id="focus" class="focus" title="Give the game the keyboard (G)"><span class="pip"></span><span id="focusText">Click the game to play</span></button>
+  <div id="controls" class="controls"></div>
+  <span class="grow"></span>
+  <span id="info" class="info"></span>
+</footer>
+
+<script src="/__harness/frame.js"></script>
+</body>
+</html>

@@ -5,6 +5,11 @@ if [ -x node_modules/.bin/vite ]; then
 else
   echo "miss node_modules — run toolchain/setup.sh"; bad=1
 fi
+if [ -f viewer.mjs ] && [ -f viewer/frame.js ] && [ -f viewer/probe.js ] && [ -f viewer/guard.js ]; then
+  echo "ok   pane: the game frame around vite (viewer.mjs, viewer/)"
+else
+  echo "miss viewer.mjs or viewer/ — the checkout is incomplete"; bad=1
+fi
 if [ -f skills/scenes/SKILL.md ] && [ -f skills/harness-phaser/SKILL.md ]; then
   echo "ok   skills: $(find skills -name SKILL.md | wc -l | tr -d ' ')"
 else

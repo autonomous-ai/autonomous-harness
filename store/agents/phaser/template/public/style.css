@@ -11,12 +11,11 @@ html, body {
     touch-action: none;
 }
 
+/* Phaser's autoCenter (CENTER_BOTH in src/main.js) centres the canvas with margins. Do not also
+   centre it with flexbox here: the two add up and push the game off-centre in a tall pane. */
 #game-container {
     width: 100vw;
     height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
 }
 
 #game-container canvas {

@@ -29,16 +29,26 @@ that names it. There is no global `Phaser` and no `<script src>`.
 
 ## The pane is a Vite dev server
 
-Harness runs `vite --port <port> --strictPort --host 127.0.0.1` in the workspace and shows it beside
-the terminal. That means:
+Harness runs Vite's dev server on the workspace (with this `vite.config.mjs`, on its own port) and
+shows the game beside the terminal, in a frame with screen sizes, pause, restart, a physics-debug
+toggle and full screen. That means:
 
 - **Saving a file reloads the game.** No build step, no refresh, no URL to print. A module with
-  `export default class ... extends Phaser.Scene` reloads through a full page reload, which restarts
-  the game from the first scene — expected, and the reason the first scene should be cheap.
+  `export default class ... extends Phaser.Scene` reloads through a full page reload. The pane then
+  takes the player back to the scene they were in, once the scene before it (the title, the
+  preloader) is running again — so a scene must work when started directly with `scene.start(key)`
+  and its own `init` data; if it crashes that way, the pane falls back to the first scene.
+- **Errors are shown, not hidden.** A syntax error, an unresolved import or an exception in
+  `create()` appears in the pane as a card with the file, the line and the code around it, and
+  clears on the next good save. The verdict still reports build errors for the header.
+- **The controls hint** under the pane is read from the keys the running scene registers
+  (`createCursorKeys`, `addKeys`, `keyboard.on('keydown-X')`) and whether it listens for the pointer.
+  To say it in words instead, put `<meta name="harness:controls" content="←→ move · SPACE jump">`
+  in `index.html`.
 - **Never start a second server** (`npm run dev`, `vite preview`, `python -m http.server`). The port
   is taken and the pane is already pointed at it.
-- **A blank pane is a JavaScript error**, not a Phaser problem. Run the verdict: the Vite build
-  reports the same error with a file and a line.
+- **An error card in the pane is a JavaScript error**, not a Phaser problem. Run the verdict: the Vite
+  build reports the same error with a file and a line.
 
 ## Keyboard focus: the rule that makes or breaks the game
 

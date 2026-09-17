@@ -6,8 +6,14 @@ shooter, a puzzle — and play it in the pane beside it while the agent writes i
 **Codex**.
 
 - `harness.json` — engine, template, skills, toolchain, and this package's own viewer.
-- `viewer.sh` — `vite` on the workspace, on the port Harness hands it, loopback only. Vite's HMR is
-  what makes the pane live: the agent saves a scene, the game reloads in place.
+- `viewer.sh` → `viewer.mjs` — Vite's dev server on the workspace (its own `vite.config.mjs`), on the
+  port Harness hands it, loopback only, inside a game frame (`viewer/`). Vite's HMR is what makes the
+  pane live: the agent saves a scene, the game reloads — and goes back to the scene the player was
+  in. The frame adds screen sizes (fit, game size, phone, tablet, 1×), pause, restart, a debug
+  toggle that draws the physics bodies with an fps/scene/bodies HUD, full screen, the focus and
+  controls hint, and build and runtime errors as a card with the file, the line and the code — never
+  a blank pane. Two small scripts are injected into the page Vite serves (never into a build): a
+  guard for errors and a probe that finds the `Phaser.Game`.
 - `toolchain/setup.sh` — one `node_modules` in this directory (Phaser 4.2.1, Vite 6, terser, pinned
   in `package.json` and `VERSIONS`) that every workspace symlinks to, so a new game is instant and
   there is one copy of Phaser on the machine.
