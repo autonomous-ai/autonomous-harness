@@ -5,9 +5,14 @@
 hear it in the Strudel pane as the agent writes the pattern. Runs on Claude Code.
 
 - `harness.json` — engine, template, skill, toolchain, and this package's own viewer.
-- `viewer.mjs` — the pane: Strudel's own REPL as a web component, from the package's own
-  `node_modules`, no CDN. Play and Stop in a bar above it, the file's text below it, and a save
-  hot-swaps the pattern on the next cycle instead of restarting the transport.
+- `viewer.mjs` + `pane/` — the pane: Strudel's own REPL as a web component, from the package's own
+  `node_modules`, no CDN, with what it takes to *see* the music. A transport (Play/Stop, tempo, bar
+  and beat, the output's waveform and spectrum); one lane per voice — the arguments of the top-level
+  `stack(...)` or the `$:` lines, named after the comment above each — scrolling under a playhead,
+  zoomable from 1 to 32 bars, with activity lights, Mute and Solo (`1`–`9`, `⇧1`–`⇧9`) and a hover
+  inspector; the code once, lit per voice as it plays. A save hot-swaps the pattern without stopping
+  the transport, and a save that does not run shows its error and line while the last good version
+  keeps playing. `pane/voices.mjs` is the voice parser (`node --test pane/voices.test.mjs`).
 - `toolchain/verdict.py` — the check: the file parses with the same parser the REPL uses, has a
   pattern in it, and says whether it plays offline. `setup.sh` is `npm ci`.
 - `skills/strudel/` — the Strudel skill (ours): mini-notation, synths, effects, song structure.
@@ -17,12 +22,13 @@ hear it in the Strudel pane as the agent writes the pattern. Runs on Claude Code
 harness dsh check .                              # conformance
 harness dsh install "$PWD" --link                # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py    # the verdict
+node --test pane/voices.test.mjs                 # the pane's voice parser
 ```
 
 ## What cannot be checked here
 
-Whether the track sounds good, or sounds at all. There is no headless audio: Strudel plays in a
-browser, after a click. The verdict parses the pattern and reports what it can — the pane and the
+Whether the track sounds good. Strudel plays in a browser, after a click, and no check here listens
+to it. The verdict parses the pattern and reports what it can — the pane and the
 user's ears do the rest.
 
 ## Credit and stewardship

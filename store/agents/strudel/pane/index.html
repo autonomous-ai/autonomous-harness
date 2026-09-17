@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strudel</title>
+<link rel="stylesheet" href="/_pane/pane.css">
+</head>
+<body>
+<header id="bar">
+  <button id="play" disabled title="Play (Space)" aria-label="Play">
+    <svg class="i-play" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.6v10.8c0 .5.55.8.98.54l8.6-5.4a.63.63 0 0 0 0-1.08l-8.6-5.4A.63.63 0 0 0 4 2.6Z"/></svg>
+    <svg class="i-stop" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.6"/></svg>
+  </button>
+  <div class="readout bpm" title="Tempo, at four beats a cycle"><b id="bpm">–</b><small>bpm</small></div>
+  <div class="readout pos" title="Where the transport is: the cycle (a bar) and its beat"><b id="barno">1</b><span class="under"><small>bar</small><span class="pips" id="pips"><i class="down"></i><i></i><i></i><i></i></span></span></div>
+  <div class="sep"></div>
+  <div class="file">
+    <div class="row"><span id="name">track.strudel</span><select id="picker" hidden></select><span id="saved">updated</span></div>
+    <div id="status"><span class="dot"></span><span id="statustext">Loading Strudel…</span></div>
+  </div>
+  <div id="scopebox" title="The output: waveform and spectrum"><canvas id="scope"></canvas></div>
+</header>
+
+<div id="banners">
+  <div id="err" class="banner err" hidden>
+    <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm0 3a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5Zm0 7.25a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Z"/></svg>
+    <div class="msg"><b id="errtitle">The track does not run</b> <code id="errmsg"></code><div class="sub" id="errsub"></div></div>
+    <button id="errgo" hidden>Show line</button>
+  </div>
+  <div id="edited" class="banner edit" hidden>
+    <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11.1 1.9a1.6 1.6 0 0 1 2.3 0l.7.7a1.6 1.6 0 0 1 0 2.3L6 13H3v-3l8.1-8.1Z"/></svg>
+    <div class="msg"><b>Edited here, not saved.</b> <span class="sub">Ctrl+Enter plays your change; <span id="editfile">track.strudel</span> is untouched.</span></div>
+    <button id="revert">Revert to file</button>
+  </div>
+</div>
+
+<main id="main">
+  <section id="lanes">
+    <div class="lanes-head">
+      <span class="title" id="vcount">Voices</span>
+      <button class="linkbtn" id="clearmix" hidden>Unmute all</button>
+      <span class="spacer"></span>
+      <span class="keys">1–9 mute · ⇧1–9 solo</span>
+      <div class="seg" id="zoom" title="How many bars the lanes show (− and +)">
+        <button data-span="1">1</button><button data-span="2">2</button><button data-span="4">4</button><button data-span="8">8</button><button data-span="16">16</button><button data-span="32">32</button>
+      </div>
+      <span class="seg-label">bars</span>
+    </div>
+    <div class="lanes-body" id="lanesbody">
+      <div id="mixer"></div>
+      <div id="rollwrap">
+        <canvas id="roll"></canvas>
+        <div id="tip" hidden></div>
+        <button id="gate" hidden>
+          <span class="disc"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.6v10.8c0 .5.55.8.98.54l8.6-5.4a.63.63 0 0 0 0-1.08l-8.6-5.4A.63.63 0 0 0 4 2.6Z"/></svg></span>
+          <span>Play the track<small>Audio starts on a click, or press Space</small></span>
+        </button>
+      </div>
+    </div>
+  </section>
+  <section id="code">
+    <div class="code-head">
+      <span class="title">Code</span><span id="codemeta"></span>
+      <span class="spacer"></span>
+      <span class="keys">lit while it plays · Ctrl+Enter run · Ctrl+. stop</span>
+    </div>
+    <div id="editor"></div>
+    <div id="toast"><span id="toasttext"></span><button id="toastgo" hidden>Show</button></div>
+  </section>
+</main>
+
+<div id="empty" hidden>
+  <div class="card">
+    <div class="glyph"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></div>
+    <h1 id="emptytitle">No track yet</h1>
+    <p id="emptytext">The agent writes <code>track.strudel</code> in this workspace. It shows up here the moment it is saved, ready to play.</p>
+    <div class="wave"><i style="animation-delay:0s"></i><i style="animation-delay:.15s"></i><i style="animation-delay:.3s"></i><i style="animation-delay:.45s"></i><i style="animation-delay:.6s"></i></div>
+  </div>
+</div>
+
+<script>
+  // Strudel's REPL preloads sample banks from the network (dough-samples on GitHub). Nothing here
+  // needs them — synth patterns are the offline path — but its prebake awaits them all before the
+  // first evaluation, so one failed fetch would mean no sound at all. Let those cross-origin fetches
+  // fall back to an empty sample map, and say in the bar that banks are unavailable.
+  window.__strudelOffline = false;
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const url = String(typeof input === 'string' ? input : (input && input.url) || '');
+    try { return await realFetch(input, init); } catch (error) {
+      if (/^https?:\/\//.test(url) && !url.startsWith(location.origin)) {
+        window.__strudelOffline = true;
+        window.dispatchEvent(new CustomEvent('strudel-offline'));
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw error;
+    }
+  };
+</script>
+<!-- Strudel's REPL web component, from this package's node_modules (@strudel/repl, AGPL-3.0-or-later, unmodified). -->
+<script src="/vendor/index.js"></script>
+<script type="module" src="/_pane/pane.mjs"></script>
+</body>
+</html>

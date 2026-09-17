@@ -173,6 +173,23 @@ $: note("<c2 g1>(3,8)").s("sawtooth").lpf(800)
 _$: n("0 3 7").scale("c4:minor").s("triangle")   // muted
 ```
 
+**Name every voice.** The pane draws one lane per `stack` argument (or `$:` line) — its notes
+scrolling under a playhead, an activity light, Mute and Solo — and titles the lane from the comment
+directly above the voice, up to the first ` — `, `:` or `.`. So give every voice its own argument and
+a title line, and keep what it does after the dash:
+
+```js
+stack(
+  // Kick — four on the floor
+  s("sbd*4").decay(0.24),
+  // Bass — three pulses in eight, filter opening over four bars
+  note("<c2 g1>(3,8)").s("sawtooth").lpf(sine.range(220, 1600).slow(4))
+)
+```
+
+A named label (`bass: note(...)`) is its own title. Without a comment the lane is named after the
+first sound it plays.
+
 **Structure.** A cycle is a bar. Longer form comes from `<>` (one per cycle), `!` and `@` to hold a
 chord for two bars, `/n` to stretch, and `every(n, f)` / `someCyclesBy` to vary. Eight bars of
 harmony is `<[chord]!2 [chord]!2 [chord]!2 [chord]!2>`.
@@ -195,8 +212,8 @@ last `lpf` wins. Use `superimpose` or a second stack entry for a second treatmen
 1. Write `track.strudel` with a tempo and one or two voices within the first minute, run the
    verdict, and tell the user to click **Play**. The pane hot-swaps from then on.
 2. Build up a voice at a time, running the verdict after each save. A file that does not parse
-   leaves the pane playing the last good pattern and shows the error in its bar — the music never
-   breaks, but nothing new is heard until the verdict is clean.
+   leaves the pane playing the last good pattern and shows the error, with its line, above the code —
+   the music never breaks, but nothing new is heard until the verdict is clean.
 3. Prefer synths. If the user asks for real drums, use them and say the pane needs the internet.
 4. Ask only what you cannot infer — tempo, key, mood, length. Otherwise decide, say so in one line,
    and play it.

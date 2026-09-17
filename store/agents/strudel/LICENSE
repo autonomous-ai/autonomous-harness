@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Autonomous (the Harness wrapper: harness.json, AGENTS.md, viewer.mjs, viewer.sh, skills/, template/, toolchain/). Strudel itself is not part of this package; it is installed from npm at setup time and is under LICENSE-strudel (GNU AGPL-3.0-or-later).
+Copyright (c) 2026 Autonomous (the Harness wrapper: harness.json, AGENTS.md, viewer.mjs, viewer.sh, pane/, skills/, template/, toolchain/). Strudel itself is not part of this package; it is installed from npm at setup time and is under LICENSE-strudel (GNU AGPL-3.0-or-later).
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
