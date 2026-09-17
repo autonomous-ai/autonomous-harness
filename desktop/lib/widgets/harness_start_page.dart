@@ -408,13 +408,21 @@ class _HarnessStartPageState extends State<HarnessStartPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  Wrap(
-                    spacing: 16,
-                    runSpacing: 16,
+                  // One row, always: the two cards shrink together rather than
+                  // wrapping, because a second row grows the footer the search
+                  // above has reserved and pushes the page past its bottom edge.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      if (widget.onStore != null)
-                        _store(compact: constraints.maxHeight < 600),
-                      _device(compact: constraints.maxHeight < 600),
+                      if (widget.onStore != null) ...[
+                        Flexible(
+                          child: _store(compact: constraints.maxHeight < 600),
+                        ),
+                        const SizedBox(width: 16),
+                      ],
+                      Flexible(
+                        child: _device(compact: constraints.maxHeight < 600),
+                      ),
                     ],
                   ),
                 ],
