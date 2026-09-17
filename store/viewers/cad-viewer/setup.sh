@@ -18,3 +18,5 @@ if [ ! -x .venv/bin/python ]; then "$PY" -m venv .venv; fi
 echo "     installing cadgen $CADGEN_VERSION (this pulls OpenCascade; a few minutes the first time)"
 .venv/bin/python -m pip install --quiet "cadgen==${CADGEN_VERSION}"
 echo "ok   cadgen $(.venv/bin/cadgen --version 2>/dev/null || echo "$CADGEN_VERSION")"
+# The client the pane serves (pane_client.py): the bundled one with its fetches kept on loopback.
+if [ -n "$(.venv/bin/python pane_client.py 2>/dev/null)" ]; then echo "ok   pane client"; else echo "warn pane client not made — the pane serves the bundled client"; fi

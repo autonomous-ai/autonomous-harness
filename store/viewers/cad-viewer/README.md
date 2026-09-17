@@ -17,7 +17,15 @@ never a tile. It is installed once per machine and shared by every harness that 
 - `harness.json` — the manifest (spec 1.1, `kind: viewer`).
 - `setup.sh` — one venv with the pinned `cadgen` (see `CADGEN_VERSION`); pulls OpenCascade.
 - `doctor.sh` — can this machine run it.
-- `viewer.sh` — `cadgen viewer --host 127.0.0.1 --port $HARNESS_VIEWER_PORT` in the workspace.
+- `viewer.sh` — `cadgen viewer --host 127.0.0.1 --port $HARNESS_VIEWER_PORT` in the workspace. The
+  viewer already follows the agent: a re-export of the open file redraws in place and keeps the
+  camera, and Measure, Display (clip planes on X/Y/Z, exploded view, render mode) and Reference
+  are in the inspector.
+- `pane_client.py` — the client the pane serves, through cadgen's own `--dist` option: the pinned
+  release's bundled client, byte for byte, plus one `Content-Security-Policy` meta tag in
+  `index.html` that keeps the page's fetches on loopback. Without it the page asks api.github.com
+  for a newer release on every open and shows an **Update** link to a version the pane cannot
+  install; with it the corner shows the pinned version. Made once per cadgen version, gitignored.
 
 ## Credit and stewardship
 
