@@ -58,7 +58,7 @@ interface Harness {
   released: string[]
 }
 
-function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCreate?: boolean; refuseLaunch?: boolean; budgetMs?: number; settleMs?: number } = {}): Harness {
+function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCreate?: boolean; refuseLaunch?: boolean; refuseLaunchWith?: { error: string; detail: string }; refuseLaunchFromCall?: number; availableCwds?: string[]; budgetMs?: number; settleMs?: number } = {}): Harness {
   const h: Harness = {
     calls: [],
     rows: new Map(rows.map((r) => [r.agentId, r])),
@@ -100,8 +100,10 @@ function harness(rows: RegisteredSession[], opts: { livePanes?: string[]; failCr
       inheritName: (from, to) => { note(`inheritName:${from}->${to}`) },
     },
     liveProcess: async (_entry, runtime) => live.has(runtime.paneId) ? identity(1000 + Number(runtime.paneId.slice(1))) : null,
+    cwdAvailable: (cwd) => (opts.availableCwds ?? ['/tmp/demo']).includes(cwd),
     buildLaunch: async (entry, o) => {
       h.launches.push({ agentId: entry.agentId, ...(o.resumeSessionId ? { resumeSessionId: o.resumeSessionId } : {}) })
+      if (opts.refuseLaunchWith && h.launches.length >= (opts.refuseLaunchFromCall ?? 1)) return opts.refuseLaunchWith
       if (opts.refuseLaunch) return { error: 'GRID_ENGINE_UNSUPPORTED', detail: 'no way to point it at a grid' }
       // The shape cli.ts builds: a grid's env and argv when the row kept its launch, a profile's
       // CODEX_HOME otherwise. Only the presence matters here; gridLaunch.ts specs the contents.
@@ -321,6 +323,75 @@ describe('restoreAgents — waiting for the engine', () => {
     expect(h.rows.get('agent-a')?.launch).toEqual({ state: 'starting' })
   })
 
+  it('never opens a pane for a row whose folder is gone, and keeps its session binding', async () => {
+    const detail = 'its folder /tmp/demo/.claude/worktrees/feat-org-links no longer exists — choose another folder to start it there'
+    const h = harness([row({ cwd: '/tmp/demo/.claude/worktrees/feat-org-links' })], {
+      refuseLaunchWith: { error: 'CWD_NOT_FOUND', detail },
+    })
+
+    const summary = await restoreAgents(h.deps)
+
+    expect(summary).toEqual({ restored: [], skipped: [], failed: [{ agentId: 'agent-a', reason: detail }] })
+    // The point of refusing at build time: no pane is opened, so there is no corpse to explain and
+    // no watch to run the resume → fresh fallback that would discard the session binding.
+    expect(h.paneCreates).toBe(0)
+    expect(h.respawns).toBe(0)
+    expect(h.calls).not.toContain('unbind:session-a')
+    expect(h.rows.get('agent-a')?.sessionId).toBe('session-a')
+    expect(h.rows.get('agent-a')?.launch).toMatchObject({ state: 'failed', error: 'CWD_NOT_FOUND', detail })
+  })
+
+  it('keeps the session binding when the fresh relaunch cannot even be built', async () => {
+    const detail = 'its folder /tmp/demo no longer exists — choose another folder to start it there'
+    // The first build succeeds (the folder was there at restore); the pane then dies, and by the time
+    // the fresh retry is built the folder is gone — a folder deleted while the agent was running.
+    const h = harness([row()], { refuseLaunchWith: { error: 'CWD_NOT_FOUND', detail }, refuseLaunchFromCall: 2 })
+    h.states.set('%0', [{ dead: true }])
+
+    await restoreAgents(h.deps)
+    await settled(h, 1)
+
+    expect(h.respawns).toBe(0)
+    expect(h.calls).not.toContain('unbind:session-a')
+    expect(h.calls).not.toContain('inheritName:session-a->agent-a')
+    expect(h.rows.get('agent-a')?.launch).toMatchObject({ state: 'failed', error: 'CWD_NOT_FOUND', detail })
+  })
+
+  it('retries a row that failed only because its folder was gone, once the folder is back', async () => {
+    const h = harness([row({ launch: { state: 'failed', error: 'CWD_NOT_FOUND', detail: 'gone' } })], {
+      availableCwds: ['/tmp/demo'],
+    })
+    h.probes.set('%0', [identity(500)])
+
+    const summary = await restoreAgents(h.deps)
+
+    expect(summary.restored).toEqual(['agent-a'])
+    expect(h.paneCreates).toBe(1)
+    await settled(h, 1, 1)
+  })
+
+  it('still skips a CWD_NOT_FOUND row whose folder is still gone', async () => {
+    const h = harness([row({ launch: { state: 'failed', error: 'CWD_NOT_FOUND', detail: 'gone' } })], {
+      availableCwds: [],
+    })
+
+    const summary = await restoreAgents(h.deps)
+
+    expect(summary).toEqual({ restored: [], skipped: [{ agentId: 'agent-a', reason: 'last launch failed' }], failed: [] })
+    expect(h.paneCreates).toBe(0)
+  })
+
+  it('still skips a row that failed for any other reason, folder or not', async () => {
+    const h = harness([row({ launch: { state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'exited' } })], {
+      availableCwds: ['/tmp/demo'],
+    })
+
+    const summary = await restoreAgents(h.deps)
+
+    expect(summary).toEqual({ restored: [], skipped: [{ agentId: 'agent-a', reason: 'last launch failed' }], failed: [] })
+    expect(h.paneCreates).toBe(0)
+  })
+
   it('fails a fresh engine that exits inside the settling window', async () => {
     const h = harness([row({ sessionId: '', boundAt: null })], { settleMs: 50 })
     h.probes.set('%0', [identity(7)])
@@ -337,6 +408,8 @@ describe('restoreAgents — waiting for the engine', () => {
     await restoreAgents(h.deps)
     await settled(h, 1)
     expect(h.respawns).toBe(1)
+    // The binding is still discarded on the path this was written for: a resume id the engine refuses.
+    expect(h.calls).toContain('unbind:session-a')
     expect(h.rows.get('agent-a')?.launch).toMatchObject({ state: 'failed', error: 'ENGINE_DID_NOT_START' })
   })
 
