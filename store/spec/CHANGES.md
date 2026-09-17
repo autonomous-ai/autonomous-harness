@@ -110,3 +110,20 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
 - **Backward compatible:** yes — `path` is optional, and a record without it is a whole-repo install.
 - **Mechanism:** `cli/src/dsh/install.ts` (`cloneInstall`), `registry.ts` (`path`,
   `registrySourceUrl`, `HARNESS_STORE_REF`), `command.ts` (`--path`), `check.ts`, `store/README.md`.
+
+## 2026-09-17 — One store folder; a built-in package is its own registry entry
+- **Change:** everything under `dsh/` moved into `store/`: the spec (`store/spec`), the starter
+  (`store/starter`), the tools (`store/tools`), the guide (`store/README.md`) and the listing for packages
+  that live elsewhere (`store/registry/<owner>/<name>.json`). A built-in package no longer has a
+  registry file: the CLI build turns each `store/<agents|viewers>/<name>` folder into its entry —
+  name, kind, category, author, description and engine from `harness.json`; `homepage`, `upstream`,
+  `license` and `screenshots` from a new `store.json` beside it (`StoreFactsSchema`); repo this
+  repository, ref `main`, path the folder, tier from what the manifest ships, `verified: true`. An
+  outside entry whose id a built-in folder already has is dropped.
+- **Why:** each fact is written once, adding a built-in package is adding a folder, and the contract,
+  the packages and the listing are one place instead of two.
+- **Backward compatible:** yes — the bundled registry has the same shape and entries as before.
+- **Unchanged on purpose:** `harness dsh …`, `dsh_list`/`dsh_install`/`dsh_remove`, `cli/src/dsh/` and
+  `~/.harness/dsh` keep the DSH name; they are the CLI's public contract.
+- **Mechanism:** `cli/src/dsh/registry.ts` (`storeEntry`, `readStoreDir`, `StoreFactsSchema`),
+  `cli/scripts/lib/dshRegistry.mjs`, `cli/src/dsh/store.spec.ts`.

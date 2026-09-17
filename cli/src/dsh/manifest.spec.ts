@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { DshManifestSchema, dshSkillsDirFor, dshTier, dshVerdictPath, expandDshValue, parseDshManifest, readDshManifest , isViewerPackage, dshEngine, viewerUse} from './manifest.js'
 
-const STARTER = fileURLToPath(new URL('../../../dsh/starter-dsh', import.meta.url))
+const STARTER = fileURLToPath(new URL('../../../store/starter', import.meta.url))
 
 describe('parseDshManifest', () => {
   it('accepts the starter fixture, which is also what the JSON Schema accepts', () => {

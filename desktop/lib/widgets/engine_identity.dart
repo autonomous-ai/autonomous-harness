@@ -230,7 +230,7 @@ const _harnesses = <String, EngineIdentity>{
     asset: 'assets/engine-icons/text-to-cad.png',
   ),
   // The store's first wave: open-source projects under their own names, their
-  // makers on the tile (dsh/README.md "Stewardship").
+  // makers on the tile (store/README.md "Stewardship").
   'autonomous/typst': EngineIdentity(
     id: 'autonomous/typst',
     label: 'Typst',

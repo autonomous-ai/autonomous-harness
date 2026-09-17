@@ -1,6 +1,6 @@
 // The Harness Store's backend half: ratings and reviews of harnesses.
 //
-// The catalogue itself is NOT here — it is the registry bundled into the CLI (`dsh/registry`), and
+// The catalogue itself is NOT here — it is the registry bundled into the CLI (`store/`), and
 // installing is a per-machine act the daemon performs. What a store needs from a server is the part
 // that has to be shared between people and signed: who rated what, and what they wrote. One review
 // per person per harness; writing again replaces it.

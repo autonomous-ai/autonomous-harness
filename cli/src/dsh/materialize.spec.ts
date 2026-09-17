@@ -7,7 +7,7 @@ import type { InstalledDsh } from './installed.js'
 import { readDshManifest } from './manifest.js'
 import { dshMarkerLine, materializeWorkspace, resolveDshCommand, skillDirsIn } from './materialize.js'
 
-const STARTER = realpathSync(fileURLToPath(new URL('../../../dsh/starter-dsh', import.meta.url)))
+const STARTER = realpathSync(fileURLToPath(new URL('../../../store/starter', import.meta.url)))
 
 function starter(engine: 'claude' | 'codex' = 'claude'): InstalledDsh {
   const manifest = readDshManifest(STARTER)

@@ -9,7 +9,7 @@ import { installDsh, removeDsh, resolveInstallSource, runDshDoctor } from './ins
 import { checkDsh, formatCheck } from './check.js'
 
 export function dshUsage(): string {
-  return `Domain-specific harnesses (a DSH turns Harness into a product for one domain — see dsh/README.md):
+  return `Domain-specific harnesses (a DSH turns Harness into a product for one domain — see store/README.md):
   harness dsh list                 what is installed on this computer, and what the registry offers
   harness dsh install <id|url|path> [--ref <ref>] [--path <folder>] [--link]
                                    install by registry id (autonomous/typst), git URL, or local path;

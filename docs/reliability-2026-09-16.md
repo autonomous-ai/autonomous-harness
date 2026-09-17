@@ -73,6 +73,6 @@ These results do not establish 100% coverage of every deployed environment.
   workflows were not rerun. Device coverage here is host-side; domain harness coverage uses a
   deterministic example.
 - Remote domain harness viewer tunneling and Linux domain harness webview support are existing
-  implementation gaps documented in `dsh/PLAN.md`, outside this reliability fix.
+  implementation gaps documented in `store/PLAN.md`, outside this reliability fix.
 
 Repeat the isolated stack using [the development instructions](development.md#isolated-end-to-end-testing).

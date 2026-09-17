@@ -1,7 +1,7 @@
 /**
  * `.harness/verdict.json` — the one file a DSH's own scripts write and Harness reads back.
  *
- * Spec 1 (`dsh/spec/schema/verdict.schema.json`): `ready` is the one machine fact, `findings` carry
+ * Spec 1 (`store/spec/schema/verdict.schema.json`): `ready` is the one machine fact, `findings` carry
  * a closed severity and an open kind, `artifact` names the primary thing to view. The daemon reduces
  * it to what the pane header needs (ready, a summary, two counts) and hands `artifact` to the viewer.
  *

@@ -1,0 +1,4 @@
+{
+  "upstream": "https://github.com/google-deepmind/mujoco",
+  "license": "MIT"
+}

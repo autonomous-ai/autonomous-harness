@@ -1,0 +1,5 @@
+{
+  "homepage": "https://mujoco.org",
+  "upstream": "https://github.com/google-deepmind/mujoco",
+  "license": "MIT"
+}

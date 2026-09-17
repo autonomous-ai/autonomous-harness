@@ -6,8 +6,8 @@ import { readDshRegistry } from './scripts/lib/dshRegistry.mjs'
 // Bake the version in so `node dist/cli.js version` works in the dev/per-file build too (parity with
 // build-bundle.mjs). The bundle build overrides this from ADAPTER_VERSION at release time.
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version
-// The bundled DSH registry (dsh/registry/**/*.json at the repo root) — see src/dsh/registry.ts.
-const dshRegistry = JSON.stringify(readDshRegistry(join('..', 'dsh', 'registry')))
+// The bundled registry (the store/ folders and store/registry at the repo root) — see src/dsh/registry.ts.
+const dshRegistry = JSON.stringify(readDshRegistry(join('..', 'store')))
 
 function getAllTsFiles(dir, fileList = []) {
   const files = readdirSync(dir)

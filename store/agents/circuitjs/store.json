@@ -1,0 +1,5 @@
+{
+  "homepage": "https://www.falstad.com/circuit/",
+  "upstream": "https://github.com/pfalstad/circuitjs1",
+  "license": "MIT"
+}

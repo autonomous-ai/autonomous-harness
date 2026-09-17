@@ -142,7 +142,7 @@ class Agent {
   /// The domain-specific harness this agent was created from (`autonomous/autonomous-circuit`), or
   /// null for a plain engine. [engine] stays the BASE engine the process actually runs —
   /// a DSH is a decoration on the session, never a second engine (see the DSH spec in
-  /// `dsh/spec/README.md`). Everything a person sees keys off this when it is set.
+  /// `store/spec/README.md`). Everything a person sees keys off this when it is set.
   final String? dsh;
 
   /// The harness's display name as the daemon read it off the manifest. Lets a DSH this
@@ -312,7 +312,7 @@ class Agent {
 }
 
 /// A domain-specific harness's verdict on an agent's workspace, as the daemon read it off
-/// `.harness/verdict.json` (see `dsh/spec/README.md`). Counts rather than the findings
+/// `.harness/verdict.json` (see `store/spec/README.md`). Counts rather than the findings
 /// themselves: the pane header has room for "3 errors", and the findings live in the
 /// harness's own viewer.
 enum AgentPhaseState { done, active, pending, failed }

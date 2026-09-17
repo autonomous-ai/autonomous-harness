@@ -1,0 +1,5 @@
+{
+  "homepage": "https://www.rdkit.org",
+  "upstream": "https://github.com/rdkit/rdkit",
+  "license": "MIT"
+}

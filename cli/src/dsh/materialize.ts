@@ -1,6 +1,6 @@
 /**
  * Put a DSH into a workspace, idempotently, before its engine is launched there — the four steps of
- * the contract (`dsh/spec/README.md` § Materialization):
+ * the contract (`store/spec/README.md` § Materialization):
  *
  *   1. an EMPTY workspace (no marker) gets the template, then the init command runs;
  *   2. `AGENTS.md` is copied in, or the DSH's text is appended under a marker line; a `claude` base

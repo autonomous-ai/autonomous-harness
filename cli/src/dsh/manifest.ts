@@ -1,9 +1,9 @@
 /**
  * `harness.json` — the one file Harness reads about a domain-specific harness.
  *
- * Spec 1, frozen: see `dsh/spec/README.md` and `dsh/spec/schema/harness.schema.json` at the repo
+ * Spec 1, frozen: see `store/spec/README.md` and `store/spec/schema/harness.schema.json` at the repo
  * root. The zod schema here is the runtime twin of that JSON Schema; the two must agree, and the
- * fixture under `dsh/starter-dsh/` is parsed by both in the spec.
+ * fixture under `store/starter/` is parsed by both in the spec.
  *
  * Every path in the manifest is relative to the DSH's install directory and must stay inside it —
  * a manifest is untrusted input (it arrives with a `git clone`), so `..` and absolute paths are

@@ -112,7 +112,7 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
   `verdict: { ready, summary, errors, warnings, artifact, phases, updatedAt } | null`. Null is a real answer
   (see `agentFrame.ts`'s doc on erased fields).
 - `dsh_list` → `{ dsh: [{ id, name, description, category, engine, installed, viewer, tier }] }`: installed
-  DSHs on this machine merged with the bundled registry (`dsh/registry/**/*.json`).
+  DSHs on this machine merged with the bundled registry (the `store/` folders and `store/registry/`).
 - `dsh_install { id?, url?, ref? }` → runs clone → setup → doctor; pushes
   `dsh_install_status { id, phase: clone|setup|doctor|done|failed, detail? }`; replies `{ ok }` at
   the end (the desktop uses a 10-minute timeout for this one request).
@@ -122,7 +122,8 @@ writes it beside the sidecar in `circuitpy.generation`; Workshop writes it from 
 ### The store's facts
 
 A registry entry may also carry `homepage`, `upstream`, `license` and `screenshots` (see
-`cli/src/dsh/registry.ts`). They are the store page's, not the package's: a manifest never has them,
+`cli/src/dsh/registry.ts`); a built-in package keeps them in `store.json` beside its manifest. They are
+the store page's, not the package's: a manifest never has them,
 and `dsh_list` rows forward them from the registry whether or not the package is installed, with
 `repo` and `linked` beside them. `dsh_remove { id }` uninstalls from the answering machine.
 
@@ -141,13 +142,16 @@ CLI: `harness dsh install <id|git-url|path> [--link] [--ref <ref>] [--path <fold
 ## In the monorepo
 
 ```
-dsh/
-  README.md            what a DSH is, the tiers, how to publish
+store/
+  README.md            what a package is, the tiers, how to build and publish, the shelf's rules
   spec/README.md       this contract, frozen; CHANGES.md is append-only
   spec/schema/         harness.schema.json, verdict.schema.json
-  registry/autonomous/ circuit.json, workshop.json   (bundled into the CLI at build time)
-  starter-dsh/         tier 0: manifest + AGENTS.md + one skill; the CLI's test fixture
-cli/src/dsh/           manifest, install, materialize, viewer, verdict, probe
+  starter/             tier 0: manifest + AGENTS.md + one skill; the CLI's test fixture
+  agents/<name>/       built-in harnesses: harness.json + store.json, each its own registry entry
+  viewers/<name>/      built-in viewer packages, the same way
+  registry/<owner>/    entries for packages in repositories of their own
+  tools/               daemon-level checks over the loopback socket
+cli/src/dsh/           manifest, install, materialize, viewer, verdict, probe, registry
 desktop/lib/dsh/       catalog, web pane, verdict chip
 ```
 

@@ -1,0 +1,5 @@
+{
+  "homepage": "https://yosyshq.net",
+  "upstream": "https://github.com/YosysHQ/yosys",
+  "license": "MIT"
+}

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkDsh } from './check.js'
 
-const STARTER = realpathSync(fileURLToPath(new URL('../../../dsh/starter-dsh', import.meta.url)))
+const STARTER = realpathSync(fileURLToPath(new URL('../../../store/starter', import.meta.url)))
 
 describe('checkDsh', () => {
   let copy: string

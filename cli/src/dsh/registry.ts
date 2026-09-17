@@ -1,8 +1,11 @@
 /**
- * The bundled registry: `dsh/registry/<owner>/<name>.json` at the repo root, baked into the CLI at
- * build time the same way the version is (`__DSH_REGISTRY__`, an esbuild `define` in both
- * `build.mjs` and `build-bundle.mjs`). Under `tsx`/vitest there is no define, so the files are read
- * off the source tree — the dev loop sees the same entries the release does.
+ * The bundled registry, baked into the CLI at build time the same way the version is
+ * (`__DSH_REGISTRY__`, an esbuild `define` in both `build.mjs` and `build-bundle.mjs`). Two sources
+ * at the repo root: every built-in package folder, `store/<agents|viewers>/<name>` — its entry built
+ * from its `harness.json` and `store.json`, so no fact is written twice — and
+ * `store/registry/<owner>/<name>.json` for packages that live in repositories of their own. Under
+ * `tsx`/vitest there is no define, so both are read off the source tree — the dev loop sees the same
+ * entries the release does.
  *
  * A registry entry is how the desktop can offer "Install Typst" for a package this machine does not
  * have yet: it names the repo and the ref to clone, and — for the built-in shelf, which lives in this
@@ -55,11 +58,65 @@ export const DshRegistryEntrySchema = z.strictObject({
 
 export type DshRegistryEntry = z.infer<typeof DshRegistryEntrySchema>
 
+/** What a built-in package's `store.json` holds: the store page's facts a manifest does not know. */
+export const StoreFactsSchema = z.strictObject({
+  homepage: z.string().url().max(2048).optional(),
+  upstream: z.string().url().max(2048).optional(),
+  license: z.string().min(1).max(40).optional(),
+  screenshots: z.array(z.string().url().max(2048)).max(8).optional(),
+})
+
+export type StoreFacts = z.infer<typeof StoreFactsSchema>
+
+/** The shelf's two folders and the kind each holds. */
+export const STORE_KINDS = [['agents', 'agent'], ['viewers', 'viewer']] as const
+
+/**
+ * One built-in package folder as its registry entry: the words from the manifest, the facts from
+ * `store.json`, the source this repository at `main` and that folder, the tier from what the manifest
+ * ships, and `verified` because every built-in is first-party. Mirrored, line for line, by
+ * `storeEntry` in `scripts/lib/dshRegistry.mjs` (the build cannot import TypeScript); a spec holds
+ * the two to the same answer on the real tree.
+ */
+export function storeEntry(path: string, manifest: Record<string, unknown>, facts: Record<string, unknown>): Record<string, unknown> {
+  const entry: Record<string, unknown> = { id: manifest.id }
+  if (manifest.kind !== undefined) entry.kind = manifest.kind
+  for (const key of ['name', 'category', 'author', 'description']) if (manifest[key] !== undefined) entry[key] = manifest[key]
+  Object.assign(entry, { repo: HARNESS_MONOREPO, ref: 'main', path })
+  for (const key of ['homepage', 'upstream', 'license', 'screenshots']) if (facts[key] !== undefined) entry[key] = facts[key]
+  if (manifest.engine !== undefined) entry.engine = manifest.engine
+  entry.tier = manifest.viewer ? 2 : manifest.verdict ? 1 : 0
+  entry.verified = true
+  return entry
+}
+
+/** Every `store/<agents|viewers>/<name>` folder with a manifest, as registry entries. */
+export function readStoreDir(storeDir: string): unknown[] {
+  const out: unknown[] = []
+  for (const [plural] of STORE_KINDS) {
+    let names: string[]
+    try { names = readdirSync(join(storeDir, plural)).sort() } catch { continue }
+    for (const name of names) {
+      const dir = join(storeDir, plural, name)
+      let manifest: Record<string, unknown>
+      try { manifest = JSON.parse(readFileSync(join(dir, 'harness.json'), 'utf8')) as Record<string, unknown> } catch { continue }
+      let facts: Record<string, unknown> = {}
+      try { facts = JSON.parse(readFileSync(join(dir, 'store.json'), 'utf8')) as Record<string, unknown> } catch { facts = {} }
+      out.push(storeEntry(`store/${plural}/${name}`, manifest, facts))
+    }
+  }
+  return out
+}
+
 function parseEntries(values: unknown[], storeRef = env.HARNESS_STORE_REF): DshRegistryEntry[] {
   const entries: DshRegistryEntry[] = []
+  const seen = new Set<string>()
   for (const value of values) {
     const parsed = DshRegistryEntrySchema.safeParse(value)
     if (!parsed.success) continue
+    // The built-in folder is read first, so an outside entry claiming the same id never replaces it.
+    if (seen.has(parsed.data.id)) continue
+    seen.add(parsed.data.id)
     // A store branch under test: the built-in packages install from it, everything else as listed.
     const builtIn = storeRef && parsed.data.path && parsed.data.repo.replace(/\.git$/, '') === HARNESS_MONOREPO
     entries.push(builtIn ? { ...parsed.data, ref: storeRef } : parsed.data)
@@ -67,7 +124,7 @@ function parseEntries(values: unknown[], storeRef = env.HARNESS_STORE_REF): DshR
   return entries.sort((a, b) => a.id.localeCompare(b.id))
 }
 
-/** Read `dsh/registry/**\/*.json` from a checkout; used by the build and by the dev fallback. */
+/** Read `store/registry/<owner>/<name>.json` from a checkout: the packages that live elsewhere. */
 export function readRegistryDir(dir: string): unknown[] {
   const out: unknown[] = []
   let owners: string[]
@@ -110,9 +167,9 @@ export function bundledDshRegistry(): DshRegistryEntry[] {
       return cached
     }
   }
-  // src/dsh/registry.ts → ../../../dsh/registry (the same relative walk from dist/dsh/registry.js).
-  const dir = fileURLToPath(new URL('../../../dsh/registry', import.meta.url))
-  cached = parseEntries(readRegistryDir(dir))
+  // src/dsh/registry.ts → ../../../store (the same relative walk from dist/dsh/registry.js).
+  const store = fileURLToPath(new URL('../../../store', import.meta.url))
+  cached = parseEntries([...readStoreDir(store), ...readRegistryDir(join(store, 'registry'))])
   return cached
 }
 
