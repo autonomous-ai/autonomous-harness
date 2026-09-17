@@ -2,14 +2,18 @@
 
 [Harness](https://github.com/autonomous-ai/autonomous-harness) agent package for
 [Blender](https://www.blender.org): describe an object, a scene, a shot in the chat pane; watch it
-take shape in the Video Viewer pane — modelled in Blender's Python, rendered headless, the turntable
-playing on every run — and get it as glTF or STL. Runs on Claude Code.
+take shape in the 3D Viewer pane — modelled in Blender's Python, exported as glTF on every run and
+shown as a live viewport (outliner, properties in mm, shading modes, measure, section, the scene
+camera, the timeline), with the rendered turntable and still beside it — and get it as glTF or STL.
+Runs on Claude Code.
 
-- `harness.json` — engine, template, skill, toolchain, `viewer.use: autonomous/video-viewer`.
+- `harness.json` — engine, template, skill, toolchain, `viewer.use: autonomous/model-viewer`.
 - `toolchain/setup.sh` — one venv with `bpy` (Blender as a Python module) at the pinned version
   (`BPY_VERSION`; the wheel needs Python 3.11 exactly); `harness_blender.py` gives a script the
-  scene, camera, renders, exports and report; `verdict.py` judges what `out/` holds.
-- `skills/blender/` — the Blender skill (ours). `template/` — a mug, built, rendered, turned, exported.
+  scene, camera, glTF export (names, collections, materials, camera, lights, animation and per-object
+  facts as extras, written atomically), renders and report, and keeps `.harness/build.json` current
+  while it runs; `verdict.py` judges what `out/` holds and names the glTF as the artifact.
+- `skills/blender/` — the Blender skill (ours). `template/` — a mug, exported first, then rendered and turned.
 
 ## Credit and stewardship
 

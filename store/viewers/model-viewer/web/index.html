@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Viewer</title>
+<link rel="stylesheet" href="/app/style.css">
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head>
+<body>
+<header class="top">
+  <button id="model-btn" class="model-btn" title="Models in this workspace">
+    <span class="mb-icon" data-icon="model"></span>
+    <span class="mb-text"><span id="model-dir" class="mb-dir"></span><span id="model-name" class="mb-name">Looking for a model…</span></span>
+    <span class="mb-caret" data-icon="caret"></span>
+  </button>
+  <div id="status" class="status" data-kind="idle" role="status" aria-live="polite"><span class="dot"></span><span class="label">Connecting</span></div>
+  <div class="spacer"></div>
+  <nav id="views" class="seg views" aria-label="View">
+    <button data-view="model" class="on" title="Live 3D scene"><span data-icon="model"></span><span class="t">3D</span></button>
+    <button data-view="video" hidden title="The rendered turntable (V)"><span data-icon="video"></span><span class="t">Turntable</span></button>
+    <button data-view="still" hidden title="The rendered still"><span data-icon="image"></span><span class="t">Render</span></button>
+  </nav>
+  <button id="shot-btn" class="icon-btn" title="Screenshot — copy the view as a PNG (P)" data-icon="shot"></button>
+  <button id="help-btn" class="icon-btn" title="Keyboard shortcuts (?)" data-icon="help"></button>
+  <div id="progress" class="progress" hidden><i></i></div>
+</header>
+
+<main id="main">
+  <section id="model-view" class="view model-view">
+    <div id="stage" class="stage" data-bg="light">
+      <canvas id="gl" tabindex="0" aria-label="3D viewport"></canvas>
+      <div id="frame" class="cam-frame" hidden><span id="frame-name">Camera</span></div>
+      <div id="labels" class="labels"></div>
+
+      <div class="toolbar" id="toolbar">
+        <div class="tgroup seg shading" role="group" aria-label="Shading">
+          <button data-shading="wire" title="Wireframe (Shift Z)" data-icon="wire"></button>
+          <button data-shading="solid" title="Solid (Z cycles)" data-icon="solid"></button>
+          <button data-shading="material" title="Material preview" data-icon="material"></button>
+          <button data-shading="rendered" title="Rendered — shadows, ambient occlusion" data-icon="rendered"></button>
+          <button id="look-btn" class="caret" title="Shading options: lighting, colour, background, overlays" data-icon="caret"></button>
+        </div>
+        <button id="xray-btn" class="tbtn" title="X-ray (Alt Z)" data-icon="xray"></button>
+        <span class="tsep"></span>
+        <div class="tgroup" role="group" aria-label="Tools">
+          <button id="measure-btn" class="tbtn" title="Measure distance (M)" data-icon="measure"></button>
+          <button id="section-btn" class="tbtn" title="Section plane (C)" data-icon="section"></button>
+          <button id="explode-btn" class="tbtn" title="Exploded view (E)" data-icon="explode"></button>
+        </div>
+        <span class="tspacer"></span>
+        <button id="view-btn" class="tbtn text" title="Views, framing, cameras"><span data-icon="view"></span><span class="t">View</span><span data-icon="caret" class="small-caret"></span></button>
+        <button id="sidebar-btn" class="tbtn" title="Outliner and properties (N)" data-icon="sidebar"></button>
+      </div>
+
+      <div id="hud" class="hud"></div>
+
+      <div class="navcol">
+        <div id="gizmo" class="gizmo"></div>
+        <div class="navbtns">
+          <button id="nav-zoom" class="nbtn" title="Drag to zoom" data-icon="zoom"></button>
+          <button id="nav-pan" class="nbtn" title="Drag to pan" data-icon="pan"></button>
+          <button id="nav-camera" class="nbtn" title="Look through the scene camera (0)" data-icon="camera"></button>
+          <button id="nav-ortho" class="nbtn" title="Perspective / orthographic (5)" data-icon="persp"></button>
+          <button id="nav-frame" class="nbtn" title="Frame all (Home)" data-icon="frame"></button>
+        </div>
+      </div>
+
+      <div id="panels" class="panels"></div>
+      <div id="card" class="selcard" hidden></div>
+      <div id="timeline" class="timeline" hidden>
+        <button id="tl-play" class="tl-btn" title="Play / pause (Space)" data-icon="play"></button>
+        <span id="tl-frame" class="tl-frame">1</span>
+        <input id="tl-scrub" type="range" min="0" max="1" step="0.0001" value="0" aria-label="Frame">
+        <span id="tl-end" class="tl-end">250</span>
+        <select id="tl-speed" title="Playback speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+        <span id="tl-name" class="tl-name"></span>
+      </div>
+      <div id="empty" class="empty" hidden></div>
+    </div>
+
+    <aside id="sidebar" class="sidebar">
+      <div class="side-head">
+        <span class="side-title">Outliner</span>
+        <input id="filter" class="filter" type="search" placeholder="Filter" aria-label="Filter objects">
+        <button id="sidebar-close" class="icon-btn small" title="Close (N)" data-icon="close"></button>
+      </div>
+      <div id="tree" class="tree" role="tree"></div>
+      <div class="side-split"><span>Properties</span></div>
+      <div id="props" class="props"></div>
+    </aside>
+  </section>
+
+  <section id="video-view" class="view media" hidden>
+    <div class="media-stage"><video id="video" controls loop muted playsinline preload="metadata"></video></div>
+    <div class="media-bar"><span id="video-name" class="media-name"></span><span class="spacer"></span><span id="video-meta" class="media-meta"></span><button class="link-btn" data-goto="model">Back to 3D</button></div>
+  </section>
+
+  <section id="still-view" class="view media" hidden>
+    <div class="media-stage"><img id="still" alt="Rendered still"></div>
+    <div class="media-bar"><span id="still-name" class="media-name"></span><span class="spacer"></span><span id="still-meta" class="media-meta"></span><button class="link-btn" data-goto="model">Back to 3D</button></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<div id="help" class="help" hidden></div>
+<script type="module" src="/app/app.js"></script>
+</body>
+</html>
