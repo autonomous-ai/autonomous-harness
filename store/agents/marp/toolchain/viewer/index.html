@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marp</title>
+<link rel="stylesheet" href="/viewer/app.css">
+<style id="deckcss"></style>
+</head>
+<body class="view-slide">
+<header id="bar">
+  <div class="side title">
+    <span id="deckTitle" class="deck-title">…</span>
+    <span id="counter" class="counter"></span>
+    <button id="checks" class="chip" hidden></button>
+  </div>
+  <div class="seg" role="tablist" aria-label="View">
+    <button data-view="slide" class="on" title="Slide, with notes and the filmstrip (S)"><i data-icon="slide"></i><span>Slide</span></button>
+    <button data-view="grid" title="All slides (G)"><i data-icon="grid"></i><span>Grid</span></button>
+    <button data-view="presenter" title="Presenter: current, next, notes and a timer (N)"><i data-icon="presenter"></i><span>Presenter</span></button>
+  </div>
+  <div class="side tools">
+    <button id="follow" class="toggle" title="Follow edits: jump to the slide the agent is writing, unless you are browsing"><b></b><span>Follow</span></button>
+    <button id="presentBtn" class="primary" title="Present from this slide (P)"><i data-icon="play"></i><span>Present</span></button>
+  </div>
+</header>
+
+<main id="views">
+  <section id="slideView" class="view">
+    <nav id="strip" class="strip" aria-label="Slides"></nav>
+    <div class="focus">
+      <div id="stageWrap" class="stage-wrap">
+        <div id="stage" class="stage"></div>
+        <button id="prev" class="nav prev" title="Previous (←)"><i data-icon="left"></i></button>
+        <button id="next" class="nav next" title="Next (→)"><i data-icon="right"></i></button>
+      </div>
+      <div id="notes" class="notes"></div>
+    </div>
+  </section>
+
+  <section id="gridView" class="view" hidden>
+    <div id="grid" class="grid"></div>
+  </section>
+
+  <section id="presenterView" class="view" hidden>
+    <div class="p-now">
+      <div class="p-label"><span>Now</span><span id="pNowTitle" class="faint"></span></div>
+      <div id="pNow" class="p-slide"></div>
+    </div>
+    <div class="p-next">
+      <div class="p-clock">
+        <button id="timer" class="timer" title="Elapsed; click to restart">00:00</button>
+        <span id="clock" class="faint"></span>
+        <span id="pCount" class="p-count"></span>
+      </div>
+      <div class="p-label"><span>Next</span><span id="pNextTitle" class="faint"></span></div>
+      <div id="pNext" class="p-slide small"></div>
+    </div>
+    <div class="p-notes-wrap">
+      <div class="p-label"><span>Notes</span></div>
+      <div id="pNotes" class="p-notes"></div>
+    </div>
+  </section>
+
+  <section id="empty" class="empty" hidden>
+    <div class="card">
+      <div class="ghosts" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h1 id="emptyTitle">The deck appears here as it is written</h1>
+      <p id="emptyText">Describe the talk to the agent. Within a minute the outline lands here, one slide per beat; then the art, then the words and the notes, slide by slide.</p>
+    </div>
+  </section>
+</main>
+
+<div id="show" class="show" hidden>
+  <div id="showSlide" class="show-slide"></div>
+  <div id="showBar" class="show-bar">
+    <button id="sPrev" title="Previous (←)"><i data-icon="left"></i></button>
+    <span id="sCount"></span>
+    <button id="sNext" title="Next (→)"><i data-icon="right"></i></button>
+    <span class="sep"></span>
+    <span id="sTimer" class="faint"></span>
+    <button id="sFull" title="Full screen (F)"><i data-icon="expand"></i></button>
+    <button id="sExit" title="Stop presenting (Esc)"><i data-icon="close"></i></button>
+  </div>
+  <div id="jump" class="jump" hidden></div>
+</div>
+
+<div id="popover" class="popover" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<div id="help" class="help" hidden>
+  <div class="card">
+    <h2>Keyboard</h2>
+    <dl>
+      <dt>← →  Space</dt><dd>Previous / next slide</dd>
+      <dt>Home  End</dt><dd>First / last slide</dd>
+      <dt>3 Enter</dt><dd>Go to slide 3</dd>
+      <dt>S  G  N</dt><dd>Slide, grid, presenter view</dd>
+      <dt>P</dt><dd>Present from here</dd>
+      <dt>F</dt><dd>Full screen while presenting</dd>
+      <dt>B</dt><dd>Black screen while presenting</dd>
+      <dt>Esc</dt><dd>Stop presenting</dd>
+    </dl>
+    <p class="faint">The deck is written by the agent; every save redraws here and keeps your place.</p>
+  </div>
+</div>
+
+<script src="/marp-browser.js"></script>
+<script src="/viewer/app.js"></script>
+</body>
+</html>

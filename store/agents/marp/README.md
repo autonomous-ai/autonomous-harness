@@ -13,13 +13,16 @@ slides are [Marp](https://marp.app) Markdown on the harness's `keynote-dark` / `
 - `themes/` — `keynote-dark.css`, `keynote-light.css`: the slide classes (`hero`, `statement`,
   `section`, `pillars`, `image`, `number`, `chart`, `quote`, `closing`, `omt`).
 - `template/` — a fresh workspace: a seven-slide keynote in `deck.md`, its art in `assets/`.
-- `toolchain/` — the pinned `marp-core` + `marp-cli`, the viewer server (scrolling stack, live
-  reload, `P` to present), the check, and `art.mjs` (wallpapers, charts and device frames, offline).
+- `toolchain/` — the pinned `marp-core` + `marp-cli`, the viewer (`viewer.mjs` + `viewer/`: a
+  slide with its notes and a filmstrip, a grid, a presenter view with next slide, notes and timer,
+  full-screen presenting with a black screen and go-to-slide, live redraws that keep your slide or
+  follow the agent's edit, findings marked on their slides), the check, and `art.mjs` (wallpapers,
+  charts and device frames, offline).
 
 ```sh
 harness dsh check .          # conformance
 harness dsh install "$PWD" --link # this checkout as the installed harness
-cd toolchain && node --test test # the check, the phases, the themes, the art
+cd toolchain && npm test          # the check, the phases, the themes, the art
 ```
 
 ## Credit and stewardship

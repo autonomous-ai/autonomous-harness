@@ -33,6 +33,12 @@ else
   warn "marp-cli missing — decks show live but do not export"
 fi
 
+if [ -f "$ROOT/toolchain/viewer.mjs" ] && [ -f "$ROOT/toolchain/viewer/index.html" ] && [ -f "$ROOT/toolchain/viewer/app.js" ]; then
+  ok "viewer pane (slide, grid, presenter, present)"
+else
+  miss "toolchain/viewer/ is incomplete — reinstall the harness"
+fi
+
 # Export to PDF/PPTX renders through a Chromium-family browser marp-cli finds on its own.
 found=""
 for app in "/Applications/Google Chrome.app" "/Applications/Chromium.app" "/Applications/Microsoft Edge.app" "/Applications/Brave Browser.app"; do

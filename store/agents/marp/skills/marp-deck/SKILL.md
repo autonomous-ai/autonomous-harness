@@ -47,7 +47,9 @@ Ten slides for a ten-minute talk. A longer talk repeats 2–8 per act. A shorter
 - **Tension, then release.** Problem, question, answer. The reveal slide is short; the audience
   finishes the sentence.
 - **Speaker notes carry the argument** (`<!-- notes -->` under a slide). The slides carry the punch.
-  Write the notes as spoken sentences, two to five per slide, so the presenter can read them cold.
+  Write the notes as spoken sentences, two to five per slide, so the presenter can read them cold —
+  the pane's Presenter view shows them large beside the next slide, and that is where the user
+  rehearses.
 - **Never a bulleted paragraph on a slide.** If a list is unavoidable, it is three lines of three
   to five words each. The themes render lists as a clean stack with hairlines, no bullets.
 
