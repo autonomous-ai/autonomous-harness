@@ -137,4 +137,30 @@ void main() {
       );
     }
   });
+
+  testWidgets('a working agent reads Working, or its phase, never the last Ready', (
+    tester,
+  ) async {
+    const build = AgentPhase(id: 'build', name: 'Build', state: AgentPhaseState.active);
+    final status = find.byKey(const ValueKey('pane-status'));
+    for (final (verdict, label) in [
+      (const AgentVerdict(ready: true, summary: 'main.pdf · 1 page'), 'Working'),
+      (const AgentVerdict(ready: false, errors: 2), 'Working'),
+      (const AgentVerdict(ready: false, phases: [build]), 'Build'),
+    ]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: VerdictStatus(verdict: verdict, working: true)),
+        ),
+      );
+      expect(
+        find.descendant(of: status, matching: find.text(label)),
+        findsOneWidget,
+        reason: label,
+      );
+      expect(find.descendant(of: status, matching: find.text('Ready')), findsNothing);
+    }
+    final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).first);
+    expect(tooltip.message, 'The agent is working');
+  });
 }

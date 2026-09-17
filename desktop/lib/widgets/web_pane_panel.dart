@@ -3,7 +3,6 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import '../core/models.dart' show AgentVerdict;
@@ -38,6 +37,7 @@ class WebPanePanel extends StatefulWidget {
     required this.ownerEngine,
     this.ownerDisplayName,
     this.verdict,
+    this.working = false,
     this.onClose,
     this.onToggleZoom,
     this.zoomed = false,
@@ -56,6 +56,9 @@ class WebPanePanel extends StatefulWidget {
   /// strip and the chip in the header. The viewer IS the product, so this
   /// header carries them in full where the terminal's shows only the chip.
   final AgentVerdict? verdict;
+
+  /// The agent is mid-turn: the header says so instead of the last verdict.
+  final bool working;
   final VoidCallback? onClose;
   final VoidCallback? onToggleZoom;
   final bool zoomed;
@@ -221,7 +224,12 @@ class _WebPanePanelState extends State<WebPanePanel> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        Flexible(child: VerdictStatus(verdict: verdict)),
+                        Flexible(
+                          child: VerdictStatus(
+                            verdict: verdict,
+                            working: widget.working,
+                          ),
+                        ),
                       ],
                     ],
                   ),

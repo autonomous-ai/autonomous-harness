@@ -9,10 +9,16 @@ import '../theme/app_theme.dart';
 
 /// Ready wins; then errors; then the phase under way; then warnings; then the
 /// last phase that happened; then a plain "Checked". The colour says which.
+///
+/// While the agent is mid-turn the verdict is the LAST check, not this one: a
+/// fresh workspace's template reads "Ready" before the agent has done anything.
+/// So a working agent shows the phase it declares under way, or "Working", and
+/// the last verdict moves to the tooltip.
 class VerdictStatus extends StatelessWidget {
-  const VerdictStatus({super.key, required this.verdict});
+  const VerdictStatus({super.key, required this.verdict, this.working = false});
 
   final AgentVerdict verdict;
+  final bool working;
 
   static String _count(int n, String noun) =>
       '$n ${n == 1 ? noun : '${noun}s'}';
@@ -21,7 +27,14 @@ class VerdictStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final active = verdict.activePhase;
     final last = verdict.currentPhase;
-    final (icon, color, label, weight) = verdict.ready
+    final (icon, color, label, weight) = working
+        ? (
+            LucideIcons.loaderCircle,
+            AppColors.text,
+            active?.name ?? 'Working',
+            FontWeight.w600,
+          )
+        : verdict.ready
         ? (LucideIcons.circleCheck, AppColors.success, 'Ready', FontWeight.w700)
         : verdict.errors > 0
         ? (
@@ -57,7 +70,9 @@ class VerdictStatus extends StatelessWidget {
             FontWeight.w500,
           );
     return Tooltip(
-      message: verdict.summary ?? label,
+      message: working
+          ? 'The agent is working${verdict.summary == null ? '' : ' · last check: ${verdict.summary}'}'
+          : verdict.summary ?? label,
       waitDuration: const Duration(milliseconds: 500),
       child: Semantics(
         label: 'Status: $label',

@@ -1279,6 +1279,9 @@ class _PaneContent extends StatelessWidget {
         ownerEngine: owner?.identityEngine,
         ownerDisplayName: owner?.identityDisplayName,
         verdict: owner?.verdict,
+        working:
+            owner != null &&
+            notifier.agentIsProcessing(pane.machineId, owner.id),
         onClose: close,
         compactHeader: swarmMode,
         zoomed: notifier.zoomedPaneId == pane.id,
