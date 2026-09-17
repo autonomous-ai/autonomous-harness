@@ -1,0 +1,8 @@
+# Autonomous Workshop — the Workshop team's own repository, wrapped here as it is on its main branch.
+# A newer Workshop is a bump of UPSTREAM_COMMIT to a later commit on that main.
+UPSTREAM_NAME="autonomous-workshop"
+UPSTREAM_REPO="https://github.com/autonomous-ai/autonomous-workshop.git"
+UPSTREAM_COMMIT="fad3835422da3bf4e1f91829cb0442829b5f4b97"
+# The Python package, its harness folder and the root files uv needs (673 MB of toys stay behind).
+UPSTREAM_SPARSE_MODE="cone"
+UPSTREAM_SPARSE="harness src"

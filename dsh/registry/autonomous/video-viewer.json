@@ -5,8 +5,9 @@
   "category": "Video",
   "author": "Autonomous",
   "description": "A pane for video: the MP4, WebM or GIF a harness is rendering, replayed on every new render, with duration and size in the header.",
-  "repo": "https://github.com/autonomous-ai/autonomous-video-viewer",
+  "repo": "https://github.com/autonomous-ai/autonomous-harness",
   "ref": "main",
+  "path": "store/viewers/video-viewer",
   "license": "MIT",
   "tier": 2,
   "verified": false

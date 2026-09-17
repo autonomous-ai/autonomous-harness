@@ -70,8 +70,8 @@ void _dshTests() {
       'id': 'agent-1',
       'name': 'Board',
       'engine': 'claude',
-      'dsh': 'autonomous/copper',
-      'dshName': 'Copper',
+      'dsh': 'autonomous/autonomous-circuit',
+      'dshName': 'Autonomous Circuit',
       'viewerUrl': 'http://127.0.0.1:4179/?workspace=1',
       'verdict': {
         'ready': false,
@@ -83,10 +83,10 @@ void _dshTests() {
       },
     });
     expect(agent.engine, 'claude');
-    expect(agent.dsh, 'autonomous/copper');
-    expect(agent.dshName, 'Copper');
-    expect(agent.identityEngine, 'autonomous/copper');
-    expect(agent.identityDisplayName, 'Copper');
+    expect(agent.dsh, 'autonomous/autonomous-circuit');
+    expect(agent.dshName, 'Autonomous Circuit');
+    expect(agent.identityEngine, 'autonomous/autonomous-circuit');
+    expect(agent.identityDisplayName, 'Autonomous Circuit');
     expect(agent.viewerUrl, 'http://127.0.0.1:4179/?workspace=1');
     final verdict = agent.verdict!;
     expect(verdict.ready, isFalse);
@@ -96,7 +96,7 @@ void _dshTests() {
     expect(verdict.artifact, 'boards/main.board.json');
     expect(verdict.updatedAt, DateTime.utc(2026, 9, 14, 20));
     expect(agent.copyWith(name: 'Renamed').verdict, verdict);
-    expect(agent.copyWith(name: 'Renamed').dsh, 'autonomous/copper');
+    expect(agent.copyWith(name: 'Renamed').dsh, 'autonomous/autonomous-circuit');
   });
 
   test('a plain engine agent has none of them and draws as its engine', () {

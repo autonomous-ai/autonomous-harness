@@ -27,8 +27,8 @@ class AgentPicker extends StatelessWidget {
     'codex',
     'claude',
     'opencode',
-    'autonomous/copper',
-    'autonomous/toymaker',
+    'autonomous/autonomous-circuit',
+    'autonomous/autonomous-workshop',
     'autonomous/marp',
   ];
 

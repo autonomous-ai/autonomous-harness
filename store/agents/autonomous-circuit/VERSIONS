@@ -1,0 +1,8 @@
+# Autonomous Circuit — the Circuit team's own repository, wrapped here as it is on its main branch.
+# A newer Circuit is a bump of UPSTREAM_COMMIT to a later commit on that main.
+UPSTREAM_NAME="autonomous-circuit"
+UPSTREAM_REPO="https://github.com/autonomous-ai/autonomous-circuit.git"
+UPSTREAM_COMMIT="dfe107d3dc8b677d2891b327b7155eeea377674a"
+# Everything but its product library and examples (118 MB a board build never reads).
+UPSTREAM_SPARSE_MODE="no-cone"
+UPSTREAM_SPARSE="/* !/products/ !/examples/"

@@ -163,7 +163,7 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
 
   /// The rows the open menu is showing: every option, or the ones the typed
   /// query names. Case-insensitive and anywhere in the string, not a prefix:
-  /// somebody hunting "cad" should find `text-to-cad` and Toymaker both.
+  /// somebody hunting "cad" should find `text-to-cad` and Autonomous Workshop both.
   List<SelectOption<T>> get _shownOptions {
     if (!_filtering || _filter.isEmpty) return widget.options;
     final needle = _filter.toLowerCase();

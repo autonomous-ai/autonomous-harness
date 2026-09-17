@@ -206,15 +206,15 @@ class _HarnessHelpDialogState extends State<_HarnessHelpDialog> {
             'Start with an agent you already use, such as Codex, Claude Code, or OpenCode.',
       ),
       _HelpOption(
-        leading: EngineMark(engine: 'autonomous/solid', size: 32),
-        title: 'Solid · 3D design',
+        leading: EngineMark(engine: 'autonomous/autonomous-workshop', size: 32),
+        title: 'Autonomous Workshop · CAD',
         description:
             'Design parts and objects with a live 3D view. '
             'Use it for prototypes, enclosures, and parts you want to 3D print.',
       ),
       _HelpOption(
-        leading: EngineMark(engine: 'autonomous/copper', size: 32),
-        title: 'Copper · PCB',
+        leading: EngineMark(engine: 'autonomous/autonomous-circuit', size: 32),
+        title: 'Autonomous Circuit · PCB',
         description:
             'Design circuit boards with a live board view. '
             'Use it for electronics projects, PCB layouts, and preparing a board for manufacturing.',

@@ -65,7 +65,7 @@ export function checkDsh(path: string): CheckResult {
     else add('fail', `workspace.template ${ws.template} is not a directory`)
     if (!ws.marker) add('warn', 'workspace.template without workspace.marker: the template is copied on EVERY create')
   }
-  if (ws?.marker && ws.template && !existsSync(join(dir, ws.template, ws.marker))) {
+  if (ws?.marker && ws.template && isDir(join(dir, ws.template)) && !existsSync(join(dir, ws.template, ws.marker))) {
     add('warn', `workspace.marker ${ws.marker} is not in the template, so a fresh workspace stays "fresh" until something else writes it`)
   }
   if (ws?.init) {

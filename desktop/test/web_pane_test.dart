@@ -22,8 +22,8 @@ Map<String, dynamic> _frame(
   'id': id,
   'name': 'Agent $id',
   'engine': 'claude',
-  'dsh': 'autonomous/copper',
-  'dshName': 'Copper',
+  'dsh': 'autonomous/autonomous-circuit',
+  'dshName': 'Autonomous Circuit',
   'viewerUrl': ?viewerUrl,
   'verdict': ?verdict,
   'terminal': {

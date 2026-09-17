@@ -139,7 +139,7 @@ class Agent {
   final bool terminalAvailable;
   final String? terminalUnavailableReason;
 
-  /// The domain-specific harness this agent was created from (`autonomous/copper`), or
+  /// The domain-specific harness this agent was created from (`autonomous/autonomous-circuit`), or
   /// null for a plain engine. [engine] stays the BASE engine the process actually runs —
   /// a DSH is a decoration on the session, never a second engine (see the DSH spec in
   /// `dsh/spec/README.md`). Everything a person sees keys off this when it is set.

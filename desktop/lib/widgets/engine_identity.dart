@@ -197,21 +197,21 @@ const _engines = <String, EngineIdentity>{
 /// own. It is only a face. A harness absent here still draws — the daemon
 /// sends its name, and [engineIdentity] falls back to an initial.
 const _harnesses = <String, EngineIdentity>{
-  'autonomous/copper': EngineIdentity(
-    id: 'autonomous/copper',
-    label: 'Copper',
+  'autonomous/autonomous-circuit': EngineIdentity(
+    id: 'autonomous/autonomous-circuit',
+    label: 'Autonomous Circuit',
     category: 'PCB',
     creator: 'Autonomous',
     color: Color(0xffd98a4a),
-    asset: 'assets/engine-icons/copper.png',
+    asset: 'assets/engine-icons/autonomous-circuit.png',
   ),
-  'autonomous/toymaker': EngineIdentity(
-    id: 'autonomous/toymaker',
-    label: 'Toymaker',
+  'autonomous/autonomous-workshop': EngineIdentity(
+    id: 'autonomous/autonomous-workshop',
+    label: 'Autonomous Workshop',
     category: 'CAD',
     creator: 'Autonomous',
     color: Color(0xff5a52d8),
-    asset: 'assets/engine-icons/toymaker.png',
+    asset: 'assets/engine-icons/autonomous-workshop.png',
   ),
   'autonomous/marp': EngineIdentity(
     id: 'autonomous/marp',
@@ -333,8 +333,8 @@ const _harnesses = <String, EngineIdentity>{
 /// say "Runs on Claude Code" — and send the right `engine` — before the machine
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
-  'autonomous/copper': 'claude',
-  'autonomous/toymaker': 'codex',
+  'autonomous/autonomous-circuit': 'claude',
+  'autonomous/autonomous-workshop': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
   'autonomous/typst': 'claude',

@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/autonomous-workshop",
+  "name": "Autonomous Workshop",
+  "category": "CAD",
+  "author": "Autonomous",
+  "formerly": ["autonomous/toymaker", "autonomous/solid", "autonomous/workshop"],
+  "description": "Describe a part; get a validated, printable STEP with a live 3D view.",
+  "engine": "codex",
+  "workspace": {
+    "template": "upstream/harness/template",
+    "marker": "model.step.py",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "upstream/harness/AGENTS.md",
+    "skills": ["upstream/src/workshop/make/skills"],
+    "env": {
+      "CAD_SKILL_ROOT": "${workspace}/.agents/skills/cad",
+      "WORKSHOP_PYTHON": "${dsh}/upstream/.venv/bin/python"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/cad-viewer",
+    "artifactExtensions": [".step", ".stp"]
+  },
+  "verdict": ".harness/verdict.json"
+}

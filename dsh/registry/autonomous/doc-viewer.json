@@ -5,10 +5,11 @@
   "category": "Documents",
   "author": "Autonomous",
   "description": "A pane for documents: the PDF a harness is writing, every page rendered with pdf.js — scroll, zoom, page count — redrawn on every save.",
-  "repo": "https://github.com/autonomous-ai/autonomous-doc-viewer",
+  "repo": "https://github.com/autonomous-ai/autonomous-harness",
   "ref": "main",
+  "path": "store/viewers/doc-viewer",
+  "upstream": "https://github.com/mozilla/pdf.js",
   "license": "MIT",
   "tier": 2,
-  "verified": false,
-  "upstream": "https://github.com/mozilla/pdf.js"
+  "verified": false
 }

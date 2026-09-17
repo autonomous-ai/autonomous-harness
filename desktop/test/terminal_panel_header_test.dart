@@ -246,8 +246,8 @@ void main() {
     id: 'agent-1',
     name: 'a',
     engine: 'claude',
-    dsh: 'autonomous/copper',
-    dshName: 'Copper',
+    dsh: 'autonomous/autonomous-circuit',
+    dshName: 'Autonomous Circuit',
     terminalAvailable: true,
     verdict: verdict,
   );
@@ -268,7 +268,7 @@ void main() {
       // Its harness — icon and name, like every other pane; no second mark
       // for the engine underneath (owner, 2026-09-15).
       expect(
-        find.byKey(const ValueKey('engine-icon-autonomous/copper')),
+        find.byKey(const ValueKey('engine-icon-autonomous/autonomous-circuit')),
         findsOneWidget,
       );
       expect(

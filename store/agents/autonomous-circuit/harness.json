@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/autonomous-circuit",
+  "name": "Autonomous Circuit",
+  "category": "PCB",
+  "author": "Autonomous",
+  "formerly": ["autonomous/copper", "autonomous/circuit"],
+  "description": "Describe a board; get a fab-ready PCB with a live board view, ordered from JLCPCB in a click.",
+  "engine": "claude",
+  "workspace": {
+    "template": "upstream/harness/template",
+    "marker": "product.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "upstream/harness/AGENTS.md",
+    "skills": ["upstream/skills"],
+    "env": {
+      "CIRCUIT_TOOLCHAIN": "${dsh}/upstream/toolchain",
+      "CIRCUIT_SKILLS_DIR": "${workspace}/.claude/skills",
+      "DISABLE_AUTOUPDATER": "1"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}

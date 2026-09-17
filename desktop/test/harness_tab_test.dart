@@ -22,7 +22,7 @@ class _Request {
       'id': id,
       'name': id,
       'engine': 'claude',
-      'dsh': 'autonomous/copper',
+      'dsh': 'autonomous/autonomous-circuit',
     },
   });
 }
@@ -68,12 +68,12 @@ void main() {
         'm',
         engine: 'claude',
         folder: '/w',
-        dsh: 'autonomous/copper',
+        dsh: 'autonomous/autonomous-circuit',
       );
       expect(app.swarms, hasLength(1), reason: 'the start page is reused');
-      expect(app.activeSwarm.name, 'Copper');
+      expect(app.activeSwarm.name, 'Autonomous Circuit');
       expect(connection.calls.single.type, 'agent_create');
-      expect(connection.calls.single.payload['dsh'], 'autonomous/copper');
+      expect(connection.calls.single.payload['dsh'], 'autonomous/autonomous-circuit');
       connection.calls.single.created('c1');
       expect(await create, isNull);
       expect(app.activeSwarm, same(starter));
@@ -94,13 +94,13 @@ void main() {
       'm',
       engine: 'codex',
       folder: '/w',
-      dsh: 'autonomous/toymaker',
+      dsh: 'autonomous/autonomous-workshop',
       // What the dialog passes when no tab was chosen: the current one.
       swarmId: app.activeSwarmId,
     );
     expect(app.swarms, hasLength(2));
     expect(app.activeSwarm, isNot(same(busy)));
-    expect(app.activeSwarm.name, 'Toymaker');
+    expect(app.activeSwarm.name, 'Autonomous Workshop');
     connection.calls.single.created('w1');
     expect(await create, isNull);
     expect(app.activeSwarm.panes.single.agentId, 'w1');

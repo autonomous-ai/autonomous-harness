@@ -1,0 +1,3 @@
+# The wrapped project, fetched by toolchain/setup.sh — never source here.
+upstream/
+upstream.partial/

@@ -79,8 +79,8 @@ void main() {
     machine.agents = [
       for (final (id, engine, dsh) in [
         ('source', 'claude', null),
-        ('board', 'claude', 'autonomous/copper'),
-        ('part', 'codex', 'autonomous/solid'),
+        ('board', 'claude', 'autonomous/autonomous-circuit'),
+        ('part', 'codex', 'autonomous/autonomous-workshop'),
         ('deck', 'claude', 'autonomous/marp'),
       ])
         Agent(
@@ -113,7 +113,7 @@ void main() {
     for (final (id, type) in [
       ('source', 'Code'),
       ('board', 'PCB'),
-      ('part', '3D design'),
+      ('part', 'CAD'),
       ('deck', 'Slides'),
     ]) {
       final row = entries.singleWhere((row) => row.agentId == id);
