@@ -1,6 +1,6 @@
 // The Harness Store: the shelf is the machines' catalog as cards, a page is
 // one harness with Get/Open/Remove per machine, and ratings and reviews come
-// from the store API. Pinned: viewers stay out of the Store, Get and
+// from the store API. Pinned: viewers have a quiet dependency view, Get and
 // Remove reach the notifier for the right machine, Remove asks first, and a
 // posted review goes to the API with what was typed.
 import 'package:flutter/material.dart';
@@ -33,6 +33,8 @@ const _typst = DshEntry(
   id: 'autonomous/typst',
   name: 'Typst',
   engine: 'claude',
+  viewer: true,
+  viewerUse: 'autonomous/doc-viewer',
   category: 'Documents',
   author: 'Typst GmbH',
   description: 'Describe a document; watch the PDF take shape.',
@@ -203,6 +205,45 @@ Future<(_Notifier, _FakeStore)> open(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets(
+    'the bottom sidebar icon shows viewers and their dependent agents',
+    (tester) async {
+      await open(tester);
+      final button = find.byKey(const ValueKey('store-viewers-button'));
+      expect(button, findsOneWidget);
+      expect(
+        tester.getBottomLeft(button).dy,
+        greaterThan(
+          tester.view.physicalSize.height / tester.view.devicePixelRatio - 50,
+        ),
+      );
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('store-viewers')), findsOneWidget);
+      expect(find.text('Doc Viewer'), findsOneWidget);
+      expect(find.text('Installed on studio-mac'), findsOneWidget);
+      expect(find.text('Used by'), findsOneWidget);
+      final dependent = find.byKey(
+        const ValueKey(
+          'store-viewer-agent:autonomous/doc-viewer:autonomous/typst',
+        ),
+      );
+      expect(dependent, findsOneWidget);
+      expect(
+        find.text('Marp'),
+        findsNothing,
+        reason: 'its own viewer is not a shared Doc Viewer dependency',
+      );
+      await tester.tap(dependent);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('store-page:autonomous/typst')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('the catalog keeps real ratings and hides viewer dependencies', (
     tester,
   ) async {
@@ -241,9 +282,15 @@ void main() {
     expect(find.byKey(const ValueKey('store-nav-manage')), findsNothing);
     expect(find.byKey(const ValueKey('store-shelf-viewers')), findsNothing);
 
-    await tester.enterText(find.byKey(const ValueKey('store-search')), 'Doc Viewer');
+    await tester.enterText(
+      find.byKey(const ValueKey('store-search')),
+      'Doc Viewer',
+    );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('store-card:autonomous/doc-viewer')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('store-card:autonomous/doc-viewer')),
+      findsNothing,
+    );
     expect(find.textContaining('No matching harnesses'), findsOneWidget);
   });
 

@@ -18,6 +18,7 @@ class DshEntry {
     this.category,
     this.installed = false,
     this.viewer = false,
+    this.viewerUse,
     this.tier = 0,
     this.kind = 'agent',
     this.author,
@@ -45,6 +46,9 @@ class DshEntry {
 
   /// Whether it ships a viewer, i.e. whether a web pane will open beside it.
   final bool viewer;
+
+  /// Shared viewer package used by this agent, if the daemon reports one.
+  final String? viewerUse;
   final int tier;
 
   /// `agent` — a harness, one tile; `viewer` — a pane other packages point at
@@ -78,7 +82,10 @@ class DshEntry {
     final kind = raw['kind'] == 'viewer' ? 'viewer' : 'agent';
     final engine = kind == 'viewer' ? '' : raw['engine'];
     if (id is! String || !_validId(id)) return null;
-    if (kind != 'viewer' && (engine is! String || engine.isEmpty || engine.length > 64)) return null;
+    if (kind != 'viewer' &&
+        (engine is! String || engine.isEmpty || engine.length > 64)) {
+      return null;
+    }
     final name = raw['name'];
     final description = raw['description'];
     final category = raw['category'];
@@ -92,7 +99,11 @@ class DshEntry {
       upstream: _httpUrl(raw['upstream']),
       license: _short(raw['license'], 40),
       screenshots: screenshots is List
-          ? screenshots.map(_httpUrl).whereType<String>().take(8).toList(growable: false)
+          ? screenshots
+                .map(_httpUrl)
+                .whereType<String>()
+                .take(8)
+                .toList(growable: false)
           : const [],
       linked: raw['linked'] == true,
       name: name is String && name.trim().isNotEmpty
@@ -114,6 +125,10 @@ class DshEntry {
           : null,
       installed: raw['installed'] == true,
       viewer: raw['viewer'] == true,
+      viewerUse:
+          raw['viewerUse'] is String && _validId(raw['viewerUse'] as String)
+          ? raw['viewerUse'] as String
+          : null,
       tier: tier is num && tier >= 0 && tier <= 9 ? tier.toInt() : 0,
     );
   }
@@ -123,11 +138,16 @@ class DshEntry {
   static String? _httpUrl(Object? raw) {
     if (raw is! String) return null;
     final uri = Uri.tryParse(raw.trim());
-    if (uri == null || !uri.hasAuthority || (uri.scheme != 'https' && uri.scheme != 'http')) return null;
+    if (uri == null ||
+        !uri.hasAuthority ||
+        (uri.scheme != 'https' && uri.scheme != 'http')) {
+      return null;
+    }
     return raw.trim().length > 2048 ? null : raw.trim();
   }
 
-  static String? _short(Object? raw, int max) => raw is String && raw.trim().isNotEmpty
+  static String? _short(Object? raw, int max) =>
+      raw is String && raw.trim().isNotEmpty
       ? raw.trim().substring(0, raw.trim().length.clamp(0, max))
       : null;
 

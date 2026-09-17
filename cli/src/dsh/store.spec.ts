@@ -75,6 +75,7 @@ describe('the built-in shelf (store/)', () => {
         const entry = registry.find((row) => row.id === read.manifest.id)!
         const m = read.manifest
         expect(entry).toMatchObject({ repo: HARNESS_MONOREPO, ref: 'main', path: folder, verified: true, tier: dshTier(m) })
+        expect(entry.viewerUse).toBe(m.viewer && 'use' in m.viewer ? m.viewer.use : undefined)
         expect({ kind: entry.kind ?? 'agent', name: entry.name, category: entry.category, author: entry.author, description: entry.description, engine: entry.engine })
           .toEqual({ kind: m.kind ?? 'agent', name: m.name, category: m.category, author: m.author, description: m.description, engine: m.engine })
       })

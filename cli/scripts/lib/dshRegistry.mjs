@@ -16,6 +16,7 @@ export function storeEntry(path, manifest, facts) {
   Object.assign(entry, { repo: HARNESS_MONOREPO, ref: 'main', path })
   for (const key of ['homepage', 'upstream', 'license', 'screenshots']) if (facts[key] !== undefined) entry[key] = facts[key]
   if (manifest.engine !== undefined) entry.engine = manifest.engine
+  if (typeof manifest.viewer?.use === 'string') entry.viewerUse = manifest.viewer.use
   entry.tier = manifest.viewer ? 2 : manifest.verdict ? 1 : 0
   entry.verified = true
   return entry

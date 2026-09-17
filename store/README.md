@@ -8,6 +8,7 @@ tools to build and check one.
 store/
   README.md        this guide: what a package is, how to build and publish one, the shelf's rules
   spec/            the contract, frozen; changes are appended to spec/CHANGES.md
+  examples/hello-world/  your first harness: instructions, an HTML page, and a shared viewer
   starter/         a complete tier-0 harness to copy
   tools/           daemon-level checks: create an agent over the loopback socket, report what happened
   agents/<name>/   the built-in harnesses: an engine plus skills, toolchain, verdict, usually a pane
@@ -47,6 +48,13 @@ what lets hundreds of packages exist without any of them touching the app or the
 | `.harness/verdict.json` | the one file the domain writes and Harness reads: ready or not, findings, phases |
 
 ## Build one
+
+**First time?** Follow [Hello World](../CONTRIBUTING.md#your-first-harness): copy a tiny package,
+install it locally, and change a greeting in a live HTML preview. It includes the viewer in
+`harness.json` with `"viewer": { "use": "autonomous/web-viewer" }`. No app changes are needed.
+
+The steps below explain the optional pieces as your harness grows. Skills, a toolchain, and a
+verdict are useful when your domain needs them; a first harness does not need every piece.
 
 1. **Copy the starter.** [`starter/`](starter/) is a complete tier-0 harness: a manifest, an
    `AGENTS.md`, one skill, a template, a toolchain that installs nothing.
@@ -113,35 +121,42 @@ what lets hundreds of packages exist without any of them touching the app or the
    The viewer process reads its own files when it starts; after you edit it, kill it and the daemon
    respawns it on the new code.
 
-8. **Publish.** Two ways, depending on where the package lives.
+## Publish a harness
 
-   **In this repository**, as a built-in: the folder is `store/agents/<name>` (or `store/viewers/<name>`),
-   its id `autonomous/<name>`, and beside `harness.json` a `store.json` with what the store page shows
-   that a manifest does not know. The CLI build lists every such folder; there is no entry to write.
+Two ways, depending on where the package lives.
 
-   ```json
-   { "homepage": "https://typst.app", "upstream": "https://github.com/typst/typst", "license": "MIT",
-     "screenshots": [] }
-   ```
+**In this repository**, as a built-in: the folder is `store/agents/<name>` (or `store/viewers/<name>`),
+its id `autonomous/<name>`, and beside `harness.json` a `store.json` with what the store page shows
+that a manifest does not know. The CLI build lists every such folder; there is no entry to write.
 
-   **In a repository of its own**: add `store/registry/<owner>/<name>.json` in a pull request.
+```json
+{ "homepage": "https://typst.app", "upstream": "https://github.com/typst/typst", "license": "MIT",
+  "screenshots": [] }
+```
 
-   ```json
-   { "id": "owner/name", "name": "Name", "category": "Thing", "description": "One line.",
-     "repo": "https://github.com/owner/name", "ref": "main", "engine": "claude",
-     "tier": 2, "verified": false }
-   ```
+**In a repository of its own**: add `store/registry/<owner>/<name>.json` in a pull request.
 
-   A package that is one folder of a bigger repository names it with `"path"`; install then fetches
-   that folder alone. CI runs the conformance check. Once merged, the app offers the tile before the
-   package is installed and installs it on Create; `verified: true` marks first-party packages, which
-   every built-in is, and everything else shows its git URL on install.
+```json
+{ "id": "owner/name", "name": "Name", "category": "Thing", "description": "One line.",
+  "repo": "https://github.com/owner/name", "ref": "main", "engine": "claude",
+  "tier": 2, "verified": false }
+```
+
+If the harness uses a shared viewer, include `"viewerUse": "autonomous/web-viewer"` (or the
+matching viewer ID) in the registry entry so the Store can show its dependencies before install.
+Built-in entries derive this field from the manifest automatically.
+
+A package that is one folder of a bigger repository names it with `"path"`; install then fetches
+that folder alone. Run the conformance check and include a real example in the PR; CI is currently
+triggered manually. Once merged and included in a CLI release, the app offers the tile before the
+package is installed and installs it on Create; `verified: true` marks first-party packages, which
+every built-in is, and everything else shows its git URL on install.
 
 ## Tiers
 
 | Tier | Ships | Harness shows |
 |---|---|---|
-| 0 | manifest, `AGENTS.md`, skills, template | the tile, a terminal with the skills loaded |
+| 0 | manifest and instructions; optional skills and template | the tile, a terminal with the instructions loaded |
 | 1 | + a check that writes `.harness/verdict.json` | + ready or not, findings and phases in the pane header |
 | 2 | + a viewer server | + the viewer pane beside the terminal, following the artifact |
 
@@ -149,15 +164,16 @@ what lets hundreds of packages exist without any of them touching the app or the
 
 | Harness | Base | What it shows |
 |---|---|---|
+| [Hello World](examples/hello-world/) | Codex | a greeting in plain HTML, with a shared viewer declared in the manifest; no build step |
 | [Marp](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/marp) (Slides) | Claude Code | the smallest complete tier 2: a 110-line viewer with live reload and a present mode, two themes, an offline art generator, a check that writes the verdict, node tests. Start here. |
 | [Blender](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/blender) (3D) | Claude Code | a pinned `bpy` in a venv set up by `setup.sh`, a helper module the skill teaches, and a viewer package it shares through `viewer.use` |
 | [Autonomous Circuit](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/autonomous-circuit) (PCB) | Claude Code | a wrapper of another team's project: setup fetches it at a pinned commit and runs its own setup, doctor, init and board viewer |
 | [Autonomous Workshop](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/autonomous-workshop) (CAD) | Codex | the same shape on a Codex base, with the store's CAD Viewer as its pane, phases Build / Fit / Print / Motion / Review |
 
-Two rules hold across all of them. The pane is progressive: a harness that only produces a final
-file is not one. And the domain stays in the harness: if adding yours needs a change in this repo,
-that is a spec change, and [`spec/README.md`](spec/README.md) with its schemas is where the
-contract lives. Changes to it are appended to [`spec/CHANGES.md`](spec/CHANGES.md).
+Visual harnesses should show work progressively. A terminal-only harness is welcome too. Domain
+behavior stays in the package: adding a harness on a supported engine should not need changes to
+the app or daemon. If you need a new shared capability, discuss it through the
+[`spec/README.md`](spec/README.md) contract. Changes are appended to [`spec/CHANGES.md`](spec/CHANGES.md).
 
 ## The built-in shelf
 
@@ -209,7 +225,10 @@ per machine. Package manifests keep their precise domain labels, grouped only fo
 Viewer packages are shared dependencies, not Store listings. Installing a harness installs its viewer
 on that machine when needed; another harness using the same viewer reuses the installed copy. Viewers
 stay out of Discover, search and categories. Authors can still inspect and manage them with
-`harness dsh list`, `doctor` and `remove`.
+`harness dsh list`, `doctor` and `remove`. A small **Viewers** icon at the bottom of the Store
+sidebar opens the viewer inventory, where each viewer shows its installed machines and the agents
+that depend on it. Dependency names come from the machines' catalogs, including community packages;
+an older daemon may not report that information yet.
 
 ## Stewardship of packages built on other people's work
 

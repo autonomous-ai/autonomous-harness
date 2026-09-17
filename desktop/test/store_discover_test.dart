@@ -44,6 +44,25 @@ final _catalog = [
       engine: 'claude',
       category: category,
       installed: ['blender', 'copper', 'marp'].contains(id),
+      viewerUse: switch (id) {
+        'blender' => 'autonomous/model-viewer',
+        'text-to-cad' => 'autonomous/cad-viewer',
+        'typst' => 'autonomous/doc-viewer',
+        _ => null,
+      },
+    ),
+  for (final (id, name) in [
+    ('cad-viewer', 'CAD Viewer'),
+    ('doc-viewer', 'Doc Viewer'),
+    ('model-viewer', '3D Viewer'),
+    ('web-viewer', 'Web Viewer'),
+  ])
+    DshEntry(
+      id: 'autonomous/$id',
+      name: name,
+      engine: '',
+      kind: 'viewer',
+      installed: true,
     ),
 ];
 
@@ -220,7 +239,12 @@ void main() {
       expect(find.byKey(const ValueKey('store-shelf-installed')), findsNothing);
       expect(find.text('Harness Store'), findsNothing);
       for (final category in [
-        'Design', 'Engineering', 'Media', 'Science', 'Games', 'Code',
+        'Design',
+        'Engineering',
+        'Media',
+        'Science',
+        'Games',
+        'Code',
       ]) {
         expect(
           find.byKey(ValueKey('store-shelf-category:$category')),
@@ -233,6 +257,15 @@ void main() {
         key,
         'discover-${width.toInt()}-${brightness.name}-${scale.toStringAsFixed(1)}',
       );
+      await tester.tap(find.byKey(const ValueKey('store-viewers-button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('store-viewers')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await _capture(
+        tester,
+        key,
+        'viewers-${width.toInt()}-${brightness.name}-${scale.toStringAsFixed(1)}',
+      );
     });
   }
 
@@ -240,11 +273,22 @@ void main() {
     'categories group domains, collections open and search finds capabilities',
     (tester) async {
       await _open(tester);
-      await tester.tap(find.byKey(const ValueKey('store-shelf-category:Design')));
+      await tester.tap(
+        find.byKey(const ValueKey('store-shelf-category:Design')),
+      );
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('store-card:autonomous/blender')), findsOneWidget);
-      expect(find.byKey(const ValueKey('store-card:autonomous/text-to-cad')), findsOneWidget);
-      expect(find.byKey(const ValueKey('store-card:autonomous/copper')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('store-card:autonomous/blender')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('store-card:autonomous/text-to-cad')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('store-card:autonomous/copper')),
+        findsNothing,
+      );
       await tester.tap(find.byKey(const ValueKey('store-shelf-discover')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('store-collection:hardware')));
@@ -358,7 +402,9 @@ void main() {
     'Open launches the installed harness and cancel abandons only its draft',
     (tester) async {
       final (app, _) = await _open(tester);
-      await tester.tap(find.byKey(const ValueKey('store-shelf-category:Design')));
+      await tester.tap(
+        find.byKey(const ValueKey('store-shelf-category:Design')),
+      );
       await tester.pumpAndSettle();
       final count = app.swarms.length;
       await tester.tap(

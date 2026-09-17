@@ -127,3 +127,15 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
   `~/.harness/dsh` keep the DSH name; they are the CLI's public contract.
 - **Mechanism:** `cli/src/dsh/registry.ts` (`storeEntry`, `readStoreDir`, `StoreFactsSchema`),
   `cli/scripts/lib/dshRegistry.mjs`, `cli/src/dsh/store.spec.ts`.
+
+## 2026-09-16 — shared viewer dependency information in the catalog
+
+- **Change:** registry entries may include `viewerUse`, a viewer package ID. Built-in entries derive
+  it from `harness.json`'s `viewer.use`. `dsh_list` forwards it for installed packages from the actual
+  manifest, and for available packages from the registry; no shared dependency is reported as null.
+- **Why:** the Store's Viewers inventory can show which agents use each viewer, including community
+  packages and packages that are not installed yet.
+- **Backward compatible:** yes. The field is optional; existing manifests and entries are unchanged,
+  and clients accept catalogs from older daemons without dependency information.
+- **Mechanism:** the registry builder and runtime reader, `backendSocket.ts`, and the desktop
+  `DshEntry` model. Viewer install, sharing, and launch behavior are unchanged.

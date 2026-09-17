@@ -47,6 +47,18 @@ const _circuit = {
 
 void main() {
   _authorAndKindTests();
+  test('shared viewer dependencies are optional and validated', () {
+    expect(
+      DshEntry.fromJson({..._circuit, 'viewerUse': 'autonomous/cad-viewer'})!
+          .viewerUse,
+      'autonomous/cad-viewer',
+    );
+    expect(DshEntry.fromJson(_circuit)!.viewerUse, isNull);
+    expect(
+      DshEntry.fromJson({..._circuit, 'viewerUse': '../viewer'})!.viewerUse,
+      isNull,
+    );
+  });
   test('an entry is read off the wire and refuses ids outside owner/name', () {
     final entry = DshEntry.fromJson(_circuit)!;
     expect(entry.id, 'autonomous/autonomous-circuit');
@@ -101,7 +113,9 @@ void main() {
       final catalog = app.stateOf('m')!.dsh;
       expect(catalog.loaded, isTrue);
       expect(catalog.error, isNull);
-      expect(catalog.entries.map((e) => e.id), ['autonomous/autonomous-circuit']);
+      expect(catalog.entries.map((e) => e.id), [
+        'autonomous/autonomous-circuit',
+      ]);
       expect(connection.calls.map((c) => c.$1), ['dsh_list']);
       // A second ask is answered from memory unless forced.
       await app.probeDsh('m');
@@ -151,7 +165,9 @@ void main() {
       expect(catalog.installs['autonomous/autonomous-circuit']!.done, isTrue);
       expect(catalog['autonomous/autonomous-circuit']!.installed, isTrue);
       expect(connection.calls.map((c) => c.$1), ['dsh_install', 'dsh_list']);
-      expect(connection.calls.first.$2, {'id': 'autonomous/autonomous-circuit'});
+      expect(connection.calls.first.$2, {
+        'id': 'autonomous/autonomous-circuit',
+      });
     },
   );
 
@@ -204,4 +220,3 @@ void _authorAndKindTests() {
     expect(DshEntry.fromJson({'id': 'a/b', 'name': 'B'}), isNull);
   });
 }
-

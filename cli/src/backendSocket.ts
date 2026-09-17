@@ -37,7 +37,7 @@ import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.j
 import { projectPreview } from './lib/projectPreview.js'
 import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
 import { installedDsh, listInstalledDsh } from './dsh/installed.js'
-import { DSH_ID_RE, dshTier } from './dsh/manifest.js'
+import { DSH_ID_RE, dshTier, viewerUse } from './dsh/manifest.js'
 import { bundledDshRegistry, registrySourceUrl } from './dsh/registry.js'
 import type { DshInstallProgress } from './dsh/install.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
@@ -1501,6 +1501,7 @@ export class BackendSocket {
               installed: true,
               linked: entry.linked === true,
               viewer: !!entry.manifest.viewer,
+              viewerUse: viewerUse(entry.manifest),
               tier: dshTier(entry.manifest),
               ...facts(entry.id),
             })
@@ -1518,6 +1519,7 @@ export class BackendSocket {
               installed: false,
               linked: false,
               viewer: (entry.tier ?? 0) >= 2,
+              viewerUse: entry.viewerUse ?? null,
               tier: entry.tier ?? 0,
               ...facts(entry.id),
             })

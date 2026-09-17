@@ -18,6 +18,7 @@ import 'store_controller.dart';
 import 'store_discover.dart';
 import 'store_editorial.dart';
 import 'store_models.dart';
+import 'store_viewers.dart';
 
 /// Store tabs reuse the app icon.
 const String kStoreMarkAsset = 'assets/app_icon.png';
@@ -66,6 +67,10 @@ class _Discover extends _Shelf {
 
 class _All extends _Shelf {
   const _All();
+}
+
+class _Viewers extends _Shelf {
+  const _Viewers();
 }
 
 class _Search extends _Shelf {
@@ -152,7 +157,7 @@ class _StoreTabState extends State<StoreTab> {
     }
     for (final state in states) {
       for (final entry in state.dsh.entries) {
-        if (!entry.isViewerPackage) rows.putIfAbsent(entry.id, () => entry);
+        rows.putIfAbsent(entry.id, () => entry);
       }
     }
     return rows;
@@ -186,14 +191,12 @@ class _StoreTabState extends State<StoreTab> {
       _Discover() || _All() => all.where((e) => !e.isViewerPackage).toList(),
       _Search(:final query) =>
         all.where((e) => !e.isViewerPackage && storeMatches(e, query)).toList(),
-      _Collection(:final collection) => all.where(collection.includes).toList(),
+      _Viewers() => all.where((e) => e.isViewerPackage).toList(),
+      _Collection(:final collection) =>
+        all.where((e) => !e.isViewerPackage && collection.includes(e)).toList(),
       _Category(:final name) =>
         all
-            .where(
-              (e) =>
-                  !e.isViewerPackage &&
-                  storeCategoryFor(e) == name,
-            )
+            .where((e) => !e.isViewerPackage && storeCategoryFor(e) == name)
             .toList(),
     };
   }
@@ -273,6 +276,26 @@ class _StoreTabState extends State<StoreTab> {
                               installedOn: _installedOn(selected.id),
                               onBack: () => setState(() => _selected = null),
                             )
+                          : _shelf is _Viewers
+                          ? StoreViewers(
+                              viewers: _shelved(const _Viewers()),
+                              agents: [
+                                for (final machine
+                                    in widget.notifier.machineStates.values)
+                                  ...machine.dsh.entries,
+                              ],
+                              installedOn: (id) => _installedOn(id)
+                                  .map((machine) => machine.machine.displayName)
+                                  .toList(),
+                              onOpenAgent: _openPage,
+                              loaded:
+                                  widget
+                                      .notifier
+                                      .localMachineState
+                                      ?.dsh
+                                      .loaded ??
+                                  false,
+                            )
                           : _shelf is _Discover
                           ? StoreDiscover(
                               entries: _shelved(const _Discover()),
@@ -350,54 +373,79 @@ class _StoreNav extends StatelessWidget {
           (MediaQuery.sizeOf(context).width < 1000 ? 184 : 216) +
           (textScale - 1) * 64,
       color: grid.AppSurface.recess,
-      child: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 22),
+      child: Column(
         children: [
-          TextField(
-            key: const ValueKey('store-search'),
-            controller: search,
-            onChanged: onSearch,
-            style: TextStyle(fontSize: 13, color: grid.AppPalette.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'Search',
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              prefixIcon: Icon(
-                LucideIcons.search300,
-                size: 15,
-                color: grid.AppPalette.textSecondary,
-              ),
-              prefixIconConstraints: const BoxConstraints(minWidth: 32),
-              suffixIconConstraints: const BoxConstraints(minWidth: 28),
-              suffixIcon: search.text.isEmpty
-                  ? null
-                  : AppIconButton(
-                      icon: LucideIcons.x300,
-                      tooltip: 'Clear search',
-                      onPressed: () {
-                        search.clear();
-                        onSearch('');
-                      },
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 22),
+              children: [
+                TextField(
+                  key: const ValueKey('store-search'),
+                  controller: search,
+                  onChanged: onSearch,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: grid.AppPalette.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Search',
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                    prefixIcon: Icon(
+                      LucideIcons.search300,
+                      size: 15,
+                      color: grid.AppPalette.textSecondary,
                     ),
+                    prefixIconConstraints: const BoxConstraints(minWidth: 32),
+                    suffixIconConstraints: const BoxConstraints(minWidth: 28),
+                    suffixIcon: search.text.isEmpty
+                        ? null
+                        : AppIconButton(
+                            icon: LucideIcons.x300,
+                            tooltip: 'Clear search',
+                            onPressed: () {
+                              search.clear();
+                              onSearch('');
+                            },
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SidebarItem(
+                  key: const ValueKey('store-shelf-discover'),
+                  icon: LucideIcons.sparkles300,
+                  label: 'Discover',
+                  selected: shelf is _Discover,
+                  onTap: () => onSelect(const _Discover()),
+                ),
+                const SizedBox(height: 16),
+                for (final name in categories)
+                  SidebarItem(
+                    key: ValueKey('store-shelf-category:$name'),
+                    icon: _categoryIcon(name),
+                    label: name,
+                    selected: shelf is _Category && shelf.name == name,
+                    onTap: () => onSelect(_Category(name)),
+                  ),
+              ],
             ),
           ),
-          const SizedBox(height: 18),
-          SidebarItem(
-            key: const ValueKey('store-shelf-discover'),
-            icon: LucideIcons.sparkles300,
-            label: 'Discover',
-            selected: shelf is _Discover,
-            onTap: () => onSelect(const _Discover()),
-          ),
-          const SizedBox(height: 16),
-          for (final name in categories)
-            SidebarItem(
-              key: ValueKey('store-shelf-category:$name'),
-              icon: _categoryIcon(name),
-              label: name,
-              selected: shelf is _Category && shelf.name == name,
-              onTap: () => onSelect(_Category(name)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: AppIconButton(
+                key: const ValueKey('store-viewers-button'),
+                icon: LucideIcons.panelsTopLeft300,
+                size: 17,
+                color: shelf is _Viewers
+                    ? grid.AppPalette.textPrimary
+                    : grid.AppPalette.textFaint,
+                tooltip: 'Viewers',
+                onPressed: () => onSelect(const _Viewers()),
+              ),
             ),
+          ),
         ],
       ),
     );
@@ -438,6 +486,7 @@ class _Shelf$View extends StatelessWidget {
   String get _title => switch (shelf) {
     _Discover() => 'Discover',
     _All() => 'All harnesses',
+    _Viewers() => 'Viewers',
     _Search() => 'Search results',
     _Collection(:final collection) => collection.title,
     _Category(:final name) => name,
@@ -445,6 +494,7 @@ class _Shelf$View extends StatelessWidget {
 
   String get _subtitle => switch (shelf) {
     _Discover() || _All() => 'Find something you have always wanted to make.',
+    _Viewers() => 'Shared previews and the agents that use them.',
     _Search() => '${entries.length} result${entries.length == 1 ? '' : 's'}',
     _Collection(:final collection) => collection.subtitle,
     _Category() =>

@@ -45,6 +45,8 @@ export const DshRegistryEntrySchema = z.strictObject({
   path: z.string().min(1).max(512).regex(PACKAGE_PATH_RE, 'path must be a relative folder inside the repo').optional(),
   engine: z.enum(ENGINES).optional(),
   tier: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
+  /** Shared viewer dependency, so the Store can show reverse dependencies before installation. */
+  viewerUse: z.string().regex(DSH_ID_RE).optional(),
   verified: z.boolean().optional(),
   /** The store's product page: where the thing lives, whose it is, what it is licensed under. */
   homepage: z.string().url().max(2048).optional(),
@@ -85,6 +87,8 @@ export function storeEntry(path: string, manifest: Record<string, unknown>, fact
   Object.assign(entry, { repo: HARNESS_MONOREPO, ref: 'main', path })
   for (const key of ['homepage', 'upstream', 'license', 'screenshots']) if (facts[key] !== undefined) entry[key] = facts[key]
   if (manifest.engine !== undefined) entry.engine = manifest.engine
+  const viewer = manifest.viewer as { use?: unknown } | undefined
+  if (typeof viewer?.use === 'string') entry.viewerUse = viewer.use
   entry.tier = manifest.viewer ? 2 : manifest.verdict ? 1 : 0
   entry.verified = true
   return entry
