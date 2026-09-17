@@ -17,7 +17,7 @@ server-sent events when the file changes, keeping the scroll position.
 
 ```sh
 harness dsh check .           # conformance
-harness dsh install . --link  # this checkout as the installed viewer
+harness dsh install "$PWD" --link # this checkout as the installed viewer
 ```
 
 pdf.js is Mozilla's, Apache-2.0 (`LICENSE-pdfjs`). The wrapper is MIT, Autonomous.

@@ -57,7 +57,7 @@ for p in $perms; do
   n=$((n + 1))
 done
 
-# The GWT theme the module injects at startup. It lives in the SDK, not in this repository's
+# The GWT theme the module injects at startup. It lives in the SDK, not in this package's
 # sources, so it only exists in the compiled output; without it the app's menus are unstyled.
 mkdir -p "$war/circuitjs1/gwt/clean/images"
 get "$CIRCUITJS1_BUILD/circuitjs1/gwt/clean/clean.css" "$war/circuitjs1/gwt/clean/clean.css"

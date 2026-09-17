@@ -53,19 +53,19 @@ numbers in the template's PCF are the
 the file itself.
 
 Nothing of any of them is changed or redistributed here: `setup.sh` installs them from Homebrew and
-npm as their authors publish them. This repository is the Harness wrapper — the manifest, a skill,
+npm as their authors publish them. This folder is the Harness wrapper — the manifest, a skill,
 the template, the toolchain, the verdict and the viewer — written by Autonomous to bring the
 open-source FPGA flow into Harness. We did that work on the projects' behalf, to bootstrap the
 catalogue.
 
 If you maintain any of these projects and want to own this Harness package, it is yours: open an
 issue on [autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we
-transfer this repository and point the registry entry at it. Until then: bugs in the tools belong
+transfer this package and point the registry entry at it. Until then: bugs in the tools belong
 upstream, bugs in the wrapper belong here, and a newer toolchain is a `brew upgrade`.
 
 ```sh
 harness dsh check .                                      # conformance
-harness dsh install . --link                             # this checkout as the installed agent
+harness dsh install "$PWD" --link                        # this checkout as the installed agent
 harness dsh doctor autonomous/yosys                       # what this machine is missing
 python3 -m unittest discover -s toolchain -p "test_*.py"  # the judge and the VCD reader, without a toolchain
 ```

@@ -22,16 +22,16 @@ never a tile. It is installed once per machine and shared by every harness that 
 ## Credit and stewardship
 
 The CAD Viewer is Jake Fitzgerald's: part of `cadgen` from [earthtojake/text-to-cad](https://github.com/earthtojake/text-to-cad), MIT, copyright 2026 Thompson Labs LLC (`LICENSE-cadgen`, `THIRD_PARTY_NOTICES.md`). Nothing of it is changed here.
-This repository is the Harness wrapper — the manifest and three shell scripts — written by Autonomous to bring the CAD Viewer into
+This folder is the Harness wrapper — the manifest and three shell scripts — written by Autonomous to bring the CAD Viewer into
 Harness. We did that work on the project's behalf, to bootstrap the catalogue; the credit for what
 the agent can do belongs upstream.
 
 If you maintain the CAD Viewer and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in the CAD Viewer belong upstream, bugs in the
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in the CAD Viewer belong upstream, bugs in the
 wrapper belong here, and a newer release is a bump of `CADGEN_VERSION`.
 
 ```sh
 harness dsh check .           # conformance
-harness dsh install . --link  # this checkout as the installed viewer
+harness dsh install "$PWD" --link # this checkout as the installed viewer
 ```

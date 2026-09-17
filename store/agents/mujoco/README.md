@@ -23,17 +23,17 @@ MuJoCo is Google DeepMind's — [google-deepmind/mujoco](https://github.com/goog
 Apache-2.0 (`LICENSE-mujoco`) — and so is the [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie)
 (Apache-2.0, with each robot's own licence in its folder — the Unitree models are BSD-3-Clause, Unitree
 Robotics). Nothing of either is changed here; MuJoCo is installed from PyPI as released and the
-Menagerie is fetched at a pinned commit. This repository is the Harness wrapper — the manifest, a
+Menagerie is fetched at a pinned commit. This folder is the Harness wrapper — the manifest, a
 skill, the helper, the template, the verdict — written by Autonomous to bring MuJoCo into Harness,
 on the project's behalf, to bootstrap the catalogue.
 
 If you maintain MuJoCo or the Menagerie and want to own this package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in MuJoCo belong upstream, bugs in the
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in MuJoCo belong upstream, bugs in the
 wrapper belong here, and a newer MuJoCo or Menagerie is a bump of `VERSIONS`.
 
 ```sh
 harness dsh check .                                # conformance
-harness dsh install . --link                       # this checkout as the installed agent
+harness dsh install "$PWD" --link                  # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py      # the verdict, without mujoco
 ```

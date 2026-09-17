@@ -21,13 +21,13 @@ RDKit is the RDKit contributors' work, led by Greg Landrum —
 [rdkit/rdkit](https://github.com/rdkit/rdkit), BSD-3-Clause (`LICENSE-rdkit`) — and the pane is
 [3Dmol.js](https://3dmol.csb.pitt.edu), David Koes and contributors at the University of Pittsburgh,
 BSD-3-Clause (`LICENSE-3dmol`). Nothing of either is changed here: RDKit is installed from PyPI as
-released and 3Dmol.js is loaded as they publish it on npm. This repository is the Harness wrapper —
+released and 3Dmol.js is loaded as they publish it on npm. This folder is the Harness wrapper —
 the manifest, the pane server, a skill, the helper, the template, the verdict — written by Autonomous
 to bring RDKit into Harness, on the project's behalf, to bootstrap the catalogue.
 
 If you maintain RDKit or 3Dmol.js and want to own this package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in RDKit belong upstream, bugs in the
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in RDKit belong upstream, bugs in the
 wrapper belong here, and a newer RDKit is a bump of `VERSIONS`.
 
 Nothing in this package predicts activity, binding or safety. It computes what RDKit computes —
@@ -36,6 +36,6 @@ and says so.
 
 ```sh
 harness dsh check .                                # conformance
-harness dsh install . --link                       # this checkout as the installed agent
+harness dsh install "$PWD" --link                  # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py      # the verdict, without rdkit
 ```

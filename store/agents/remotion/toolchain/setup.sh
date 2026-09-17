@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs once at install, cwd = the install dir. One node_modules here (Remotion, its CLI, React,
 # TypeScript) that every workspace links to, the headless browser Remotion renders with, and
-# Remotion's own agent skills fetched at a pinned commit — fetched, not copied into this repository,
+# Remotion's own agent skills fetched at a pinned commit — fetched, not copied into this package,
 # because that repository carries no licence to copy under.
 set -euo pipefail
 cd "$(dirname "$0")/.."

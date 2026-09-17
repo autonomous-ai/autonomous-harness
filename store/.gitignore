@@ -1,0 +1,7 @@
+# What a package's setup writes into its own folder. A `--link` install runs setup IN this working
+# tree, so these land beside the source; each package also ignores its own.
+.venv/
+node_modules/
+__pycache__/
+# A wrapper's setup fetches the project it wraps here, at the commit its VERSIONS pins.
+upstream/

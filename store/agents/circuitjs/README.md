@@ -21,7 +21,7 @@ the app without a reload.
 
 ```sh
 harness dsh check .                                  # conformance
-harness dsh install . --link                         # this checkout as the installed agent
+harness dsh install "$PWD" --link                    # this checkout as the installed agent
 harness dsh doctor autonomous/circuitjs              # what the machine is missing
 python3 -m unittest toolchain/test_verdict.py        # the judge's own tests
 ```
@@ -32,7 +32,7 @@ CircuitJS1 is Paul Falstad's and Iain Sharp's — [pfalstad/circuitjs1](https://
 **GPL-2.0** (`LICENSE-circuitjs1`). Nothing of it is changed and nothing of it is vendored here:
 `toolchain/setup.sh` downloads it at install time, pinned in `VERSIONS`, and the pane serves it as
 published. `THIRD_PARTY_NOTICES.md` says exactly what is fetched, from where, and the two
-serving-time edits the pane makes to `circuitjs.html`. This repository is the Harness wrapper — the
+serving-time edits the pane makes to `circuitjs.html`. This folder is the Harness wrapper — the
 manifest, the pane server, a skill, the verdict — written by Autonomous to bring CircuitJS1 into
 Harness, on the project's behalf, to bootstrap the catalogue.
 
@@ -43,6 +43,6 @@ compiled module from. If that ever changes — a release, a published artefact �
 place to point somewhere better.
 
 If you maintain CircuitJS1 and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in CircuitJS1 belong upstream, bugs
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in CircuitJS1 belong upstream, bugs
 in the wrapper belong here, and a newer CircuitJS1 is a bump in `VERSIONS`.

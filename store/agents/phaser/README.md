@@ -34,13 +34,13 @@ Phaser is Richard Davey's and Phaser Studio's — [phaserjs/phaser](https://gith
 [phaser.io](https://phaser.io) — under the **MIT License** (`LICENSE-phaser`). Nothing of it is
 changed here: the engine is installed from npm as released, and Phaser Studio's agent skills are
 copied into `skills/` verbatim, at the commit recorded in `PROVENANCE.md`, as the MIT licence
-allows. This repository is the Harness wrapper — the manifest, the pane script, the template, the
+allows. This folder is the Harness wrapper — the manifest, the pane script, the template, the
 toolchain, the verdict, the one `harness-phaser` skill — written by Autonomous to bring Phaser into
 Harness, on the project's behalf, to bootstrap the catalogue. The wrapper is MIT too (`LICENSE`).
 
 If you maintain Phaser and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in Phaser belong upstream, bugs in
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in Phaser belong upstream, bugs in
 the wrapper belong here, and a newer Phaser is a bump of `package.json`, `template/package.json` and
 `VERSIONS` plus a refresh of `skills/` (`PROVENANCE.md` has the commands).
 
@@ -52,6 +52,6 @@ the wrapper belong here, and a newer Phaser is a bump of `package.json`, `templa
 
 ```sh
 harness dsh check .                                   # conformance
-harness dsh install . --link                          # this checkout as the installed agent
+harness dsh install "$PWD" --link                     # this checkout as the installed agent
 python3 -m unittest discover -s toolchain              # the verdict's judge, without vite
 ```

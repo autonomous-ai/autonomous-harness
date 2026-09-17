@@ -15,18 +15,18 @@ playing on every run — and get it as glTF or STL. Runs on Claude Code.
 
 Blender is the Blender Foundation's and its community's — [blender/blender](https://projects.blender.org/blender/blender),
 GPL-2.0-or-later (`LICENSE-blender`); `bpy` is Blender itself, installed from PyPI as released.
-Nothing of it is changed here. This repository is the Harness wrapper — the manifest, a skill, the
+Nothing of it is changed here. This folder is the Harness wrapper — the manifest, a skill, the
 helper, the template, the verdict — written by Autonomous to bring Blender into Harness, on the
 project's behalf, to bootstrap the catalogue. The wrapper's own files are MIT; scripts that import
 `bpy` run under Blender's GPL terms, as every Blender add-on does.
 
 If you maintain Blender and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in Blender belong upstream, bugs in
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in Blender belong upstream, bugs in
 the wrapper belong here, and a newer Blender is a bump of `BPY_VERSION`.
 
 ```sh
 harness dsh check .                                # conformance
-harness dsh install . --link                       # this checkout as the installed agent
+harness dsh install "$PWD" --link                  # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py      # the verdict, without bpy
 ```

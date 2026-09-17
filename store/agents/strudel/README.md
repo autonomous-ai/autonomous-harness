@@ -15,7 +15,7 @@ hear it in the Strudel pane as the agent writes the pattern. Runs on Claude Code
 
 ```sh
 harness dsh check .                              # conformance
-harness dsh install . --link                     # this checkout as the installed agent
+harness dsh install "$PWD" --link                # this checkout as the installed agent
 python3 -m unittest toolchain/test_verdict.py    # the verdict
 ```
 
@@ -29,13 +29,13 @@ user's ears do the rest.
 
 Strudel is Felix Roos's and the Strudel contributors' — [codeberg.org/uzu/strudel](https://codeberg.org/uzu/strudel),
 mirrored at [tidalcycles/strudel](https://github.com/tidalcycles/strudel) — and it is licensed
-**GNU AGPL-3.0-or-later** (`LICENSE-strudel`). None of it is in this repository. `toolchain/setup.sh`
+**GNU AGPL-3.0-or-later** (`LICENSE-strudel`). None of it is in this package. `toolchain/setup.sh`
 installs `@strudel/repl` from npm into this package's `node_modules`, exactly as the Strudel project
-publishes it, unmodified, and the pane serves it from there. The wrapper in this repository — the
+publishes it, unmodified, and the pane serves it from there. The wrapper in this package — the
 manifest, the pane server, the skill, the template, the verdict — is MIT (`LICENSE`), written by
 Autonomous to bring Strudel into Harness, on the project's behalf, to bootstrap the catalogue.
 
 If you maintain Strudel and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in Strudel belong upstream, bugs in
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in Strudel belong upstream, bugs in
 the wrapper belong here, and a newer Strudel is a bump in `package.json`.

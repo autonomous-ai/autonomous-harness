@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs once at install, cwd = the install dir. Strudel's REPL — the whole engine — into this
 # package's node_modules, from the lockfile, as npm publishes it. Nothing global, nothing vendored
-# into this repository, no CDN at run time.
+# into this package, no CDN at run time.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 command -v node >/dev/null 2>&1 || { echo "miss node >= 18 on PATH"; exit 1; }

@@ -1,0 +1,4 @@
+# What setup writes into this package on a linked install — never source.
+.venv/
+__pycache__/
+template/tmp/

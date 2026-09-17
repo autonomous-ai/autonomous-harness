@@ -140,7 +140,7 @@ class Scene:
     # ---- output ----
     def to_dict(self) -> dict:
         return {
-            "type": "excalidraw", "version": 2, "source": "https://github.com/autonomous-ai/autonomous-excalidraw",
+            "type": "excalidraw", "version": 2, "source": "https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/excalidraw",
             "elements": self.elements,
             "appState": {"viewBackgroundColor": self.background, "gridSize": None, "theme": "dark" if self.dark else "light"},
             "files": {},

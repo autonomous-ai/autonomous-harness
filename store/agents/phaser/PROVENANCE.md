@@ -29,7 +29,7 @@ cp -R /tmp/phaser/skills/. skills/
 then update `SKILLS_COMMIT` in `VERSIONS` and the commit in the table above.
 
 `skills/harness-phaser/` is ours (MIT, `LICENSE`): the workspace, the pane, keyboard focus, the
-verdict. It is the only skill in this repository that Phaser Studio did not write.
+verdict. It is the only skill in this package that Phaser Studio did not write.
 
 ## `template/` — the shape of phaserjs/template-vite
 

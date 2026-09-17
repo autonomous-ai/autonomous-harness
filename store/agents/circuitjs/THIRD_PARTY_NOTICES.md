@@ -8,7 +8,7 @@
 - **Licence** GNU General Public License, version 2 — the full text is in `LICENSE-circuitjs1`
   (upstream's `COPYING.txt`, copied unchanged).
 
-### What this repository contains of it
+### What this package contains of it
 
 - **The nine circuits in `skills/circuitjs/examples/`**, copied verbatim from upstream's
   `src/com/lushprojects/circuitjs1/public/circuits/` at commit

@@ -1,6 +1,6 @@
 # Marp harness
 
-> Marp is Yuki Hattori's and the Marp team's. This repository brings it into Harness; see
+> Marp is Yuki Hattori's and the Marp team's. This package brings it into Harness; see
 > *Credit and stewardship* below.
 
 A domain-specific harness for [Autonomous Harness](https://github.com/autonomous-ai/autonomous-harness):
@@ -18,18 +18,18 @@ slides are [Marp](https://marp.app) Markdown on the harness's `keynote-dark` / `
 
 ```sh
 harness dsh check .          # conformance
-harness dsh install . --link # this checkout as the installed harness
+harness dsh install "$PWD" --link # this checkout as the installed harness
 cd toolchain && node --test test # the check, the phases, the themes, the art
 ```
 
 ## Credit and stewardship
 
 Marp is Yuki Hattori's and the Marp team's: [marp-team/marp-core](https://github.com/marp-team/marp-core) and [marp-cli](https://github.com/marp-team/marp-cli), MIT, copyright 2018 Marp team (`LICENSE-marp`, `THIRD_PARTY_NOTICES.md`). Nothing of it is changed here.
-This repository is the Harness wrapper — the manifest, the agent guide, the keynote themes, the art generator, the viewer page, the check, the workspace template — written by Autonomous to bring Marp into
+This folder is the Harness wrapper — the manifest, the agent guide, the keynote themes, the art generator, the viewer page, the check, the workspace template — written by Autonomous to bring Marp into
 Harness. We did that work on the project's behalf, to bootstrap the catalogue; the credit for what
 the agent can do belongs upstream.
 
 If you maintain Marp and want to own its Harness package, it is yours: open an issue on
-[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we transfer this
-repository and point the registry entry at it. Until then: bugs in Marp belong upstream, bugs in the
+[autonomous-harness](https://github.com/autonomous-ai/autonomous-harness/issues) and we move this folder into a
+repository of yours and point the registry entry at it. Until then: bugs in Marp belong upstream, bugs in the
 wrapper belong here, and a newer release is a bump of `toolchain/package.json`.

@@ -11,7 +11,7 @@ A harness points at it with
 "viewer": { "use": "autonomous/mujoco-viewer" }
 ```
 
-and writes `out/rollout.qpos.json` beside its video. The [MuJoCo harness](https://github.com/autonomous-ai/autonomous-mujoco)'s
+and writes `out/rollout.qpos.json` beside its video. The [MuJoCo harness](https://github.com/autonomous-ai/autonomous-harness/tree/main/store/agents/mujoco)'s
 `record()` writes it; anything that can write a qpos per frame can use this pane.
 
 ## The artifact
