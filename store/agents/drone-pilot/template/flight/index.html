@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drone Pilot — seeded placeholder</title>
+<style>
+  :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         background: linear-gradient(160deg, #0c1220, #05070d); color: #dbe6f5;
+         font-family: ui-monospace, Menlo, monospace; }
+  canvas { width: min(90vw, 720px); height: auto; aspect-ratio: 4/3; background: #0a0f1a;
+           border: 1px solid #1e2a3d; border-radius: 10px; }
+  .card { text-align: center; padding: 20px; max-width: 760px; }
+  h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: .02em; }
+  p { opacity: .7; line-height: 1.6; margin: 0 0 14px; }
+  .hint { opacity: .55; font-size: 12px; margin-top: 10px; }
+</style>
+<div class="card">
+  <h1>Drone Pilot · placeholder</h1>
+  <p>A real, flyable first-person flight will run here. This placeholder is a seeded
+     scene — a horizon, a ground grid stub, and a drone marker you steer with
+     WASD/arrows. Confirm it renders and the controls move the drone, then replace it.</p>
+  <canvas id="c" width="640" height="480"></canvas>
+  <div class="hint">WASD / arrows · re-seed with ?seed=…</div>
+</div>
+<script>
+  // Seeded PRNG (mulberry32) so the placeholder is deterministic.
+  const seed = () => {
+    const s = new URLSearchParams(location.search).get('seed') || '0';
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  };
+  const mulberry32 = (a) => () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const rnd = mulberry32(seed());
+  const drone = { x: 320, y: 360, z: 0, throttle: 0.5 };
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const keys = {};
+  addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+  addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+  const horizon = 120; // placeholder horizon sits at a fixed height
+  (function tick() {
+    if (keys['w'] || keys['arrowup']) drone.throttle = Math.min(1, drone.throttle + 0.02);
+    if (keys['s'] || keys['arrowdown']) drone.throttle = Math.max(0, drone.throttle - 0.02);
+    drone.z += (keys['w'] || keys['arrowup']) ? 3 : (keys['s'] || keys['arrowdown']) ? -3 : 0;
+    drone.x += (keys['d'] || keys['arrowright']) ? 3 : (keys['a'] || keys['arrowleft']) ? -3 : 0;
+    drone.y = 360 - drone.throttle * 160;
+    ctx.fillStyle = '#0a0f1a'; ctx.fillRect(0, 0, 640, 480);
+    // sky + ground
+    ctx.fillStyle = '#22304a'; ctx.fillRect(0, 0, 640, horizon);
+    ctx.fillStyle = '#14202f'; ctx.fillRect(0, horizon, 640, 480 - horizon);
+    // horizon line
+    ctx.strokeStyle = '#3a5578'; ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(640, horizon); ctx.stroke();
+    // ground grid stub
+    ctx.strokeStyle = 'rgba(120,160,200,0.25)';
+    for (let gx = 0; gx <= 640; gx += 64) { ctx.beginPath(); ctx.moveTo(gx, horizon); ctx.lineTo(gx, 480); ctx.stroke(); }
+    for (let gy = horizon; gy <= 480; gy += 40) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(640, gy); ctx.stroke(); }
+    // drone marker
+    ctx.fillStyle = '#7cff9e'; ctx.beginPath(); ctx.arc(drone.x, drone.y, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e8f4ff';
+    ctx.font = '14px ui-monospace, Menlo, monospace';
+    ctx.fillText('DRONE', drone.x + 14, drone.y + 4);
+    ctx.fillText('thr ' + drone.throttle.toFixed(2) + ' · seed z ' + drone.z.toFixed(0), 12, 24);
+    requestAnimationFrame(tick);
+  })();
+</script>
+</html>
