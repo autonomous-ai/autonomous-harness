@@ -3098,7 +3098,7 @@ class AppNotifier extends ChangeNotifier {
       machineId: machineId,
       computerId: localComputerId ?? endpoint.computerId,
       authMode: MachineAuthMode.remote,
-      name: Platform.localHostname,
+      name: localHostnameOrNull(),
       status: 'online',
     );
     machines = [...machines, machine];
