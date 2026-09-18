@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jev Pendulum</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/studio.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="dot"></span><h1>Jev Pendulum</h1></div>
+  <div id="title"></div>
+  <div class="stats">
+    <div class="stat"><label>Tilt</label><span id="tilt"></span></div>
+    <div class="stat"><label>Action</label><span id="action"></span></div>
+    <div class="stat"><label>Falls</label><span id="falls"></span></div>
+    <div class="stat"><label>Best</label><span id="best"></span></div>
+  </div>
+  <div class="controls">
+    <button id="pause">Pause</button>
+    <button id="tick">Tick</button>
+    <button id="reset" class="primary">Reset</button>
+  </div>
+</header>
+
+<main>
+  <section id="stage">
+    <div class="panel balancer">
+      <canvas id="rod"></canvas>
+      <div id="gauge"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Tilt over time (°)</div>
+      <canvas id="chart"></canvas>
+    </div>
+  </section>
+
+  <aside id="rail">
+    <div class="panel">
+      <div class="panel-title">How it works</div>
+      <p class="how">Jev reads the rod's angle + angular velocity and picks a torque each tick to keep it up. Every <span id="gustLbl"></span> ticks a <b>gust</b> kicks the rod — Jev must recover before the next one. Crank <code>gravity</code> in <code>pendulum.json</code> and watch it get hard.</p>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Recent decisions</div>
+      <ol id="log"></ol>
+    </div>
+  </aside>
+</main>
+
+<script src="/studio.js"></script>
+</body>
+</html>

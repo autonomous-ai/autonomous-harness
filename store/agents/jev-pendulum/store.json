@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev balances an inverted pendulum live on a pivot",
+  "examples": [
+    {
+      "prompt": "Set Jev Pendulum up as a tense balancing rig — a stiff rod under gravity 8 with a gust every few ticks that shoves it toward the fall line. Give Jev a style line for how to recover, then watch it hold, wobble, and eventually drop.",
+      "caption": "Jev's Balancing Act — a fast decision model keeping a rod upright, and losing it at high gravity"
+    }
+  ]
+}

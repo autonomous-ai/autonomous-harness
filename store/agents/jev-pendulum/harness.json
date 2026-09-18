@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-pendulum",
+  "name": "Jev Pendulum",
+  "category": "Science",
+  "author": "Autonomous",
+  "description": "A live inverted-pendulum experiment. A stiff rod stands upright on a pivot; Jev — TypeSafe's System One model — chooses a corrective torque every tick to keep it from toppling. Turn gravity up and watch Jev start to lose it; the balance is the show.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "pendulum.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

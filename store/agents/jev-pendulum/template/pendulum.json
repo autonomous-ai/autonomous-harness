@@ -1,0 +1,14 @@
+{
+  "title": "The Balance Rod",
+  "description": "Jev keeps a stiff rod upright on a pivot — a live balancing act.",
+  "instrument": "ROD",
+  "gravity": 7,
+  "length": 1.0,
+  "damping": 0.5,
+  "maxTorque": 0.8,
+  "stepMs": 80,
+  "gustEvery": 10,
+  "gustStrength": 0.5,
+  "fallDeg": 60,
+  "style": "Keep the rod upright. Correct every lean immediately, shrink the swing, and never let it drift past the edge. You are a fast, steady balancer."
+}
