@@ -188,23 +188,12 @@ class TerminalRoundAction extends StatelessWidget {
                     height: diameter,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppGlass.surfaceFill,
+                      // The mic's resting look: see-through, so the output
+                      // under the button stays readable, with a light shadow
+                      // to keep the edge — see [floatingButtonFill].
+                      color: floatingButtonFill,
                       border: Border.all(color: AppGlass.lift),
-                      // The mic's resting shadows: these float over streaming
-                      // output too, and without them the edge is lost on every
-                      // bright line under it.
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.45),
-                          blurRadius: 12,
-                          offset: const Offset(0, 3),
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          blurRadius: 3,
-                          offset: const Offset(0, 1),
-                        ),
-                      ],
+                      boxShadow: floatingButtonShadow,
                     ),
                     child: Icon(icon, size: 20, color: AppPalette.textPrimary),
                   ),

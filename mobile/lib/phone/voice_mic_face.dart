@@ -49,6 +49,20 @@ Color voiceMicTint(VoiceMicFace face) => switch (face) {
   _ => AppPalette.accent,
 };
 
+/// The resting fill of the terminal's floating buttons — the mic, Search and
+/// `+` — see-through enough that the output under them stays readable.
+Color get floatingButtonFill => AppGlass.surfaceFill.withValues(alpha: 0.5);
+
+/// The resting shadow under those buttons: enough to lift the edge off the
+/// text, light enough not to black out the characters beneath.
+List<BoxShadow> get floatingButtonShadow => [
+  BoxShadow(
+    color: Colors.black.withValues(alpha: 0.2),
+    blurRadius: 8,
+    offset: const Offset(0, 2),
+  ),
+];
+
 /// The round, filled part of the mic: its colour, its glow, and the glyph for
 /// what a press will do.
 class VoiceMicCore extends StatelessWidget {
@@ -77,7 +91,7 @@ class VoiceMicCore extends StatelessWidget {
               colors: [Color.lerp(_tint, Colors.white, 0.18)!, _tint],
             )
           : null,
-      color: lit ? null : AppGlass.surfaceFill,
+      color: lit ? null : floatingButtonFill,
       border: Border.all(
         color: lit ? Colors.white.withValues(alpha: 0.28) : AppGlass.lift,
       ),
@@ -99,23 +113,10 @@ class VoiceMicCore extends StatelessWidget {
                 offset: const Offset(0, 3),
               ),
             ]
-          : [
-              // Cast down and soft: enough to lift the circle off the text
-              // behind it without reading as a second ring around it.
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 12,
-                offset: const Offset(0, 3),
-              ),
-              // A tight, darker core under the edge, which is what keeps the
-              // outline readable where the blur alone washes out over a bright
-              // line of output.
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 3,
-                offset: const Offset(0, 1),
-              ),
-            ],
+          // ⚠️ Light, and that is deliberate: the fill is see-through, and a
+          // box shadow paints under the WHOLE circle — a heavy one showed
+          // through as a dark disc over the very text the fill lets through.
+          : floatingButtonShadow,
     ),
     child: Center(
       child: AnimatedSwitcher(
