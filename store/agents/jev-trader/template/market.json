@@ -1,0 +1,11 @@
+{
+  "title": "Jev's Desk",
+  "description": "A paper account run by a System One decision model. Watch it trade a synthetic market.",
+  "instrument": "SYNTH",
+  "startPrice": 100,
+  "volatility": 0.012,
+  "drift": 0.0003,
+  "stepMs": 900,
+  "capital": 10000,
+  "style": "Buy the trend, cut losses, keep some cash. You are a fast, disciplined trader."
+}

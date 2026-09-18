@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jev Trader</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/studio.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="dot"></span><h1>Jev Trader</h1></div>
+  <div id="title"></div>
+  <div class="stats">
+    <div class="stat"><label>Equity</label><span id="equity"></span></div>
+    <div class="stat"><label>Return</label><span id="return"></span></div>
+    <div class="stat"><label>Price</label><span id="price"></span></div>
+    <div class="stat"><label>Cash</label><span id="cash"></span></div>
+    <div class="stat"><label>Shares</label><span id="shares"></span></div>
+  </div>
+  <div class="controls">
+    <button id="play" class="primary">Play</button>
+    <button id="pause">Pause</button>
+    <button id="tick">Tick</button>
+    <button id="reset">Reset</button>
+  </div>
+</header>
+
+<main>
+  <section id="stage">
+    <div class="panel">
+      <div class="panel-title">Equity &amp; price</div>
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Trade tape</div>
+      <div id="tape"><span class="pulse"></span><span>waiting for the first tick…</span></div>
+    </div>
+  </section>
+
+  <aside id="rail">
+    <div class="panel">
+      <div class="panel-title">Jev's decisions</div>
+      <ol id="log"></ol>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Last action</div>
+      <div id="last"></div>
+    </div>
+  </aside>
+</main>
+
+<script src="/studio.js"></script>
+</body>
+</html>
