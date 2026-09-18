@@ -18,7 +18,7 @@ import 'package:harness_mobile/widgets/terminal_panel.dart';
 
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
-import 'machine_actions.dart';
+import 'machines_tab.dart';
 import 'phone_navigation.dart' show phoneRoute;
 import 'phone_sheet.dart';
 import 'phone_status.dart';
@@ -1041,23 +1041,26 @@ class _TerminalPageState extends State<TerminalPage>
       title: '$agentName · $machineName',
       // Two lines — the agent, then its machine — shown in full.
       titleParts: [agentName, machineName],
-      // Three groups, by what each row acts on: this agent, the app, and the machines. Machines
-      // moved here from search, which now finds agents only.
+      // Two groups: what acts on THIS agent, and the two screens the app itself has. Machines is a
+      // door like Settings rather than a list of its own — the list belongs on the page behind it,
+      // where it has room for every machine and does not push the rest of this sheet down.
       sections: [
         PhoneSheetSection(
           caption: 'Agent',
           actions: [..._agentActions(agentName)],
         ),
-        // Four machines, then "N more": the sheet has to stay short enough that App below is not
-        // pushed off a small phone by an account with a rack of machines.
-        PhoneSheetSection(
-          caption: 'Machines',
-          actions: machineSheetRows(context, widget.notifier),
-          maxVisible: 4,
-        ),
         PhoneSheetSection(
           caption: 'App',
           actions: [
+            PhoneSheetAction(
+              icon: LucideIcons.laptopMinimal300,
+              label: 'Machines',
+              onTap: () => Navigator.of(context).push(
+                phoneRoute(
+                  (_) => MachinesTab(notifier: widget.notifier, large: false),
+                ),
+              ),
+            ),
             PhoneSheetAction(
               icon: LucideIcons.settings300,
               label: 'Settings',
