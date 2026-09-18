@@ -638,6 +638,9 @@ class _TerminalPanelState extends State<TerminalPanel>
     return _claimFocus(view, navigating: true);
   }
 
+  @override
+  void clearInputBuffer() => _terminalViewKey.currentState?.clearInputBuffer();
+
   void _claimFocusAfterFrame() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;

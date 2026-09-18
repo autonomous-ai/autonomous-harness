@@ -7,11 +7,15 @@ void main() {
   late Terminal terminal;
   late List<String> outbound;
   late int dismissals;
+  late int clears;
+  late int edits;
 
   setUp(() {
     terminal = Terminal(maxLines: 200, reflowEnabled: false)..resize(80, 12);
     outbound = [];
     dismissals = 0;
+    clears = 0;
+    edits = 0;
     terminal.onOutput = outbound.add;
   });
 
@@ -25,6 +29,8 @@ void main() {
               terminal: terminal,
               enabled: enabled,
               onDismissKeyboard: () => dismissals++,
+              onClearPrompt: () => clears++,
+              onPromptEdited: () => edits++,
             ),
           ),
         ),
@@ -51,12 +57,30 @@ void main() {
     expect(outbound, ['\x1b', '\x1b[D', '\x1b[A', '\x1b[B', '\x1b[C']);
   });
 
-  testWidgets('the row holds esc, the arrows and hide — nothing else', (
+  testWidgets('tab and / reach the pty and empty the keyboard buffer', (
     tester,
   ) async {
     await pumpBar(tester);
 
-    for (final gone in ['tab', 'Enter', 'ctrl', '1', '0']) {
+    await tapKey(tester, 'tab');
+    await tapKey(tester, '/');
+
+    expect(outbound, ['\t', '/']);
+    expect(edits, 2);
+  });
+
+  testWidgets('clear hands the prompt to its owner to empty', (tester) async {
+    await pumpBar(tester);
+
+    await tapKey(tester, 'clear');
+
+    expect(clears, 1);
+  });
+
+  testWidgets('the row holds no Enter, ctrl or digits', (tester) async {
+    await pumpBar(tester);
+
+    for (final gone in ['Enter', 'ctrl', '1', '0']) {
       expect(
         find.byKey(ValueKey('terminal-key-$gone')),
         findsNothing,

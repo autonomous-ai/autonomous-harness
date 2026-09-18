@@ -18,24 +18,40 @@ import 'phone_sheet.dart';
 /// enough on a phone that chrome is worth its height only while someone is
 /// actually typing.
 ///
-/// ⚠️ **ONE row, fixed, and nothing scrolls.** It used to be two — `tab`, `↵`,
-/// `⇧tab`, `ctrl` and a row of digits beside what is here now — and the second
-/// row cost the terminal a line of output for keys the system keyboard below
-/// already types (the digits) or that were rarely reached for. What is left is
-/// what a phone keyboard genuinely cannot produce and a pane is driven by: `esc`
-/// and the arrows. Every key stays in the same place every time; this strip is
-/// used while looking at the TERMINAL, not at the strip.
+/// ⚠️ **ONE row, fixed, and nothing scrolls.** It used to be two — `↵`, `⇧tab`,
+/// `ctrl` and a row of digits beside what is here now — and the second row cost
+/// the terminal a line of output for keys the system keyboard below already
+/// types (the digits) or that were rarely reached for. What is left is what a
+/// phone keyboard cannot produce, or buries, and a pane is driven by:
+///
+/// ```
+/// esc tab clear ← ↑ ↓ → /  │  🖼 ⌄
+/// ```
+///
+/// Every key stays in the same place every time; this strip is used while
+/// looking at the TERMINAL, not at the strip.
 class TerminalKeyBar extends StatelessWidget {
   const TerminalKeyBar({
     super.key,
     required this.terminal,
     required this.enabled,
     required this.onDismissKeyboard,
+    this.onClearPrompt,
+    this.onPromptEdited,
     this.onPickImage,
     this.onTakePhoto,
   });
 
   final Terminal terminal;
+
+  /// The `clear` key: empties the prompt being typed into. Null leaves the key
+  /// out.
+  final VoidCallback? onClearPrompt;
+
+  /// Called after `tab` or `/` changed the prompt without the software
+  /// keyboard knowing — so its buffer can be emptied before it edits words the
+  /// prompt no longer holds.
+  final VoidCallback? onPromptEdited;
 
   /// False while the stream is not accepting input — the strip stays visible
   /// (it moves with the keyboard, and a row that vanished would take the
@@ -98,8 +114,18 @@ class TerminalKeyBar extends StatelessWidget {
     AppTheme.watch(context);
     // What drives an engine and a phone keyboard lacks: leave a mode, walk
     // history, move through a menu.
+    final onClearPrompt = this.onClearPrompt;
     final keys = <Widget>[
       _key(label: 'esc', onTap: () => terminal.keyInput(TerminalKey.escape)),
+      // Completes a path or a command, and moves through Claude Code's menus.
+      _key(
+        label: 'tab',
+        onTap: () {
+          terminal.keyInput(TerminalKey.tab);
+          onPromptEdited?.call();
+        },
+      ),
+      if (onClearPrompt != null) _key(label: 'clear', onTap: onClearPrompt),
       _key(
         icon: LucideIcons.arrowLeft300,
         semanticLabel: 'Left',
@@ -119,6 +145,15 @@ class TerminalKeyBar extends StatelessWidget {
         icon: LucideIcons.arrowRight300,
         semanticLabel: 'Right',
         onTap: () => terminal.keyInput(TerminalKey.arrowRight),
+      ),
+      // Last before the rule, beside the image key: how a slash command
+      // starts, and a phone keyboard buries `/` a layer down.
+      _key(
+        label: '/',
+        onTap: () {
+          terminal.textInput('/');
+          onPromptEdited?.call();
+        },
       ),
     ];
     // ⚠️ **Neither of these sends a byte anywhere**, and that is why they sit
@@ -223,14 +258,22 @@ class TerminalKeyBar extends StatelessWidget {
           ),
           child: icon != null
               ? Icon(icon, size: 16, color: foreground)
-              : Text(
-                  label!,
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1,
-                    color: foreground,
-                    fontWeight: FontWeight.w500,
+              // Shrinks rather than clips: ten keys share a phone's width, and
+              // `clear` is the widest word among them.
+              : Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label!,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1,
+                        color: foreground,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
                 ),
         ),

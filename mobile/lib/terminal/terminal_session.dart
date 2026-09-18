@@ -717,6 +717,25 @@ class TerminalSession extends ChangeNotifier {
     if (identical(_viewport, viewport)) _viewport = null;
   }
 
+  /// Empties the prompt being typed into: Ctrl+E to its end, then Ctrl+U to
+  /// delete back to its start — what a shell and Claude Code's prompt both
+  /// read as "clear the line" — and the keyboard's own buffer with it (see
+  /// [TerminalViewport.clearInputBuffer]).
+  ///
+  /// ⚠️ Not Ctrl+C: to Claude Code an empty prompt's Ctrl+C is the first half
+  /// of quitting.
+  void clearPrompt() {
+    if (!acceptsInput) return;
+    terminal.keyInput(TerminalKey.keyE, ctrl: true);
+    terminal.keyInput(TerminalKey.keyU, ctrl: true);
+    resetInputBuffer();
+  }
+
+  /// Empties the keyboard's own buffer after a key sent from outside it — Tab
+  /// completing a word, a `/` typed from the key strip — changed the prompt
+  /// behind its back. See [TerminalViewport.clearInputBuffer].
+  void resetInputBuffer() => _viewport?.clearInputBuffer();
+
   /// Changes only the local paint phase of the cursor. Incoming terminal data
   /// is always parsed against [_remoteCursorVisible], so blinking cannot turn
   /// a remote DECTCEM hide/show command into terminal input or corrupt its

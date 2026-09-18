@@ -15,4 +15,10 @@ abstract interface class TerminalViewport {
   /// Claims an already mounted editor before navigation's next rendered frame.
   /// False means the destination has no ready input view yet.
   bool focusInput();
+
+  /// Empties the software keyboard's own copy of what was typed, after the
+  /// prompt has been cleared on the far side. Left holding the old words, the
+  /// keyboard would edit them again — Vietnamese Telex re-marks the word it
+  /// thinks is being typed, and would rub out characters already gone.
+  void clearInputBuffer();
 }

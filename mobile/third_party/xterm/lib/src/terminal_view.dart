@@ -396,6 +396,13 @@ class TerminalViewState extends State<TerminalView> {
     _customTextEditKey.currentState?.closeKeyboard();
   }
 
+  /// AUTONOMOUS PATCH: empties the native input buffer, the way a submitted
+  /// line does, for an embedder that has cleared the prompt by other means
+  /// (a Ctrl+U sent from its own key strip).
+  void clearInputBuffer() {
+    _customTextEditKey.currentState?.resetEditingState();
+  }
+
   Rect get cursorRect {
     return renderTerminal.cursorOffset & renderTerminal.cellSize;
   }

@@ -221,3 +221,11 @@ it if one is dropped.
     full-screen program as wheel events or arrow keys, until the view was
     rebuilt. The setter now moves `_onScroll` with it. Regression:
     `mobile/test/terminal_alt_scroll_test.dart`.
+
+16. **An embedder can empty the keyboard's buffer**
+    (`lib/src/terminal_view.dart`). `TerminalViewState.clearInputBuffer()`
+    resets the native editing state the way a submitted line does. The phone's
+    key strip clears the prompt with Ctrl+E Ctrl+U and types `/` and Tab
+    without the keyboard seeing them; left holding the old words, the keyboard
+    would edit them again — Telex re-marks the word it believes is being typed
+    and would rub out characters the prompt no longer holds.
