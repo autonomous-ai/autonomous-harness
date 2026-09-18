@@ -1,0 +1,14 @@
+{
+  "$schema": "https://autonomous.null.land/store.schema.json",
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev improvises a live tune you watch being written",
+  "screenshots": [],
+  "examples": [
+    {
+      "prompt": "Jev is improvising a warm, nocturnal jazz tune. Set a slow tempo, lush 7th chords, and a brooding-to-hopeful mood arc. Live up to the name.",
+      "caption": "Jev in Blue — a slow, moody jazz improvisation"
+    }
+  ]
+}

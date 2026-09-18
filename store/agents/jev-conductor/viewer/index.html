@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jev Conductor</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/studio.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="dot"></span><h1>Jev Conductor</h1></div>
+  <div id="title">Jev in Blue</div>
+  <div id="meta"></div>
+  <div class="controls">
+    <button id="play" class="primary">Play</button>
+    <button id="pause">Pause</button>
+    <button id="reset">Reset</button>
+    <button id="onemore">One more bar</button>
+  </div>
+</header>
+
+<main>
+  <section id="stage">
+    <div id="keyboard"></div>
+    <div id="measures"><ol id="score"></ol></div>
+  </section>
+
+  <aside id="rail">
+    <div class="panel">
+      <div class="panel-title">Now playing</div>
+      <div id="now"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Composition so far</div>
+      <ol id="log"></ol>
+    </div>
+  </aside>
+</main>
+
+<script src="/studio.js"></script>
+</body>
+</html>
