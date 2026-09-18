@@ -65,6 +65,15 @@ Future<NewAgentDialogResult?> showNewAgentDialog(
   // Reported here rather than at each call site: the doors are four and
   // growing, and one that forgets to track is a hole in the funnel that only
   // shows up as a number quietly being too small.
+  if (notifier.stateOf(machineId)?.machine.isShared == true) {
+    machineId =
+        notifier.machineStates.values
+            .where((m) => !m.machine.isShared)
+            .firstOrNull
+            ?.machine
+            .machineId ??
+        '';
+  }
   analytics.newAgentOpened(source: source);
   return showAppDialog<NewAgentDialogResult>(
     context: context,
@@ -1371,7 +1380,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
       (machine.nodeOnline == true && !machine.needsLink);
 
   List<MachineState> get _orderedMachines {
-    final machines = widget.notifier.machineStates.values.toList();
+    final machines = widget.notifier.machineStates.values
+        .where((m) => !m.machine.isShared)
+        .toList();
     int priority(MachineState machine) => machine.isLocalMachine
         ? 0
         : _machineOnline(machine)
@@ -1408,23 +1419,24 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
         .toList(),
     options: [
       for (final machine in widget.notifier.machineStates.values)
-        SelectOption(
-          value: machine.machine.machineId,
-          label: machine.machine.displayName,
-          detail: machine.isLocalMachine ? 'This computer' : 'Remote',
-          leading: () => Icon(
-            _machineOnline(machine)
-                ? (machine.isLocalMachine
-                      ? LucideIcons.laptop
-                      : LucideIcons.monitor)
-                : LucideIcons.monitorOff,
-            size: 22,
-            color: _machineOnline(machine)
-                ? grid.AppPalette.textPrimary
-                : grid.AppPalette.textFaint,
-            semanticLabel: _machineOnline(machine) ? 'Online' : 'Offline',
+        if (!machine.machine.isShared)
+          SelectOption(
+            value: machine.machine.machineId,
+            label: machine.machine.displayName,
+            detail: machine.isLocalMachine ? 'This computer' : 'Remote',
+            leading: () => Icon(
+              _machineOnline(machine)
+                  ? (machine.isLocalMachine
+                        ? LucideIcons.laptop
+                        : LucideIcons.monitor)
+                  : LucideIcons.monitorOff,
+              size: 22,
+              color: _machineOnline(machine)
+                  ? grid.AppPalette.textPrimary
+                  : grid.AppPalette.textFaint,
+              semanticLabel: _machineOnline(machine) ? 'Online' : 'Offline',
+            ),
           ),
-        ),
     ],
     onChanged: (id) {
       if (id == _machineId || _choicesLocked) return;

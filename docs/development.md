@@ -58,6 +58,22 @@ cd provider/e2e && npm install && npm test
 make device-test
 ```
 
+Harness package updates have a dedicated coverage gate and a desktop-to-daemon integration test:
+
+```bash
+cd cli && npm run test:dsh-updates
+cd ../desktop
+DSH_UPDATE_CLI_ROOT="$PWD/../cli" flutter test test/store_update_e2e_test.dart
+```
+
+The coverage gate requires 100% statements, branches, functions and lines in the updater, version
+comparison, package locks and daemon mutation handler, and runs in the on-demand CI workflow.
+The integration test uses temporary local Git packages and a real WebSocket connection: click Update,
+reject a broken release, retry successfully,
+update a shared viewer, then reopen the preserved workspace and fetch its rendered preview. It needs
+Node and the CLI dependencies, with no account or model calls. Its fixture is
+`cli/scripts/smoke-dsh-updates.ts`; `DSH_UPDATE_CLI_ROOT` makes this integration run explicit.
+
 Each product releases on its own tag and the suffix routes the workflow: `vX.Y.Z_cli` bundles and
 publishes the daemon (running daemons pick it up within a minute), `vX.Y.Z_backend` builds the image,
 `vX.Y.Z_desktop` builds, signs and publishes both macOS bundles and both Linux architectures.

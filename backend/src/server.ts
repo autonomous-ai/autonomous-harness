@@ -9,6 +9,8 @@ import { errorHandler } from './middlewares/errorHandler.js'
 import { registerAuthMiddleware } from './middlewares/authMiddleware.js'
 import { cursorRoutes } from './routes/cursor.js'
 import { voiceRoutes } from './routes/voice.js'
+import { harnessShareRoutes } from './routes/harnessShares.js'
+import { handleObserverUpgrade } from './lib/observerWs.js'
 import { deviceAuthRoutes } from './routes/deviceAuth.js'
 import { healthRoutes, authRoutes, userRoutes, machineRoutes, planRoutes, gridRoutes, deviceRoutes, mobileRoutes, appRoutes, analyticsRoutes, agentRouteRoutes, storeRoutes } from './routes/index.js'
 import { startSubdomainProxy, startMeshProxy } from './lib/subdomainProxy.js'
@@ -76,6 +78,10 @@ const app = Fastify({
       // `ws` resets the timeout to 0 once it completes the upgrade, so this only ever fires pre-upgrade.
       if (socket instanceof net.Socket) socket.setTimeout(UPGRADE_HANDSHAKE_TIMEOUT_MS, () => socket.destroy())
       const path = (req.url ?? '').split('?')[0]
+      if (path === '/api/observer-ws') {
+        handleObserverUpgrade(req, socket, head)
+        return
+      }
       // Inverted-transport hub endpoints (terminated here, not proxied):
       //   /api/web-ws     — web clients (replaces the old proxied /proxy/api/ws)
       //   /api/manager-ws — managers dial in and multiplex all their agents
@@ -151,6 +157,7 @@ async function start(): Promise<void> {
   await app.register(voiceRoutes)
   await app.register(deviceAuthRoutes) // device-authorization grant: how the desktop app gets a machine key
   await app.register(storeRoutes)      // the Harness Store's ratings and reviews; the catalogue is the CLI's registry
+  await app.register(harnessShareRoutes)
 
   // Dedicated public subdomain app-proxy on its own port (Host-header routed → tunnelled to the node app).
   const appProxyServer = startSubdomainProxy()

@@ -168,3 +168,22 @@ Initial contract. Lifted from the `.board.json` (Circuit) and `.episode.json` (T
 - **Mechanism:** `DshRegistryEntrySchema` and `StoreFactsSchema` in `cli/src/dsh/registry.ts`,
   `cli/scripts/lib/dshRegistry.mjs`, `cli/src/dsh/wire.ts`, the publisher's limits in
   `store/tools/catalog.mjs`, and the desktop `DshEntry.tagline` and `EngineIdentity.tagline`.
+
+## 2026-09-17 — explicit package updates
+
+- **Change:** installed records add optional `revision` (the package Git tree) and `updatedAt`.
+  Catalog entries add optional `revision`; `ref` remains the source commit or ref to fetch.
+  Installed `dsh_list` rows add `installedCommit`, `availableCommit` (nullable source SHAs) and
+  `updateAvailable`. A changed tree avoids false updates from unrelated monorepo commits; older
+  records fall back to comparing source commits. Linked installs and different sources are excluded.
+- **Wire:** `dsh_update { id }` replies `{ ok: true, id }` or `{ error, detail }`, reusing
+  `dsh_install_status` for clone/setup/doctor/done/failed progress. The daemon validates the id and
+  follows the stored source; request URL/ref overrides are not accepted. Concurrent package mutations
+  return `DSH_BUSY`. Unsupported daemons retain their normal unsupported-request response.
+- **Behavior:** `harness dsh update <id>` and the Store's Update action replace the package only after
+  fetching and identity checks. Setup and doctor run at its permanent path, with the previous copy
+  retained until success. On failure it is restored; workspaces are never rematerialized by an update.
+  Setup scripts' changes outside the package cannot be reverted by the host.
+- **Backward compatible:** all version fields are optional additions. Older records remain readable;
+  older desktop clients ignore new fields, and newer clients show their existing actions for daemons
+  without update metadata. Shared viewers update independently.

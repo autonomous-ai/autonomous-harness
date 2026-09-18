@@ -61,6 +61,7 @@ import 'pending_question.dart';
 import 'session_preview.dart';
 import '../usage/remote_usage.dart';
 import '../usage/usage_accounts.dart';
+import '../orchestrator/orchestrator_controller.dart';
 
 enum AppStatus {
   bootstrapping,
@@ -291,6 +292,7 @@ class AppNotifier extends ChangeNotifier {
   final AuthSession session;
   AppConfig config;
   late ApiClient api;
+
   /// Signs in, and says whether this computer is signed in: the harness CLI in a desktop build,
   /// [ViewerServices.login] in a viewer build — which has no CLI — under one name, so every call
   /// site reads the same in both.
@@ -389,6 +391,8 @@ class AppNotifier extends ChangeNotifier {
   // Backend REST can fail while the daemon and its WebSocket remain ready. Recover that list
   // independently, with capped backoff and the same in-flight request as a manual retry.
   Timer? _machineRecoveryTimer;
+  Timer? _sharingDiscoveryTimer;
+  bool _sharingDiscoveryBusy = false;
   int _machineRecoveryAttempts = 0;
   String? _machineLoadError;
 
@@ -501,11 +505,9 @@ class AppNotifier extends ChangeNotifier {
     final target = swarms.where((s) => s.id == entry.swarmId).firstOrNull;
     return target == null ||
         target.panes.length < maxPanes ||
-              target.panes.any(
-                (p) =>
-                    p.machineId == entry.machineId &&
-                    p.agentId == entry.agentId,
-              );
+        target.panes.any(
+          (p) => p.machineId == entry.machineId && p.agentId == entry.agentId,
+        );
   }
 
   bool _canReopenSwarm(ClosedSwarm saved) {
@@ -543,6 +545,74 @@ class AppNotifier extends ChangeNotifier {
   List<TerminalPane> get panes => activeSwarm.panes;
   Iterable<TerminalPane> get allPanes => swarms.expand((s) => s.panes).toSet();
   String get activeSwarmId => activeSwarm.id;
+
+  final _orchestratorProjects = <String, OrchestratorController>{};
+
+  Future<Map<String, dynamic>> orchestratorRequest(
+    String machineId,
+    Map<String, dynamic> payload,
+  ) async {
+    if (machineId != localMachineState?.machine.machineId) {
+      throw StateError(
+        'Orchestrator projects currently run on this computer only.',
+      );
+    }
+    try {
+      return await _conn(machineId).request(
+        'orchestrator',
+        payload: payload,
+        timeout: const Duration(seconds: 35),
+      );
+    } on WsRequestFailure catch (e) {
+      if (e.code == 'UNSUPPORTED') {
+        throw StateError(
+          'Update the local Harness CLI to use the orchestrator.',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  OrchestratorController orchestratorProject(String machineId, String id) =>
+      _orchestratorProjects.putIfAbsent(
+        '$machineId/$id',
+        () => OrchestratorController(
+          id: id,
+          request: (payload) => orchestratorRequest(machineId, payload),
+        ),
+      );
+
+  void openOrchestratorProject(String machineId, String id, String title) {
+    final existing = swarms
+        .where(
+          (s) => s.orchestratorId == id && s.orchestratorMachineId == machineId,
+        )
+        .firstOrNull;
+    if (existing != null) {
+      selectSwarm(existing.id);
+      return;
+    }
+    final name = title.trim().replaceAll(RegExp(r'\s+'), ' ');
+    newSwarm(
+      name: name.isEmpty
+          ? 'Orchestrator'
+          : name.substring(0, name.length.clamp(0, 48)),
+    );
+    activeSwarm
+      ..kind = 'orchestrator'
+      ..orchestratorId = id
+      ..orchestratorMachineId = machineId;
+    _persistLayout();
+    notifyListeners();
+  }
+
+  Future<void> inspectOrchestratorAgent(
+    String machineId,
+    String agentId,
+  ) async {
+    newSwarm(name: 'Inspect agent');
+    await addAgentToSwarm(machineId, agentId, swarmId: activeSwarmId);
+  }
 
   // A New Tab remains temporary until it has content or a custom name.
   // The return destination is session-local; abandoned drafts are never saved.
@@ -838,6 +908,8 @@ class AppNotifier extends ChangeNotifier {
       return;
     }
     final restored = Swarm(id: saved.id, name: saved.name, kind: saved.kind)
+      ..orchestratorId = saved.orchestratorId
+      ..orchestratorMachineId = saved.orchestratorMachineId
       ..gridColumns = saved.gridColumns
       ..presets.addAll(saved.presets)
       ..paneSizes.addAll(saved.paneSizes);
@@ -2493,7 +2565,8 @@ class AppNotifier extends ChangeNotifier {
       final updater = desktopUpdater ?? DesktopUpdater();
       final staged = await updater.downloadAndStage(info);
       if (staged == null) {
-        updateError = 'Could not download and verify OpenHarness ${info.version}.';
+        updateError =
+            'Could not download and verify OpenHarness ${info.version}.';
         return false;
       }
       final applied = await updater.applyStaged(staged, selfPid: pid);
@@ -2778,6 +2851,21 @@ class AppNotifier extends ChangeNotifier {
   /// machines", which an empty list alone cannot say.
   bool machinesLoading = false;
 
+  Future<Map<String, dynamic>> manageHarnessShares(
+    String machineId,
+    String agentId,
+    String action, [
+    Map<String, dynamic> payload = const {},
+  ]) {
+    if (machineStates[machineId]?.machine.isShared == true) {
+      return Future.error(StateError('Only the owner can change sharing.'));
+    }
+    return _conn(machineId).request(
+      'harness_share_$action',
+      payload: {'agentId': agentId, ...payload},
+    );
+  }
+
   Future<void> refreshMachines() async {
     final revision = _authRevision;
     if (!_authWorkCurrent(revision)) return;
@@ -2966,6 +3054,31 @@ class AppNotifier extends ChangeNotifier {
         (state) => state..machine = machine,
         ifAbsent: () => MachineState(machine),
       );
+      if (machine.isShared) {
+        state.agents = [
+          for (final grant in machine.sharedHarnesses)
+            Agent(
+              id: grant.agentId,
+              name: grant.name,
+              engine: grant.engine,
+              terminalAvailable: true,
+            ),
+        ];
+        state.agentLoadStatus = AgentLoadStatus.loaded;
+        state.needsLink = false;
+        state.nodeOnline = machine.status == 'running';
+        for (final pane in allPanes.where(
+          (p) => p.machineId == machine.machineId,
+        )) {
+          pane.sharedHarness =
+              machine.sharedHarnesses
+                  .where((g) => g.agentId == pane.agentId)
+                  .firstOrNull ??
+              pane.sharedHarness;
+          pane.sharedOwnerName = machine.ownerName;
+        }
+        continue;
+      }
       state.localOnly =
           localComputerId != null &&
           _normalizeComputerId(machine.computerId) == localComputerId;
@@ -2979,6 +3092,28 @@ class AppNotifier extends ChangeNotifier {
     }
     if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();
+    _sharingDiscoveryTimer ??= Timer.periodic(const Duration(seconds: 15), (
+      _,
+    ) async {
+      if (_disposed ||
+          status != AppStatus.authenticated ||
+          _sharingDiscoveryBusy ||
+          machinesRefreshing) {
+        return;
+      }
+      final discoveryRevision = _authRevision;
+      _sharingDiscoveryBusy = true;
+      try {
+        await refreshMachines();
+      } catch (error) {
+        if (_authWorkCurrent(discoveryRevision)) {
+          _reportMachineLoadError(error, automatic: true);
+          notifyListeners();
+        }
+      } finally {
+        _sharingDiscoveryBusy = false;
+      }
+    });
     notifyListeners();
   }
 
@@ -3392,6 +3527,7 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _connectMachine(MachineState machine) {
+    if (machine.machine.isShared) return;
     // connFor() starts a new socket and reports `connecting` through onStatus,
     // or returns the existing socket with its current status intact. Do not
     // overwrite an already-connected socket when the user collapses and
@@ -3560,7 +3696,10 @@ class AppNotifier extends ChangeNotifier {
     if (decision == null) return;
     // The dialog may list the machines, and the person may have moved the choice.
     machineId = decision.machineId;
-    final error = await _startLocalModelAgent(machineId, prompt: decision.prompt);
+    final error = await _startLocalModelAgent(
+      machineId,
+      prompt: decision.prompt,
+    );
     if (error != null) {
       _lastError = error;
       _lastErrorRetryable = false;
@@ -3592,7 +3731,10 @@ class AppNotifier extends ChangeNotifier {
   /// before this dialog had buttons.
   ///
   /// Null on success, else the sentence for the person.
-  Future<String?> _startLocalModelAgent(String machineId, {String? prompt}) async {
+  Future<String?> _startLocalModelAgent(
+    String machineId, {
+    String? prompt,
+  }) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final home = await _homeFolderOf(machine);
@@ -3639,6 +3781,9 @@ class AppNotifier extends ChangeNotifier {
   }
 
   WsConn _conn(String machineId) {
+    if (machineStates[machineId]?.machine.isShared == true) {
+      throw StateError('This harness is shared with view-only access.');
+    }
     final testConnection = connectionForTest;
     if (testConnection != null) return testConnection(machineId);
     // The local-manual dev fixture exercises a locally-run backend+node stack directly (no real
@@ -3716,6 +3861,7 @@ class AppNotifier extends ChangeNotifier {
     MachineState machine, {
     bool force = false,
   }) async {
+    if (machine.machine.isShared) return;
     if (!_machineWorkCurrent(machine, _authRevision)) return;
     if (machine.agentLoadStatus == AgentLoadStatus.loaded && !force) return;
     if (machine.isLocalMachine && !machine.usesLocalTransport) {
@@ -3960,10 +4106,22 @@ class AppNotifier extends ChangeNotifier {
   /// narrates progress through `dsh_install_status` pushes, which land in
   /// [MachineDsh.installs] for the dialog's status line. Null on success, else
   /// a sentence for the person who clicked.
-  Future<String?> installDsh(String machineId, String id) async {
+  Future<String?> installDsh(String machineId, String id) =>
+      _installOrUpdateDsh(machineId, id, update: false);
+
+  Future<String?> updateDsh(String machineId, String id) =>
+      _installOrUpdateDsh(machineId, id, update: true);
+
+  Future<String?> _installOrUpdateDsh(
+    String machineId,
+    String id, {
+    required bool update,
+  }) async {
     final machine = machineStates[machineId];
     if (machine == null) return 'Machine not found';
     final machineName = machine.machine.displayName;
+    final action = update ? 'Update' : 'Install';
+    final verb = update ? 'update' : 'install';
     // A new run every time the button is pressed: a retry after a failure is
     // its own attempt, with its own clock.
     machine.dsh.runs.remove(id);
@@ -3971,9 +4129,9 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     try {
       final result = await _conn(machineId).request(
-        'dsh_install',
+        update ? 'dsh_update' : 'dsh_install',
         payload: {'id': id},
-        timeout: const Duration(minutes: 10),
+        timeout: const Duration(minutes: 90),
       );
       if (result['ok'] != true) {
         final detail = result['detail'];
@@ -3982,26 +4140,26 @@ class AppNotifier extends ChangeNotifier {
           id,
           detail is String && detail.isNotEmpty
               ? detail
-              : 'Install failed on $machineName',
+              : '$action failed on $machineName',
         );
       }
     } on WsRequestFailure catch (failure) {
       return _finishInstall(machine, id, switch (failure.code) {
         'UNSUPPORTED' || 'UNSUPPORTED_ON_REMOTE' =>
-          'Update the harness CLI on $machineName to install harnesses',
+          'Update the harness CLI on $machineName to $verb harnesses',
         _ =>
           failure.detail?.isNotEmpty == true
               ? failure.detail!
-              : 'Install failed on $machineName (${failure.code})',
+              : '$action failed on $machineName (${failure.code})',
       });
     } on WsRequestTimeout {
       return _finishInstall(
         machine,
         id,
-        '$machineName is still installing. Try again in a few minutes.',
+        '$machineName is still ${update ? 'updating' : 'installing'}. Try again in a few minutes.',
       );
     } catch (_) {
-      return _finishInstall(machine, id, 'Install failed on $machineName');
+      return _finishInstall(machine, id, '$action failed on $machineName');
     }
     machine.dsh.applyInstall(DshInstallProgress(id: id, phase: 'done'));
     notifyListeners();
@@ -5527,6 +5685,12 @@ class AppNotifier extends ChangeNotifier {
         shared ??
         TerminalPane(id: _nextPaneId++, machineId: machineId, agentId: agentId);
     final firstAgent = targetPanes.every((pane) => pane.agentId == null);
+    if (machine.machine.isShared) {
+      pane.sharedHarness = machine.machine.sharedHarnesses
+          .where((g) => g.agentId == agentId)
+          .firstOrNull;
+      pane.sharedOwnerName = machine.machine.ownerName;
+    }
     targetPanes.insert(insertion.clamp(0, targetPanes.length), pane);
     if (split != null) {
       target.pinnedSlots.updateAll(
@@ -5598,6 +5762,14 @@ class AppNotifier extends ChangeNotifier {
     if (wantedAgentId == null) return;
     final machine = machineStates[pane.machineId];
     if (machine == null) return;
+    if (machine.machine.isShared) {
+      pane.sharedHarness = machine.machine.sharedHarnesses
+          .where((g) => g.agentId == wantedAgentId)
+          .firstOrNull;
+      pane.sharedOwnerName = machine.machine.ownerName;
+      notifyListeners();
+      return;
+    }
     if (machine.nodeOnline == false) return;
     if (!machine.terminalCapabilityAvailable) return;
 
@@ -6131,17 +6303,32 @@ class AppNotifier extends ChangeNotifier {
             raw['kind'] == 'store' ||
             (raw['name'] == Swarm.storeName && (raw['panes'] as List).isEmpty);
         if (isStore && restored.any((s) => s.isStore)) continue;
-        final swarm = Swarm(
-          id: id,
-          name:
-              raw['name'] is String && (raw['name'] as String).trim().isNotEmpty
-              ? (raw['name'] as String).substring(
-                  0,
-                  (raw['name'] as String).length.clamp(0, 80),
-                )
-              : Swarm.defaultName,
-          kind: isStore ? 'store' : 'harness',
-        );
+        final swarm =
+            Swarm(
+                id: id,
+                name:
+                    raw['name'] is String &&
+                        (raw['name'] as String).trim().isNotEmpty
+                    ? (raw['name'] as String).substring(
+                        0,
+                        (raw['name'] as String).length.clamp(0, 80),
+                      )
+                    : Swarm.defaultName,
+                kind: isStore
+                    ? 'store'
+                    : raw['kind'] == 'orchestrator'
+                    ? 'orchestrator'
+                    : 'harness',
+              )
+              ..orchestratorId =
+                  raw['orchestratorId'] is String &&
+                      RegExp(r'^[a-f0-9]{32}$')
+                          .hasMatch(raw['orchestratorId'] as String)
+                  ? raw['orchestratorId'] as String
+                  : null
+              ..orchestratorMachineId = raw['orchestratorMachineId'] is String
+                  ? raw['orchestratorMachineId'] as String
+                  : null;
         for (final item in (raw['panes'] as List).take(maxPanes)) {
           final entry = PaneLayoutEntry.fromJson(item);
           if (entry == null) continue;
@@ -6358,6 +6545,10 @@ class AppNotifier extends ChangeNotifier {
     if (machine == null) return;
     final type = event['type'] as String? ?? '';
     final payload = (event['payload'] as Map<String, dynamic>?) ?? {};
+    if (type == 'orchestrator_changed') {
+      _orchestratorProjects['$machineId/${payload['id']}']?.changed();
+      return;
+    }
     // Only terminal protocol frames visit the session pool. Heartbeats, dial
     // scroll and discovery events must not await every retained terminal.
     // Each session still sees terminal frames: ready replies match their own
@@ -6690,11 +6881,15 @@ class AppNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    for (final project in _orchestratorProjects.values) {
+      project.dispose();
+    }
     grid.AppTheme.palette.removeListener(_announceTerminalThemeEverywhere);
     terminalThemeStore.removeListener(_announceTerminalThemeEverywhere);
     _localGitProjects.dispose();
     sessionPreviews.dispose();
     _disposed = true;
+    _sharingDiscoveryTimer?.cancel();
     _stopMachineRecovery();
     if (signingIn) cliLogin.cancel();
     _closedHistory.clear();

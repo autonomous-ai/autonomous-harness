@@ -40,6 +40,7 @@ export interface TerminalBackend<Ref extends TerminalRuntimeRef = TerminalRuntim
     expected: TerminalProcessExpectation,
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
+    readOnly?: boolean,
   ): Promise<TerminalReadResult<TerminalStreamHandle<Ref>>>
 
   /** Restart's two primitives. Optional per backend — only tmux (a real multiplexer pane) supports an

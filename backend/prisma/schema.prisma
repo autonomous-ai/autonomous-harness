@@ -555,3 +555,26 @@ model HarnessReview {
   @@index([harnessId])
   @@map("harness_reviews")
 }
+
+/// Discovery metadata for one account-bound, view-only invitation. Content remains on the owner
+/// daemon, which independently authorizes every observer against its durable local grant list.
+model HarnessShare {
+  id             String    @id @map("_id")
+  ownerId        String
+  machineId      String
+  agentId        String
+  recipientEmail String
+  autonomousEnv  String
+  name           String
+  engine         String?
+  ownerPublicKey String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([machineId, agentId, recipientEmail])
+  @@index([recipientEmail, autonomousEnv, expiresAt])
+  @@index([ownerId, machineId])
+  @@map("harness_shares")
+}

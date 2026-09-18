@@ -50,6 +50,8 @@ import '../widgets/swarm_wallpaper.dart';
 import '../widgets/agent_action_icons.dart';
 import '../widgets/swarm_icon.dart';
 import '../widgets/task_palette.dart';
+import '../orchestrator/orchestrator_launcher.dart';
+import '../orchestrator/orchestrator_workspace.dart';
 
 class SwarmScreen extends StatefulWidget {
   const SwarmScreen({
@@ -398,6 +400,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         (
           machine.machine.machineId,
           machine.machine.displayName,
+          machine.machine.isShared,
+          machine.machine.ownerName,
           machine.isLocalMachine,
           machine.nodeOnline,
           machine.needsLink,
@@ -426,6 +430,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
               'id': machine.machine.machineId,
               'name': machine.machine.displayName,
               'local': machine.isLocalMachine,
+              'shared': machine.machine.isShared,
+              'ownerName': machine.machine.ownerName,
               'agentCount':
                   machine.agents.isNotEmpty ||
                       machine.agentLoadStatus == AgentLoadStatus.loaded
@@ -501,15 +507,16 @@ class _SwarmScreenState extends State<SwarmScreen> {
   DateTime? _localModelsAt;
 
   Future<void> _refreshLocalModels() async {
-    final machines = app.machines;
+    final machines = app.machines.where((machine) => !machine.isShared).toList();
     if (machines.isEmpty) return;
     // The daemon memoises its answer, so a repeat is nearly free — but this is called on every app
     // change, and an RPC per keystroke-sized notification is not free. One read per window is
     // plenty for a list that changes when someone starts or stops serving a model.
     final now = DateTime.now();
     final last = _localModelsAt;
-    if (last != null && now.difference(last) < const Duration(seconds: 10))
+    if (last != null && now.difference(last) < const Duration(seconds: 10)) {
       return;
+    }
     _localModelsAt = now;
     final preferred = machines.firstWhere(
       (m) => app.stateOf(m.machineId)?.isLocalMachine == true,
@@ -1289,6 +1296,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
     ShortcutAction.newAgent: _newAgent,
     ShortcutAction.routeTask: () =>
         _dialog(() => showTaskPalette(context, app)),
+    ShortcutAction.orchestrate: () =>
+        _dialog(() => showOrchestratorLauncher(context, app)),
     ShortcutAction.reload: app.retryMachines,
     ShortcutAction.showLayout: () =>
         _dialog(() => showLayoutPalette(context, app)),
@@ -1501,66 +1510,75 @@ class _SwarmScreenState extends State<SwarmScreen> {
                             key: ValueKey('harness-start-background'),
                             child: SwarmWallpaper(),
                           ),
-                        if (app.activeSwarm.isStore)
+                        if (app.activeSwarm.isOrchestrator)
+                          OrchestratorWorkspace(
+                            key: ValueKey(
+                              'orchestrator:${app.activeSwarm.orchestratorId}',
+                            ),
+                            notifier: app,
+                            machineId: app.activeSwarm.orchestratorMachineId!,
+                            projectId: app.activeSwarm.orchestratorId!,
+                          )
+                        else if (app.activeSwarm.isStore)
                           StoreTab(
                             key: ValueKey('store-tab:${app.activeSwarmId}'),
                             notifier: app,
                             source: 'tab',
                           )
                         else
-                        Padding(
-                          padding: app.panes.isEmpty
-                              ? EdgeInsets.zero
-                              : const EdgeInsets.all(10),
-                          child: Focus.withExternalFocusNode(
-                            focusNode: _canvasFocus,
-                            includeSemantics: false,
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: PaneGrid(
-                                    notifier: app,
-                                    swarmMode: true,
-                                    onSplit: (paneId, axis) => unawaited(
-                                      _splitAgent(axis, paneId: paneId),
-                                    ),
-                                    onNewSplit: (paneId, axis) => unawaited(
-                                      _splitAgent(
-                                        axis,
-                                        paneId: paneId,
-                                        create: true,
+                          Padding(
+                            padding: app.panes.isEmpty
+                                ? EdgeInsets.zero
+                                : const EdgeInsets.all(10),
+                            child: Focus.withExternalFocusNode(
+                              focusNode: _canvasFocus,
+                              includeSemantics: false,
+                              child: Stack(
+                                children: [
+                                  Positioned.fill(
+                                    child: PaneGrid(
+                                      notifier: app,
+                                      swarmMode: true,
+                                      onSplit: (paneId, axis) => unawaited(
+                                        _splitAgent(axis, paneId: paneId),
                                       ),
+                                      onNewSplit: (paneId, axis) => unawaited(
+                                        _splitAgent(
+                                          axis,
+                                          paneId: paneId,
+                                          create: true,
+                                        ),
+                                      ),
+                                      empty: app.panes.isEmpty
+                                          ? HarnessStartPage(
+                                              key: ValueKey(
+                                                'harness-start:${app.activeSwarmId}',
+                                              ),
+                                              focusNode: _startSearchFocus,
+                                              createSearch: () =>
+                                                  SwarmSearchController(
+                                                    app,
+                                                    _navigation.recent,
+                                                    projects: _projects,
+                                                    commands: _searchCommands,
+                                                    adding: true,
+                                                    catalog: _searchCatalog,
+                                                  ),
+                                              onNew: _newAgent,
+                                              onStore: app.openStore,
+                                              onChoose: (selection) =>
+                                                  _activateSearch(
+                                                    selection,
+                                                    app.activeSwarmId,
+                                                  ),
+                                            )
+                                          : null,
                                     ),
-                                    empty: app.panes.isEmpty
-                                        ? HarnessStartPage(
-                                            key: ValueKey(
-                                              'harness-start:${app.activeSwarmId}',
-                                            ),
-                                            focusNode: _startSearchFocus,
-                                            createSearch: () =>
-                                                SwarmSearchController(
-                                                  app,
-                                                  _navigation.recent,
-                                                  projects: _projects,
-                                                  commands: _searchCommands,
-                                                  adding: true,
-                                                  catalog: _searchCatalog,
-                                                ),
-                                            onNew: _newAgent,
-                                            onStore: app.openStore,
-                                            onChoose: (selection) =>
-                                                _activateSearch(
-                                                  selection,
-                                                  app.activeSwarmId,
-                                                ),
-                                          )
-                                        : null,
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -1649,7 +1667,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
                                     children: [
                                       if (swarm.isStore)
                                         StoreMark(
-                                          key: ValueKey('tab-store:${swarm.id}'),
+                                          key: ValueKey(
+                                            'tab-store:${swarm.id}',
+                                          ),
                                         )
                                       else if (_tabAgents(swarm).length == 1)
                                         EngineMark(

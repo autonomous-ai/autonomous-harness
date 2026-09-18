@@ -91,6 +91,11 @@ class StoreViewers extends StatelessWidget {
                   ),
                 ),
               ),
+              TextButton(
+                key: ValueKey('store-viewer-action:${viewer.id}'),
+                onPressed: () => onOpenAgent(viewer.id),
+                child: Text(viewer.hasUpdate ? 'Update' : 'View'),
+              ),
             ],
           ),
           if (viewer.description?.isNotEmpty == true) ...[

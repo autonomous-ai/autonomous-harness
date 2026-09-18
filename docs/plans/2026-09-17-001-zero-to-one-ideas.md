@@ -147,8 +147,7 @@ agent's terminal can run code as Bob's user, on Bob's machine:
   existing encrypted connection; both CLIs need the forwarding-capable version. See
   [the implementation and validation plan](2026-09-17-004-remote-viewers.md). This preserves the
   owner's interactive viewer access; read-only public sharing still needs its own restrictions.
-- **Installed harnesses never update.** `harness dsh` offers `list`, `install`, `check` and `remove`
-  (`cli/src/dsh/command.ts`) — no update. A fix to a package (today's RDKit verdict fix, the text-to-cad
-  Chromium setup) only reaches a machine that removes and reinstalls it. Needs: an installed package
-  knows its source commit, the catalog knows the latest, the store shows "Update", and an update keeps
-  workspaces working.
+- **Harness updates — implemented.** Installed packages track their source commit, the catalog
+  identifies published revisions, and the Store shows "Update". `harness dsh update <id>` and the
+  Store upgrade packages while preserving workspaces and restoring the previous package if setup or
+  doctor fails. Shared viewers update independently. See [implementation and verification](2026-09-17-002-harness-updates.md).

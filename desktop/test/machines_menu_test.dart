@@ -9,6 +9,7 @@ import 'package:harness/core/config.dart';
 import 'package:harness/core/models.dart';
 import 'package:harness/screens/swarm_screen.dart';
 import 'package:harness/state/swarm_catalog.dart';
+import 'package:harness/state/app_state.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 
 import 'swarm_state_test.dart' show createApp;
@@ -26,6 +27,108 @@ class _RecordingApi extends ApiClient {
 }
 
 void main() {
+  test(
+    'shared machines never enter the general machine connection path',
+    () async {
+      var requestedConnections = 0;
+      final app = createApp(
+        connectionForTest: (_) {
+          requestedConnections++;
+          throw StateError('A shared machine requested a full connection');
+        },
+      );
+      const shared = Machine(
+        machineId: 'shared',
+        authMode: MachineAuthMode.remote,
+        isShared: true,
+      );
+      app.machines.add(shared);
+      app.machineStates['shared'] = MachineState(shared);
+      await expectLater(app.listRemoteFolder('shared', '/'), throwsStateError);
+      final restart = await app.restartAgent('shared', 'shared-agent');
+      expect(restart.error, contains('view-only'));
+      await app.gridModels('shared');
+      expect(requestedConnections, 0);
+      app.dispose();
+    },
+  );
+
+  testWidgets(
+    'shared machines expose only invited agents and carry a view-only owner label',
+    (tester) async {
+      const channel = MethodChannel('harness/swarm_tabs');
+      final messages = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        messages.add(call);
+        return true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final app = createApp();
+      final grant = SharedHarness(
+        id: 'grant',
+        agentId: 'shared-agent',
+        name: 'Climate dashboard',
+        expiresAt: DateTime(2027),
+      );
+      final shared = Machine(
+        machineId: 'shared',
+        authMode: MachineAuthMode.remote,
+        name: 'Studio',
+        isShared: true,
+        ownerName: 'D',
+        sharedHarnesses: [grant],
+      );
+      app.machines.add(shared);
+      app.machineStates['shared'] = MachineState(shared)
+        ..nodeOnline = true
+        ..agentLoadStatus = AgentLoadStatus.loaded
+        ..agents = [
+          const Agent(
+            id: 'shared-agent',
+            name: 'Climate dashboard',
+            terminalAvailable: true,
+          ),
+        ];
+      final projects = SwarmProjectStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SwarmScreen(
+            notifier: app,
+            nativeTabs: true,
+            projectStore: projects,
+          ),
+        ),
+      );
+      await tester.pump();
+      final state =
+          messages.lastWhere((m) => m.method == 'machinesState').arguments
+              as Map;
+      final machines = state['machines'] as List;
+      final row = machines.cast<Map>().firstWhere((m) => m['id'] == 'shared');
+      expect(row['shared'], isTrue);
+      expect(row['ownerName'], 'D');
+      expect(row['linkRequired'], isFalse);
+      expect(
+        (row['agents'] as List).single,
+        containsPair('id', 'shared-agent'),
+      );
+      expect((row['agents'] as List).single, containsPair('canOpen', true));
+      expect(
+        app.machineStates['shared']!.connectionStatus,
+        ConnectionStatus.disconnected,
+      );
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+      projects.dispose();
+    },
+  );
   testWidgets('tab navigation does not resend the agent inventory', (
     tester,
   ) async {
@@ -344,10 +447,10 @@ void main() {
 
     Map machine() =>
         ((messages.lastWhere((c) => c.method == 'machinesState').arguments
-                    as Map)['machines']
-                as List)
-            .single
-        as Map;
+                        as Map)['machines']
+                    as List)
+                .single
+            as Map;
 
     // Online + linked: presence shows "Online", trailing status drops out so
     // the agent count can fill the slot.

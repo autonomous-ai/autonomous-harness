@@ -18,6 +18,11 @@ class Swarm {
   /// over the New Tab it was opened from, the way a first agent does.
   String kind;
   bool get isStore => kind == 'store';
+  bool get isOrchestrator =>
+      kind == 'orchestrator' &&
+      orchestratorId != null &&
+      orchestratorMachineId != null;
+  String? orchestratorId, orchestratorMachineId;
   static const storeName = 'Harness Store';
 
   static const defaultName = 'New Tab';
@@ -104,6 +109,8 @@ class Swarm {
       'id': id,
       'name': name,
       if (kind != 'harness') 'kind': kind,
+      if (isOrchestrator) 'orchestratorId': orchestratorId,
+      if (isOrchestrator) 'orchestratorMachineId': orchestratorMachineId,
       'focus': agents.indexWhere((p) => p.id == focusedPaneId),
       'previousFocus': agents.indexWhere((p) => p.id == previousPaneId),
       'zoom': agents.indexWhere((p) => p.id == zoomedPaneId),
@@ -174,6 +181,8 @@ class ClosedSwarm extends ClosedWork {
   }) : id = swarm.id,
        name = swarm.name,
        kind = swarm.kind,
+       orchestratorId = swarm.orchestratorId,
+       orchestratorMachineId = swarm.orchestratorMachineId,
        gridColumns = swarm.gridColumns,
        focus = swarm.panes.indexWhere((p) => p.id == swarm.focusedPaneId),
        previousFocus = swarm.panes.indexWhere(
@@ -198,6 +207,7 @@ class ClosedSwarm extends ClosedWork {
 
   /// So a closed store tab reopens as the store, not as an empty harness tab.
   final String kind;
+  final String? orchestratorId, orchestratorMachineId;
   final String? engine;
   final int index;
   final int? gridColumns;

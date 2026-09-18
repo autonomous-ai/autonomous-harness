@@ -11,6 +11,7 @@ class PaneHeaderActions extends StatelessWidget {
     required this.zoomed,
     this.onZoom,
     this.onRestart,
+    this.onShare,
     this.onDelete,
     this.onClose,
     this.onToggleComposer,
@@ -23,6 +24,7 @@ class PaneHeaderActions extends StatelessWidget {
   });
 
   final bool zoomed, composerVisible;
+  final VoidCallback? onShare;
   final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
 
   /// A harness agent's viewer: show it beside this terminal, or hide it.
@@ -90,6 +92,10 @@ class PaneHeaderActions extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (onShare != null) ...[
+              action('Share harness', Icons.person_add_alt_1_outlined, onShare),
+              const SizedBox(width: 2),
+            ],
             if (modelPicker != null) ...[
               modelPicker!,
               const SizedBox(width: 4),

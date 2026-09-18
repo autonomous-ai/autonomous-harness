@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/shortcuts/keymap_commands.dart';
 import 'package:harness/terminal/terminal_binary.dart';
 import 'package:harness/widgets/swarm_switcher.dart';
+import 'package:harness/orchestrator/orchestrator_launcher.dart';
 
 import 'keymap_runtime_test.dart' show native;
 import 'swarm_interactions_test.dart' show chord;
@@ -42,8 +43,12 @@ void main() {
           isFalse,
         );
         await chord(tester, LogicalKeyboardKey.keyP);
+        expect(find.byType(OrchestratorLauncher), findsOneWidget);
         expect(jumpField, findsNothing);
         expect(app.swarms, [original]);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(find.byType(OrchestratorLauncher), findsNothing);
         if (nativeTabs) {
           await native(tester, 'jump');
           expect(jumpField, findsNothing);

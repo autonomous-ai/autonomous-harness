@@ -34,6 +34,7 @@ describe('dshListRows', () => {
     expect(rows).toEqual([
       {
         id: 'autonomous/typst', kind: 'agent', name: 'Typst (local)', description: null, category: null, author: null, engine: 'claude',
+        installedCommit: null, availableCommit: null, updateAvailable: false,
         installed: true, linked: true, viewer: true, viewerUse: 'autonomous/doc-viewer', tier: 2,
         verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/agents/typst`, homepage: 'https://typst.example.com',
         upstream: 'https://example.com/typst', license: 'MIT', tagline: 'Typesetting for the rest of us', screenshots: ['https://example.com/1.png'],
@@ -41,6 +42,7 @@ describe('dshListRows', () => {
       },
       {
         id: 'acme/private', kind: 'viewer', name: 'Private', description: null, category: null, author: null, engine: null,
+        installedCommit: null, availableCommit: null, updateAvailable: false,
         installed: true, linked: false, viewer: true, viewerUse: null, tier: 2,
         verified: false, repo: null, homepage: null, upstream: null, license: null, tagline: null, screenshots: [], examples: [],
       },

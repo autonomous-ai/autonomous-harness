@@ -252,6 +252,7 @@ the one folder, and runs its setup. From a terminal:
 
 ```sh
 harness dsh install autonomous/typst                          # from the shelf
+harness dsh update autonomous/typst                           # update the package; keep projects
 harness dsh install "$PWD/store/agents/typst" --link          # this working tree, for development
 HARNESS_STORE_REF=my-branch harness start                     # the shelf from a pushed branch
 ```
@@ -265,20 +266,37 @@ The app's start page has a door to the store: every harness as a card, and a pag
 mark, who made it (`author`), its category and description, where it lives (`repo` and `path`,
 `homepage`, `upstream`), what it is licensed under (`license`), prompts beside what they made
 (`examples`), pictures (`screenshots`), ratings and
-reviews, and a row per machine with Get, Open or Remove. Installing is still what it always was — a
+reviews, and installation actions for this computer: Get, Update, Open and Remove. Installing is still what it always was — a
 clone (for a built-in package, of its one folder) under `~/.harness/dsh` on one machine, its toolchain
 set up beside it — so the page is honest about that: a harness is on a machine, not on an account.
 Ratings and reviews are the signed-in person's, one per package, kept in the control plane, never in
 this repository.
 
 The sidebar starts with Search, followed by Discover and six broad sections: Design, Engineering,
-Media, Science, Games and Code. Cards show Get or Open for each harness; its page manages installation
-per machine. Package manifests keep their precise domain labels, grouped only for browsing.
+Media, Science, Games and Code. Cards show Get, Update or Open for each harness; its page manages installation
+on this computer. Package manifests keep their precise domain labels, grouped only for browsing.
+
+Updates are explicit. The Store shows **Update** when a matching catalog source publishes a different
+commit with changed package content. Built-in catalog entries carry their package folder's Git tree
+revision, so a change elsewhere in the monorepo does not flag every installed harness. Hover over the
+short installed version on a package page to see the installed and available commits.
+
+`harness dsh update <id>` follows the matching catalog's published ref, or the recorded source/ref
+for an unlisted package or private fork. A community catalog needs a full commit SHA in `ref` to
+advertise updates; moving branches can still be updated from the CLI. Linked checkouts are updated
+directly by their owner.
+
+The updater fetches and validates a replacement, retains the previous package, and runs setup and
+doctor at the permanent installation path. A failed check restores the old files and installed
+record. Workspaces, copied instructions, output files and session identities are preserved; existing
+skill links resolve to the updated package. Running sessions are not restarted. Setup scripts may
+change external tools, and those external side effects cannot be rolled back. Shared viewer updates
+are independent: open their page from **Viewers**, then choose **Update**.
 
 Viewer packages are shared dependencies, not Store listings. Installing a harness installs its viewer
 on that machine when needed; another harness using the same viewer reuses the installed copy. Viewers
 stay out of Discover, search and categories. Authors can still inspect and manage them with
-`harness dsh list`, `doctor` and `remove`. A small **Viewers** icon at the bottom of the Store
+`harness dsh list`, `update`, `doctor` and `remove`. A small **Viewers** icon at the bottom of the Store
 sidebar opens the viewer inventory, where each viewer shows its installed machines and the agents
 that depend on it. Dependency names come from the machines' catalogs, including community packages;
 an older daemon may not report that information yet.

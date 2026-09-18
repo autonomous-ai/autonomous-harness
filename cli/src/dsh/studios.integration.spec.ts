@@ -13,6 +13,11 @@ import { materializeWorkspace } from './materialize.js'
 import { DshViewerManager } from './viewer.js'
 
 const store = realpathSync(fileURLToPath(new URL('../../../store/', import.meta.url)))
+
+// The viewer's /api/state, as loosely as this test reads it. `Response.json()` is `unknown` under this
+// tsconfig, and the release gate is `tsc --noEmit` — an unshaped read here would hold up a CLI release.
+type ViewerStateJson = Record<string, any>
+const stateOf = async (url: string): Promise<ViewerStateJson> => (await (await fetch(url)).json()) as ViewerStateJson
 const packages = ['juce-agent-toolkit', 'foam-agent', 'autoresearch-mlx', 'ableton-ai', 'dimos', 'simskill', 'bonsai-mcp', 'comfy-mcp']
 
 describe.runIf(process.env.HARNESS_STUDIO_INTEGRATION === '1')('specialist studios through the real Harness lifecycle', () => {
@@ -58,13 +63,13 @@ describe.runIf(process.env.HARNESS_STUDIO_INTEGRATION === '1')('specialist studi
     await manager.start(name, result.installed, workspace)
     const url = manager.url(name)
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/)
-    const first = await (await fetch(`${url}api/state`)).json()
+    const first = await stateOf(`${url}api/state`)
     expect(first.history).toHaveLength(1)
     const run = await fetch(`${url}api/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: first.config.actions[0].id, parameters: first.project.parameters, revision: first.revision }) })
     expect(run.status).toBe(202)
-    await expect.poll(async () => (await (await fetch(`${url}api/state`)).json()).job.status, { timeout: 120_000, interval: 300 }).toBe('done')
-    const current = await (await fetch(`${url}api/state`)).json()
+    await expect.poll(async () => (await stateOf(`${url}api/state`)).job.status, { timeout: 120_000, interval: 300 }).toBe('done')
+    const current = await stateOf(`${url}api/state`)
     expect(current.history).toHaveLength(2)
     for (const artifact of current.result.artifacts) expect((await fetch(`${url}artifacts/${artifact.path}`)).status).toBe(200)
     await manager.stop(name)
@@ -73,7 +78,7 @@ describe.runIf(process.env.HARNESS_STUDIO_INTEGRATION === '1')('specialist studi
     expect(again.created).toEqual([])
     expect(again.initLines).toEqual([])
     await manager.start(name, result.installed, workspace)
-    const restored = await (await fetch(`${manager.url(name)}api/state`)).json()
+    const restored = await stateOf(`${manager.url(name)}api/state`)
     expect(restored.result.id).toBe(current.result.id)
     expect(restored.history).toHaveLength(2)
     await manager.stop(name)
@@ -99,7 +104,7 @@ describe.runIf(process.env.HARNESS_STUDIO_INTEGRATION === '1')('specialist studi
     mkdirSync(workspace)
     expect((await materializeWorkspace(result.installed, workspace)).warnings).toEqual([])
     await manager.start('fresh', result.installed, workspace)
-    const state = await (await fetch(`${manager.url('fresh')}api/state`)).json()
+    const state = await stateOf(`${manager.url('fresh')}api/state`)
     expect(state.result.engine).toBe('Local MIDI + synthesized audio')
     expect(state.result.artifacts).toHaveLength(3)
     await manager.stop('fresh')

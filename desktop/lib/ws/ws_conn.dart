@@ -79,6 +79,7 @@ class WsConn {
 
   /// Retained only for fixture constructor compatibility. Local transport ignores it.
   final String? localApiKey;
+  final String? observerShareId;
   final int localProtocolVersion;
 
   /// A viewer build's end-to-end session with the machine, minted fresh on every connect — the
@@ -169,6 +170,7 @@ class WsConn {
     this.transportKind = WsTransportKind.cloudE2ee,
     this.localWsUri,
     this.localApiKey,
+    this.observerShareId,
     this.localProtocolVersion = 1,
     this.relayCodecs,
     this.transportPlugins,
@@ -241,6 +243,7 @@ class WsConn {
         'type': 'machine_select',
         'payload': {
           'machineId': machineId,
+          if (observerShareId != null) 'shareId': observerShareId,
           if (isLocal) 'localProtocolVersion': localProtocolVersion,
           if (isLocal && forceRelayReconnect) 'forceReconnect': true,
         },
@@ -679,7 +682,7 @@ class WsConn {
     }
     final code = channel.closeCode;
     if (isLocal) {
-      if (code == 4404) {
+      if (code == 4404 || (observerShareId != null && code == 4403)) {
         _closing = true;
         // needsLink first: AppNotifier's onStatus handler reads machine.needsLink
         // to decide whether a disconnect should be treated as the node going

@@ -11,6 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { env } from './env.js'
+import { AUTH_DIR } from '../lib/authSession.js'
 
 const productRoot = join(homedir(), '.harness')
 
@@ -21,5 +22,9 @@ describe('test environment isolation', () => {
 
   it('keeps the runtime dir off the developer\'s ~/.harness, so no real managed grid or node outranks a fake on PATH', () => {
     expect(env.ADAPTER_RUNTIME_DIR.startsWith(productRoot)).toBe(false)
+  })
+  it('keeps account reads and refreshes in the test-owned auth directory', () => {
+    expect(AUTH_DIR).toBe(join(env.ADAPTER_DATA_DIR, 'auth'))
+    expect(AUTH_DIR.startsWith(productRoot)).toBe(false)
   })
 })

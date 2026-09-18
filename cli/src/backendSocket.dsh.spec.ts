@@ -56,9 +56,39 @@ describe('the DSH requests on the local socket', () => {
   it('dsh_remove and dsh_install are refused on a daemon that cannot do them', async () => {
     ask('dsh_remove', { requestId: 'rm-1', id: 'acme/thing' })
     ask('dsh_install', { requestId: 'in-1', id: 'acme/thing' })
+    ask('dsh_update', { requestId: 'up-1', id: 'acme/thing' })
     await vi.waitFor(() => expect(replies('dsh_install')).toHaveLength(1))
     expect(replies('dsh_remove')).toEqual([expect.objectContaining({ requestId: 'rm-1', error: 'UNSUPPORTED_ON_REMOTE' })])
     expect(replies('dsh_install')).toEqual([expect.objectContaining({ requestId: 'in-1', error: 'UNSUPPORTED_ON_REMOTE' })])
+    expect(replies('dsh_update')).toEqual([expect.objectContaining({ requestId: 'up-1', error: 'UNSUPPORTED_ON_REMOTE' })])
+  })
+
+  it('dsh_update validates identity, streams progress, and returns update failures', async () => {
+    const update = vi.fn<NonNullable<BackendSocket['onDshUpdate']>>(async (id, progress) => {
+      progress({ id: null, phase: 'clone' })
+      progress({ id, phase: 'done' })
+      return { ok: true, id }
+    })
+    socket.onDshUpdate = update
+    ask('dsh_update', { requestId: 'invalid', id: '../../etc' })
+    ask('dsh_update', { requestId: 'update', id: 'acme/thing', url: 'ignored', ref: 'ignored' })
+    await vi.waitFor(() => expect(replies('dsh_update')).toHaveLength(2))
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(replies('dsh_update')).toEqual([
+      expect.objectContaining({ requestId: 'invalid', error: 'INVALID_DSH' }),
+      expect.objectContaining({ requestId: 'update', ok: true, id: 'acme/thing' }),
+    ])
+    expect(frames.filter(frame => frame.type === 'dsh_install_status').map(frame => frame.payload))
+      .toEqual([{ id: 'acme/thing', phase: 'clone' }, { id: 'acme/thing', phase: 'done' }])
+    update.mockResolvedValueOnce({ ok: false, error: 'LINKED_INSTALL', detail: 'Update the checkout' })
+    ask('dsh_update', { requestId: 'linked', id: 'acme/thing' })
+    await vi.waitFor(() => expect(replies('dsh_update')).toHaveLength(3))
+    expect(replies('dsh_update')[2]).toMatchObject({ error: 'LINKED_INSTALL', detail: 'Update the checkout' })
+    for (const error of [new Error('disk full'), 'closed']) {
+      update.mockRejectedValueOnce(error)
+      ask('dsh_update', { requestId: 'throws', id: 'acme/thing' })
+      await vi.waitFor(() => expect(replies('dsh_update').at(-1)).toMatchObject({ error: 'INTERNAL', detail: String(error instanceof Error ? error.message : error) }))
+    }
   })
 
   it('dsh_install: refuses a request with no usable id or url, before the daemon hears of it', async () => {

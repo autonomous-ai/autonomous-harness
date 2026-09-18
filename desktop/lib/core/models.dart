@@ -62,6 +62,27 @@ class CurrentUserProfile {
   }
 }
 
+/// A view-only invitation. It never contains a full machine credential.
+class SharedHarness {
+  const SharedHarness({
+    required this.id,
+    required this.agentId,
+    required this.name,
+    this.engine,
+    required this.expiresAt,
+  });
+  final String id, agentId, name;
+  final String? engine;
+  final DateTime expiresAt;
+  factory SharedHarness.fromJson(Map<String, dynamic> j) => SharedHarness(
+    id: j['id'] as String,
+    agentId: j['agentId'] as String,
+    name: j['name'] as String,
+    engine: j['engine'] as String?,
+    expiresAt: DateTime.parse(j['expiresAt'] as String),
+  );
+}
+
 /// Control-plane machine (GET /api/machines).
 class Machine {
   final String machineId;
@@ -73,6 +94,9 @@ class Machine {
   final String? engine;
   final String? name;
   final String? hostname;
+  final bool isShared;
+  final String? ownerName;
+  final List<SharedHarness> sharedHarnesses;
   final String? status;
 
   const Machine({
@@ -83,6 +107,9 @@ class Machine {
     this.engine,
     this.name,
     this.hostname,
+    this.isShared = false,
+    this.ownerName,
+    this.sharedHarnesses = const [],
     this.status,
   });
 
@@ -101,6 +128,12 @@ class Machine {
     engine: j['engine'] as String?,
     name: j['name'] as String?,
     hostname: j['hostname'] as String?,
+    isShared: j['shared'] == true,
+    ownerName: j['ownerName'] as String?,
+    sharedHarnesses: [
+      for (final row in j['shares'] as List? ?? const [])
+        SharedHarness.fromJson(Map<String, dynamic>.from(row as Map)),
+    ],
     status: j['status'] as String?,
   );
 
@@ -112,6 +145,9 @@ class Machine {
     engine: engine,
     name: name ?? this.name,
     hostname: hostname,
+    isShared: isShared,
+    ownerName: ownerName,
+    sharedHarnesses: sharedHarnesses,
     status: status,
   );
 }

@@ -1,0 +1,869 @@
+<style>
+  #harness-orchestrator {
+    --or-window: light-dark(#f5f4f0, #171918);
+    --or-panel: light-dark(#fdfcf9, #202320);
+    --or-inset: light-dark(#ebeae4, #151815);
+    --or-text: light-dark(#252a25, #e6e9e1);
+    --or-muted: light-dark(#656b62, #a0a89d);
+    --or-line: light-dark(#dbdfd5, #363d34);
+    --or-accent: light-dark(#426149, #c2d8af);
+    --or-accent-text: light-dark(#ffffff, #1c2919);
+    --or-soft: light-dark(#e6ecdf, #303b29);
+    --or-warm: light-dark(#97693d, #d6ab78);
+    --or-shadow: light-dark(#29312022, #00000050);
+    --or-canvas: light-dark(#e9eae3, #222820);
+    --or-grid: light-dark(#c8cec0, #3e4936);
+    --or-model: light-dark(#a6b396, #a8b693);
+    --or-wire: light-dark(#526845, #ced9bc);
+    --or-room: light-dark(#d9c9b2, #4a4437);
+    --or-floor: light-dark(#b6a48a, #292b23);
+    --or-brass: light-dark(#b89664, #c6a576);
+    --or-film: light-dark(#272c22, #1b2018);
+    --or-film-text: light-dark(#f2f0e4, #ececdb);
+    color: var(--or-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    width: 100%;
+    position: relative;
+  }
+  #harness-orchestrator * { box-sizing: border-box; }
+  #harness-orchestrator [hidden] { display: none !important; }
+  #harness-orchestrator button, #harness-orchestrator textarea {
+    font: inherit;
+    color: inherit;
+  }
+  #harness-orchestrator button { cursor: pointer; }
+  #harness-orchestrator button:disabled { cursor: default; opacity: .55; }
+  #harness-orchestrator svg { flex-shrink: 0; width: 15px; height: 15px; }
+  #harness-orchestrator .or-window {
+    overflow: clip;
+    border: 1px solid var(--or-line);
+    border-radius: 13px;
+    background: var(--or-window);
+    position: relative;
+  }
+  #harness-orchestrator .or-chrome {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 0 15px;
+    min-height: 48px;
+    border-bottom: 1px solid var(--or-line);
+    background: var(--or-inset);
+  }
+  #harness-orchestrator .or-lights { display: flex; gap: 6px; flex-shrink: 0; }
+  #harness-orchestrator .or-lights span {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--or-line);
+  }
+  #harness-orchestrator .or-brand { font-weight: 500; letter-spacing: -.25px; }
+  #harness-orchestrator .or-tab {
+    display: flex; align-items: center; gap: 8px;
+    align-self: end;
+    padding: 9px 16px;
+    margin-bottom: -1px;
+    background: var(--or-window);
+    border: 1px solid var(--or-line);
+    border-bottom-color: var(--or-window);
+    border-radius: 8px 8px 0 0;
+    min-width: 0;
+  }
+  #harness-orchestrator .or-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #harness-orchestrator .or-concept { color: var(--or-muted); font-size: 11px; margin-left: auto; white-space: nowrap; }
+  #harness-orchestrator .or-quiet {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    background: transparent; border: 0; border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 30px;
+  }
+  #harness-orchestrator .or-quiet:hover { background: var(--or-soft); }
+  #harness-orchestrator kbd {
+    font: inherit; font-size: 11px; color: var(--or-muted);
+    background: transparent; padding: 1px 2px; border: 0; box-shadow: none;
+  }
+  #harness-orchestrator .or-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(270px, var(--or-chat-width, 34%));
+    min-height: 620px;
+    align-items: stretch;
+  }
+  #harness-orchestrator .or-work { min-width: 0; padding: 14px; }
+  #harness-orchestrator .or-workbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-height: 35px; margin-bottom: 11px; padding: 0 2px;
+  }
+  #harness-orchestrator .or-workname { font-weight: 500; }
+  #harness-orchestrator .or-workstatus { color: var(--or-muted); font-size: 12px; }
+  #harness-orchestrator .or-views {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start; gap: 10px;
+  }
+  #harness-orchestrator .or-view { min-width: 0; border: 1px solid var(--or-line); border-radius: 9px; overflow: clip; background: var(--or-panel); }
+  #harness-orchestrator .or-view:first-child { grid-column: 1 / -1; }
+  #harness-orchestrator .or-views[data-count="2"] .or-view { grid-column: 1 / -1; }
+  #harness-orchestrator[data-layout="stack"] .or-view { grid-column: 1 / -1; }
+  #harness-orchestrator .or-view[data-selected="true"] { border-color: var(--or-accent); }
+  #harness-orchestrator .or-view[data-expanded="true"] { grid-column: 1 / -1; }
+  #harness-orchestrator .or-viewhead {
+    display: flex; align-items: center; justify-content: space-between; gap: 2px;
+    padding: 6px 7px; border-bottom: 1px solid var(--or-line);
+  }
+  #harness-orchestrator .or-viewtitle { min-width: 0; justify-content: start; font-weight: 500; padding: 3px 5px; }
+  #harness-orchestrator .or-viewtitle span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #harness-orchestrator .or-viewactions { display: flex; gap: 0; }
+  #harness-orchestrator .or-viewactions button { padding: 4px 6px; }
+  #harness-orchestrator .or-canvasbox { position: relative; height: 195px; background: var(--or-canvas); }
+  #harness-orchestrator .or-view:first-child .or-canvasbox { height: 260px; }
+  #harness-orchestrator .or-views[data-count="1"] .or-canvasbox { height: 420px; }
+  #harness-orchestrator .or-views[data-count="2"] .or-canvasbox { height: 220px; }
+  #harness-orchestrator .or-view[data-expanded="true"] .or-canvasbox { height: 465px; }
+  #harness-orchestrator canvas { width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+  #harness-orchestrator canvas:active { cursor: grabbing; }
+  #harness-orchestrator .or-canvaslabel {
+    position: absolute; top: 12px; left: 13px; color: var(--or-muted);
+    font-size: 11px; letter-spacing: 1px; pointer-events: none;
+  }
+  #harness-orchestrator .or-canvasnote {
+    position: absolute; right: 12px; bottom: 9px;
+    color: var(--or-muted); font-size: 11px; pointer-events: none;
+  }
+  #harness-orchestrator .or-viewfoot {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-height: 33px; padding: 6px 11px; font-size: 11px; color: var(--or-muted);
+  }
+  #harness-orchestrator .or-status { display: flex; align-items: center; gap: 5px; min-width: 0; }
+  #harness-orchestrator .or-status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; background: var(--or-warm); }
+  #harness-orchestrator .or-view[data-status="ready"] .or-status::before { background: var(--or-accent); }
+  #harness-orchestrator .or-stageprogress { height: 2px; background: var(--or-line); }
+  #harness-orchestrator .or-stageprogress span { display: block; height: 100%; width: 0; background: var(--or-accent); transition: width .5s ease; }
+  #harness-orchestrator .or-agentlog { background: var(--or-inset); padding: 13px; border-top: 1px solid var(--or-line); }
+  #harness-orchestrator .or-agentlog pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.8 ui-monospace, SFMono-Regular, monospace; color: var(--or-muted); background: transparent; }
+  #harness-orchestrator .or-empty {
+    grid-column: 1 / -1; min-height: 490px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: var(--or-muted);
+  }
+  #harness-orchestrator .or-empty svg { width: 26px; height: 26px; }
+  #harness-orchestrator .or-empty span { max-width: 225px; text-align: center; }
+  #harness-orchestrator .or-chat {
+    min-width: 0; border-left: 1px solid var(--or-line);
+    background: var(--or-panel); display: flex; flex-direction: column;
+  }
+  #harness-orchestrator .or-chathead {
+    display: flex; align-items: center; gap: 9px; padding: 19px 19px 14px;
+    border-bottom: 1px solid var(--or-line); font-weight: 500;
+  }
+  #harness-orchestrator .or-orb {
+    width: 25px; height: 25px; border-radius: 8px; background: var(--or-soft);
+    display: grid; place-items: center; color: var(--or-accent);
+  }
+  #harness-orchestrator .or-chatstate { font-size: 11px; font-weight: 400; color: var(--or-muted); margin-left: auto; }
+  #harness-orchestrator .or-messages { padding: 18px; display: flex; flex-direction: column; gap: 15px; }
+  #harness-orchestrator .or-message { margin: 0; overflow-wrap: anywhere; }
+  #harness-orchestrator .or-message.or-you {
+    padding: 12px 13px; border-radius: 10px 10px 3px 10px;
+    background: var(--or-window); border: 1px solid var(--or-line);
+  }
+  #harness-orchestrator .or-message.or-agent { padding: 0 1px; }
+  #harness-orchestrator .or-byline { font-size: 11px; color: var(--or-muted); margin-bottom: 5px; }
+  #harness-orchestrator .or-message p { margin: 0; }
+  #harness-orchestrator .or-dispatch {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--or-muted);
+    padding: 2px 1px;
+  }
+  #harness-orchestrator .or-dispatch i, #harness-orchestrator .or-dispatch svg { color: var(--or-accent); width: 13px; height: 13px; }
+  #harness-orchestrator .or-history { color: var(--or-muted); font-size: 11px; }
+  #harness-orchestrator .or-history summary { cursor: pointer; }
+  #harness-orchestrator .or-history .or-message { margin-top: 12px; font-size: 12px; }
+  #harness-orchestrator .or-chatbottom { margin-top: auto; padding: 0 14px 15px; }
+  #harness-orchestrator .or-followups { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+  #harness-orchestrator .or-suggestion {
+    background: transparent; border: 1px solid var(--or-line);
+    border-radius: 6px; padding: 5px 8px; font-size: 11px;
+    color: var(--or-muted);
+  }
+  #harness-orchestrator .or-suggestion:hover { background: var(--or-soft); color: var(--or-text); }
+  #harness-orchestrator .or-composer { border: 1px solid var(--or-line); border-radius: 10px; background: var(--or-window); padding: 9px; }
+  #harness-orchestrator .or-context {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--or-accent); font-size: 11px; margin-bottom: 4px;
+  }
+  #harness-orchestrator .or-context button { padding: 2px; min-height: 20px; margin-left: auto; }
+  #harness-orchestrator textarea {
+    display: block; width: 100%; min-width: 0; resize: none;
+    border: 0; border-radius: 4px; background: transparent;
+    padding: 5px; box-shadow: none;
+  }
+  #harness-orchestrator textarea::placeholder { color: var(--or-muted); }
+  #harness-orchestrator .or-composefoot { display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 2px; }
+  #harness-orchestrator .or-composefoot span { font-size: 11px; color: var(--or-muted); }
+  #harness-orchestrator .or-send {
+    width: 30px; height: 30px; border: 0; border-radius: 7px;
+    background: var(--or-accent); color: var(--or-accent-text);
+    display: inline-grid; place-items: center;
+  }
+  #harness-orchestrator .or-chatnote { color: var(--or-muted); font-size: 11px; padding: 9px 3px 0; display: flex; align-items: center; gap: 5px; }
+  #harness-orchestrator .or-veil {
+    position: absolute; z-index: 5; inset: 48px 0 0;
+    background: light-dark(#e2e5dbed, #121611ee);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 78px 24px 32px;
+  }
+  #harness-orchestrator .or-launcher {
+    width: min(650px, 100%); border: 1px solid var(--or-line);
+    background: var(--or-panel); border-radius: 18px;
+    box-shadow: 0 24px 80px var(--or-shadow);
+    padding: 27px;
+  }
+  #harness-orchestrator .or-launchhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 25px; }
+  #harness-orchestrator .or-launchlabel { display: flex; gap: 9px; align-items: center; color: var(--or-muted); font-size: 12px; }
+  #harness-orchestrator .or-launcher label { display: block; font-size: 27px; letter-spacing: -.8px; font-weight: 500; margin-bottom: 13px; }
+  #harness-orchestrator .or-launcher textarea { font-size: 20px; line-height: 1.65; min-height: 133px; padding: 0; }
+  #harness-orchestrator .or-launchfoot { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 22px; padding-top: 17px; border-top: 1px solid var(--or-line); }
+  #harness-orchestrator .or-launchmeta { display: flex; align-items: center; gap: 7px; color: var(--or-muted); font-size: 12px; }
+  #harness-orchestrator .or-primary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+    background: var(--or-accent); color: var(--or-accent-text);
+    border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 500;
+  }
+  #harness-orchestrator .or-primary kbd { color: inherit; opacity: .75; }
+  #harness-orchestrator .or-launchhint { color: var(--or-muted); font-size: 11px; text-align: center; margin: 15px 0 0; }
+  #harness-orchestrator .or-filmcopy { position: absolute; z-index: 1; left: 15px; top: 16px; color: var(--or-film-text); pointer-events: none; }
+  #harness-orchestrator .or-filmcopy small { font-size: 10px; letter-spacing: 2px; }
+  #harness-orchestrator .or-filmcopy p { margin: 8px 0 0; font-size: 23px; font-weight: 400; line-height: 1.15; letter-spacing: -.6px; }
+  #harness-orchestrator .or-play {
+    position: absolute; bottom: 10px; left: 11px;
+    background: var(--or-film); color: var(--or-film-text);
+    border: 1px solid light-dark(#a2aa9255, #a2aa9255);
+    display: flex; align-items: center; gap: 7px; border-radius: 6px; padding: 5px 9px; font-size: 11px;
+  }
+  #harness-orchestrator .or-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #harness-orchestrator .or-swatch { position: absolute; width: 0; height: 0; visibility: hidden; }
+  @media (max-width: 740px) {
+    #harness-orchestrator .or-body { grid-template-columns: minmax(0, 1fr) minmax(245px, 40%); }
+    #harness-orchestrator .or-brand { display: none; }
+    #harness-orchestrator .or-work { padding: 10px; }
+    #harness-orchestrator .or-views { grid-template-columns: minmax(0, 1fr); }
+    #harness-orchestrator .or-view .or-canvasbox { height: 190px; }
+    #harness-orchestrator .or-view:first-child .or-canvasbox { height: 230px; }
+    #harness-orchestrator .or-messages { padding: 14px; }
+  }
+  @media (max-width: 550px) {
+    #harness-orchestrator .or-body { grid-template-columns: minmax(0, 1fr); }
+    #harness-orchestrator .or-chat { border-left: 0; border-top: 1px solid var(--or-line); }
+    #harness-orchestrator .or-empty { min-height: 240px; }
+    #harness-orchestrator .or-chrome { gap: 8px; padding: 0 9px; flex-wrap: wrap; }
+    #harness-orchestrator .or-lights { display: none; }
+    #harness-orchestrator .or-tab { padding: 9px; }
+    #harness-orchestrator .or-concept { font-size: 10px; }
+    #harness-orchestrator .or-chrome > button { font-size: 11px; padding: 5px; gap: 4px; }
+    #harness-orchestrator .or-chrome > button kbd { display: none; }
+    #harness-orchestrator .or-veil { padding: 35px 12px; }
+    #harness-orchestrator .or-launcher { padding: 20px; }
+    #harness-orchestrator .or-launcher label { font-size: 24px; }
+    #harness-orchestrator .or-launcher textarea { font-size: 17px; min-height: 165px; }
+    #harness-orchestrator .or-launchhead { margin-bottom: 19px; }
+    #harness-orchestrator .or-launchfoot { gap: 12px; }
+    #harness-orchestrator .or-launchmeta { font-size: 11px; }
+    #harness-orchestrator textarea { font-size: 16px; }
+    #harness-orchestrator .or-views[data-count="1"] .or-canvasbox { height: 310px; }
+  }
+  @media (pointer: coarse) {
+    #harness-orchestrator button { min-height: 44px; }
+    #harness-orchestrator .or-viewactions button { min-width: 44px; }
+    #harness-orchestrator .or-send { width: 44px; }
+    #harness-orchestrator .or-viewhead { flex-wrap: wrap; }
+    #harness-orchestrator textarea { font-size: 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #harness-orchestrator .or-stageprogress span { transition: none; }
+  }
+</style>
+
+<div id="harness-orchestrator" aria-label="Orchestrator workspace concept">
+  <div class="or-window">
+    <header class="or-chrome">
+      <div class="or-lights" aria-hidden="true"><span></span><span></span><span></span></div>
+      <span class="or-brand">Harness</span>
+      <div class="or-tab"><i data-lucide="panels-top-left" aria-hidden="true"></i><span data-slot="tab-title">New workspace</span></div>
+      <span class="or-concept">Interactive concept</span>
+      <button type="button" class="or-quiet" data-action="new-task"><i data-lucide="plus" aria-hidden="true"></i>New task <kbd>⌘P</kbd></button>
+    </header>
+    <div class="or-body">
+      <section class="or-work" aria-label="Live views">
+        <div class="or-workbar">
+          <span class="or-workname">Workspace</span>
+          <span class="or-workstatus" data-slot="workspace-status">Ready when you are</span>
+        </div>
+        <div class="or-views" data-count="0">
+          <div class="or-empty">
+            <i data-lucide="layers-2" aria-hidden="true"></i>
+            <span>Your work takes shape here.</span>
+            <button type="button" class="or-quiet" data-action="new-task">Start with a request <i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
+          </div>
+        </div>
+      </section>
+      <aside class="or-chat" aria-label="Conversation with the orchestrator">
+        <div class="or-chathead">
+          <span class="or-orb"><i data-lucide="aperture" aria-hidden="true"></i></span>
+          <span>Orchestrator</span>
+          <span class="or-chatstate" data-slot="chat-state">Ready</span>
+        </div>
+        <div class="or-messages">
+          <div class="or-message or-agent"><div class="or-byline">Harness</div><p>Tell me what you want to make. I’ll find the right tools and bring the work here.</p></div>
+        </div>
+        <div class="or-chatbottom">
+          <div class="or-followups" hidden>
+            <button type="button" class="or-suggestion" data-prompt="Make the lighting warmer.">Warmer lighting</button>
+            <button type="button" class="or-suggestion" data-prompt="Make the lamp taller.">Make it taller</button>
+          </div>
+          <form class="or-composer">
+            <div class="or-context" hidden>
+              <i data-lucide="panel-top" aria-hidden="true"></i>
+              <span data-slot="context-label"></span>
+              <button type="button" class="or-quiet" data-action="clear-context" aria-label="Clear selected view"><i data-lucide="x" aria-hidden="true"></i></button>
+            </div>
+            <label class="or-sr" for="or-followup">Message the orchestrator</label>
+            <textarea id="or-followup" rows="2" maxlength="1200" placeholder="Keep going. Change direction. Ask anything." disabled></textarea>
+            <div class="or-composefoot">
+              <span>One conversation, all your work</span>
+              <button type="submit" class="or-send" aria-label="Send message" disabled><i data-lucide="arrow-up" aria-hidden="true"></i></button>
+            </div>
+          </form>
+          <div class="or-chatnote"><i data-lucide="cpu" aria-hidden="true"></i><span data-slot="agent-note">Specialists appear as they’re needed</span></div>
+        </div>
+      </aside>
+    </div>
+    <div class="or-veil">
+      <form class="or-launcher" role="dialog" aria-modal="true" aria-labelledby="or-launch-title">
+        <div class="or-launchhead">
+          <span class="or-launchlabel"><span class="or-orb"><i data-lucide="aperture" aria-hidden="true"></i></span>Harness</span>
+          <button type="button" class="or-quiet" data-action="close-launcher" aria-label="Close request box"><kbd>esc</kbd><i data-lucide="x" aria-hidden="true"></i></button>
+        </div>
+        <label id="or-launch-title" for="or-brief">What would you like to make?</label>
+        <textarea id="or-brief" rows="4" maxlength="1600" spellcheck="false">Design a sculptural desk lamp, render it in a warm room, and make a 15-second launch film.</textarea>
+        <div class="or-launchfoot">
+          <span class="or-launchmeta"><i data-lucide="monitor" aria-hidden="true"></i>This computer · New workspace</span>
+          <button type="submit" class="or-primary">Start creating <kbd>⌘↵</kbd></button>
+        </div>
+        <p class="or-launchhint">Describe the outcome. Harness brings the specialists.</p>
+      </form>
+    </div>
+  </div>
+  <span class="or-sr" role="status" aria-live="polite" data-slot="announcement"></span>
+</div>
+
+<script>
+(() => {
+  const root = document.getElementById("harness-orchestrator");
+  const query = (selector) => root.querySelector(selector);
+  const viewGrid = query(".or-views");
+  const launcher = query(".or-veil");
+  const brief = query("#or-brief");
+  const composer = query("#or-followup");
+  const messages = query(".or-messages");
+  const announce = query('[data-slot="announcement"]');
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const defaultBrief = brief.value;
+  const design = { chatWidth: 34, layout: "mosaic" };
+  const state = {
+    started: false, selected: "", expanded: "", stages: {},
+    chat: [], turn: 0, tall: false, warm: false, videoTime: 0, playing: false
+  };
+  const definitions = {
+    cad: { name: "CAD model", engine: "text-to-cad", icon: "box", artifact: "lamp.glb", work: "Shaping the lamp", done: "Model ready" },
+    render: { name: "Product render", engine: "Blender", icon: "sun", artifact: "lamp-studio.png", work: "Rendering the room", done: "Render ready" },
+    film: { name: "Launch film", engine: "Remotion", icon: "clapperboard", artifact: "lamp-launch.mp4", work: "Composing the film", done: "Film ready" }
+  };
+  let generation = 0;
+  let restoring = false;
+  let lastSentState = "";
+  let timers = [];
+  let videoFrame = 0;
+  let previousFocus = null;
+  const canvases = new Map();
+  const observers = [];
+  const colorKeys = ["canvas", "grid", "model", "wire", "room", "floor", "brass", "film", "film-text", "text", "muted"];
+  const swatches = {};
+  colorKeys.forEach((key) => {
+    const swatch = document.createElement("span");
+    swatch.className = "or-swatch";
+    swatch.style.color = "var(--or-" + key + ")";
+    swatch.setAttribute("aria-hidden", "true");
+    root.append(swatch);
+    swatches[key] = swatch;
+  });
+  const colorCache = new Map();
+  const color = (key) => {
+    if (!colorCache.has(key)) colorCache.set(key, getComputedStyle(swatches[key]).color);
+    return colorCache.get(key);
+  };
+  const icon = (name) => '<i data-lucide="' + name + '" aria-hidden="true"></i>';
+  function refreshIcons() {
+    if (globalThis.lucide) globalThis.lucide.createIcons({ attrs: { width: 15, height: 15 } });
+  }
+  function later(fn, delay) {
+    const version = generation;
+    timers.push(setTimeout(() => { if (version === generation) fn(); }, delay));
+  }
+  function clearRun() {
+    generation++;
+    timers.forEach(clearTimeout);
+    timers = [];
+    cancelAnimationFrame(videoFrame);
+    state.playing = false;
+  }
+  function persist() {
+    if (restoring) return;
+    if (!window.openai || !window.openai.setWidgetState) return;
+    const snapshot = {
+      modelContent: {
+        concept: "A single orchestrator conversation on the right; live specialist views on the left.",
+        selectedView: state.selected || null,
+        visibleViews: Object.keys(state.stages),
+        chatWidthPercent: design.chatWidth,
+        viewerLayout: design.layout
+      },
+      privateContent: {
+        started: state.started, launcherOpen: !launcher.hidden, selected: state.selected,
+        stages: Object.keys(state.stages), tall: state.tall, warm: state.warm,
+        chatWidth: design.chatWidth, layout: design.layout
+      }
+    };
+    lastSentState = JSON.stringify(snapshot);
+    try { Promise.resolve(window.openai.setWidgetState(snapshot)).catch(() => {}); } catch (_) {}
+  }
+  function renderDesign() {
+    root.style.setProperty("--or-chat-width", design.chatWidth + "%");
+    root.dataset.layout = design.layout;
+    requestAnimationFrame(drawAll);
+  }
+  function addMessage(role, text, kind) {
+    state.chat.push({ role, text, kind: kind || "" });
+    renderMessages();
+  }
+  function messageElement(entry) {
+    const el = document.createElement("div");
+    if (entry.kind === "dispatch") {
+      el.className = "or-dispatch";
+      el.innerHTML = icon("corner-down-right");
+      const label = document.createElement("span");
+      label.textContent = entry.text;
+      el.append(label);
+    } else {
+      el.className = "or-message " + (entry.role === "user" ? "or-you" : "or-agent");
+      const author = document.createElement("div");
+      author.className = "or-byline";
+      author.textContent = entry.role === "user" ? "You" : "Harness";
+      const text = document.createElement("p");
+      text.textContent = entry.text;
+      el.append(author, text);
+    }
+    return el;
+  }
+  function renderMessages() {
+    messages.replaceChildren();
+    const past = state.chat.slice(0, -5);
+    if (past.length) {
+      const history = document.createElement("details");
+      history.className = "or-history";
+      const summary = document.createElement("summary");
+      summary.textContent = past.length + " earlier messages";
+      history.append(summary);
+      past.forEach((entry) => history.append(messageElement(entry)));
+      messages.append(history);
+    }
+    state.chat.slice(-5).forEach((entry) => messages.append(messageElement(entry)));
+    refreshIcons();
+  }
+  function updateStatus() {
+    const entries = Object.entries(state.stages);
+    const busy = entries.filter((entry) => entry[1].status === "working");
+    const count = entries.length;
+    query('[data-slot="workspace-status"]').textContent = count ? count + (count === 1 ? " live view" : " live views") : "Ready when you are";
+    query('[data-slot="chat-state"]').textContent = busy.length ? "Working" : "Ready";
+    query('[data-slot="agent-note"]').textContent = count
+      ? count + (count === 1 ? " specialist" : " specialists") + " · " + (busy.length ? "working in the background" : "sessions retained")
+      : "Specialists appear as they’re needed";
+    query(".or-followups").hidden = !state.started;
+    composer.disabled = !state.started;
+    query(".or-send").disabled = !state.started;
+    viewGrid.dataset.count = String(count);
+    for (const [id, stage] of entries) {
+      const card = query('[data-view="' + id + '"]');
+      if (!card) continue;
+      const def = definitions[id];
+      card.dataset.status = stage.status;
+      card.dataset.selected = String(state.selected === id);
+      card.dataset.expanded = String(state.expanded === id);
+      card.hidden = !!state.expanded && state.expanded !== id;
+      card.querySelector(".or-status").textContent = stage.status === "ready" ? def.done : stage.label || def.work;
+      card.querySelector(".or-stageprogress span").style.width = Math.round(stage.progress * 100) + "%";
+      card.querySelector('[data-action="select-view"]').setAttribute("aria-pressed", String(state.selected === id));
+      card.querySelector('[data-action="expand-view"]').setAttribute("aria-label", state.expanded === id ? "Restore viewers" : "Expand " + def.name);
+      const log = card.querySelector(".or-agentlog pre");
+      log.textContent = def.engine + " · persistent session\n\nTask received from Orchestrator.\n" +
+        (stage.status === "ready" ? "Output: " + def.artifact + "\nChecks complete. Ready for follow-up." : (stage.label || def.work) + "…");
+    }
+    query(".or-context").hidden = !state.selected;
+    query('[data-slot="context-label"]').textContent = state.selected ? "Looking at " + definitions[state.selected].name.toLowerCase() : "";
+  }
+  function setLauncher(open) {
+    if (open) previousFocus = document.activeElement;
+    launcher.hidden = !open;
+    query(".or-body").inert = open;
+    query(".or-chrome").inert = open;
+    if (open) {
+      requestAnimationFrame(() => { brief.focus({ preventScroll: true }); brief.setSelectionRange(brief.value.length, brief.value.length); });
+    } else if (previousFocus && previousFocus.isConnected && !launcher.contains(previousFocus)) {
+      previousFocus.focus({ preventScroll: true });
+    } else {
+      (state.started ? composer : query('[data-action="new-task"]')).focus({ preventScroll: true });
+    }
+  }
+  function addView(id) {
+    if (state.stages[id]) return;
+    const empty = query(".or-empty");
+    if (empty) empty.remove();
+    const def = definitions[id];
+    state.stages[id] = { status: "working", progress: .1, label: def.work, yaw: -.58 };
+    const card = document.createElement("section");
+    card.className = "or-view";
+    card.dataset.view = id;
+    card.setAttribute("aria-label", def.name);
+    card.innerHTML =
+      '<div class="or-viewhead"><button type="button" class="or-quiet or-viewtitle" data-action="select-view" aria-pressed="false">' +
+      icon(def.icon) + '<span>' + def.name + '</span></button><div class="or-viewactions">' +
+      '<button type="button" class="or-quiet" data-action="inspect-agent" aria-label="Inspect ' + def.engine + ' agent" aria-expanded="false">' + icon("terminal") + '</button>' +
+      '<button type="button" class="or-quiet" data-action="expand-view" aria-label="Expand ' + def.name + '">' + icon("maximize-2") + '</button></div></div>' +
+      '<div class="or-canvasbox"><canvas role="img" aria-label="' + def.name + ' of a sculptural desk lamp. Drag to rotate the preview."></canvas>' +
+      (id === "cad" ? '<span class="or-canvaslabel">PERSPECTIVE</span><span class="or-canvasnote">Drag to orbit</span>' : "") +
+      (id === "film" ? '<div class="or-filmcopy"><small>FORMA</small><p>Light,<br>considered.</p></div><button type="button" class="or-play" data-action="play-film">' + icon("play") + '<span>Play · 0:15</span></button>' : "") +
+      '</div><div class="or-stageprogress"><span></span></div>' +
+      '<div class="or-viewfoot"><span class="or-status">' + def.work + '</span><span>' + def.engine + '</span></div>' +
+      '<div class="or-agentlog" hidden><pre></pre></div>';
+    viewGrid.append(card);
+    const canvas = card.querySelector("canvas");
+    canvases.set(id, canvas);
+    const observer = new ResizeObserver(() => draw(id));
+    observer.observe(canvas);
+    observers.push(observer);
+    let drag = null;
+    canvas.addEventListener("pointerdown", (event) => {
+      drag = { x: event.clientX, yaw: state.stages[id].yaw };
+      if (event.pointerType === "mouse") canvas.setPointerCapture(event.pointerId);
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (!drag || !(event.buttons & 1)) return;
+      state.stages[id].yaw = drag.yaw + (event.clientX - drag.x) / 130;
+      draw(id);
+    });
+    canvas.addEventListener("pointerup", () => { drag = null; });
+    canvas.addEventListener("pointercancel", () => { drag = null; });
+    updateStatus();
+    refreshIcons();
+    announce.textContent = def.name + " added to the workspace.";
+    draw(id);
+  }
+  function advance(id, progress, label) {
+    if (!state.stages[id]) return;
+    Object.assign(state.stages[id], { progress, label, status: progress >= 1 ? "ready" : "working" });
+    updateStatus();
+    draw(id);
+    if (progress >= 1) persist();
+  }
+  function begin() {
+    const text = brief.value.trim();
+    if (!text) { brief.focus(); return; }
+    clearRun();
+    observers.splice(0).forEach((observer) => observer.disconnect());
+    canvases.clear();
+    viewGrid.replaceChildren();
+    Object.assign(state, { started: true, selected: "", expanded: "", stages: {}, chat: [], tall: false, warm: false, videoTime: 0 });
+    query('[data-slot="tab-title"]').textContent = "Desk lamp";
+    addMessage("user", text);
+    addMessage("assistant", "I’ll start with the lamp’s shape, then light the scene and bring it into a short film. You can keep directing me here.");
+    setLauncher(false);
+    composer.focus({ preventScroll: true });
+    addMessage("assistant", "text-to-cad is shaping the model", "dispatch");
+    addView("cad");
+    later(() => advance("cad", .4, "Building the shade"), 650);
+    later(() => advance("cad", .75, "Checking proportions"), 1550);
+    later(() => {
+      advance("cad", 1);
+      addMessage("assistant", "The model is ready on the left. I’m handing it to Blender for the room and lighting.");
+      addView("render");
+    }, 2600);
+    later(() => advance("render", .45, "Placing lights and materials"), 3550);
+    later(() => advance("render", .8, "Rendering the scene"), 4500);
+    later(() => {
+      advance("render", 1);
+      addMessage("assistant", "The warm studio render is ready. Remotion is composing a 15-second film from it.");
+      addView("film");
+    }, 5400);
+    later(() => advance("film", .5, "Arranging the shots"), 6400);
+    later(() => advance("film", .85, "Adding motion and titles"), 7500);
+    later(() => {
+      advance("film", 1);
+      addMessage("assistant", "All three views are here. Try the film, orbit the model, or tell me what you’d like to change.");
+      announce.textContent = "The model, render, and film are ready. Your conversation stays on the right.";
+      persist();
+    }, 8600);
+    persist();
+  }
+  function sendFollowup(value) {
+    const text = String(value || composer.value).trim();
+    if (!text || !state.started) return;
+    composer.value = "";
+    addMessage("user", text);
+    state.turn++;
+    const isTall = /tall|height|longer|proportion/i.test(text);
+    const target = isTall ? "cad" : state.selected || (/film|video|shot|title/i.test(text) ? "film" : "render");
+    if (!state.stages[target]) addView(target);
+    if (isTall) state.tall = !state.tall;
+    if (/warm|light|gold/i.test(text)) state.warm = true;
+    const response = target === "cad"
+      ? "I’ll adjust the proportions with the CAD agent, then refresh the render and film to match."
+      : target === "film"
+      ? "I’ll have Remotion revise the film. The model and render stay available on the left."
+      : "I’ll have Blender adjust the scene, then refresh the film with the new render.";
+    addMessage("assistant", response);
+    advance(target, .3, target === "cad" ? "Adjusting proportions" : target === "render" ? "Updating the lighting" : "Revising the edit");
+    later(() => advance(target, .7, "Updating the preview"), 900);
+    later(() => {
+      advance(target, 1);
+      const downstream = target === "cad" ? ["render", "film"] : target === "render" ? ["film"] : [];
+      downstream.filter((id) => state.stages[id]).forEach((id) => {
+        advance(id, .5, "Using the updated " + (target === "cad" ? "model" : "render"));
+        later(() => advance(id, 1), 1200);
+      });
+      addMessage("assistant", "The updated view is ready. I’ve kept the same specialist sessions and your workspace in place.");
+      announce.textContent = definitions[target].name + " updated.";
+      persist();
+    }, 1800);
+    composer.focus({ preventScroll: true });
+    persist();
+  }
+  function draw(id) {
+    const canvas = canvases.get(id);
+    const stage = state.stages[id];
+    if (!canvas || !stage) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(rect.height * ratio);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(ratio, ratio);
+    const w = rect.width, h = rect.height;
+    const film = id === "film", cad = id === "cad";
+    ctx.fillStyle = color(cad ? "canvas" : film ? "film" : "room");
+    ctx.fillRect(0, 0, w, h);
+    if (!cad && !film) {
+      const room = ctx.createLinearGradient(0, 0, w, h);
+      room.addColorStop(0, color("room"));
+      room.addColorStop(1, color("floor"));
+      ctx.fillStyle = room;
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = color("floor");
+      ctx.beginPath(); ctx.moveTo(w * .15, 0); ctx.lineTo(w * .15, h * .66); ctx.lineTo(0, h * .74); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w * .15, h * .66); ctx.lineTo(w, h * .73); ctx.stroke();
+    }
+    const scale = Math.min(w / (film ? 300 : 360), h / (state.tall ? 325 : 285));
+    const yaw = stage.yaw + (film ? state.videoTime * .06 : 0);
+    const cos = Math.cos(yaw), sin = Math.sin(yaw);
+    const origin = [w * (film ? .65 : .5), h * .82];
+    function project(point) {
+      const x = point[0] * cos - point[2] * sin;
+      const z = point[0] * sin + point[2] * cos;
+      return [origin[0] + x * scale, origin[1] - point[1] * scale + z * .39 * scale, z];
+    }
+    function line(a, b) {
+      const aa = project(a), bb = project(b);
+      ctx.beginPath(); ctx.moveTo(aa[0], aa[1]); ctx.lineTo(bb[0], bb[1]); ctx.stroke();
+    }
+    if (cad) {
+      ctx.strokeStyle = color("grid"); ctx.lineWidth = .65;
+      for (let n = -210; n <= 210; n += 30) {
+        line([n, 0, -180], [n, 0, 180]);
+        line([-210, 0, n], [210, 0, n]);
+      }
+    }
+    ctx.save();
+    ctx.translate(origin[0], origin[1] + 7 * scale);
+    ctx.scale(1, .3);
+    const shadow = ctx.createRadialGradient(0, 0, 1, 0, 0, 98 * scale);
+    shadow.addColorStop(0, "rgba(0,0,0,.24)");
+    shadow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = shadow; ctx.fillRect(-110 * scale, -110 * scale, 220 * scale, 220 * scale); ctx.restore();
+    const height = state.tall ? 1.2 : 1;
+    const parts = [
+      { rings: [[52, 0, 0], [64, 5, 0], [64, 12, 0], [52, 18, 0], [8, 19, 0]], flatten: .7 },
+      { rings: [[7, 18, 0], [6, 80 * height, 1], [6, 150 * height, 20], [6, 191 * height, 28]], flatten: 1 },
+      { rings: [[4, 229 * height, 28], [26, 228 * height, 28], [50, 221 * height, 28], [72, 207 * height, 28], [83, 190 * height, 28], [81, 185 * height, 28]], flatten: .8 }
+    ];
+    const faces = [];
+    const segments = cad ? 32 : 56;
+    parts.forEach((part, partIndex) => {
+      if (stage.progress < .4 && partIndex > 1) return;
+      for (let r = 0; r < part.rings.length - 1; r++) {
+        for (let k = 0; k < segments; k++) {
+          const a = k / segments * Math.PI * 2, b = (k + 1) / segments * Math.PI * 2;
+          const first = part.rings[r], second = part.rings[r + 1];
+          const point = (ring, angle) => [ring[2] + Math.cos(angle) * ring[0], ring[1], Math.sin(angle) * ring[0] * part.flatten];
+          const raw = [point(first, a), point(first, b), point(second, b), point(second, a)];
+          const pts = raw.map(project);
+          const depth = pts.reduce((sum, point) => sum + point[2], 0) / 4 + (raw.reduce((sum, point) => sum + point[1], 0) / 4) * .5;
+          faces.push({ pts, depth, shade: Math.cos(a + yaw - .8) * .22 + .04, partIndex, band: r, k });
+        }
+      }
+    });
+    faces.sort((a, b) => a.depth - b.depth);
+    faces.forEach((face) => {
+      ctx.beginPath();
+      face.pts.forEach((point, index) => { if (!index) ctx.moveTo(point[0], point[1]); else ctx.lineTo(point[0], point[1]); });
+      ctx.closePath();
+      ctx.fillStyle = color(cad ? "model" : "brass"); ctx.fill();
+      ctx.fillStyle = face.shade > 0 ? "rgba(255,255,255," + face.shade + ")" : "rgba(0,0,0," + -face.shade + ")";
+      ctx.fill();
+      if (cad) {
+        ctx.strokeStyle = color("wire"); ctx.globalAlpha = .2; ctx.lineWidth = .5; ctx.stroke(); ctx.globalAlpha = 1;
+      }
+    });
+    if (!cad && state.warm) {
+      ctx.save(); ctx.globalCompositeOperation = "screen";
+      const center = project([28, 180 * height, 0]);
+      const glow = ctx.createRadialGradient(center[0], center[1], 1, center[0], center[1], 100 * scale);
+      glow.addColorStop(0, "rgba(255,194,87,.35)"); glow.addColorStop(1, "rgba(255,194,87,0)");
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, w, h); ctx.restore();
+    }
+    if (cad && w > 310) {
+      const p1 = project([125, 0, 0]), p2 = project([125, 229 * height, 0]);
+      ctx.strokeStyle = color("muted"); ctx.lineWidth = .7;
+      ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+      [p1, p2].forEach((p) => { ctx.beginPath(); ctx.moveTo(p[0] - 4, p[1]); ctx.lineTo(p[0] + 4, p[1]); ctx.stroke(); });
+      ctx.save(); ctx.translate(p1[0] + 13, (p1[1] + p2[1]) / 2);
+      ctx.rotate(-Math.PI / 2); ctx.font = "11px -apple-system, sans-serif";
+      ctx.fillStyle = color("muted"); ctx.textAlign = "center";
+      ctx.fillText(state.tall ? "384 mm" : "320 mm", 0, 0); ctx.restore();
+    }
+  }
+  function drawAll() { colorCache.clear(); canvases.forEach((_, id) => draw(id)); }
+  function playFilm() {
+    if (!state.stages.film) return;
+    state.playing = !state.playing;
+    const control = query('[data-action="play-film"]');
+    if (reducedMotion.matches) {
+      state.playing = false;
+      state.videoTime = (state.videoTime + 5) % 15;
+      control.innerHTML = icon("play") + "<span>Frame · 0:" + String(state.videoTime).padStart(2, "0") + "</span>";
+      draw("film"); refreshIcons(); return;
+    }
+    if (!state.playing) {
+      cancelAnimationFrame(videoFrame);
+      control.innerHTML = icon("play") + "<span>Play · 0:15</span>"; refreshIcons(); return;
+    }
+    const start = performance.now() - state.videoTime * 1000;
+    control.innerHTML = icon("pause") + "<span></span>";
+    refreshIcons();
+    const timeLabel = control.querySelector("span");
+    let shownSecond = -1;
+    const tick = (now) => {
+      if (!state.playing) return;
+      state.videoTime = Math.min(15, (now - start) / 1000);
+      const second = Math.floor(state.videoTime);
+      if (second !== shownSecond) {
+        shownSecond = second;
+        timeLabel.textContent = "0:" + String(second).padStart(2, "0") + " / 0:15";
+      }
+      draw("film");
+      if (state.videoTime >= 15) {
+        state.playing = false; state.videoTime = 0;
+        control.innerHTML = icon("rotate-ccw") + "<span>Replay · 0:15</span>"; refreshIcons();
+      } else videoFrame = requestAnimationFrame(tick);
+    };
+    videoFrame = requestAnimationFrame(tick);
+  }
+  root.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || !root.contains(button)) return;
+    if (button.dataset.prompt) { sendFollowup(button.dataset.prompt); return; }
+    const action = button.dataset.action;
+    const card = button.closest("[data-view]");
+    const id = card ? card.dataset.view : "";
+    if (action === "new-task") { setLauncher(true); persist(); }
+    else if (action === "close-launcher") { setLauncher(false); persist(); }
+    else if (action === "clear-context") { state.selected = ""; updateStatus(); persist(); composer.focus({ preventScroll: true }); }
+    else if (action === "select-view") { state.selected = state.selected === id ? "" : id; updateStatus(); persist(); }
+    else if (action === "inspect-agent") {
+      const log = card.querySelector(".or-agentlog"); log.hidden = !log.hidden;
+      button.setAttribute("aria-expanded", String(!log.hidden));
+    } else if (action === "expand-view") {
+      state.expanded = state.expanded === id ? "" : id; updateStatus(); requestAnimationFrame(drawAll); persist();
+    } else if (action === "play-film") playFilm();
+  });
+  query(".or-launcher").addEventListener("submit", (event) => { event.preventDefault(); begin(); });
+  query(".or-composer").addEventListener("submit", (event) => { event.preventDefault(); sendFollowup(); });
+  composer.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendFollowup(); }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "p") { event.preventDefault(); setLauncher(launcher.hidden); persist(); }
+    if (!launcher.hidden && event.key === "Escape") { event.preventDefault(); setLauncher(false); persist(); }
+    if (!launcher.hidden && (event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); begin(); }
+    if (!launcher.hidden && event.key === "Tab") {
+      const items = [...launcher.querySelectorAll("button, textarea")].filter((el) => !el.disabled);
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+  function restore(snapshot) {
+    const saved = snapshot && snapshot.privateContent;
+    if (!saved || typeof saved !== "object") return;
+    restoring = true;
+    try {
+    clearRun();
+    design.chatWidth = Number.isFinite(saved.chatWidth) ? Math.max(28, Math.min(43, saved.chatWidth)) : 34;
+    design.layout = saved.layout === "stack" ? "stack" : "mosaic";
+    state.tall = saved.tall === true; state.warm = saved.warm === true;
+    if (saved.started === true) {
+      observers.splice(0).forEach((observer) => observer.disconnect());
+      canvases.clear(); viewGrid.replaceChildren(); state.stages = {}; state.chat = []; state.started = true; state.expanded = "";
+      const stages = Array.isArray(saved.stages) ? saved.stages.filter((id) => Object.hasOwn(definitions, id)) : ["cad"];
+      stages.forEach((id) => { addView(id); advance(id, 1); });
+      state.selected = stages.includes(saved.selected) ? saved.selected : "";
+      query('[data-slot="tab-title"]').textContent = "Desk lamp";
+      addMessage("user", defaultBrief);
+      addMessage("assistant", "Your views are ready. Keep directing the work here, or select a view to give your next message context.");
+    }
+    launcher.hidden = saved.launcherOpen === false;
+    query(".or-body").inert = !launcher.hidden; query(".or-chrome").inert = !launcher.hidden;
+    renderDesign(); updateStatus();
+    } finally {
+      restoring = false;
+    }
+  }
+  query(".or-body").inert = true;
+  query(".or-chrome").inert = true;
+  renderDesign();
+  if (window.openai && window.openai.widgetState) restore(window.openai.widgetState);
+  window.addEventListener("openai:set_globals", (event) => {
+    if (event.detail && event.detail.globals && Object.hasOwn(event.detail.globals, "widgetState")) {
+      const snapshot = event.detail.globals.widgetState;
+      if (JSON.stringify(snapshot) !== lastSentState) restore(snapshot);
+    }
+  });
+  const themeObserver = new MutationObserver(() => requestAnimationFrame(drawAll));
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+  const appearance = window.matchMedia("(prefers-color-scheme: dark)");
+  appearance.addEventListener("change", drawAll);
+  if (globalThis.Tweak) {
+    const tweaks = new Tweak({ container: root, onChange: () => { renderDesign(); persist(); } });
+    tweaks.addSlider(design, "chatWidth", { label: "Conversation width", min: 28, max: 43, step: 1, unit: "%", reference: "--or-chat-width" });
+    tweaks.addSelect(design, "layout", { label: "Left-hand views", options: [{ label: "Main view + smaller views", value: "mosaic" }, { label: "Stacked views", value: "stack" }] });
+  }
+})();
+</script>

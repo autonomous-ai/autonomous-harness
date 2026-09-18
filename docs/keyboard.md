@@ -10,6 +10,7 @@ The defaults, in the workspace:
 | ⌘O | Open Harness — search sessions, tabs, machines, history; `>` for commands |
 | ⇧⌘P | Command palette |
 | ⌘B | Boss mode: describe a task, it picks the agent |
+| ⌘P | Orchestrator: describe a project, coordinate background harnesses and live viewers |
 | ⌘T · ⌘W · ⇧⌘T · ⇧⌘R | New tab · close tab · reopen last closed · rename tab |
 | ⌘1 … ⌘9 | Select tab by position |
 | ⇧⌘] · ⇧⌘[ · ⌃Tab · ⌃⇧Tab | Next · previous tab |

@@ -189,6 +189,7 @@ export class TerminalBackendCoordinator {
     session: RegisteredSession,
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
+    readOnly = false,
   ): Promise<TerminalReadResult<TerminalStreamHandle>> {
     // `active` describes whether the engine process was discovered, not whether the retained
     // terminal runtime is still viewable. A dormant agent can legitimately be waiting at setup,
@@ -202,7 +203,7 @@ export class TerminalBackendCoordinator {
       const result = await backend.openStream(runtime, {
         engine: session.engine,
         processIdentity: session.processIdentity ?? undefined,
-      }, size, sink)
+      }, size, sink, readOnly)
       if (result.state === 'succeeded') return result as TerminalReadResult<TerminalStreamHandle>
       reason = result.reason
     }

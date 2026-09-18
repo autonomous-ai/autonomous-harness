@@ -51,6 +51,8 @@ export const DshRegistryEntrySchema = z.strictObject({
   author: z.string().min(1).max(80).optional(),
   repo: z.string().min(1).max(2048),
   ref: z.string().min(1).max(200).optional(),
+  /** Git tree of this package at ref; avoids updates caused by other monorepo folders. */
+  revision: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
   /**
    * The folder inside `repo` that is the package, when the package is not the whole repo — every
    * built-in package lives at `store/agents/<name>` or `store/viewers/<name>` of the Harness monorepo.

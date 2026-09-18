@@ -1,3 +1,5 @@
+import '../sharing/share_harness_dialog.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1254,7 +1256,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                           session.terminal,
                           key: _terminalViewKey,
                           controller: _controller,
-                          autoResize: widget.visible,
+                          autoResize: widget.visible && !session.readOnly,
                           resizeBuffer: false,
                           renderingEnabled: widget.visible,
                           scrollController: _scrollController,
@@ -1722,6 +1724,21 @@ class _TerminalHeader extends StatelessWidget {
                             ),
                           )
                         : null,
+                    onShare:
+                        readOnly ||
+                            notifier
+                                    .stateOf(session.machineId)
+                                    ?.machine
+                                    .isShared ==
+                                true
+                        ? null
+                        : () => showShareHarnessDialog(
+                            context,
+                            notifier,
+                            session.machineId,
+                            session.agentId,
+                            session.agentName,
+                          ),
                     zoomed: zoomed,
                     onZoom: onToggleZoom,
                     onRestart: onRestart,

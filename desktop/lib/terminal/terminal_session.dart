@@ -79,6 +79,14 @@ class TerminalSession extends ChangeNotifier {
   final TerminalFrameSender send;
   final TerminalBinarySender sendBinary;
   final Duration resyncTimeout;
+  final bool readOnly;
+
+  // A controllable clock keeps coalescing tests independent of host scheduling.
+  final DateTime Function() _now;
+
+  /// Lets input batching tests hold the clock inside the four-millisecond window under host load.
+  @visibleForTesting
+  late DateTime Function() inputClockForTest = _now;
 
   /// Forces a fresh transport dial (see `WsConn.forceReconnect`) — called once when the very first
   /// `terminal_open` never gets a `terminal_ready` back within [resyncTimeout]. Covers the relay
@@ -95,8 +103,10 @@ class TerminalSession extends ChangeNotifier {
     required this.send,
     required this.sendBinary,
     this.onOpenStalled,
+    this.readOnly = false,
     this.resyncTimeout = const Duration(seconds: 4),
-  }) {
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now {
     terminal = _newTerminal();
   }
 
@@ -166,7 +176,9 @@ class TerminalSession extends ChangeNotifier {
   Future<void> _inputSendTail = Future<void>.value();
 
   bool get acceptsInput =>
-      status == TerminalSessionStatus.controlling && streamId != null;
+      !readOnly &&
+      status == TerminalSessionStatus.controlling &&
+      streamId != null;
 
   /// Grok's CLI declares terminal mouse-tracking (so tmux defers wheel bytes to it, same as any
   /// alt-buffer program) but doesn't correctly handle wheel reports itself — confirmed live: it
@@ -1028,7 +1040,7 @@ class TerminalSession extends ChangeNotifier {
       final last = _lastInputFlushAt;
       final idle =
           last == null ||
-          DateTime.now().difference(last) >= _inputCoalesceWindow;
+          inputClockForTest().difference(last) >= _inputCoalesceWindow;
       if (_inputTimer == null && idle) {
         unawaited(_flushInput());
       } else {
@@ -1049,7 +1061,7 @@ class TerminalSession extends ChangeNotifier {
     }
     final bytes = List<int>.from(_inputBytes);
     _inputBytes.clear();
-    _lastInputFlushAt = DateTime.now();
+    _lastInputFlushAt = inputClockForTest();
     final currentStreamId = streamId;
     if (currentStreamId == null) return;
     final generation = _generation;
@@ -1127,12 +1139,12 @@ class TerminalSession extends ChangeNotifier {
   static const _resizeCoalesceWindow = Duration(milliseconds: 50);
 
   void resize(int width, int height) {
+    if (readOnly) return;
     _pendingCols = _clampCols(width);
     _pendingRows = _clampRows(height);
     final last = _lastResizeFlushAt;
     final idle =
-        last == null ||
-        DateTime.now().difference(last) >= _resizeCoalesceWindow;
+        last == null || _now().difference(last) >= _resizeCoalesceWindow;
     if (_resizeTimer == null && idle) {
       unawaited(_flushResize());
       return;
@@ -1158,7 +1170,7 @@ class TerminalSession extends ChangeNotifier {
     if (nextCols == cols && nextRows == rows) return;
     cols = nextCols;
     rows = nextRows;
-    _lastResizeFlushAt = DateTime.now();
+    _lastResizeFlushAt = _now();
     final generation = _generation;
     final sent = await send('terminal_resize', {
       'streamId': streamId,
@@ -1241,7 +1253,7 @@ class TerminalSession extends ChangeNotifier {
   }
 
   Future<void> _sendHeartbeat() async {
-    if (!acceptsInput) return;
+    if (status != TerminalSessionStatus.controlling || streamId == null) return;
     final generation = _generation;
     final sent = await send('terminal_alive', {'streamId': streamId});
     if (!sent && _isCurrent(generation)) {

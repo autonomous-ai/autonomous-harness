@@ -18,6 +18,8 @@ import '../settings/settings_section.dart';
 import '../shortcuts/app_shortcuts.dart';
 import '../widgets/new_agent_dialog.dart';
 import '../widgets/task_palette.dart';
+import '../orchestrator/orchestrator_launcher.dart';
+import '../orchestrator/orchestrator_workspace.dart';
 import '../widgets/pane_grid.dart';
 import '../widgets/shortcuts_sheet.dart';
 import '../widgets/status_rail/status_rail.dart';
@@ -258,6 +260,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ShortcutAction.newAgent: _newAgent,
               ShortcutAction.routeTask: () =>
                   unawaited(showTaskPalette(context, notifier)),
+              ShortcutAction.orchestrate: () =>
+                  unawaited(showOrchestratorLauncher(context, notifier)),
               ShortcutAction.reload: () => unawaited(notifier.retryMachines()),
               ShortcutAction.pinPane: () {
                 final id = notifier.focusedPaneId;
@@ -371,7 +375,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                           }),
                                         ),
                                       Expanded(
-                                        child: PaneGrid(notifier: notifier),
+                                        child:
+                                            notifier.activeSwarm.isOrchestrator
+                                            ? OrchestratorWorkspace(
+                                                key: ValueKey(
+                                                  'orchestrator:${notifier.activeSwarm.orchestratorId}',
+                                                ),
+                                                notifier: notifier,
+                                                machineId: notifier
+                                                    .activeSwarm
+                                                    .orchestratorMachineId!,
+                                                projectId: notifier
+                                                    .activeSwarm
+                                                    .orchestratorId!,
+                                              )
+                                            : PaneGrid(notifier: notifier),
                                       ),
                                     ],
                                   ),

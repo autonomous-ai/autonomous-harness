@@ -243,7 +243,7 @@ void main() {
     final controls = find.byType(PaneHeaderActions).first;
     expect(
       find.descendant(of: controls, matching: find.byType(IconButton)),
-      findsNWidgets(5),
+      findsNWidgets(6),
     );
     expect(find.byTooltip('Stop Harness').first.hitTestable(), findsNothing);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);

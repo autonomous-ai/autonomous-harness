@@ -98,6 +98,8 @@ interface ActiveStream {
 }
 
 export interface TerminalStreamManagerDeps {
+  /** An independent observer manager never acquires the owner control lease. */
+  readOnly?: boolean
   terminals: TerminalBackendCoordinator
   resolveAgent: (agentId: string) => RegisteredSession | undefined
   sendTarget: (connId: string, type: string, payload: FramePayload) => boolean
@@ -167,6 +169,10 @@ export class TerminalStreamManager {
   }
 
   async handleFrame(connId: string, type: string, payload: FramePayload): Promise<boolean> {
+    if (this.deps.readOnly && !['terminal_capabilities', 'terminal_open', 'terminal_alive', 'terminal_ack', 'terminal_resync', 'terminal_close'].includes(type)) {
+      this.sendError(connId, 'VIEW_ONLY', { requestId: payload.requestId })
+      return true
+    }
     switch (type) {
       case 'terminal_capabilities':
         this.capabilities(connId, payload.requestId)
@@ -216,6 +222,7 @@ export class TerminalStreamManager {
   }
 
   async handleBinary(connId: string, frame: TerminalBinaryClear): Promise<void> {
+    if (this.deps.readOnly) return
     if (frame.kind !== TerminalBinaryKind.input && frame.kind !== TerminalBinaryKind.paste
       && frame.kind !== TerminalBinaryKind.imagePaste && frame.kind !== TerminalBinaryKind.pasteFile) return
     const state = this.streams.get(frame.streamId)
@@ -238,26 +245,26 @@ export class TerminalStreamManager {
       backend: 'tmux',
       available: this.deps.streamingAvailable,
       features: {
-        rawInput: true,
-        resize: true,
-        mouse: true,
+        rawInput: !this.deps.readOnly,
+        resize: !this.deps.readOnly,
+        mouse: !this.deps.readOnly,
         keyframe: true,
         sync: true,
         compression: ['none', 'zlib'],
         // A client old enough to predate `terminal_paste` must keep sending a direct terminal paste
         // through `terminal_input` — checked here rather than assumed, so it degrades instead of
         // silently going nowhere against a CLI that doesn't recognize the newer frame type.
-        pasteRaw: true,
+        pasteRaw: !this.deps.readOnly,
         // A client old enough to predate `TerminalBinaryKind.imagePaste` must keep forwarding a bare
         // Ctrl+V and hoping the engine's own clipboard read finds something local — see
         // `pasteImage()` for the frame this unlocks.
-        imagePaste: true,
+        imagePaste: !this.deps.readOnly,
         // A client old enough to predate `TerminalBinaryKind.pasteFile` has no way to hand a
         // dropped non-image file to a REMOTE pane at all (a local pane needs no capability — it
         // pastes the file's own path directly, never touching the wire) — see `pasteFile()`.
-        pasteFile: true,
+        pasteFile: !this.deps.readOnly,
         // Bounded media reads through the already encrypted agent_read_file RPC.
-        mediaPreview: true,
+        mediaPreview: !this.deps.readOnly,
         // `agent_create` understands `projectSource` — a folder this machine makes or clones for
         // itself — rather than only a `cwd` the client already knows. A client old enough to
         // predate `lib/projectFolder.ts` never sends it, and one NEWER than the machine has no way
@@ -266,7 +273,7 @@ export class TerminalStreamManager {
         // nobody named. Advertised here, beside the other "what this CLI can do" answers, even
         // though creating an agent is not terminal streaming; this is the message a client already
         // asks every machine.
-        projectFolder: true,
+        projectFolder: !this.deps.readOnly,
       },
       engines: terminalEngineCapabilities(this.deps.streamingAvailable),
     })
@@ -320,7 +327,7 @@ export class TerminalStreamManager {
     await this.withLeaseLock(reservedPlacement, async () => {
       // A terminal is single-controller. A later client explicitly wins the lease and the incumbent
       // receives a targeted close notification; it must not be broadcast to other clients.
-      await this.closeStreamsForTakeover(session.agentId, reservedPlacement, connId)
+      if (!this.deps.readOnly) await this.closeStreamsForTakeover(session.agentId, reservedPlacement, connId)
       // Only THIS connection's stream for THIS terminal, not every stream it holds.
       //
       // It used to be closeConnection(connId), i.e. "opening a terminal ends every other terminal
@@ -331,8 +338,8 @@ export class TerminalStreamManager {
       // looked alive, but its session never reached `controlling`, so every keystroke into it was
       // dropped in silence.
       await this.closeOwnStreamsFor(connId, session.agentId, reservedPlacement)
-      this.controllerByAgent.set(session.agentId, connId)
-      this.controllerByPlacement.set(reservedPlacement, connId)
+      if (!this.deps.readOnly) this.controllerByAgent.set(session.agentId, connId)
+      if (!this.deps.readOnly) this.controllerByPlacement.set(reservedPlacement, connId)
       const streamId = randomUUID()
       const buffered: Buffer[] = []
       let state: ActiveStream | null = null
@@ -346,7 +353,7 @@ export class TerminalStreamManager {
           onClose: (reason) => {
             if (state) void this.closeStream(state, reason, true)
           },
-        })
+        }, this.deps.readOnly)
       } catch {
         if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
         if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
@@ -362,7 +369,7 @@ export class TerminalStreamManager {
 
       const placementKey = terminalPlacementKey(opened.value.runtime)
       const actualController = this.controllerByPlacement.get(placementKey)
-      if (actualController && actualController !== connId) {
+      if (!this.deps.readOnly && actualController && actualController !== connId) {
         if (this.controllerByAgent.get(session.agentId) === connId) this.controllerByAgent.delete(session.agentId)
         if (this.controllerByPlacement.get(reservedPlacement) === connId) this.controllerByPlacement.delete(reservedPlacement)
         await opened.value.close().catch(() => { /* best effort */ })
@@ -372,7 +379,7 @@ export class TerminalStreamManager {
       if (reservedPlacement !== placementKey && this.controllerByPlacement.get(reservedPlacement) === connId) {
         this.controllerByPlacement.delete(reservedPlacement)
       }
-      this.controllerByPlacement.set(placementKey, connId)
+      if (!this.deps.readOnly) this.controllerByPlacement.set(placementKey, connId)
 
       const requestedCompression = Array.isArray(payload.compression) ? payload.compression : []
       // Never compress for the loopback desktop, whatever it asks for: the bytes cross 127.0.0.1,
@@ -424,6 +431,7 @@ export class TerminalStreamManager {
         agentId: session.agentId,
         engineId: session.engine,
         backend: 'tmux',
+        readOnly: this.deps.readOnly === true,
       })) {
         await this.closeStream(state, 'backend disconnected', false)
         return
