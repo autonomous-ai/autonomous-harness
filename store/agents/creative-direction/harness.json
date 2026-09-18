@@ -1,0 +1,24 @@
+{
+  "spec": 1,
+  "id": "autonomous/creative-direction",
+  "name": "Creative Direction",
+  "category": "Design",
+  "author": "Autonomous",
+  "description": "Give a look-and-feel — a moodboard, a brand voice, a film palette — and get a living moodboard in the pane: seeded palettes, type, layout directions and a re-seed, all in one frame.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "board/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": { "use": "autonomous/web-viewer", "artifactExtensions": [".html"] },
+  "verdict": ".harness/verdict.json"
+}
