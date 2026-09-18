@@ -412,6 +412,16 @@ class AppNotifier extends ChangeNotifier {
   /// The last [ensureCliDaemonReady] did not reach a ready daemon — the one
   /// error the supervisor's ready transition is allowed to retry away.
   bool _daemonGateFailed = false;
+
+  /// The daemon's backend link as it last reported it (`/api/status.connected`), fed by the boot
+  /// probe and then by the supervisor's 5s tick. Null until a daemon has answered at all. False is
+  /// not an error: this computer's agents work over the loopback regardless; it is what makes the
+  /// rail say "offline copy" and what keeps a failed machine list from raising the red strip.
+  bool? _backendOnline;
+  bool? get backendOnline => _backendOnline;
+  // The last probe state the boot gate logged, so a daemon that sits in one state for a minute
+  // costs one line, not one per 500ms tick.
+  String? _loggedDaemonState;
   // Update checks do not depend on the daemon or SSO. A signed-out user should
   // still be able to replace a broken desktop build from the login screen.
   Timer? _updateCheckTimer;
@@ -2330,24 +2340,33 @@ class AppNotifier extends ChangeNotifier {
     // answers. Waiting for the machine list first would leave the window empty
     // for as long as the slowest one takes, and would hand the first-run
     // auto-pick a window in which the grid still looks empty.
+    // Every exit below clears the message: a boot superseded by a sign-out/sign-in mid-way (the
+    // `_authWorkCurrent` returns) used to leave "Starting local service…" on a screen nothing would
+    // ever repaint.
     await _restorePaneLayout();
-    if (!_authWorkCurrent(revision)) return;
+    if (!_authWorkCurrent(revision)) {
+      _bootStatusMessage = null;
+      return;
+    }
     await dial.restore();
-    if (!_authWorkCurrent(revision)) return;
+    if (!_authWorkCurrent(revision)) {
+      _bootStatusMessage = null;
+      return;
+    }
     _ensurePool();
     try {
       await ensureCliDaemonReady();
     } catch (error) {
-      if (!_authWorkCurrent(revision)) return;
       _bootStatusMessage = null;
+      if (!_authWorkCurrent(revision)) return;
       status = AppStatus.authenticated;
       _lastError = '$error';
       _lastErrorRetryable = true;
       notifyListeners();
       return;
     }
-    if (!_authWorkCurrent(revision)) return;
     _bootStatusMessage = null;
+    if (!_authWorkCurrent(revision)) return;
     // `ensureCliDaemonReady` may have signed the app out instead of succeeding (daemon absent AND
     // the saved session gone) — that already routed to the login screen, so don't clobber it.
     if (status == AppStatus.unauthenticated) return;
@@ -2414,10 +2433,12 @@ class AppNotifier extends ChangeNotifier {
     final discovery = _discovery;
     final probe = await discovery.ensureRunning();
     if (!_authWorkCurrent(revision)) return;
+    _logDaemonProbe(probe);
     switch (probe.state) {
       case LocalCliProbeState.ready:
         _cliEndpoint = probe.endpoint;
         _daemonGateFailed = false;
+        _noteBackendOnline(probe.endpoint!.backendOnline);
       case LocalCliProbeState.notReady:
         _daemonGateFailed = true;
         // Running, not ready — most often a daemon fresh from a self-update still shaking hands
@@ -2426,9 +2447,8 @@ class AppNotifier extends ChangeNotifier {
         // retrying by itself; the supervisor below picks the app up the moment it gets there.
         _startDaemonSupervision(discovery);
         throw StateError(
-          'Harness is running${probe.version == null ? '' : ' (v${probe.version})'} but has not '
-          'connected to the backend yet — ${probe.reason}. It usually finishes on its own; '
-          'retry in a moment.',
+          'Harness is running${probe.version == null ? '' : ' (v${probe.version})'} but is not '
+          'ready yet — ${probe.reason}. It usually finishes on its own; retry in a moment.',
         );
       case LocalCliProbeState.down:
         _daemonGateFailed = true;
@@ -2449,6 +2469,40 @@ class AppNotifier extends ChangeNotifier {
     _startDaemonSupervision(discovery);
   }
 
+  /// One line per probe STATE the gate lands in, never per tick: this gate was silent, and the one
+  /// machine that sat on "Starting local service…" for good had nothing in any log to say why.
+  void _logDaemonProbe(LocalCliProbe probe) {
+    final line = switch (probe.state) {
+      LocalCliProbeState.ready =>
+        'ready · backend ${probe.endpoint!.backendOnline ? 'online' : 'OFFLINE'}'
+            '${probe.version == null ? '' : ' · v${probe.version}'}',
+      LocalCliProbeState.notReady =>
+        'not ready · ${probe.reason}${probe.version == null ? '' : ' · v${probe.version}'}',
+      LocalCliProbeState.down => 'down · ${probe.reason}',
+    };
+    if (line == _loggedDaemonState) return;
+    _loggedDaemonState = line;
+    appLog.info('daemon', line);
+  }
+
+  /// The daemon's backend link changed (or was first seen). Coming BACK is the moment the app has
+  /// been waiting for since it booted offline: the machine list (remote tiles, the real row for this
+  /// computer) and the profile can be fetched now, without a click.
+  ///
+  /// [refetch] is false when the caller IS a machine refresh that just observed the flip through
+  /// its own probe — it is already fetching, and a second run beside it would race the same state.
+  void _noteBackendOnline(bool online, {bool refetch = true}) {
+    if (_backendOnline == online) return;
+    final wasOffline = _backendOnline == false;
+    _backendOnline = online;
+    appLog.info('daemon', 'backend ${online ? 'online' : 'offline'}');
+    if (online && wasOffline && status == AppStatus.authenticated) {
+      if (refetch && !machinesRefreshing) unawaited(retryMachines());
+      if (currentUser == null) unawaited(_loadProfile());
+    }
+    notifyListeners();
+  }
+
   /// Supervision starts once the daemon is at least ANSWERING — ready or still connecting. It used to
   /// wait for ready, out of fear of a concurrent `harness start` from both places; the supervisor
   /// no longer spawns while anything answers on the port, so that race is gone, and starting it on
@@ -2459,6 +2513,7 @@ class AppNotifier extends ChangeNotifier {
       stillSignedIn: () async => (await cliLogin.checkStatus()).loggedIn,
       onSignedOut: () => _signedOutAtRuntime(_signedOutMessage),
       onSnapshot: _updateLocalProjectSnapshot,
+      onBackendOnline: _noteBackendOnline,
       onReady: (endpoint) {
         // Back (or here for the first time). If the app is sitting on the error strip from a boot
         // or reload that found the daemon not ready, this is the moment it was waiting for.
@@ -2999,6 +3054,18 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _reportMachineLoadError(Object error, {bool automatic = false}) {
+    // Offline is not an error to shout about: the daemon said it has no backend, this computer's
+    // machine is standing in from the daemon (see _refreshMachines), and the rail already reads
+    // "offline copy". The strip is for a backend that SHOULD be reachable and is not.
+    if (_backendOnline == false) {
+      machinesAreStale = true;
+      // A strip this raised while the backend still looked reachable comes down with it.
+      if (_lastError != null && _lastError == _machineLoadError) {
+        _lastError = null;
+      }
+      _machineLoadError = null;
+      return;
+    }
     final message = 'Could not load machines: ${describeApiError(error)}';
     // A recovery must not replace a later agent error or redisplay a dismissed strip.
     if (!automatic || (_lastError != null && _lastError == _machineLoadError)) {
@@ -3006,6 +3073,43 @@ class AppNotifier extends ChangeNotifier {
       _lastErrorRetryable = true;
     }
     _machineLoadError = message;
+  }
+
+  /// The machine THIS computer's daemon serves, built from the daemon's own answer
+  /// (`/api/status.machineId`) when the backend could not list it — no cache yet, backend down. Its
+  /// local WS only selects that exact id (`localWsServer` `machine_select`), so nothing else would
+  /// attach. Added, never replaced: a later real list carries the same id and updates the row in
+  /// place through `machineStates.update` above. No-op when the daemon is not ready, reports no id,
+  /// or a row already exists for it.
+  ///
+  /// [listUnavailable] is true on the failure path: the rows are then a stand-in for a list that
+  /// never came, and the rail says so ("offline copy") while the recovery timer keeps asking. A
+  /// fresh list that simply does not name this computer is not stale — marking it so would keep
+  /// the recovery timer polling a backend that has already answered.
+  void _adoptLocalMachineFromDaemon(
+    LocalCliEndpoint? endpoint,
+    String? localComputerId, {
+    required bool listUnavailable,
+  }) {
+    final machineId = endpoint?.machineId;
+    if (endpoint == null || machineId == null) return;
+    if (machineStates.containsKey(machineId)) return;
+    final machine = Machine(
+      machineId: machineId,
+      computerId: localComputerId ?? endpoint.computerId,
+      authMode: MachineAuthMode.remote,
+      name: Platform.localHostname,
+      status: 'online',
+    );
+    machines = [...machines, machine];
+    machineStates[machineId] = MachineState(machine)
+      ..localOnly = true
+      ..nodeOnline = true;
+    if (listUnavailable) machinesAreStale = true;
+    appLog.info(
+      'daemon',
+      'no machine list from the backend — this computer stands in from the daemon',
+    );
   }
 
   /// What the loopback probe means for one machine's transport.
@@ -3072,6 +3176,19 @@ class AppNotifier extends ChangeNotifier {
       await localSettled;
       if (_authWorkCurrent(revision)) {
         final endpoint = probed;
+        // The probe is the freshest word on the backend link — fresher than the supervisor's last
+        // tick — and it decides whether this failure is an outage to report or just "offline".
+        if (endpoint != null) {
+          _noteBackendOnline(endpoint.backendOnline, refetch: false);
+        }
+        // No list and no row for this computer — a first run offline, or a cache the daemon could
+        // not serve. The daemon knows the machine it serves; stand it up from that so the person
+        // can work locally, exactly as if the backend had listed it.
+        _adoptLocalMachineFromDaemon(
+          endpoint,
+          localComputerId,
+          listUnavailable: true,
+        );
         for (final state in machineStates.values) {
           _applyLocalTransport(state, endpoint, localComputerId);
           _connectMachine(state);
@@ -3086,6 +3203,9 @@ class AppNotifier extends ChangeNotifier {
     // sign-out or a dispose may still be published.
     if (!_authWorkCurrent(revision)) return;
     final localEndpoint = probed;
+    if (localEndpoint != null) {
+      _noteBackendOnline(localEndpoint.backendOnline, refetch: false);
+    }
     machines = list
         .where((machine) => machine.authMode == MachineAuthMode.remote)
         .toList();
@@ -3140,6 +3260,22 @@ class AppNotifier extends ChangeNotifier {
           (state.nodeOnline == null || state.nodeOnline != reportedOnline)) {
         unawaited(_applyNodeStatus(state, reportedOnline));
       }
+    }
+    // A list that arrived but does not name this computer (a stale copy from before this computer
+    // was paired, say) still gets the daemon's own row, on the same rule as the failure path.
+    if (localEndpoint != null &&
+        localEndpoint.machineId != null &&
+        !machineStates.containsKey(localEndpoint.machineId)) {
+      _adoptLocalMachineFromDaemon(
+        localEndpoint,
+        localComputerId,
+        listUnavailable: false,
+      );
+      _applyLocalTransport(
+        machineStates[localEndpoint.machineId]!,
+        localEndpoint,
+        localComputerId,
+      );
     }
     if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();

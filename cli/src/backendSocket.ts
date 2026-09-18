@@ -551,6 +551,9 @@ export class BackendSocket {
   /** Answers `usage_read` — this machine's own agent-account usage (lib/accountUsage.ts). A field
    *  rather than a direct call so a spec answers it without a real home, Keychain or network. */
   accountUsageReader: () => Promise<AccountUsageReading[]> = readAccountUsage
+  /** The grid listing currently out, shared by every `grid_models_list` for the same own grid
+   *  that lands meanwhile. */
+  private gridModelsInFlight: { gridName: string | null; grids: ReturnType<typeof listAllGridModels> } | null = null
   /** Receives `theme_set` — the desktop's pane colours, to become this machine's tmux
    *  `window-style` (lib/hostTheme.ts). Wired by cli.ts; null answers with UNSUPPORTED. */
   hostThemeSink: ((theme: HostTheme) => void) | null = null
@@ -1785,24 +1788,49 @@ export class BackendSocket {
         case 'grid_models_list': {
           // Every grid this computer is signed into, in sections, the account's own first. `gridName`
           // and `models` keep naming the own grid alone, for an app that predates `grids`.
-          const gridName = await this.resolveGridName()
-          const grids = await listAllGridModels(gridName)
-          reply(type, requestId, {
-            gridName,
-            models: grids.find((g) => g.own)?.models ?? [],
-            grids,
-            // Which engines a Local model can be offered to at all. Static per CLI version — it is
-            // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
-            // so the picker can say "Cursor runs only on its own login" instead of offering a row
-            // whose retarget the daemon would refuse. An older app ignores the field; an older
-            // daemon omits it, which the app reads as "offer everything", as before.
-            localModelEngines: gridCapableEngines(),
-            // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
-            // as distinct from `gridName`, which is about the account. The Local model dialog was
-            // gating on the account alone and starting an agent whose second step is `grid`; this
-            // is what lets it, and the picker, say so first. An older app ignores the field.
-            gridCli: gridCliPresence(),
-          })
+          //
+          // DETACHED from this connection's ordered RPC chain, like `engines_probe`: it waits on a
+          // grid reconcile (up to 6s), then `grid` spawns that each go to the network (up to 30s).
+          // The desktop asks for it in the same breath as `terminal_capabilities` and `agents_list`
+          // on every connect, and awaited here it held both behind it — with no network, past the
+          // app's 10s request timeout, on which the app forces a reconnect and asks all three again.
+          // Measured 2026-09-18, wifi off, daemon restarted: every local RPC timed out for as long
+          // as the backend stayed unreachable; the terminal on the SAME computer sat on "offline"
+          // until the wifi came back. Request ids make the reply safe to land out of order.
+          //
+          // One computation at a time: detached, a second ask that lands while the first is still
+          // out (the app re-asks on every connect, and its own 12s timeout is shorter than the grid
+          // spawns' 30s) would start more `grid` processes for the same answer. Later askers share
+          // the one in flight; the cache in listGridModels covers the settled case.
+          void (async () => {
+            const gridName = await this.resolveGridName()
+            const inFlight = this.gridModelsInFlight
+            const listing = inFlight && inFlight.gridName === gridName
+              ? inFlight.grids
+              : (this.gridModelsInFlight = {
+                  gridName,
+                  grids: listAllGridModels(gridName).finally(() => {
+                    if (this.gridModelsInFlight?.gridName === gridName) this.gridModelsInFlight = null
+                  }),
+                }).grids
+            const grids = await listing
+            reply(type, requestId, {
+              gridName,
+              models: grids.find((g) => g.own)?.models ?? [],
+              grids,
+              // Which engines a Local model can be offered to at all. Static per CLI version — it is
+              // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
+              // so the picker can say "Cursor runs only on its own login" instead of offering a row
+              // whose retarget the daemon would refuse. An older app ignores the field; an older
+              // daemon omits it, which the app reads as "offer everything", as before.
+              localModelEngines: gridCapableEngines(),
+              // Whether this MACHINE has a `grid` to run at all — `managed`, `path` or `missing` —
+              // as distinct from `gridName`, which is about the account. The Local model dialog was
+              // gating on the account alone and starting an agent whose second step is `grid`; this
+              // is what lets it, and the picker, say so first. An older app ignores the field.
+              gridCli: gridCliPresence(),
+            })
+          })().catch(() => reply(type, requestId, { error: 'GRID_MODELS_FAILED' }))
           return
         }
 
@@ -2402,7 +2430,12 @@ export class BackendSocket {
         // not — which may be signed in to a different subscription entirely. The vendor's answer goes
         // back as it came: see lib/accountUsage.ts for why the parsing stays on the client.
         case 'usage_read': {
-          reply(type, requestId, { providers: await this.accountUsageReader() })
+          // Two vendor round trips (up to 8s each, lib/accountUsage.ts) — detached from the ordered
+          // chain for the same reason as `grid_models_list`: it is asked on connect beside the RPCs
+          // the terminal needs, and with no network it held them past the app's timeout.
+          void this.accountUsageReader()
+            .then((providers) => reply(type, requestId, { providers }))
+            .catch(() => reply(type, requestId, { error: 'USAGE_READ_FAILED' }))
           return
         }
 

@@ -158,7 +158,7 @@ import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
 import { connectWithPassword } from './lib/e2ee/relayClient.js'
 import {
   startSelfUpdater, restore as restoreUpdate, confirm as confirmUpdate,
-  fetchManifest, downloadVerified, canary, stage, semverGt, shouldAutoUpdate, isLocalDevBuild,
+  fetchManifest, downloadVerified, canary, stage, semverGt, isLocalDevBuild,
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { managedNodePath } from './lib/nodeRuntime.js'
@@ -283,10 +283,6 @@ const DEVIN_DB = join(env.DEVIN_HOME, 'sessions.db')
 // may wait on the backend. Under the desktop app's own 30s receive timeout, so a slow backend is
 // reported by the daemon in words rather than by the app as a timeout.
 const PROXY_BACKEND_TIMEOUT_MS = 20_000
-
-// How long `harness start` waits for the background daemon to report "[backend] connected" before
-// declaring an error. A healthy backend connects in well under this; a timeout ⇒ unreachable.
-const CONNECT_WAIT_MS = 10_000
 
 /** Bounds the `POST /api/grid/name` inside the daemon-start grid reconcile, so a stalled control-plane
  *  connection cannot hold it open. */
@@ -436,11 +432,14 @@ async function requestJson<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   // A GET/DELETE with no body must not carry a content-type — some proxies reject that pairing.
+  // Always bounded: a caller that passes no signal gets the proxy's own bound, so a black-holed
+  // backend (packets dropped, never refused) is an error in 20s and not a process that never exits —
+  // `harness start` used to hang here, and the desktop app, waiting on that start, hung with it.
   const res = await fetch(`${backendHttpBase()}${path}`, {
     method,
     headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    ...(signal ? { signal } : {}),
+    signal: signal ?? AbortSignal.timeout(PROXY_BACKEND_TIMEOUT_MS),
   })
   const json = (await res.json().catch(() => ({}))) as { success?: boolean; data?: T; error?: { message?: string } }
   if (!res.ok || json.success === false) {
@@ -471,7 +470,7 @@ async function controlPlaneAuth(): Promise<{ session: AuthSession; headers: Reco
 }
 
 /** Resolve the canonical machine for the durable computer id without ever using a machine API key. */
-async function resolveComputerMachine(): Promise<AuthSession> {
+async function resolveComputerMachine(signal?: AbortSignal): Promise<AuthSession> {
   const current = readAuthSession()
   if (!current) throw new Error('Not signed in. Run `harness login`.')
   const auth = new AuthSessionManager(backendHttpBase())
@@ -485,7 +484,7 @@ async function resolveComputerMachine(): Promise<AuthSession> {
   }, {
     authorization: `Bearer ${accessToken}`,
     'x-autonomous-env': current.autonomousEnv,
-  })
+  }, signal)
   const machineId = result.machine?.machineId
   if (!machineId) throw new Error('Backend did not return a machine id for this computer')
   // Refresh can atomically replace the session while this request is in flight. Always merge the
@@ -512,14 +511,22 @@ async function authStatusCommand(json: boolean): Promise<void> {
   }
   const auth = new AuthSessionManager(backendHttpBase())
   let loggedIn = true
+  let offline = false
   try {
     await auth.accessToken()
   } catch (err) {
-    loggedIn = !(err instanceof AuthSessionError)
+    // Only a session the SSO service will never renew (or none at all) is "not signed in". A refresh
+    // that could not be SERVED right now — no network, service down — is a signed-in computer that is
+    // offline, and says so; it used to read as signed out and send the desktop app to a login screen
+    // that could not have succeeded either. Same split proxyBackend makes (401 vs 502).
+    if (err instanceof AuthSessionError && err.code === 'UNAVAILABLE') offline = true
+    else loggedIn = !(err instanceof AuthSessionError)
   }
   const latest = readAuthSession()
+  const signedIn = loggedIn && latest !== null
   const payload = {
-    loggedIn: loggedIn && latest !== null,
+    loggedIn: signedIn,
+    ...(signedIn && offline ? { offline: true } : {}),
     computerId: latest?.computerId,
     machineId: latest?.machineId,
     autonomousEnv: latest?.autonomousEnv,
@@ -990,24 +997,17 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
     console.error('\n  ✗ Not signed in. Run: harness login\n')
     process.exit(1)
   }
-  // Update-before-connect: pull the newest bundle so a machine always reconnects on the latest build.
-  // Staging swaps ~/.harness/cli/cli.js, and the daemon start spawns below (`node cli.js __run`)
-  // executes those fresh bytes. Skipped in the foreground (THIS process becomes the long-lived daemon
-  // and self-updates on its own) and on a dev/repo build; never blocks start if the check fails.
-  // Run alongside resolveComputerMachine() rather than before it — the two touch disjoint resources
-  // (bundle files vs. the auth-session file/a machine-resolve POST), so there is nothing to serialize.
-  //
-  // Under the spawn lock from the staging onwards: the running daemon's own updater swaps the same
-  // cli.js/.prev, and two writers there can leave `.prev` holding the NEW bytes — which is what a
-  // later rollback would then "restore". The lock is re-entrant, so `launch` below just joins it.
+  // The session file is the ONLY thing `start` needs. It used to pull the newest bundle and resolve
+  // this computer's machine against the backend before launching — so a computer that could not reach
+  // the backend could not start its daemon at all (a black-holed link hung here forever, and the
+  // desktop app, which spawns this command when the port is silent, hung on "Starting local service…"
+  // with it). Both now belong to the daemon: it updates itself on its own tick (startSelfUpdater) and
+  // it dials, retries and serves the cached machine list until the backend answers. `harness update`
+  // remains for an update on demand.
   if (!foreground) {
-    // A daemon that is already up is left ALONE — bundle included. Staging is for the daemon this
-    // command is about to spawn; a live one updates itself (and hands off under the spawn lock). The
-    // desktop app re-runs `harness start` whenever its 400ms probe misreads a busy daemon as down, and
-    // staging on each of those swapped cli.js/notify.mjs under the running process and dropped its
-    // `.prev` — so the daemon's own updater later wrote `.prev` from the NEW bytes, and a rollback
-    // "restored" the very build that had just failed. `spawnDaemon` repeats this check under the
-    // lock, for the daemon that comes up while we are waiting our turn.
+    // A daemon that is already up is left ALONE. The desktop app re-runs `harness start` whenever its
+    // 400ms probe misreads a busy daemon as down; `spawnDaemon` repeats this check under the lock, for
+    // the daemon that comes up while we are waiting our turn.
     const running = readPid()
     if (running && isAlive(running)) {
       // Left alone only when it serves THIS sign-in. A daemon on another account — what a forced
@@ -1029,11 +1029,7 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
       await stopDaemonProcess()
     }
     await withSpawnLock('start', async () => {
-      const [v] = await Promise.all([
-        stageLatestBundle((m) => console.log(m)),
-        resolveComputerMachine(),
-      ])
-      if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
+      await resolveMachineIfUnknown(session)
       await launch(foreground, repair)
     }, {
       onWaiting: (owner) => console.log(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
@@ -1045,9 +1041,26 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
     })
     return
   }
-  await resolveComputerMachine()
+  await resolveMachineIfUnknown(session)
   await launch(foreground, repair)
 }
+
+/**
+ * The one backend round trip `start` may still make, and only when the session has no machine id —
+ * a file written by a build that predates login resolving it. Bounded, and never fatal: the daemon
+ * runs on the computer id meanwhile (runForeground `session.machineId ?? session.computerId`; the
+ * adapter dial omits the `&machine=` claim for a non-machine id and the backend pairs by `?computer=`),
+ * and the next login or online start writes the id. A session that already has one costs nothing here.
+ */
+async function resolveMachineIfUnknown(session: AuthSession): Promise<void> {
+  if (session.machineId) return
+  try {
+    await resolveComputerMachine(AbortSignal.timeout(RESOLVE_ON_START_TIMEOUT_MS))
+  } catch (err) {
+    console.log(`  (machine id not resolved yet — ${err instanceof Error ? err.message : String(err)}; starting on the computer id, resolved on the next login or online start)`)
+  }
+}
+const RESOLVE_ON_START_TIMEOUT_MS = 10_000
 
 /** Download + sha256-verify + canary the manifest's cli.js/notify.mjs, then atomically swap them into
  *  the installed CLI dir (dropping the .prev backups on success). The freshly-written cli.js is what the
@@ -1060,24 +1073,6 @@ async function downloadCanaryStage(entry: UpdateEntry, dir: string, log: (m: str
   stage(dir, cliBuf, notifyBuf)
   confirmUpdate(dir) // canary passed + bytes already verified ⇒ drop the .prev backups
   return true
-}
-
-/** Fetch the manifest and, if a strictly-newer build exists, stage it (see downloadCanaryStage). Returns
- *  the staged version, or null when nothing was staged — already current, a local, dev/repo or
- *  update-disabled build, or ANY fetch/verify/canary failure (all swallowed: an update hiccup must
- *  never block `start`). See {@link shouldAutoUpdate} for why a local build is left alone. */
-async function stageLatestBundle(log: (m: string) => void): Promise<string | null> {
-  if (SCRIPT_PATH.endsWith('.ts') || env.ADAPTER_UPDATE_DISABLE) return null // dev/repo run never touches the installed bundle
-  const dir = resolve(env.ADAPTER_CLI_DIR)
-  try {
-    const entry = await fetchManifest(env.ADAPTER_UPDATE_URL, env.ADAPTER_UPDATE_KEY)
-    if (!entry || !shouldAutoUpdate(entry.version, VERSION)) return null
-    log(`▸ newer build available — updating v${VERSION} → v${entry.version}…`)
-    return (await downloadCanaryStage(entry, dir, log)) ? entry.version : null
-  } catch (e) {
-    log(`  (update check skipped: ${e instanceof Error ? e.message : String(e)})`)
-    return null
-  }
 }
 
 /** `harness update` — force the self-update NOW instead of waiting for the daemon's
@@ -5376,18 +5371,20 @@ async function runForeground(session: AuthSession): Promise<void> {
  * the one fact that tells a daemon on THIS sign-in from one left over from the previous account (see
  * startCommand). Null when the daemon does not say.
  */
-async function runningDaemonStatus(): Promise<{ version: string; sessions: number; machineId: string | null } | null> {
+async function runningDaemonStatus(): Promise<{ version: string; sessions: number; machineId: string | null; connected: boolean } | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/status`, {
       signal: AbortSignal.timeout(1_500),
     })
     if (!res.ok) return null
     const body: unknown = await res.json()
-    const status = body as { version?: unknown; sessions?: unknown; machineId?: unknown } | null
+    const status = body as { version?: unknown; sessions?: unknown; machineId?: unknown; connected?: unknown } | null
     const version = typeof status?.version === 'string' && status.version ? status.version : VERSION
     const sessions = Array.isArray(status?.sessions) ? status.sessions.length : 0
     const machineId = typeof status?.machineId === 'string' && status.machineId ? status.machineId : null
-    return { version, sessions, machineId }
+    // Missing on a daemon too old to report it — read as connected, as the desktop app does.
+    const connected = status?.connected !== false
+    return { version, sessions, machineId, connected }
   } catch {
     return null
   }
@@ -5405,7 +5402,7 @@ function printInfoBlock(opts: {
   const row = (k: string, v: string): string => `   ${k.padEnd(10)} ${v}`
   const rule = '  ' + '─'.repeat(37)
   console.log('')
-  console.log('  machine · remote machine connected')
+  console.log('  machine · remote machine')
   console.log(rule)
   console.log(row('status', opts.status))
   // Display name mirrored from the backend by the daemon (machine_meta) — only shown when named.
@@ -5524,64 +5521,14 @@ async function spawnDaemon(session: AuthSession, runtimeNode: string | null): Pr
     process.exit(1)
   }
 
-  const ready = await waitForReady(logOffset, CONNECT_WAIT_MS, launchDeps)
-
-  // DEAUTH (401/403): the saved credential is no longer valid — this computer was removed from the machine
-  // (or the token is stale). Wipe it, stop the daemon, and signal the caller to ask for a fresh token.
-  if (ready.state === 'deauth') {
-    try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    removePidFileIf(child.pid)
-    clearAuthSession()
-    return
-  }
-
-  // BUSY (409): one machine per machine — this machine is already connected from another computer. The
-  // credential is valid, just in use elsewhere, so KEEP the token; stop the daemon and inform (not a
-  // failure, not a retry loop). The user stops the other machine first, then runs `harness start` here.
-  if (ready.state === 'busy') {
-    try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    removePidFileIf(child.pid)
-    console.log('\n  ℹ This machine is already connected from another computer.')
-    console.log('    Only one machine per machine — stop the adapter on that machine first,')
-    console.log('    then run `harness start` here again.')
-    process.exit(0)
-  }
-
-  // FATAL misconfig (wrong route → 404, DNS, TLS): retrying is pointless → kill the daemon and say what
-  // to fix. (Not 401/403 — those are handled as deauth above.)
-  if (ready.state === 'fatal') {
-    try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    removePidFileIf(child.pid)
-    // A hook-port clash isn't a backend problem — it's a duplicate/leftover adapter. Report it as such.
-    if (ready.detail?.startsWith('hook port')) {
-      console.error(`\n✗ ${ready.detail}`)
-      console.error(`  logs   ${tildify(LOG_FILE)}`)
-    } else {
-      console.error(`\n✗ Could not connect to the backend: ${ready.detail}`)
-      console.error(`  backend   ${env.BACKEND_WS_URL}`)
-      console.error(`  logs      ${tildify(LOG_FILE)}`)
-      console.error('  If this computer was removed from your machine, run: harness login')
-    }
-    process.exit(1)
-  }
-
-  // Not connected YET, but transient (backend deploying / 5xx / slow / not up). The daemon is alive and
-  // retries with backoff — it will connect on its own — so leave it running and say so plainly (never a
-  // meaningless one-shot "connecting…"). The user runs `harness start` once, not on a babysitting loop.
-  if (ready.state === 'unreachable') {
-    // Lead with the RUNNING state (+ pid), not the error — the daemon IS started and self-retrying, so
-    // seeing a pid / "harness stop" later isn't a surprise. This is not a failure; it reconnects itself.
-    console.log(`\n● adapter started · running in the background · pid ${child.pid}`)
-    console.log(`  Not connected yet — ${ready.detail}. It keeps retrying and connects on its own`)
-    console.log('  when the backend is reachable — no need to re-run.')
-    console.log(`  backend  ${env.BACKEND_WS_URL}`)
-    console.log(`  status   harness status   ·   stop   harness stop   ·   logs  ${tildify(LOG_FILE)}`)
-    process.exit(0) // daemon stays alive
-  }
-
+  // Bound is started. What the daemon does next — dial the backend, retry on its own backoff, sign
+  // itself out on a 401, step aside on a 409 — is its own business and is logged by it; this command
+  // used to sit here for up to ten seconds watching the log for "[backend] connected", and a computer
+  // with no route to the backend paid all ten before hearing that its daemon was fine. `harness
+  // status` says whether the link is up; the desktop app reads the same fact off `/api/status`.
   const daemonStatus = await runningDaemonStatus()
   printInfoBlock({
-    status: '● connected',
+    status: '● started · connecting to the backend in the background',
     pid: child.pid ?? 0,
     machineId: session.machineId,
     sessions: daemonStatus?.sessions ?? 0,
@@ -6236,7 +6183,15 @@ async function status(): Promise<void> {
   const daemonStatus = alive ? await runningDaemonStatus() : null
   if (!alive) registry.load()
   printInfoBlock({
-    status: alive ? '● running' : '○ stopped',
+    // The backend link is the daemon's own business, so `status` is where it is read — `start` no
+    // longer waits to see it, and a daemon with no backend is still serving every local agent.
+    status: !alive
+      ? '○ stopped'
+      : daemonStatus == null
+        ? '● running · not answering yet'
+        : daemonStatus.connected
+          ? '● running · backend connected'
+          : '● running · backend offline — retrying in the background',
     pid: pid ?? 0,
     machineId: session.machineId,
     sessions: daemonStatus?.sessions ?? 0,

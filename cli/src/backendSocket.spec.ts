@@ -1807,6 +1807,35 @@ describe('grid_models_list says whether this machine has a grid CLI', () => {
   })
 })
 
+describe('the connect burst with no network', () => {
+  afterEach(() => { wsMock.instances.length = 0 })
+
+  it('a grid_models_list that never answers does not hold agents_list or usage_read behind it', async () => {
+    // Measured 2026-09-18, wifi off, daemon restarted: the desktop asks grid_models_list,
+    // terminal_capabilities and agents_list in one breath on every connect. grid_models_list waited
+    // on a grid reconcile that could not finish, and the ordered per-connection chain held the other
+    // two behind it past the app's 10s timeout — on which the app forced a reconnect and asked all
+    // three again, for as long as the wifi stayed off. The terminal on the same computer read
+    // "offline" the whole time.
+    const socket = new BackendSocket('token')
+    socket.deriveGridName = async () => null
+    socket.gridReadyProbe = () => new Promise<void>(() => {}) // a reconcile that never lands
+    socket.accountUsageReader = () => new Promise(() => {})   // a vendor that never answers
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:burst', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+
+    socket.handleLocalFrame('local:burst', { type: 'grid_models_list', payload: { requestId: 'grid' } })
+    socket.handleLocalFrame('local:burst', { type: 'usage_read', payload: { requestId: 'usage' } })
+    socket.handleLocalFrame('local:burst', { type: 'agents_list', payload: { requestId: 'agents' } })
+
+    await vi.waitFor(() => expect(frames.some((f) => f.type === 'agents_list_result')).toBe(true))
+    expect(frames.some((f) => f.type === 'grid_models_list_result')).toBe(false)
+    expect(frames.some((f) => f.type === 'usage_read_result')).toBe(false)
+    await socket.unregisterLocalClient('local:burst')
+    await socket.stop()
+  })
+})
+
 describe('machine_meta carries the grid name without clobbering it on rename', () => {
   afterEach(() => { wsMock.instances.length = 0 })
 

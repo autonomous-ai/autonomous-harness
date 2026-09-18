@@ -19,6 +19,7 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
   int superviseCalls = 0;
   void Function(LocalCliEndpoint endpoint)? onReady;
   void Function(LocalCliEndpoint endpoint)? onSnapshot;
+  void Function(bool online)? onBackendOnline;
 
   @override
   Future<LocalCliProbe> ensureRunning({
@@ -42,10 +43,12 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
     void Function(LocalCliEndpoint endpoint)? onSnapshot,
+    void Function(bool online)? onBackendOnline,
   }) {
     superviseCalls++;
     this.onReady = onReady;
     this.onSnapshot = onSnapshot;
+    this.onBackendOnline = onBackendOnline;
     return Timer(const Duration(days: 1), () {});
   }
 }
@@ -165,10 +168,10 @@ void main() {
     expect(notifier.refreshes, 0);
   });
 
-  test('a daemon that answers but is still connecting is reported as such, and supervised', () async {
+  test('a daemon that answers but is still scanning is reported as such, and supervised', () async {
     final discovery = _ScriptedDiscovery([
       const LocalCliProbe.notReady(
-        'not connected to the backend yet',
+        'still scanning for agents',
         version: '9.9.9',
       ),
     ]);
@@ -183,7 +186,7 @@ void main() {
           'message',
           allOf(
             contains('Harness is running (v9.9.9)'),
-            contains('not connected to the backend yet'),
+            contains('still scanning for agents'),
           ),
         ),
       ),
@@ -216,9 +219,47 @@ void main() {
     expect(discovery.superviseCalls, 0);
   });
 
+  test(
+    'a daemon with no backend is READY: this computer works over the loopback',
+    () async {
+      // The case this whole gate used to fail: a daemon up, tmux up, agents up, and no route to the
+      // backend. It sat on "Starting local service…" for 45s and then on an error strip — and every
+      // retry threw the same error. Offline is a fact the daemon reports, not a reason to wait.
+      final offline = LocalCliEndpoint(
+        computerId: _endpoint.computerId,
+        wsUri: _endpoint.wsUri,
+        protocolVersion: 1,
+        terminalProtocolVersion: 3,
+        machineId: 'm' * 32,
+        backendOnline: false,
+      );
+      // Two answers: offline at boot, online for the retry the reconnect triggers.
+      final discovery = _ScriptedDiscovery([
+        LocalCliProbe.ready(offline),
+        LocalCliProbe.ready(_endpoint),
+      ]);
+      final notifier = _Notifier(discovery)..status = AppStatus.authenticated;
+      addTearDown(notifier.dispose);
+
+      await notifier.ensureCliDaemonReady();
+
+      expect(notifier.backendOnline, isFalse);
+      expect(notifier.lastError, isNull);
+      expect(discovery.superviseCalls, 1);
+      expect(discovery.onBackendOnline, isNotNull);
+
+      // The backend comes back (the supervisor's 5s probe sees `connected:true`): the machines are
+      // fetched again without a click, and the profile too if it was never loaded.
+      discovery.onBackendOnline!(true);
+      await notifier.retryMachines();
+      expect(notifier.backendOnline, isTrue);
+      expect(notifier.refreshes, 1);
+    },
+  );
+
   test('the supervisor reporting ready after a not-ready boot retries the machines without a click', () async {
     final discovery = _ScriptedDiscovery([
-      const LocalCliProbe.notReady('not connected to the backend yet'),
+      const LocalCliProbe.notReady('still scanning for agents'),
       LocalCliProbe.ready(_endpoint),
     ]);
     final notifier = _Notifier(discovery)..status = AppStatus.authenticated;
@@ -226,10 +267,7 @@ void main() {
 
     // The boot path: the gate throws, the error strip shows, supervision is on.
     await notifier.retryMachines();
-    expect(
-      notifier.lastError,
-      contains('has not connected to the backend yet'),
-    );
+    expect(notifier.lastError, contains('still scanning for agents'));
     expect(notifier.lastErrorRetryable, isTrue);
     expect(notifier.refreshes, 0);
     expect(discovery.onReady, isNotNull);

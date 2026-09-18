@@ -204,9 +204,41 @@ describe('start beside a daemon that serves another account', () => {
     expect(result.stdout).not.toContain('already running')
     await daemon.exited
     expect(existsSync(join(root, 'data', 'adapter.pid'))).toBe(false)
-    // The restart itself goes on to resolve this session's machine with the backend, which is refused
-    // here (port 1) — past the point under test, and the one place a repo run could boot a daemon.
+    // The restart goes on to boot a daemon inline (a repo run) — which fails to bind, because the port
+    // it was handed is this test's own status server. Past the point under test; the backend is never
+    // consulted (start no longer resolves the machine when the session already names one).
     expect(result.status).toBe(1)
+    expect(result.stdout + result.stderr).not.toContain('resolve-computer')
+  }, 20_000)
+
+  it('starts without the backend: a session that already names its machine never calls it', async () => {
+    // Offline is the case this exists for. The backend here is port 1 — refused instantly — and the
+    // only thing that stops the boot is the port clash with this test's status server, AFTER the point
+    // where `start` used to abort on the resolve. No "Failed to start adapter: fetch failed".
+    const root = freshRoot()
+    seedSession(root)
+    const port = await daemonStatusServer('m_other')
+
+    const result = await runAsync(root, ['start'], { PORT: String(port) })
+
+    expect(result.stderr).not.toContain('fetch failed')
+    expect(result.stdout + result.stderr).not.toContain('resolve-computer')
+    expect(result.stdout).toContain('dev mode — running in the foreground')
+  }, 20_000)
+
+  it('starts without the backend even when the session has no machine id yet, on the computer id', async () => {
+    const root = freshRoot()
+    mkdirSync(join(root, 'auth'), { recursive: true })
+    writeFileSync(join(root, 'auth', 'session.json'), JSON.stringify({
+      version: 1, accessToken: 'tok', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000,
+      autonomousEnv: 'prod', computerId: 'a'.repeat(32), updatedAt: Date.now(),
+    }))
+    const port = await daemonStatusServer('m_other')
+
+    const result = await runAsync(root, ['start'], { PORT: String(port) })
+
+    expect(result.stdout).toContain('machine id not resolved yet')
+    expect(result.stdout).toContain('dev mode — running in the foreground')
   }, 20_000)
 
   it('leaves one that serves this session alone', async () => {

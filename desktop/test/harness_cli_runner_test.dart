@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -77,6 +78,31 @@ void main() {
     expect(invocation.source, HarnessCliSource.launcher);
     expect(invocation.executable, launcher.path);
     expect(invocation.arguments, ['start']);
+  });
+
+  test('a command that never finishes is an error within the bound, not a wait without end', () async {
+    // A `harness start` that had to reach a black-holed backend hung here, and the app — waiting on
+    // it to say "Starting local service…" was over — hung with it, for good.
+    final home = Directory('${scratch.path}/home')..createSync();
+    final harnessHome = Directory('${home.path}/.harness')..createSync();
+    final runner = HarnessCliRunner(
+      harnessHome: harnessHome,
+      environment: {'HOME': home.path, 'PATH': '/usr/bin'},
+      runTimeout: const Duration(milliseconds: 50),
+      runProcess: (command, argv, {environment}) =>
+          Completer<ProcessResult>().future,
+    );
+
+    await expectLater(
+      runner.run(['start']),
+      throwsA(
+        isA<ProcessException>().having(
+          (e) => e.message,
+          'message',
+          contains('did not finish'),
+        ),
+      ),
+    );
   });
 
   test('remote-password status invokes cli.js as direct argv and reads its JSON result', () async {

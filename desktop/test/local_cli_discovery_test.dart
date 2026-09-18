@@ -325,15 +325,68 @@ void main() {
     });
 
     test(
-      'a daemon still connecting to the backend is NOT READY, and says so',
+      'a daemon with no backend link is READY, and says the backend is offline',
       () async {
+        // Readiness is the loopback's: a daemon that cannot reach the backend still serves every
+        // agent on this computer. `connected:false` used to hold the app on "Starting local
+        // service…" for 45s and then an error strip, with tmux and the agents right there.
+        server = await serveStatus(
+          0,
+          () => readyStatus(
+            computerId,
+            extra: {'connected': false, 'machineId': 'm' * 32},
+          ),
+        );
+        final probe = await discoveryFor(server!.port, identityFile).probe();
+        expect(probe.state, LocalCliProbeState.ready);
+        expect(probe.endpoint!.backendOnline, isFalse);
+        expect(probe.endpoint!.machineId, 'm' * 32);
+        expect(probe.pid, 4242);
+        expect(probe.version, '9.9.9');
+      },
+    );
+
+    test(
+      'discover() still hands back the endpoint while the backend is down',
+      () async {
+        // `discover()` is what the machine refresh applies to this computer's row. When it returned
+        // null on `connected:false`, `_applyLocalTransport` read that as "the CLI is offline" and put
+        // the LOCAL terminal into localOffline — a daemon that lost its cloud link took the terminal
+        // on the same desk down with it.
         server = await serveStatus(
           0,
           () => readyStatus(computerId, extra: {'connected': false}),
         );
+        final endpoint = await discoveryFor(
+          server!.port,
+          identityFile,
+        ).discover(expectedComputerId: computerId);
+        expect(endpoint, isNotNull);
+        expect(endpoint!.backendOnline, isFalse);
+      },
+    );
+
+    test(
+      'a daemon that reports no `connected` (older CLI) counts as online',
+      () async {
+        server = await serveStatus(0, () => readyStatus(computerId));
+        final probe = await discoveryFor(server!.port, identityFile).probe();
+        expect(probe.state, LocalCliProbeState.ready);
+        expect(probe.endpoint!.backendOnline, isTrue);
+        expect(probe.endpoint!.machineId, isNull);
+      },
+    );
+
+    test(
+      'a daemon still scanning for agents is NOT READY, and says so',
+      () async {
+        server = await serveStatus(
+          0,
+          () => readyStatus(computerId, extra: {'discoveryReady': false}),
+        );
         final probe = await discoveryFor(server!.port, identityFile).probe();
         expect(probe.state, LocalCliProbeState.notReady);
-        expect(probe.reason, 'not connected to the backend yet');
+        expect(probe.reason, 'still scanning for agents');
         expect(probe.pid, 4242);
         expect(probe.version, '9.9.9');
         expect(probe.endpoint, isNull);
@@ -396,10 +449,10 @@ void main() {
     const computerId = '0123456789abcdef0123456789abcdef';
     final identityFile = File('${scratch.path}/computer-id')
       ..writeAsStringSync(computerId);
-    var connected = false;
+    var scanned = false;
     server = await serveStatus(
       0,
-      () => readyStatus(computerId, extra: {'connected': connected}),
+      () => readyStatus(computerId, extra: {'discoveryReady': scanned}),
     );
     var spawned = false;
     final discovery = discoveryFor(
@@ -409,7 +462,7 @@ void main() {
         spawned = true;
       },
     );
-    Future.delayed(const Duration(milliseconds: 700), () => connected = true);
+    Future.delayed(const Duration(milliseconds: 700), () => scanned = true);
     final probe = await discovery.ensureRunning(
       readyTimeout: const Duration(seconds: 5),
     );
@@ -423,7 +476,7 @@ void main() {
       ..writeAsStringSync(computerId);
     server = await serveStatus(
       0,
-      () => readyStatus(computerId, extra: {'connected': false}),
+      () => readyStatus(computerId, extra: {'discoveryReady': false}),
     );
     var spawned = false;
     final probe = await discoveryFor(
@@ -434,7 +487,7 @@ void main() {
       },
     ).ensureRunning(readyTimeout: const Duration(milliseconds: 600));
     expect(probe.state, LocalCliProbeState.notReady);
-    expect(probe.reason, 'not connected to the backend yet');
+    expect(probe.reason, 'still scanning for agents');
     expect(spawned, isFalse);
   });
 
@@ -567,15 +620,41 @@ void main() {
   });
 
   test(
+    'startSupervising reports the backend link on every change, not every tick',
+    () async {
+      const computerId = '0123456789abcdef0123456789abcdef';
+      final identityFile = File('${scratch.path}/computer-id')
+        ..writeAsStringSync(computerId);
+      var connected = false;
+      server = await serveStatus(
+        0,
+        () => readyStatus(computerId, extra: {'connected': connected}),
+      );
+      final seen = <bool>[];
+      final timer = discoveryFor(server!.port, identityFile).startSupervising(
+        checkInterval: const Duration(milliseconds: 20),
+        onBackendOnline: seen.add,
+      );
+      addTearDown(timer.cancel);
+
+      await Future.delayed(const Duration(milliseconds: 120));
+      expect(seen, [false], reason: 'offline at first sight, said once');
+      connected = true;
+      await Future.delayed(const Duration(milliseconds: 120));
+      expect(seen, [false, true], reason: 'the reconnect, said once');
+    },
+  );
+
+  test(
     'startSupervising never spawns over a daemon that answers but is not ready',
     () async {
       const computerId = '0123456789abcdef0123456789abcdef';
       final identityFile = File('${scratch.path}/computer-id')
         ..writeAsStringSync(computerId);
-      // The state a daemon sits in for the length of every self-update's backend handshake.
+      // The state a daemon sits in for the length of its startup scan.
       server = await serveStatus(
         0,
-        () => readyStatus(computerId, extra: {'connected': false}),
+        () => readyStatus(computerId, extra: {'discoveryReady': false}),
       );
       var spawnCount = 0;
       final discovery = discoveryFor(
