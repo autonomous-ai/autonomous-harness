@@ -68,6 +68,8 @@ class PhoneSheetSection {
 /// for. One sheet rather than a menu per page: the actions differ, the shape does not.
 ///
 /// [sections] draws captioned groups after [actions]; an empty section is left out.
+///
+/// [titleDetail] is drawn under [titleParts] — the folder and branch, on an agent's sheet.
 Future<void> showPhoneSheet(
   BuildContext context, {
   required String title,
@@ -75,6 +77,7 @@ Future<void> showPhoneSheet(
   List<PhoneSheetSection> sections = const [],
   PhoneSheetAction? titleAction,
   List<String>? titleParts,
+  Widget? titleDetail,
 }) => showModalBottomSheet<void>(
   context: context,
   useRootNavigator: true,
@@ -100,7 +103,17 @@ Future<void> showPhoneSheet(
                           fontSize: 13,
                         ),
                       )
-                    : _TitleParts(parts: titleParts),
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _TitleParts(parts: titleParts),
+                          if (titleDetail != null) ...[
+                            const SizedBox(height: 3),
+                            titleDetail,
+                          ],
+                        ],
+                      ),
               ),
               // [titleAction]: an icon on the title line — for something that is not about the
               // subject of the sheet (Settings, on an agent's sheet), so it does not take a row

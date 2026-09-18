@@ -29,6 +29,25 @@ void main() {
     }
   });
 
+  group('the sheet names the folder with its parent, the rest folded', () {
+    for (final (cwd, label) in [
+      (
+        '/Users/dudu/Bitcoin_builder/Grid/autonomous-harness/mobile',
+        '~/…/autonomous-harness/mobile',
+      ),
+      ('/home/tony/work/harness', '~/work/harness'),
+      ('/Users/dudu/notes', '~/notes'),
+      ('/Users/dudu', '~'),
+      ('/root/a/b/c', '~/…/b/c'),
+      ('/srv/app', '/srv/app'),
+      ('/opt/tools/grid', '/…/tools/grid'),
+      (r'C:\Users\tony\code\harness', 'C:/…/code/harness'),
+      ('/', '/'),
+    ]) {
+      test('$cwd → $label', () => expect(projectPathTrail(cwd), label));
+    }
+  });
+
   testWidgets('two lines, and the state on the mark', (tester) async {
     final agent = Agent.fromJson({
       'id': 'a',

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -203,6 +205,89 @@ class _Identity extends StatelessWidget {
     fontWeight: FontWeight.w500,
     height: 1.2,
   );
+}
+
+/// Where an agent works, as the `⋯` sheet shows it under the names: the folder
+/// with its parent — `~/…/autonomous-harness/mobile` — then the branch.
+///
+/// The header has room for the folder's own name alone; the sheet is where the
+/// rest of the path is read.
+class AgentPlaceLine extends StatelessWidget {
+  const AgentPlaceLine({super.key, required this.project});
+
+  final AgentProject project;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final branch = project.branchLabel;
+    final style = TextStyle(color: AppPalette.textSecondary, fontSize: 13);
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 2,
+      children: [
+        Text(projectPathTrail(project.cwd), style: style),
+        if (branch != null)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                LucideIcons.gitBranch300,
+                size: 13,
+                color: AppPalette.textFaint,
+              ),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  branch,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: style,
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+/// A folder with its parent, everything above them folded into `…` —
+/// `~/…/autonomous-harness/mobile`.
+///
+/// Home is written `~` the way a shell prompt writes it; a path short enough to
+/// need no fold is kept whole (`~/notes`, `/srv/app`).
+String projectPathTrail(String cwd) {
+  const kept = 2;
+  final path = cwd.replaceAll('\\', '/');
+  final parts = path.split('/').where((part) => part.isNotEmpty).toList();
+  if (parts.isEmpty) return path.isEmpty ? '~' : '/';
+
+  // `/Users/<name>/…` on a Mac, `/home/<name>/…` on Linux, `/root` for root.
+  var homeDepth = 0;
+  if (path.startsWith('/') && parts.length >= 2) {
+    if (parts[0] == 'Users' || parts[0] == 'home') homeDepth = 2;
+  }
+  if (path.startsWith('/') && parts[0] == 'root') homeDepth = 1;
+  if (path.startsWith('~')) homeDepth = 1;
+
+  final String lead;
+  final List<String> below;
+  if (homeDepth > 0) {
+    lead = '~';
+    below = parts.sublist(math.min(homeDepth, parts.length));
+  } else {
+    // A Windows drive keeps its letter, anything else its root.
+    final drive = RegExp(r'^[A-Za-z]:$').hasMatch(parts.first);
+    lead = drive ? parts.first : '';
+    below = drive ? parts.sublist(1) : parts;
+  }
+  if (below.isEmpty) return lead.isEmpty ? '/' : lead;
+  final tail = below.length <= kept
+      ? below
+      : ['…', ...below.sublist(below.length - kept)];
+  return '$lead/${tail.join('/')}';
 }
 
 /// A folder as the header names it: its own name and nothing above it —

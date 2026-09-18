@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'package:harness_mobile/core/models.dart' show AgentProject;
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/app_icon_button.dart';
 import 'package:harness_mobile/state/app_state.dart';
@@ -769,6 +770,7 @@ class _TerminalPageState extends State<TerminalPage>
                                     machineName:
                                         machine?.machine.displayName ?? '',
                                     agentName: agent.name,
+                                    project: agent.project,
                                   ),
                                 ),
                             ],
@@ -829,12 +831,18 @@ class _TerminalPageState extends State<TerminalPage>
     });
   }
 
-  void _showActions({required String machineName, required String agentName}) {
+  void _showActions({
+    required String machineName,
+    required String agentName,
+    AgentProject? project,
+  }) {
     showPhoneSheet(
       context,
       title: '$agentName · $machineName',
-      // Two lines — the agent, then its machine — shown in full.
+      // Two lines — the agent, then its machine — shown in full, then where it works: the folder
+      // with its parent and the branch, which the header has no room for.
       titleParts: [agentName, machineName],
+      titleDetail: project == null ? null : AgentPlaceLine(project: project),
       // Two groups: what acts on THIS agent, and the two screens the app itself has. Machines is a
       // door like Settings rather than a list of its own — the list belongs on the page behind it,
       // where it has room for every machine and does not push the rest of this sheet down.
