@@ -76,9 +76,20 @@ class _RenderInfiniteScrollView extends RenderShiftedBox {
   ViewportOffset _position;
   set position(ViewportOffset value) {
     if (_position == value) return;
-    if (attached) _position.removeListener(markNeedsLayout);
+    // AUTONOMOUS PATCH: `_onScroll` moves to the new position too. The
+    // Scrollable replaces its position whenever its dependencies change (a
+    // route pushed over the terminal and popped is enough), and the listener
+    // left on the old one meant no gesture reached the program again — a
+    // full-screen agent that would not scroll until its view was rebuilt.
+    if (attached) {
+      _position.removeListener(markNeedsLayout);
+      _position.removeListener(_onScroll);
+    }
     _position = value;
-    if (attached) _position.addListener(markNeedsLayout);
+    if (attached) {
+      _position.addListener(markNeedsLayout);
+      _position.addListener(_onScroll);
+    }
     markNeedsLayout();
   }
 
