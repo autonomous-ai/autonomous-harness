@@ -20,7 +20,9 @@ model on my machines.” It runs on the Codex engine already supported by Harnes
 Harness's managed Grid runtime when present; otherwise it installs the upstream revision in
 `VERSIONS` into a package-local Python environment. Setup does not download models or start engines.
 
-New workspaces reuse your remembered fleet, or Grid's reachable active selection, and import your
+New workspaces follow the grid you have selected (`grid use`), and the viewer keeps following it
+as you switch; with nothing selected yet they reuse your remembered fleet, or your own private grid
+(the one Harness minted at sign-in, recognised from your account) and select it. They import your
 Harness machine inventory. They never assume an old local grid named `home`. Use
 `fleet connect --mode remote --grid NAME --remember` to make a verified fleet the default for future
 Grid workspaces; `--remember` stores only fleet configuration in `~/.harness/grid-fleet/default.json`.

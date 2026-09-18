@@ -8,11 +8,6 @@ import { readDshRegistry } from './scripts/lib/dshRegistry.mjs'
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version
 // The bundled registry (the store/ folders and store/registry at the repo root) — see src/dsh/registry.ts.
 const dshRegistry = JSON.stringify(readDshRegistry(join('..', 'store')))
-// The Harness Compute skill docs, embedded as build-bundle.mjs embeds them — see src/lib/harnessComputeSkill.ts.
-const harnessSkills = JSON.stringify(Object.fromEntries(
-  ['harness-compute.md', 'harness-compute.agent.md']
-    .map((name) => [name, readFileSync(join('..', 'docs', 'skills', name), 'utf8')]),
-))
 
 function getAllTsFiles(dir, fileList = []) {
   const files = readdirSync(dir)
@@ -44,7 +39,6 @@ try {
     define: {
       __ADAPTER_VERSION__: JSON.stringify(version),
       __DSH_REGISTRY__: JSON.stringify(dshRegistry),
-      __HARNESS_SKILLS__: JSON.stringify(harnessSkills),
     },
     logLevel: 'info',
   })

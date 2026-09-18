@@ -1,9 +1,9 @@
-"""python3 -m unittest discover -s toolchain — the Solder wrapper holds together.
+"""python3 -m unittest discover -s toolchain — the KiCad wrapper holds together.
 
 The wrapper is a manifest, a pin and five hand-off scripts. These tests check the manifest's every
 path points into `upstream/harness/kicad/` (the package this wraps), the pin is a full commit of the
 project's public repository, the scripts exist, are executable and hand off to the right upstream
-script with the environment Solder's own scripts expect, and `runtimes.sh` is the store's copy. No
+script with the environment the KiCad package's own scripts expect, and `runtimes.sh` is the store's copy. No
 network, no install: the hand-offs are exercised against a stub `upstream/` in a temp dir.
 """
 import hashlib
@@ -22,7 +22,7 @@ PACKAGE = TOOLCHAIN.parent
 STORE = PACKAGE.parents[1]
 UPSTREAM_PKG = "upstream/harness/kicad"
 SCRIPTS = ("fetch-upstream.sh", "setup.sh", "doctor.sh", "init-workspace.sh", "viewer.sh", "python")
-# A stub of a Solder package script: says which one ran, with what, where; exits with $STUB_EXIT.
+# A stub of a KiCad package script: says which one ran, with what, where; exits with $STUB_EXIT.
 STUB = ('#!/bin/sh\necho "{name} dsh=$HARNESS_DSH_DIR python=${{CIRCUIT_PYTHON:-}} toolchain=${{CIRCUIT_TOOLCHAIN:-}} '
         'pwd=$(pwd -P)"\nexit "${{STUB_EXIT:-0}}"\n')
 
@@ -41,7 +41,7 @@ class ManifestTest(unittest.TestCase):
 
     def test_identity(self):
         m = manifest()
-        self.assertEqual((m["spec"], m["id"], m["name"], m["category"]), (1, "autonomous/solder", "Solder", "PCB"))
+        self.assertEqual((m["spec"], m["id"], m["name"], m["category"]), (1, "autonomous/kicad", "KiCad", "PCB"))
         self.assertIn(m["engine"], ("claude", "codex"))
         self.assertEqual(m["verdict"], ".harness/verdict.json")
 
@@ -53,9 +53,9 @@ class ManifestTest(unittest.TestCase):
 
     def test_the_agent_runs_the_pipeline_on_the_wrappers_python(self):
         env = manifest()["agent"]["env"]
-        self.assertEqual(env["SOLDER_PYTHON"], "${dsh}/" + UPSTREAM_PKG + "/toolchain/python")
+        self.assertEqual(env["KICAD_HARNESS_PYTHON"], "${dsh}/" + UPSTREAM_PKG + "/toolchain/python")
         self.assertEqual(env["CIRCUIT_PYTHON"], "${dsh}/toolchain/python")
-        self.assertEqual(env["SOLDER_ROOT"], "${dsh}/upstream")
+        self.assertEqual(env["KICAD_HARNESS_ROOT"], "${dsh}/upstream")
         self.assertEqual(env["CIRCUIT_TOOLCHAIN"], "${dsh}/upstream/toolchain")
         expected = ".agents/skills" if manifest()["engine"] == "codex" else ".claude/skills"
         self.assertTrue(env["CIRCUIT_SKILLS_DIR"].endswith(expected))
@@ -86,7 +86,7 @@ class ManifestTest(unittest.TestCase):
 
 
 class HandoffTest(unittest.TestCase):
-    """Each hand-off script runs the stub of its upstream twin with the environment Solder expects."""
+    """Each hand-off script runs the stub of its upstream twin with the environment the KiCad package expects."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' show max;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -27,6 +28,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     required bool autoResize,
     bool resizeBuffer = true,
     bool renderingEnabled = true,
+    Duration? outputRepaintInterval,
     required TerminalStyle textStyle,
     required TextScaler textScaler,
     required TerminalTheme theme,
@@ -43,6 +45,7 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
         _autoResize = autoResize,
         _resizeBuffer = resizeBuffer,
         _renderingEnabled = renderingEnabled,
+        _outputRepaintInterval = outputRepaintInterval,
         _focusNode = focusNode,
         _cursorType = cursorType,
         _alwaysShowCursor = alwaysShowCursor,
@@ -112,6 +115,10 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   set renderingEnabled(bool value) {
     if (value == _renderingEnabled) return;
     _renderingEnabled = value;
+    if (!value) {
+      _outputRepaintTimer?.cancel();
+      _outputRepaintTimer = null;
+    }
     if (attached) {
       if (value) {
         _terminal.addListener(_onTerminalChange);
@@ -122,6 +129,19 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     // Catch up from the live buffer once, preserving follow-tail or the user's
     // scroll offset. Hidden output never queues a renderer layout or paint.
     if (value) markNeedsLayout();
+  }
+
+  Duration? _outputRepaintInterval;
+  Timer? _outputRepaintTimer;
+
+  set outputRepaintInterval(Duration? value) {
+    if (value == _outputRepaintInterval) return;
+    _outputRepaintInterval = value;
+    _outputRepaintTimer?.cancel();
+    _outputRepaintTimer = null;
+    // A focused tile resumes immediately even if its former background timer
+    // was waiting; there may be no later output chunk to wake it up.
+    if (value == null && attached && _renderingEnabled) markNeedsLayout();
   }
 
   set textStyle(TerminalStyle value) {
@@ -227,6 +247,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
   }
 
   void _onTerminalChange() {
+    final interval = _outputRepaintInterval;
+    if (interval != null && interval > Duration.zero) {
+      if (_outputRepaintTimer?.isActive ?? false) return;
+      _outputRepaintTimer = Timer(interval, () {
+        _outputRepaintTimer = null;
+        if (!attached || !_renderingEnabled) return;
+        markNeedsLayout();
+        _scheduleEditableRect();
+      });
+      return;
+    }
     markNeedsLayout();
     _scheduleEditableRect();
   }
@@ -249,6 +280,8 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   @override
   void detach() {
+    _outputRepaintTimer?.cancel();
+    _outputRepaintTimer = null;
     super.detach();
     _offset.removeListener(_onScroll);
     _terminal.removeListener(_onTerminalChange);

@@ -74,6 +74,11 @@ harness logout     # stop the adapter and clear this computer's SSO session
 backend-resolved machine id are stored atomically with owner-only permissions in
 `~/.harness/auth/session.json`; the immutable computer id lives separately at
 `~/.harness/computer-id`. Later `harness start` invocations reuse and refresh that session as needed.
+`login --force` holds the daemon's spawn lock from the moment it stops the old daemon until the new
+session is on disk, so a `harness start` that lands while the browser is open (the desktop app runs
+one whenever the daemon is down) waits its turn rather than bringing a daemon up on the account being
+replaced. `harness start` beside a running daemon also asks it which machine it serves, and restarts
+one that answers for another account instead of reporting it "already running".
 Raw daemon logs go to `${ADAPTER_DATA_DIR}/harness.log`.
 
 The log is **capped at 10 MB**: the daemon checks the size every minute and, over the cap, rewrites the

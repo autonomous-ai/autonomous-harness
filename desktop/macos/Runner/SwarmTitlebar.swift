@@ -64,7 +64,8 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
         let state = call.arguments as? [String: Any] ?? [:]
         self.updateModels(
           state["subscriptions"] as? [[String: Any]] ?? [],
-          local: state["local"] as? [[String: Any]] ?? []
+          local: state["local"] as? [[String: Any]] ?? [],
+          sections: state["sections"] as? [[String: Any]] ?? []
         )
         result(nil)
       case "keymapState":
@@ -415,20 +416,54 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
   }
 
-  private func updateModels(_ rows: [[String: Any]], local: [[String: Any]] = []) {
+  /// One heading's worth of the picker: the account's own grid ("Local") or a shared grid, with
+  /// the models it is serving. `own` picks the heading word; `name` names a shared grid under the
+  /// "Models shared with you" header, or is empty for the account's own grid.
+  private struct MenuGridSection {
+    let name: String
+    let own: Bool
+    let models: [(String, String)]  // (model id, node)
+  }
+
+  private func updateModels(_ rows: [[String: Any]], local: [[String: Any]] = [],
+                            sections: [[String: Any]] = []) {
     let entries = rows.prefix(32).compactMap(SwarmSubscriptionEntry.init)
-    // What the account's own grid is serving RIGHT NOW, read off the machines that answer for it.
+    // What the picker is actually serving RIGHT NOW, read off the machines that answer for it.
     // Placeholder names lived here before and read as real ones — a menu naming a model nobody is
     // serving is worse than a menu admitting it has none.
-    let locals: [(String, String)] = local.prefix(32).compactMap {
-      guard let id = $0["id"] as? String, !id.isEmpty else { return nil }
-      return (id, $0["node"] as? String ?? "")
+    func paired(_ models: [[String: Any]]) -> [(String, String)] {
+      models.prefix(32).compactMap {
+        guard let id = $0["id"] as? String, !id.isEmpty else { return nil }
+        return (id, $0["node"] as? String ?? "")
+      }
     }
-    guard entries != subscriptions || locals.map({ $0.0 }) != localModels.map({ $0.0 })
-      || locals.map({ $0.1 }) != localModels.map({ $0.1 }) else { return }
+    let parsed: [MenuGridSection]
+    if sections.isEmpty {
+      // Older Flutter pushes only `local` (the account's own grid). Fall back to one own section.
+      let own = paired(local)
+      parsed = own.isEmpty ? [] : [MenuGridSection(name: "", own: true, models: own)]
+    } else {
+      parsed = sections.prefix(16).compactMap { dict -> MenuGridSection? in
+        guard let name = dict["name"] as? String,
+              let own = dict["own"] as? Bool,
+              let models = dict["models"] as? [[String: Any]] else { return nil }
+        return MenuGridSection(name: name, own: own, models: paired(models))
+      }
+    }
+    guard entries != subscriptions || !sectionsEqual(parsed, localSections) else { return }
     subscriptions = entries
-    localModels = locals
+    localSections = parsed
     rebuildModelsMenu()
+  }
+
+  private func sectionsEqual(_ a: [MenuGridSection], _ b: [MenuGridSection]) -> Bool {
+    guard a.count == b.count else { return false }
+    for (x, y) in zip(a, b) {
+      guard x.name == y.name, x.own == y.own,
+            x.models.map({ $0.0 }) == y.models.map({ $0.0 }),
+            x.models.map({ $0.1 }) == y.models.map({ $0.1 }) else { return false }
+    }
+    return true
   }
 
   /// The mark for a locally served model. Built once: `NSImage(systemSymbolName:)` re-renders the
@@ -438,8 +473,9 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     return image?.withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
   }()
 
-  /// `(model id, node)` for every model the account's private grid is serving.
-  private var localModels: [(String, String)] = []
+  /// `(model id, node)` for every model the account's private grid is serving, grouped by the
+  /// grid that serves it — the sections the picker draws (own first as "Local", then shared).
+  private var localSections: [MenuGridSection] = []
 
   private func rebuildModelsMenu() {
     modelsMenu.removeAllItems()
@@ -458,9 +494,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     section("Subscription")
     // One width across both sections. Measuring them separately let the menu's two halves size
     // independently, so the trailing column stepped in or out at the section break.
+    let allModels = localSections.flatMap { $0.models }
     let rowWidth = max(
       subscriptions.map(SwarmSubscriptionView.preferredWidth).max() ?? 352,
-      localModels.map { SwarmSubscriptionView.preferredWidth(title: $0.0, account: "", status: $0.1) }.max() ?? 352)
+      allModels.map { SwarmSubscriptionView.preferredWidth(title: $0.0, account: "", status: $0.1) }.max() ?? 352)
     for entry in subscriptions {
       let item = NSMenuItem(title: entry.accessibilityLabel, action: nil, keyEquivalent: "")
       let icon = historyIcons.image(engine: entry.engine, asset: entry.iconAsset)
@@ -476,18 +513,30 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     // menu naming providers this app cannot reach reads as a list of things you could pick. The
     // section returns when there is a real source for it, not before.
     modelsMenu.addItem(.separator())
-    section("Local")
-    // Nothing served is not said: the "Talk to Model manager" row that ends this section is the
-    // answer, and an empty-list sentence above an empty list is noise.
-    do {
-      for (id, node) in localModels {
+    // One section per grid the picker draws, own first as "Local". The account's own grid carries
+    // the Local header; a shared grid lists under "Models shared with you" with its grid name as
+    // a line under the heading — the same shape the pane picker gives them. With nothing pushed
+    // yet (an older Flutter, or a machine not answering) the menu keeps the legacy Local heading
+    // so it does not collapse to just the run row.
+    if localSections.isEmpty {
+      section("Local")
+    }
+    for gridSection in localSections {
+      if gridSection.own {
+        section("Local models on your machines")
+      } else {
+        section("Models shared with you")
+        let name = NSMenuItem(title: gridSection.name, action: nil, keyEquivalent: "")
+        name.isEnabled = false
+        modelsMenu.addItem(name)
+      }
+      for (id, node) in gridSection.models {
         // Same row view as the subscriptions above: the model id reads at full strength where an
-        // account name would, and the node — which of the user's own machines answers, the detail
-        // that makes a private grid legible — takes the trailing column the usage figures use.
-        // The mark is a chip rather than a vendor logo, because what distinguishes these rows is
-        // where they run, not who supplies them. Tinted to match the model id beside it: at a
-        // secondary weight the glyph sat a shade under the vivid brand artwork above and read as
-        // smudge rather than icon.
+        // account name would, and the node — which machine answers, the detail that makes a grid
+        // legible — takes the trailing column the usage figures use. The mark is a chip rather
+        // than a vendor logo, because what distinguishes these rows is where they run, not who
+        // supplies them. Tinted to match the model id beside it: at a secondary weight the glyph
+        // sat a shade under the vivid brand artwork above and read as smudge rather than icon.
         let item = NSMenuItem(title: [id, node].filter { !$0.isEmpty }.joined(separator: ", "),
           action: nil, keyEquivalent: "")
         item.view = SwarmSubscriptionView(title: id, account: "", status: node,
@@ -513,7 +562,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     caption.view = SwarmMenuCaptionView(text: caption.title, width: rowWidth)
     caption.isEnabled = false
     modelsMenu.addItem(caption)
-    let run = NSMenuItem(title: "Talk to Model manager", action: nil, keyEquivalent: "")
+    let run = NSMenuItem(title: "Open Grid", action: nil, keyEquivalent: "")
     run.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "runLocalModel")
     if machines.filter({ !$0.shared }).count > 1 {
       let pick = NSMenu(title: run.title)

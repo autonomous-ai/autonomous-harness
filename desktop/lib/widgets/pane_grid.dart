@@ -1332,6 +1332,20 @@ class _PaneContent extends StatelessWidget {
     // Availability changes the header and input permission, never the renderer's
     // ancestry. Retained output, selection, scroll and Find stay in this view.
     if (session != null) {
+      // A software renderer (notably WSLg's llvmpipe) cannot keep up when
+      // every visible terminal schedules a full text layout for every output
+      // chunk. Keep the active tile realtime and coalesce background output
+      // only once the grid has three terminal panes. The buffer remains live,
+      // so the next paint contains every intervening chunk.
+      final terminalPaneCount = notifier.panes
+          .where((candidate) => candidate.session != null)
+          .length;
+      final throttleBackgroundOutput =
+          swarmMode &&
+          visible &&
+          !notifier.isPaneFocused(pane.id) &&
+          notifier.zoomedPaneId == null &&
+          terminalPaneCount >= 3;
       final TerminalNotice? notice;
       if (machine == null) {
         notice = (
@@ -1384,6 +1398,9 @@ class _PaneContent extends StatelessWidget {
             notifier.zoomedPaneId,
           ),
           focused: visible && notifier.isPaneFocused(pane.id),
+          outputRepaintInterval: throttleBackgroundOutput
+              ? const Duration(milliseconds: 80)
+              : null,
           focusRequest: notifier.isPaneFocused(pane.id)
               ? notifier.paneFocusRequest
               : 0,

@@ -8,9 +8,9 @@ import 'transient_menus.dart';
 
 /// The pane header's menu, as one shape for every list that wants to look like it.
 ///
-/// Born in the model picker and shared from here so a second list (the machine chooser in the
-/// Model manager dialog) is the same menu rather than a second drawing of it: the same
-/// overlay, the same rows, the same quiet fill on the current row instead of a tick.
+/// Born in the model picker and shared from here so any second list that wants this shape is
+/// the same menu rather than a second drawing of it: the same overlay, the same rows, the same
+/// quiet fill on the current row instead of a tick.
 ///
 /// Shown in an OVERLAY rather than as a modal route. `showMenu` puts a full-screen modal barrier
 /// under its menu, and that barrier EATS the click that dismisses it: closing the menu and then
@@ -143,21 +143,42 @@ Widget paneMenuEmpty(String text) => Padding(
 
 /// A section label. Non-interactive and short, so the groups read as groups rather than as
 /// entries someone failed to make clickable.
-Widget paneMenuHeader(String label) => Padding(
-  padding: const EdgeInsets.only(top: 3, bottom: 3),
-  child: Padding(
-    // The row's margin plus its internal padding, so a header sits directly above the text it
-    // heads rather than a few pixels to either side of it.
-    padding: const EdgeInsets.only(left: kPaneMenuInset + kPaneMenuRowPadding),
-    child: Text(
-      label,
-      style: TextStyle(
-        fontSize: 10.5,
-        fontWeight: FontWeight.w600,
-        letterSpacing: .3,
-        color: AppColors.mutedStrong,
+///
+/// A rule used to run from the label to the menu's edge to make a heading read as a line that
+/// divides. [caption], when given, is a second line UNDER the label — a specific name under a
+/// heading that is a plain sentence ("Models shared with you" / "autonomous.ai"). It used to sit
+/// on the same line as the label, joined by a middot ("Local · your machines"), which read as two
+/// half-sentences forced together rather than as one heading and one detail under it.
+Widget paneMenuHeader(String label, {String? caption}) => Padding(
+  // The row's margin plus its internal padding, so a header sits directly above the text it
+  // heads rather than a few pixels to either side of it.
+  padding: const EdgeInsets.fromLTRB(
+    kPaneMenuInset + kPaneMenuRowPadding,
+    6,
+    kPaneMenuInset + kPaneMenuRowPadding,
+    3,
+  ),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w600,
+          letterSpacing: .3,
+          color: AppColors.mutedStrong,
+        ),
       ),
-    ),
+      if (caption != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            caption,
+            style: TextStyle(fontSize: 10.5, color: AppColors.textSoft),
+          ),
+        ),
+    ],
   ),
 );
 

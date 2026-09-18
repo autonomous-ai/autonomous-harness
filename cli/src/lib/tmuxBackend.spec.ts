@@ -168,6 +168,25 @@ esac
     ])
   })
 
+  it('treats a fresh tmux installation with no server as an available empty inventory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-no-server-'))
+    dirs.push(dir)
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+if [ "$1" = list-panes ]; then
+  printf 'no server running on /tmp/tmux-1000/default\\n' >&2
+  exit 1
+fi
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+
+    await expect(new TmuxBackend().inventory()).resolves.toEqual({
+      state: 'available',
+      roots: [],
+    })
+  })
+
   it('respawns a pane in place with -k, an optional cwd, and the exact argv, no shell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-'))
     dirs.push(dir)

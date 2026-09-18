@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs once at install, cwd = the install dir: a Node and a Python of the package's own, then fetch
-# Autonomous Circuit at the pinned commit and run the Solder package's OWN setup in it (Freerouting
+# Autonomous Circuit at the pinned commit and run the KiCad package's OWN setup in it (Freerouting
 # jar + JRE, the board viewer). KiCad is the machine's — doctor.sh reports it afterwards.
 set -euo pipefail
 cd "$(dirname "$0")/.."

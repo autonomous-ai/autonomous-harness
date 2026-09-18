@@ -2,10 +2,10 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { atomicJson, now, operations, PACKAGE } from './lib/fleet.mjs';
+import { atomicJson, gridSelect, now, operations, PACKAGE, readConfig } from './lib/fleet.mjs';
 import { createCollector } from './lib/telemetry.mjs';
 
-export function createViewer({ workspace, port = 0, intervalMs = 8000, collect = createCollector(workspace, { intervalMs }) }) {
+export function createViewer({ workspace, port = 0, intervalMs = 8000, collect = createCollector(workspace, { intervalMs }), select = gridSelect }) {
   const clients = new Set();
   let snapshot = { spec: 1, status: 'connecting', grid: 'Your grid', nodes: [], machines: [], models: [], events: [], operations: [], history: {}, sources: {}, summary: {}, observedAt: null, pollIntervalMs: intervalMs };
   let stopped = false, pollTimer, opTimer, heartbeat;
@@ -23,10 +23,20 @@ export function createViewer({ workspace, port = 0, intervalMs = 8000, collect =
       const address = server.address();
       const hosts = new Set([`127.0.0.1:${address?.port}`, `localhost:${address?.port}`, `[::1]:${address?.port}`]);
       if (!hosts.has(req.headers.host)) { json(res, 403, { error: 'Loopback requests only.' }); return; }
-      if (!['GET', 'HEAD'].includes(req.method)) { res.setHeader('allow', 'GET, HEAD'); json(res, 405, { error: 'This viewer is read-only. Talk to the Grid agent to make changes.' }); return; }
       const url = new URL(req.url, `http://${req.headers.host}`);
       const origin = req.headers.origin;
       if (origin && origin !== url.origin) { json(res, 403, { error: 'Cross-origin requests are not allowed.' }); return; }
+      // The one write the viewer takes: which grid to look at. It is the CLI's own selection
+      // (`grid use`), so the agent and a terminal see the same choice, and the next poll is run at
+      // once so the screen changes with the click rather than up to a poll later.
+      if (req.method === 'POST' && url.pathname === '/api/select') {
+        let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 4096) { json(res, 413, { error: 'Too large.' }); return; } }
+        let grid = ''; try { grid = String(JSON.parse(body || '{}').grid || '').trim(); } catch { /* not json */ }
+        if (!grid || grid.startsWith('-') || !/^[A-Za-z0-9._-]{1,128}$/.test(grid)) { json(res, 400, { error: 'Name a grid.' }); return; }
+        try { await selectGrid(grid); json(res, 200, { ok: true, grid }); } catch (err) { json(res, 409, { error: err.message }); }
+        return;
+      }
+      if (!['GET', 'HEAD'].includes(req.method)) { res.setHeader('allow', 'GET, HEAD, POST'); json(res, 405, { error: 'This viewer is read-only. Talk to the Grid agent to make changes.' }); return; }
       if (url.pathname === '/health') { json(res, 200, { ok: true }); return; }
       if (url.pathname === '/api/snapshot') { json(res, 200, snapshot); return; }
       if (url.pathname === '/events') {
@@ -44,6 +54,24 @@ export function createViewer({ workspace, port = 0, intervalMs = 8000, collect =
       res.end(req.method === 'HEAD' ? undefined : content);
     } catch { if (!res.headersSent) json(res, 500, { error: 'The viewer could not serve this request.' }); else res.end(); }
   });
+  async function selectGrid(grid) {
+    const config = await readConfig(workspace);
+    const controller = config.machines.find(m => m.id === config.controller);
+    const mode = config.mode === 'local' ? 'local' : 'remote';
+    const chosen = await select(controller, mode, grid, { timeoutMs: 10_000 });
+    if (!chosen.ok) throw new Error(chosen.error || `Could not select ${grid}.`);
+    await atomicJson(join(workspace, 'grid-fleet.json'), { ...config, mode, grid });
+    // The click answers here, the moment the switch itself is done — not after a full collect(),
+    // which chains several `grid` subprocess calls and can run for seconds on a fleet nobody has
+    // looked at yet. That used to hold the button disabled long enough to read as broken. The name
+    // changes at once (published now, over the same connection the map already listens on); the
+    // map's numbers catch up a moment later when the poll below lands.
+    snapshot = { ...snapshot, status: 'connecting', grid, nodes: [], machines: [], models: [], summary: {}, history: {}, observedAt: null };
+    publish();
+    clearTimeout(pollTimer);
+    poll(); // not awaited — its own errors are already caught inside poll()
+  }
+
   async function poll() {
     try { snapshot = await collect(); }
     catch {

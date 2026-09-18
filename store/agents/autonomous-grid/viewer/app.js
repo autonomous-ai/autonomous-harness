@@ -23,10 +23,12 @@
     const late = lastReceived && Date.now() - lastReceived > Math.max(30_000, (snapshot.pollIntervalMs || 8000)*3);
     const state = transportLost || late ? 'disconnected' : snapshot.status;
     const labels={live:'Grid connected',partial:'Partial telemetry',unavailable:'Grid unavailable',unconfigured:'Choose a grid',connecting:'Connecting',disconnected:'Connection lost'};
-    $('connection-label').textContent=labels[state] || 'Waiting for Grid';
-    $('connection-dot').className='status-dot'+(['unavailable','disconnected'].includes(state)?' offline':state==='live'?'':' pending');
-    $('observed').textContent=snapshot.observedAt?`Observed ${age(snapshot.observedAt)}`:'Waiting for Grid';
-    $('footer-status').textContent=['unavailable','disconnected'].includes(state)?'Last observations remain visible. Ask Grid to reconnect.':'Talk to Grid in the agent pane.';
+    // The connection state rides on the grid dropdown's title: the header that carried a dot and a
+    // label is gone, and the dropdown is where the grid is named now.
+    $('grid-select').title=labels[state] || 'Waiting for Grid';
+    // The footer that used to say "ask Grid to reconnect" is gone (it cost a row of height for a
+    // sentence nobody needed while things worked); the activity heading says it when it matters.
+    $('observed').textContent=['unavailable','disconnected'].includes(state)?`${labels[state]} · ask Grid to reconnect`:snapshot.observedAt?`Observed ${age(snapshot.observedAt)}`:'Waiting for Grid';
   }
   function consume(data) {
     if (!data || data.spec!==1 || !Array.isArray(data.nodes)) return;
@@ -39,8 +41,7 @@
   }
   function render() {
     if (!snapshot) return;
-    $('grid-name').textContent=snapshot.grid;
-    $('mode').textContent=snapshot.mode || '';
+    renderGridSelect();
     const available=!['connecting','unavailable','unconfigured'].includes(snapshot.status);
     $('total-engines').textContent=available?fmt(snapshot.summary.enginesOnline,0):'—';
     $('total-known').textContent=snapshot.nodes.length?`${snapshot.nodes.length} known to this grid`:'waiting for engines';
@@ -98,6 +99,8 @@
     if(!snapshot)return;
     const node=snapshot.nodes.find(n=>n.id===selected), machine=snapshot.machines?.find(m=>'machine:'+m.id===selected);
     const panel=$('inspector');
+    // In a narrow pane the inspector is a drawer over the map (CSS), open while something is chosen.
+    panel.classList.toggle('open',Boolean(node||machine));
     if(machine){
       panel.innerHTML=`<div class="inspector-head"><div><span class="eyebrow">MANAGED MACHINE</span><h2>${escape(machine.name)}</h2><p class="subline">${escape(machine.hardware || machine.error || '')}</p></div><button class="close" type="button" data-close aria-label="Close machine details">×</button></div><div class="detail-status"><span class="status-dot${machine.reachable?'':' offline'}"></span>${machine.reachable?'Reachable':'Unreachable'} · ${escape(machine.transport)}</div><div class="detail-metrics">${detailMetric('System memory',machine.memoryTotalGb,'GB')}${detailMetric('Grid RAM estimate',machine.memoryAvailableGb,'GB','Inventory, not live usage')}${detailMetric('Grid model budget',machine.usableModelGb,'GB')}${detailMetric('Free disk',machine.diskFreeGb,'GB')}</div><div class="detail-section">${pair('Platform',machine.platform || '—')}${pair('Backend',machine.backend || '—')}${pair('CPU cores',fmt(machine.cpuCores,0))}${pair('Observed',age(machine.observedAt))}</div><div class="detail-section"><h3>Graphics</h3>${machine.gpus?.map(gpuDetails).join('')||'<p class="quiet">No GPU reported. CPU models can still be useful.</p>'}</div>${prompt(`Find an open-weight model that fits ${machine.name}, keeping enough memory free for my other work. Explain the tradeoff before deploying it.`)}`;
       return;
@@ -126,25 +129,31 @@
   }
   function resize() {
     if(view==='rack')return;
-    width=stage.clientWidth||800;
-    const small=width<620;
-    const expanded=small?230+Math.ceil(graphNodes.length/2)*144:graphNodes.length>8?Math.max(680,200+Math.ceil(graphNodes.length/4)*150):560;
-    stage.style.height=Math.max(width<540?600:560,expanded)+'px';height=stage.clientHeight;
+    // The map takes whatever height the pane leaves it (CSS: the main column is a flex column and
+    // the map is its stretching row) — never a height of its own. A fixed 560px map on a pane
+    // shorter than that pushed the totals, activity and footer below the fold, and the page grew a
+    // scrollbar for a screen whose whole point is to be taken in at a glance. Nodes are laid out
+    // within the height there is (see position()).
+    width=stage.clientWidth||800;height=stage.clientHeight||420;
     const dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx?.setTransform(dpr,0,0,dpr,0,0);
     position();draw();
   }
   function position() {
     const small=width<620,count=graphNodes.length;
-    hub={x:width*.5,y:small?150:height*.49};
+    hub={x:width*.5,y:height*.49};
     $('hub').style.left=hub.x+'px';$('hub').style.top=hub.y+'px';
     const anchors=[[.14,.31],[.36,.18],[.15,.63],[.36,.83],[.69,.17],[.85,.40],[.85,.73],[.64,.88]];
     const smallFleet={1:[[.22,.49]],2:[[.22,.35],[.78,.65]],3:[[.20,.34],[.80,.34],[.50,.85]],4:[[.20,.32],[.80,.32],[.20,.76],[.80,.76]]};
+    // Two columns, spread over the height there is: a narrow pane, or more nodes than the
+    // eight anchors. Rows are shared out between the top and bottom margins rather than stacked
+    // at a fixed pitch, so the map never needs more height than it has.
+    const column=(k,rows,fraction)=>({x:width*fraction,y:rows<=1?height*.5:105+k*(height-200)/(rows-1)});
     graphNodes.forEach((n,i)=>{
       const b=nodeButtons.get(n.id);if(!b)return;
       let base;
-      if(small)base={x:width*(i%2===0?.25:.75),y:275+Math.floor(i/2)*144};
+      if(small)base=column(Math.floor(i/2),Math.ceil(count/2),i%2===0?.25:.75);
       else if(count<=8){const a=(smallFleet[count]||anchors)[i];base={x:width*a[0],y:height*a[1]};}
-      else {const half=Math.ceil(count/2),left=i<half;const k=left?i:i-half;base={x:width*(left?.18:.82),y:115+k*(height-190)/(half-1)};}
+      else {const half=Math.ceil(count/2),left=i<half;base=column(left?i:i-half,half,left?.18:.82);}
       const stored=drags[n.id];if(stored&&finite(stored.x)&&finite(stored.y))base={x:stored.x*width,y:stored.y*height};
       const inset=(b.offsetWidth||140)/2+12;
       const x=Math.max(inset,Math.min(width-inset,base.x+(dragging?.id===n.id?0:Math.sin(t*.20+i*.78)*3)));
@@ -152,20 +161,46 @@
       positions.set(n.id,{x,y});b.style.left=x+'px';b.style.top=y+'px';
     });
   }
+  // The map is a <canvas>: none of its color is CSS, so it does not follow the stylesheet's own
+  // light/dark tokens. This is its own small palette, one for each system appearance, read fresh
+  // every frame (matchMedia is cheap) so a live appearance change repaints it at once rather than
+  // needing a reopen. "Chosen" (the node someone picked) is drawn in a NEUTRAL tone, apart from the
+  // warm accent that means "this one is online, working" — a click used to paint its line and
+  // pulses gold too, the same color as "busy", which made picking a node look like it had also
+  // started something on it.
+  const darkQuery=matchMedia('(prefers-color-scheme: dark)');
+  // The app's own choice (data-theme on the root, stamped by the pane that hosts this page) wins
+  // over the system's, exactly as the stylesheet resolves it — so the map and the chrome around
+  // it never disagree.
+  const isDark=()=>{const stamp=document.documentElement.dataset.theme;return stamp==='dark'||(stamp!=='light'&&darkQuery.matches);};
+  function canvasPalette(){
+    return isDark()?{
+      hub0:'rgba(185,134,36,.13)',hub1:'rgba(170,117,27,0)',star:'rgba(171,159,130,',starStrong:.16,starFaint:.06,
+      linkChosen:'rgba(226,228,232,.60)',linkOnline:'rgba(173,140,74,.31)',linkOffline:'rgba(115,126,141,.17)',
+      pulseStroke:'rgba(232,183,78,.27)',dotChosen:'#e7e9ec',dot:'#c4a25e',glowChosen:'#d7dade',glow:'#d5ab52',
+      ring0:'rgba(211,165,72,.63)',ring1:'rgba(190,146,55,.12)',ring2:'rgba(190,146,55,.05)',
+    }:{
+      hub0:'rgba(163,113,28,.10)',hub1:'rgba(163,113,28,0)',star:'rgba(120,104,68,',starStrong:.11,starFaint:.045,
+      linkChosen:'rgba(58,57,53,.55)',linkOnline:'rgba(163,113,28,.26)',linkOffline:'rgba(150,150,146,.28)',
+      pulseStroke:'rgba(163,113,28,.30)',dotChosen:'#3a3935',dot:'#a3711c',glowChosen:'#3a3935',glow:'#a3711c',
+      ring0:'rgba(163,113,28,.55)',ring1:'rgba(163,113,28,.14)',ring2:'rgba(163,113,28,.07)',
+    };
+  }
   function draw() {
     if(!ctx||view!=='topology')return;
     ctx.clearRect(0,0,width,height);
     if(!graphNodes.length)return;
-    const glow=ctx.createRadialGradient(hub.x,hub.y,10,hub.x,hub.y,180);glow.addColorStop(0,'rgba(185,134,36,.13)');glow.addColorStop(1,'rgba(170,117,27,0)');ctx.fillStyle=glow;ctx.fillRect(0,0,width,height);
-    for(let i=0;i<70;i++){ctx.fillStyle=`rgba(171,159,130,${i%6===0?.16:.06})`;ctx.beginPath();ctx.arc(((i*173.87+42)%991)/991*width,((i*131.2+31)%587)/587*height,i%5===0?1:.55,0,Math.PI*2);ctx.fill();}
+    const P=canvasPalette();
+    const glow=ctx.createRadialGradient(hub.x,hub.y,10,hub.x,hub.y,180);glow.addColorStop(0,P.hub0);glow.addColorStop(1,P.hub1);ctx.fillStyle=glow;ctx.fillRect(0,0,width,height);
+    for(let i=0;i<70;i++){ctx.fillStyle=`${P.star}${i%6===0?P.starStrong:P.starFaint})`;ctx.beginPath();ctx.arc(((i*173.87+42)%991)/991*width,((i*131.2+31)%587)/587*height,i%5===0?1:.55,0,Math.PI*2);ctx.fill();}
     for(let i=0;i<graphNodes.length;i++){
       const node=graphNodes[i],p=positions.get(node.id);if(!p)continue;
       const online=node.online===true&&!node.stale&&!transportLost&&Date.now()-lastReceived<30000,active=finite(node.activeRequests)?node.activeRequests:0,chosen=selected===node.id;
-      ctx.beginPath();ctx.strokeStyle=chosen?'rgba(237,188,85,.70)':online?'rgba(173,140,74,.31)':'rgba(115,126,141,.17)';ctx.lineWidth=chosen?1.35:.75;ctx.setLineDash(online?[]:[3,7]);ctx.moveTo(hub.x,hub.y);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.setLineDash([]);
+      ctx.beginPath();ctx.strokeStyle=chosen?P.linkChosen:online?P.linkOnline:P.linkOffline;ctx.lineWidth=chosen?1.35:.75;ctx.setLineDash(online?[]:[3,7]);ctx.moveTo(hub.x,hub.y);ctx.lineTo(p.x,p.y);ctx.stroke();ctx.setLineDash([]);
       // Connection pulses express online membership. Only measured active requests add extra pulses.
-      if(online){const pulses=1+Math.min(3,active);for(let j=0;j<pulses;j++){const progress=(t*(.045+Math.min(active,4)*.008)+i*.137+j/pulses)%1;const x=hub.x+(p.x-hub.x)*progress,y=hub.y+(p.y-hub.y)*progress;ctx.beginPath();ctx.strokeStyle='rgba(232,183,78,.27)';ctx.moveTo(x-(p.x-hub.x)*.026,y-(p.y-hub.y)*.026);ctx.lineTo(x,y);ctx.stroke();ctx.fillStyle=chosen?'#f4d795':'#c4a25e';ctx.shadowColor='#d5ab52';ctx.shadowBlur=6;ctx.beginPath();ctx.arc(x,y,chosen?1.8:1.25,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}}
+      if(online){const pulses=1+Math.min(3,active);for(let j=0;j<pulses;j++){const progress=(t*(.045+Math.min(active,4)*.008)+i*.137+j/pulses)%1;const x=hub.x+(p.x-hub.x)*progress,y=hub.y+(p.y-hub.y)*progress;ctx.beginPath();ctx.strokeStyle=P.pulseStroke;ctx.moveTo(x-(p.x-hub.x)*.026,y-(p.y-hub.y)*.026);ctx.lineTo(x,y);ctx.stroke();ctx.fillStyle=chosen?P.dotChosen:P.dot;ctx.shadowColor=chosen?P.glowChosen:P.glow;ctx.shadowBlur=6;ctx.beginPath();ctx.arc(x,y,chosen?1.8:1.25,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}}
     }
-    for(let ring=0;ring<3;ring++){ctx.beginPath();ctx.strokeStyle=ring===0?'rgba(211,165,72,.63)':`rgba(190,146,55,${ring===1?.12:.05})`;ctx.lineWidth=ring===0?1.7:1;const angle=t*.075*(ring%2?-1:1);ctx.arc(hub.x,hub.y,88+ring*13,angle,angle+Math.PI*(ring===0?1.85:1.4));ctx.stroke();}
+    for(let ring=0;ring<3;ring++){ctx.beginPath();ctx.strokeStyle=ring===0?P.ring0:ring===1?P.ring1:P.ring2;ctx.lineWidth=ring===0?1.7:1;const angle=t*.075*(ring%2?-1:1);ctx.arc(hub.x,hub.y,88+ring*13,angle,angle+Math.PI*(ring===0?1.85:1.4));ctx.stroke();}
   }
   function frame(time) {
     if(!paused&&!document.hidden&&view==='topology') {t+=Math.min((time-previousFrame)/1000,.08)||0;position();draw();}
@@ -174,7 +209,66 @@
   function setView(value) {view=value;$('topology').hidden=value!=='topology';$('rack').hidden=value!=='rack';$('topology-button').setAttribute('aria-pressed',String(value==='topology'));$('rack-button').setAttribute('aria-pressed',String(value==='rack'));resize();}
   $('topology-button').addEventListener('click',()=>setView('topology'));
   $('rack-button').addEventListener('click',()=>setView('rack'));
-  $('metric').addEventListener('change',event=>{metric=event.target.value;render();});
+  // The two pickers are menus of this page's own, drawn the way the app's pane menu is
+  // (desktop/lib/widgets/pane_menu.dart): a heading over a rule, then rows, the current one on
+  // a soft fill. A native <select> opened the platform's list, which looked like nothing else in
+  // the app. One menu is open at a time; a click anywhere else, or Escape, closes it.
+  const menus=[];
+  function menu(buttonId,listId,valueId,{heading,items,current,pick}){
+    const button=$(buttonId),list=$(listId),value=$(valueId);
+    const close=()=>{list.hidden=true;button.setAttribute('aria-expanded','false');};
+    const open=()=>{
+      menus.forEach(m=>m.close());
+      const rows=items(),now=current();
+      list.innerHTML=(heading?`<div class="menu-heading">${escape(heading.label)}${heading.caption?`<small>· ${escape(heading.caption)}</small>`:''}</div>`:'')+
+        (rows.length?rows.map(row=>`<button type="button" class="menu-row" role="option" data-value="${escape(row.value)}" aria-selected="${row.value===now}"><span class="row-title">${escape(row.label)}</span>${row.detail?`<span class="row-detail">${escape(row.detail)}</span>`:''}</button>`).join(''):'<div class="menu-empty">Nothing to choose yet.</div>');
+      list.hidden=false;button.setAttribute('aria-expanded','true');
+    };
+    button.addEventListener('click',event=>{event.stopPropagation();if(list.hidden)open();else close();});
+    list.addEventListener('click',event=>{
+      event.stopPropagation();const row=event.target.closest('[data-value]');if(!row)return;
+      close();if(row.dataset.value!==current())pick(row.dataset.value);
+    });
+    const draw=()=>{const now=current(),row=items().find(r=>r.value===now);value.textContent=row?row.label:(now||'Choose your grid');};
+    menus.push({close,draw});draw();
+    return {draw};
+  }
+  document.addEventListener('click',()=>menus.forEach(m=>m.close()));
+  document.addEventListener('keydown',event=>{if(event.key==='Escape')menus.forEach(m=>m.close());});
+  const metricLabels={tokS:'Decode speed',temperatureC:'Temperature',utilizationPct:'GPU load',memoryUsedGb:'Memory used',powerW:'Power'};
+  menu('metric','metric-list','metric-value',{
+    heading:{label:'Show on each machine'},
+    items:()=>Object.entries(metricLabels).map(([value,label])=>({value,label,detail:metricInfo[value][1]})),
+    current:()=>metric,
+    pick:value=>{metric=value;render();},
+  });
+  let selecting=false;
+  function gridChoices(){
+    const current=currentGrid();
+    const grids=(snapshot?.grids||[]).map(g=>({value:g.name,label:g.name,detail:g.type==='permissioned-public'?'private':g.type==='domain-restricted'?'domain':''}));
+    if(current&&!grids.some(g=>g.value===current))grids.unshift({value:current,label:current,detail:''});
+    return grids;
+  }
+  function currentGrid(){return snapshot?.grid&&!['Your grid','Choose your grid'].includes(snapshot.grid)?snapshot.grid:'';}
+  const gridMenu=menu('grid-select','grid-list','grid-value',{
+    heading:{label:'Grid'},
+    items:gridChoices,
+    current:currentGrid,
+    pick:async grid=>{
+      // The button's own label changes on the click, not on the network round trip: the server
+      // now answers as soon as the switch itself is done (not after a full telemetry refresh),
+      // but even that round trip is a moment a person can feel. Saying it here, first, is what
+      // makes the pick feel instant; render() below corrects it back if the switch failed.
+      selecting=true;$('grid-select').disabled=true;$('grid-value').textContent=grid;
+      toast(`Looking at ${grid}`);
+      try{
+        const r=await fetch('api/select',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({grid}),signal:AbortSignal.timeout(30_000)});
+        if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||'Could not switch grid');}
+      }catch(err){toast(err.message||'Could not switch grid');}
+      finally{selecting=false;$('grid-select').disabled=false;render();}
+    },
+  });
+  function renderGridSelect(){if(!selecting)gridMenu.draw();}
   $('motion').addEventListener('click',()=>{paused=!paused;$('motion').textContent=paused?'Resume motion':'Pause motion';$('motion').setAttribute('aria-pressed',String(paused));});
   $('motion').textContent=paused?'Resume motion':'Pause motion';$('motion').setAttribute('aria-pressed',String(paused));
   $('hub').addEventListener('click',()=>{selected=null;render();});
