@@ -403,6 +403,7 @@ void main() {
           notifier: app,
           animation: const AlwaysStoppedAnimation(1),
           onClose: () {},
+          trailingExtent: 0,
         ),
       ),
     };
