@@ -1,87 +1,76 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
+import 'package:harness_mobile/widgets/engine_identity.dart';
 
-/// The terminal page's own header: a search bar across the row, with the page's
-/// controls at its right end.
+import 'phone_status.dart';
+import 'status_pill.dart';
+
+/// The terminal page's own header: whose terminal this is, in two lines, with
+/// the page's controls at the right end.
 ///
-/// ⚠️ **Not [PhoneHeader], and the agent's name is not here.** The phone opens
-/// straight into a terminal now, so this row is the only place search can live —
-/// and a title beside a field leaves the field too narrow to read a hint in. The
-/// name moved to the foot of the page, beside the engine mark, where it is
-/// identity rather than chrome. See `terminal_foot_bar.dart`.
+/// ```
+/// [mark●]  agent-3                                       ⋯
+///          autonomous-harness  ⑂ main
+/// ```
 ///
-/// The bar is a button wearing a field's clothes: tapping it does not push
-/// anything, it grows in place into the search screen — see
-/// `terminal_search.dart`, which draws the same bar at the same geometry so the
-/// two frames line up. That is what the measurements below are public for: the
-/// expanded bar has to land on the pixels the collapsed one left.
+/// ⚠️ **The connection state is the dot on the engine mark, not a word.** It
+/// rides the mark's bottom-right corner the way presence sits on an avatar in a
+/// messenger: green while live, a spinner while attaching, the warning or error
+/// colour when the stream is taken over or drops. The label is still there for
+/// a screen reader and as the long-press tooltip — see [StatusDot].
 ///
-/// ⚠️ **It leaves on a scroll, and its controls carry on without it.** The page
-/// shrinks this row away as the terminal is scrolled forward, and the search
-/// bar, `+` and `⋯` fly out of it to become floating buttons down the right
-/// edge — see `terminal_header_floats.dart`. Nothing here knows about that; the
-/// row is either laid out or it is not.
+/// ⚠️ **Search and New agent are not here.** They float over the terminal's
+/// bottom-right corner with the mic — see `terminal_action_column.dart` — so
+/// this row is identity plus `⋯`, and nothing competes with the names for width.
+///
+/// ⚠️ **It leaves on a scroll, and `⋯` leaves with it.** The page slides this
+/// row away as the terminal is scrolled forward; nothing floats in its place.
+/// Nothing here knows about that; the row is either laid out or it is not.
 class TerminalHeader extends StatelessWidget {
   const TerminalHeader({
     super.key,
-    required this.onSearch,
+    required this.agent,
+    required this.status,
     this.trailing = const [],
-    this.barHidden = false,
   });
 
-  final VoidCallback onSearch;
+  /// The agent this terminal belongs to. Null while it is still loading.
+  final Agent? agent;
 
-  /// Whether the search overlay is drawing the bar instead of this row.
-  ///
-  /// ⚠️ **The bar still takes its space — it is only not PAINTED.** The overlay
-  /// draws an identical field at these very pixels, and two of them stacked put
-  /// one translucent rim over another: the border comes out darker than either
-  /// alone, and the fill deepens, for the whole of the open. Keeping the layout
-  /// and dropping the paint leaves this row doing what it still has to do —
-  /// holding the trailing controls in place while they fade — without a second
-  /// field showing through the first.
-  final bool barHidden;
+  /// The session's state, drawn as the dot on the engine mark.
+  final PhoneSummary status;
 
-  /// The page's controls, right of the bar: `+`, `⋯`, and the reclaim button
-  /// when the stream is read-only.
+  /// The page's controls, right of the names: `⋯`, and the reclaim button when
+  /// the stream is read-only.
   final List<Widget> trailing;
 
-  /// The bar's height, and with it the header's.
-  static const double barHeight = 38;
+  /// The row's height, not counting its insets.
+  ///
+  /// Two lines of type: 15pt name over 12.5pt folder, with the engine mark
+  /// centred against the pair.
+  static const double rowHeight = 40;
 
-  /// The row's padding, shared with the expanded bar. See the class note.
   static const double sideInset = 14;
   static const double topInset = 6;
   static const double bottomInset = 8;
 
-  /// Inside the bar: the inset before the magnifier, and the magnifier itself.
-  static const double barPadding = 10;
-  static const double glyphSize = 16;
+  /// The whole header, insets and divider included — what floats over the
+  /// terminal's top rows while it is shown.
+  static const double height = topInset + rowHeight + bottomInset + 1;
 
-  /// The hint's type.
-  static const double hintSize = 14;
-
-  /// The gap between the bar and whatever sits right of it.
-  ///
-  /// ⚠️ Carried by the trailing controls themselves, not laid in this row. The
-  /// page sizes their slot from one count, and the search field is laid out
-  /// from that same number; a gap sitting outside the slot would be points
-  /// neither side accounts for — see `_TrailingFade` in `terminal_page.dart`.
-  static const double barGap = 6;
-
-  /// What the bar says it will search.
-  ///
-  /// ⚠️ Names both kinds on purpose. The query spans agents AND machines, and
-  /// the two tabs this screen replaced each answered half the question — a bare
-  /// "Search" left somebody who remembers "that review thing" unsure whether
-  /// this is where to look for it.
-  static const String searchHint = 'Search agents and machines';
+  /// The engine mark's size. Big enough to carry the status dot on its corner
+  /// without the dot hiding it.
+  static const double markSize = 28;
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
+    final agent = this.agent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         sideInset,
@@ -89,85 +78,252 @@ class TerminalHeader extends StatelessWidget {
         sideInset,
         bottomInset,
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Visibility(
-              visible: !barHidden,
-              // Keeps the box, drops the paint and the hit test. See [barHidden].
-              maintainSize: true,
-              maintainAnimation: true,
-              maintainState: true,
-              child: _SearchBar(onTap: onSearch),
+      child: SizedBox(
+        height: rowHeight,
+        child: Row(
+          children: [
+            _BadgedMark(agent: agent, status: status),
+            const SizedBox(width: 11),
+            Expanded(
+              child: _Identity(agent: agent),
             ),
+            ...trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The engine mark with the session's state notched into its corner.
+class _BadgedMark extends StatelessWidget {
+  const _BadgedMark({required this.agent, required this.status});
+
+  final Agent? agent;
+  final PhoneSummary status;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    return SizedBox.square(
+      dimension: TerminalHeader.markSize,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          EngineMark(
+            engine: agent?.engine,
+            displayName: agent?.engineDisplayName,
+            size: TerminalHeader.markSize,
           ),
-          // ⚠️ **No gap of its own before these — see [barGap].** The page
-          // sizes their slot from one count. A spacer sitting outside that slot
-          // is points the count does not know about, so the search overlay's
-          // field — which is laid out from the same number — would stop short
-          // of where this row's own does, by exactly six.
-          ...trailing,
+          // Bottom-right, hanging a little past the mark — the corner a
+          // messenger puts presence on an avatar. The ring is the header's own
+          // colour, so the dot reads as cut into the mark rather than stuck on.
+          Positioned(
+            right: -4,
+            bottom: -4,
+            child: StatusDot(summary: status, ring: AppPalette.windowBg),
+          ),
         ],
       ),
     );
   }
 }
 
-/// The field-shaped target. Opaque hit test so the whole bar answers, not just
-/// the glyph and the words in it.
-class _SearchBar extends StatelessWidget {
-  const _SearchBar({required this.onTap});
+/// The two lines: *agent*, then *folder ⑂ branch*.
+///
+/// On the second line the folder is kept whole where it can be and the branch
+/// gives way — see [projectPathLabel].
+class _Identity extends StatelessWidget {
+  const _Identity({required this.agent});
 
-  final VoidCallback onTap;
+  final Agent? agent;
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    return Semantics(
-      button: true,
-      label: TerminalHeader.searchHint,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          height: TerminalHeader.barHeight,
-          padding: const EdgeInsets.symmetric(
-            horizontal: TerminalHeader.barPadding,
-          ),
-          decoration: BoxDecoration(
-            color: AppGlass.rowFill,
-            borderRadius: BorderRadius.circular(AppCard.radius),
-            border: Border.all(color: AppGlass.hair),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                LucideIcons.search300,
-                size: TerminalHeader.glyphSize,
-                color: AppPalette.textFaint,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  TerminalHeader.searchHint,
-                  maxLines: 1,
-                  // ⚠️ Fades rather than ellipses. The hint names two things and
-                  // the second one is what somebody is scanning for — a cut at
-                  // "Search agents and mac…" reads as a bug, while a soft edge
-                  // reads as a line that ran out of room.
-                  overflow: TextOverflow.fade,
-                  softWrap: false,
-                  style: TextStyle(
-                    color: AppPalette.textFaint,
-                    fontSize: TerminalHeader.hintSize,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
+    final agent = this.agent;
+    final project = agent?.project;
+    final branch = project?.branchLabel;
+    final hasPlace = project != null || branch != null;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          agent?.name ?? 'Agent',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: AppPalette.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            height: 1.2,
           ),
         ),
-      ),
+        if (hasPlace) ...[
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              if (project != null)
+                Flexible(
+                  flex: 3,
+                  child: Text(
+                    projectPathLabel(project.cwd),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _placeStyle,
+                  ),
+                ),
+              if (branch != null) ...[
+                if (project != null) const SizedBox(width: 8),
+                Icon(
+                  LucideIcons.gitBranch300,
+                  size: 12,
+                  color: AppPalette.textFaint,
+                ),
+                const SizedBox(width: 3),
+                Flexible(
+                  flex: 2,
+                  child: Text(
+                    branch,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _placeStyle,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ],
     );
   }
+
+  TextStyle get _placeStyle => TextStyle(
+    color: AppPalette.textSecondary,
+    fontSize: 12.5,
+    fontWeight: FontWeight.w500,
+    height: 1.2,
+  );
+}
+
+/// Where an agent runs, as the `⋯` sheet shows it under the agent's name, one
+/// line each behind its icon: the machine, the folder with its parent —
+/// `~/…/autonomous-harness/mobile` — and the branch.
+///
+/// The header has room for the folder's own name alone; the sheet is where the
+/// rest of the path is read.
+class AgentPlaceLines extends StatelessWidget {
+  const AgentPlaceLines({
+    super.key,
+    required this.machineName,
+    required this.project,
+  });
+
+  /// Empty leaves the line out.
+  final String machineName;
+
+  final AgentProject? project;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    final project = this.project;
+    final branch = project?.branchLabel;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (machineName.isNotEmpty)
+          _line(LucideIcons.laptopMinimal300, machineName),
+        if (project != null)
+          _line(LucideIcons.folder300, projectPathTrail(project.cwd)),
+        if (branch != null) _line(LucideIcons.gitBranch300, branch),
+      ],
+    );
+  }
+
+  Widget _line(IconData icon, String text) => Padding(
+    padding: const EdgeInsets.only(top: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Nudged down to sit on the text's first line rather than its top.
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 13, color: AppPalette.textFaint),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: AppPalette.textSecondary, fontSize: 13),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// A folder with its parent, everything above them folded into `…` —
+/// `~/…/autonomous-harness/mobile`.
+///
+/// Home is written `~` the way a shell prompt writes it; a path short enough to
+/// need no fold is kept whole (`~/notes`, `/srv/app`).
+String projectPathTrail(String cwd) {
+  const kept = 2;
+  final path = cwd.replaceAll('\\', '/');
+  final parts = path.split('/').where((part) => part.isNotEmpty).toList();
+  if (parts.isEmpty) return path.isEmpty ? '~' : '/';
+
+  // `/Users/<name>/…` on a Mac, `/home/<name>/…` on Linux, `/root` for root.
+  var homeDepth = 0;
+  if (path.startsWith('/') && parts.length >= 2) {
+    if (parts[0] == 'Users' || parts[0] == 'home') homeDepth = 2;
+  }
+  if (path.startsWith('/') && parts[0] == 'root') homeDepth = 1;
+  if (path.startsWith('~')) homeDepth = 1;
+
+  final String lead;
+  final List<String> below;
+  if (homeDepth > 0) {
+    lead = '~';
+    below = parts.sublist(math.min(homeDepth, parts.length));
+  } else {
+    // A Windows drive keeps its letter, anything else its root.
+    final drive = RegExp(r'^[A-Za-z]:$').hasMatch(parts.first);
+    lead = drive ? parts.first : '';
+    below = drive ? parts.sublist(1) : parts;
+  }
+  if (below.isEmpty) return lead.isEmpty ? '/' : lead;
+  final tail = below.length <= kept
+      ? below
+      : ['…', ...below.sublist(below.length - kept)];
+  return '$lead/${tail.join('/')}';
+}
+
+/// A folder as the header names it: its own name and nothing above it —
+/// `autonomous-harness`.
+///
+/// Home itself is written `~` the way a shell prompt writes it, and the root
+/// `/`: those have no name of their own to show.
+///
+/// ⚠️ The parents are the part every agent somebody owns has in common — the
+/// folder's own name is what tells two of them apart, so it is all that is kept.
+String projectPathLabel(String cwd) {
+  final path = cwd.replaceAll('\\', '/');
+  final parts = path.split('/').where((part) => part.isNotEmpty).toList();
+  if (parts.isEmpty) return path.isEmpty ? '~' : '/';
+
+  // Home: `/Users/<name>` on a Mac, `/home/<name>` on Linux, `/root`, `~`.
+  final isHome =
+      (path.startsWith('/') &&
+          parts.length == 2 &&
+          (parts[0] == 'Users' || parts[0] == 'home')) ||
+      (path.startsWith('/') && parts.length == 1 && parts[0] == 'root') ||
+      (path.startsWith('~') && parts.length == 1);
+  if (isHome) return '~';
+  return parts.last;
 }

@@ -126,6 +126,7 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
   bool get _lit => switch (_face) {
     VoiceMicFace.starting ||
     VoiceMicFace.listening ||
+    VoiceMicFace.send ||
     VoiceMicFace.cancelling ||
     VoiceMicFace.retry => true,
     VoiceMicFace.talk || VoiceMicFace.busy || VoiceMicFace.off => false,
@@ -136,7 +137,8 @@ class _VoiceMicButtonState extends State<VoiceMicButton> {
       micHoldsToTalk ? 'Hold to talk to the agent' : 'Talk to the agent',
     VoiceMicFace.starting => 'Cancel',
     VoiceMicFace.listening =>
-      micHoldsToTalk ? 'Release to send' : 'Send what was said',
+      micHoldsToTalk ? 'Release to send' : 'Done talking',
+    VoiceMicFace.send => 'Send',
     VoiceMicFace.cancelling => 'Release to cancel',
     VoiceMicFace.busy => 'Working',
     VoiceMicFace.retry => 'Send again',

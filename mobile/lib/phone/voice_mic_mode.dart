@@ -6,8 +6,10 @@
 /// listens for, the faces it can show, and what a release does — and nothing
 /// else in the app branches on it.
 enum VoiceMicMode {
-  /// Tap to start, tap again to send. Walkie-talkie: the button holds the
-  /// recording open with nothing held down, so a long sentence costs no thumb.
+  /// Tap to start talking, tap Send when done — the words are written into the
+  /// terminal's prompt and Return is pressed. `×` beside the mic calls the take
+  /// off. The button holds the recording open with nothing held down, so a
+  /// long sentence costs no thumb.
   ///
   /// Long-press stays the language shortcut here, because nothing else wants it.
   tapToToggle,
@@ -31,7 +33,7 @@ enum VoiceMicMode {
 /// want — a preference would mean a Settings row, a stored value, and two
 /// behaviours live at once in a button whose whole job is to be unambiguous
 /// under the thumb. Change this line, rebuild, and the app is the other app.
-const VoiceMicMode voiceMicMode = VoiceMicMode.holdToTalk;
+const VoiceMicMode voiceMicMode = VoiceMicMode.tapToToggle;
 
 /// Whether the mic records only while held down.
 bool get micHoldsToTalk => voiceMicMode == VoiceMicMode.holdToTalk;

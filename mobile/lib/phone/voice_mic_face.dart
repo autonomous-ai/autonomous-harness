@@ -14,8 +14,13 @@ enum VoiceMicFace {
   /// The microphone is opening: tap to call it off.
   starting,
 
-  /// Recording: tap to send what was said. It breathes while it listens.
+  /// Recording: tap Send, and what was said is written into the prompt and
+  /// sent. It breathes while it listens.
   listening,
+
+  /// What was said is in the prompt and its Return did not land: tap to send
+  /// it again.
+  send,
 
   /// Transcribing or sending: nothing to tap until that is back.
   busy,
@@ -36,6 +41,18 @@ enum VoiceMicFace {
   cancelling,
 }
 
+/// The mic's fill for [face].
+///
+/// Cancelling takes the warning colour: the button is about to throw away what
+/// was just said, and that is not something the accent — which everywhere else
+/// in the app means "go" — should be saying.
+///
+/// Listening is the accent's blue: the next tap sends.
+Color voiceMicTint(VoiceMicFace face) => switch (face) {
+  VoiceMicFace.cancelling => AppPalette.warn,
+  _ => AppPalette.accent,
+};
+
 /// The round, filled part of the mic: its colour, its glow, and the glyph for
 /// what a press will do.
 class VoiceMicCore extends StatelessWidget {
@@ -47,11 +64,7 @@ class VoiceMicCore extends StatelessWidget {
   final VoiceMicFace face;
   final bool lit;
 
-  /// The fill's hue. Cancelling takes the warning colour: the button is about
-  /// to throw away what was just said, and that is not something the accent —
-  /// which everywhere else in the app means "go" — should be saying.
-  Color get _tint =>
-      face == VoiceMicFace.cancelling ? AppPalette.warn : AppPalette.accent;
+  Color get _tint => voiceMicTint(face);
 
   @override
   Widget build(BuildContext context) => AnimatedContainer(
@@ -140,9 +153,11 @@ class _Glyph extends StatelessWidget {
         // pressing this, it is sent by letting go. The mic stays up for the
         // whole take and the thumb never leaves it, so there is no second press
         // for an arrow to describe.
-        VoiceMicFace.listening =>
-          micHoldsToTalk ? LucideIcons.mic300 : LucideIcons.arrowUp300,
-        VoiceMicFace.retry => LucideIcons.arrowUp300,
+        //
+        // The mic stays the glyph while it listens; the blue fill is what
+        // says the next tap sends — see [voiceMicTint].
+        VoiceMicFace.listening => LucideIcons.mic300,
+        VoiceMicFace.send || VoiceMicFace.retry => LucideIcons.arrowUp300,
         VoiceMicFace.cancelling => LucideIcons.x300,
         VoiceMicFace.off => LucideIcons.micOff300,
         VoiceMicFace.talk ||
@@ -175,7 +190,9 @@ class VoiceMicRing extends StatelessWidget {
         height: VoiceMicCore.diameter,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppPalette.accent.withValues(alpha: 0.35 * (1 - t)),
+          color: voiceMicTint(
+            VoiceMicFace.listening,
+          ).withValues(alpha: 0.35 * (1 - t)),
         ),
       ),
     ),

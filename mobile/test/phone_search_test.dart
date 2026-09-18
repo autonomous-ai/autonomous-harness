@@ -403,7 +403,6 @@ void main() {
           notifier: app,
           animation: const AlwaysStoppedAnimation(1),
           onClose: () {},
-          trailingExtent: 0,
         ),
       ),
     };
@@ -446,39 +445,6 @@ void main() {
         variant: TargetPlatformVariant.only(TargetPlatform.android),
       );
     }
-  });
-
-  testWidgets('terminal search: one bar, no Cancel, its chevron closes it', (
-    tester,
-  ) async {
-    final app = _app([
-      _machine('box', [_agent('3188', minutesAgo: 4)]),
-    ]);
-    addTearDown(app.dispose);
-    var closed = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: TerminalSearchOverlay(
-            notifier: app,
-            animation: const AlwaysStoppedAnimation(1),
-            onClose: () => closed++,
-            trailingExtent: 62,
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
-    expect(find.text('Cancel'), findsNothing);
-    // Open all the way, the field runs to the header's own inset: the trailing
-    // slot it started beside is its to take.
-    final screen = tester.getSize(find.byType(Scaffold)).width;
-    final field = tester.getRect(find.byType(AnimatedContainer).first);
-    expect(field.right, closeTo(screen - 14, 0.5));
-
-    await tester.tap(find.bySemanticsLabel('Close search'));
-    await tester.pump();
-    expect(closed, 1);
   });
 
   testWidgets('one bar: no Cancel beside it, and its chevron closes search', (
