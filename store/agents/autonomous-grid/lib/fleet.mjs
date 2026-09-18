@@ -111,15 +111,56 @@ export function execute(machine, args, { timeoutMs = 15_000, inherit = false, en
   });
 }
 
+/**
+ * The CLI's own reason for a failed read: a JSON error envelope (`{"error":
+ * {"message": ...}}`, printed to either stream) or the last human-readable
+ * stderr line. Surfaced so the viewer names the cause — "could not reach grid
+ * X: ..." — instead of a bare exit code. Credentials never reach the browser:
+ * tokens and userinfo are redacted before the message is stored.
+ */
+export function cliDetail(stdout, stderr) {
+  for (const chunk of [stdout, stderr]) {
+    for (const line of String(chunk || '').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('{')) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        const message = typeof parsed?.error === 'string' ? parsed.error : parsed?.error?.message;
+        if (typeof message === 'string' && message.trim()) return cleanDetail(message);
+      } catch { /* not a JSON envelope */ }
+    }
+  }
+  // Otherwise the human line: stderr first (the CLI reports failures there), then stdout.
+  for (const chunk of [stderr, stdout]) {
+    const lines = String(chunk || '').split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('{'));
+    if (lines.length) return cleanDetail(lines[lines.length - 1]);
+  }
+  return null;
+}
+
+export function cleanDetail(message) {
+  return text(String(message)
+    .replace(/([?&]token=)[^&\s]+/gi, '$1…')
+    .replace(/(^[a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/i, '$1…@'), 280);
+}
+
 export async function gridJson(machine, mode, args, options) {
   const result = await execute(machine, [`--${mode}`, ...args, '--json'], options);
   if (!result.ok) {
     const blocked = /(?:could not reach|network|socket)[\s\S]{0,600}(?:operation not permitted|EPERM|denied|blocked)/i.test(`${result.stdout}\n${result.stderr}`);
-    return { ok: false, error: blocked ? 'Network access was blocked by the agent sandbox. Use fleet status for viewer observations, or request scoped network approval before retrying this Grid command.' : result.code === 127 ? result.error : `grid ${args[0]} failed (${result.code}). Run it in the agent terminal for details.` };
+    if (blocked) return { ok: false, error: 'Network access was blocked by the agent sandbox. Use fleet status for viewer observations, or request scoped network approval before retrying this Grid command.' };
+    if (result.code === 127) return { ok: false, error: result.error };
+    // Exit 1 carries the reason on stderr (e.g. a dead relay URL): repeat it so the
+    // viewer and the agent see "could not reach grid …", not just an exit code.
+    const detail = cliDetail(result.stdout, result.stderr);
+    return { ok: false, error: detail ? `grid ${args[0]} failed (${result.code}): ${detail}` : `grid ${args[0]} failed (${result.code}). Run it in the agent terminal for details.` };
   }
   try {
     const value = JSON.parse(result.stdout);
-    if (value?.error) return { ok: false, error: `grid ${args[0]} reported an error.` };
+    if (value?.error) {
+      const detail = typeof value.error === 'string' ? cleanDetail(value.error) : cleanDetail(value.error.message || 'Grid reported an error.');
+      return { ok: false, error: `grid ${args[0]} reported: ${detail}` };
+    }
     return { ok: true, value };
   } catch { return { ok: false, error: `grid ${args[0]} did not return valid JSON.` }; }
 }
@@ -135,7 +176,11 @@ export async function gridJson(machine, mode, args, options) {
  */
 export async function gridSelect(machine, mode, grid, options, { run = execute, readJson = gridJson } = {}) {
   const written = await run(machine, [`--${mode}`, 'use', grid], options);
-  if (!written.ok) return { ok: false, error: written.code === 127 ? written.error : `grid use failed (${written.code}). Run it in the agent terminal for details.` };
+  if (!written.ok) {
+    if (written.code === 127) return { ok: false, error: written.error };
+    const detail = cliDetail(written.stdout, written.stderr);
+    return { ok: false, error: detail ? `grid use failed (${written.code}): ${detail}` : `grid use failed (${written.code}). Run it in the agent terminal for details.` };
+  }
   const read = await readJson(machine, mode, ['use'], options);
   const active = typeof read.value?.active === 'string' ? read.value.active : null;
   if (read.ok && active !== null && active !== grid) return { ok: false, error: `grid use answered, but the active grid is ${active}, not ${grid}.` };
