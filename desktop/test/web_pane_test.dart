@@ -16,6 +16,7 @@ import 'swarm_state_test.dart' show createApp;
 
 Map<String, dynamic> _frame(
   String id, {
+  bool terminalAvailable = true,
   String? viewerUrl,
   String? viewerError,
   String? viewerName,
@@ -31,16 +32,18 @@ Map<String, dynamic> _frame(
   'viewerName': ?viewerName,
   'verdict': ?verdict,
   'terminal': {
-    'available': true,
-    'runtimes': [
-      {'backend': 'tmux', 'paneId': '%1'},
-    ],
+    'available': terminalAvailable,
+    if (terminalAvailable)
+      'runtimes': [
+        {'backend': 'tmux', 'paneId': '%1'},
+      ],
   },
 };
 
 Future<void> _synced(
   AppNotifier app,
   String id, {
+  bool terminalAvailable = true,
   String? viewerUrl,
   String? viewerError,
   String? viewerName,
@@ -50,6 +53,7 @@ Future<void> _synced(
   'payload': {
     'agent': _frame(
       id,
+      terminalAvailable: terminalAvailable,
       viewerUrl: viewerUrl,
       viewerError: viewerError,
       viewerName: viewerName,
@@ -62,6 +66,44 @@ List<TerminalPane> _viewers(AppNotifier app) =>
     app.panes.where((pane) => pane.isWeb).toList();
 
 void main() {
+  test('a transient terminal-unavailable sync retains the terminal pane until deletion', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final pane = app.adoptSessionForTest(
+      terminal('a0', <TerminalBinaryFrame>[]),
+    );
+
+    await _synced(app, 'a0', terminalAvailable: false);
+
+    expect(app.panes, [pane]);
+    expect(
+      app
+          .stateOf('m')!
+          .agents
+          .firstWhere((agent) => agent.id == 'a0')
+          .terminalAvailable,
+      isFalse,
+    );
+
+    await _synced(app, 'a0');
+    expect(app.panes, [pane]);
+    expect(
+      app
+          .stateOf('m')!
+          .agents
+          .firstWhere((agent) => agent.id == 'a0')
+          .terminalAvailable,
+      isTrue,
+    );
+
+    await app.handleEventForTest('m', {
+      'type': 'agent_deleted',
+      'agentId': 'a0',
+      'payload': {'agentId': 'a0'},
+    });
+    expect(app.panes, isEmpty);
+  });
+
   testWidgets(
     'remote viewer update guidance can be dismissed and recovers to a forwarded URL',
     (tester) async {

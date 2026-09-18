@@ -6963,7 +6963,19 @@ class AppNotifier extends ChangeNotifier {
               // already `loaded`, so this push is the only signal that it can attach now.
               _attachPendingPanes(machine);
             } else {
-              await _removeAgent(machine, agent.id);
+              // A process replacement can briefly publish an agent before its
+              // terminal route is verified. `agent_synced` is a snapshot, not
+              // a deletion authority: removing every tile here turns that
+              // short gap into a lost workspace even though tmux and the
+              // agent are still alive. Keep the pane/layout intent and let a
+              // later available sync reattach it. A confirmed `agent_deleted`
+              // event remains the sole path that removes a person's panes.
+              _upsertAgent(machine, agent);
+              for (final pane in panesFor(machine.machine.machineId)) {
+                if (pane.agentId != agent.id) continue;
+                await _detachSession(pane, sendClose: false);
+              }
+              notifyListeners();
             }
           } catch (_) {
             unawaited(_loadMachineData(machine, force: true));
