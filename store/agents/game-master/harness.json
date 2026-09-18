@@ -1,0 +1,31 @@
+{
+  "spec": 1,
+  "id": "autonomous/game-master",
+  "name": "Game Master / AI-vs-AI Arena",
+  "category": "Games",
+  "author": "Autonomous",
+  "description": "Describe a game — a duel, a chase, a race, a turn-based bout — and get a deterministic, seedable arena in the pane where two AIs (or you + an AI) compete, replayed live with a re-seed.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "game/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}

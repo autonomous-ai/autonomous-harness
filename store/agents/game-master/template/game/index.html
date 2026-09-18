@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game Master — seeded placeholder</title>
+<style>
+  :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         background: linear-gradient(160deg, #14121f, #0a0910); color: #eee;
+         font-family: ui-monospace, Menlo, monospace; }
+  canvas { width: min(90vw, 560px); height: auto; aspect-ratio: 1/1; background: #0d0c16;
+           border: 1px solid #2a2440; border-radius: 10px; }
+  .card { text-align: center; padding: 20px; max-width: 600px; }
+  h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: .02em; }
+  p { opacity: .7; line-height: 1.6; margin: 0 0 14px; }
+  .score { font-size: 16px; margin-bottom: 10px; }
+</style>
+<div class="card">
+  <h1>Game Master · placeholder</h1>
+  <p>A real arena game will run here. This placeholder is a seeded two-player arena —
+     a grid with two tokens that each move a tick toward a goal, plus a scoreline.
+     Confirm it animates and the score counts, then replace it.</p>
+  <div class="score" id="score"> A 0 &mdash; 0 B</div>
+  <canvas id="c" width="480" height="480"></canvas>
+</div>
+<script>
+  // Seeded PRNG (mulberry32) so the placeholder is deterministic.
+  const seed = () => {
+    const s = new URLSearchParams(location.search).get('seed') || '0';
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  };
+  const mulberry32 = (a) => () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const rnd = mulberry32(seed());
+  const N = 8, S = 480 / N;
+  const token = (x, y) => ({ x, y, score: 0 });
+  const A = token(0, Math.floor(rnd() * N));
+  const B = token(N - 1, Math.floor(rnd() * N));
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  let tick = 0;
+  (function step() {
+    tick++;
+    // each side nudges one step toward the other's column, skewed by the seeded rng
+    const ahead = (t) => (t === A ? (B.x > A.x ? 1 : -1) : (A.x > B.x ? 1 : -1));
+    const move = (t) => {
+      const dir = ahead(t);
+      if (rnd() < 0.5) t.y = (t.y + (rnd() < 0.5 ? -1 : 1) + N) % N;
+      else t.x = Math.max(0, Math.min(N - 1, t.x + dir));
+    };
+    if (tick % 2) move(A); else move(B);
+    if (A.x === B.x && A.y === B.y) { (tick % 2 ? B : A).score++; A.x = 0; B.x = N - 1;
+      A.y = Math.floor(rnd() * N); B.y = Math.floor(rnd() * N); }
+    // arena grid
+    ctx.fillStyle = '#0d0c16'; ctx.fillRect(0, 0, 480, 480);
+    ctx.strokeStyle = 'rgba(120,110,180,0.2)';
+    for (let i = 1; i < N; i++) {
+      ctx.beginPath(); ctx.moveTo(i * S, 0); ctx.lineTo(i * S, 480); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * S); ctx.lineTo(480, i * S); ctx.stroke();
+    }
+    // tokens
+    ctx.fillStyle = '#7cc7ff'; ctx.beginPath(); ctx.arc(A.x * S + S / 2, A.y * S + S / 2, S * 0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ff9e7c'; ctx.beginPath(); ctx.arc(B.x * S + S / 2, B.y * S + S / 2, S * 0.3, 0, Math.PI * 2); ctx.fill();
+    scoreEl.textContent = ' A ' + A.score + ' — ' + B.score + ' B';
+    setTimeout(step, 120);
+  })();
+</script>
+</html>
