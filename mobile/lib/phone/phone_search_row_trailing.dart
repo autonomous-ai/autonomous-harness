@@ -39,7 +39,7 @@ class PhoneSearchTrailing extends StatelessWidget {
     if (entry.isWorking) {
       return _Recency('working', color: phoneToneColor(PhoneTone.busy));
     }
-    final at = entry.agent.updatedAt;
+    final at = entry.lastActiveAt;
     if (at == null) return const SizedBox.shrink();
     return _Recency(compactAge(at, now), color: AppPalette.textFaint);
   }

@@ -78,7 +78,7 @@ class _CheckingContent extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       Text(
-        'Verifying the tools Harness needs. This check is read-only and nothing is being installed.',
+        'Verifying the tools OpenHarness needs. This check is read-only and nothing is being installed.',
         textAlign: TextAlign.center,
         style: Theme.of(context).textTheme.bodySmall,
       ),

@@ -220,9 +220,9 @@ class _AgentsBody extends StatelessWidget {
     if (status == PhoneMachineStatus.offline) {
       return EmptyState(
         icon: LucideIcons.cloudOff300,
-        title: "Harness isn't running there",
+        title: "OpenHarness isn't running there",
         message:
-            'Start Harness on ${machine.machine.displayName} and its agents '
+            'Start OpenHarness on ${machine.machine.displayName} and its agents '
             'will show up here.',
       );
     }
@@ -245,7 +245,7 @@ class _AgentsBody extends StatelessWidget {
       return EmptyState(
         icon: LucideIcons.squareTerminal300,
         title: 'No agents yet',
-        message: 'Start one here, or from Harness on that machine.',
+        message: 'Start one here, or from OpenHarness on that machine.',
         action: FilledButton(
           onPressed: () => openNewAgent(context, notifier, _machineId),
           child: const Text('New agent'),

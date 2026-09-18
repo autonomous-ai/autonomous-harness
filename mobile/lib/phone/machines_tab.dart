@@ -102,7 +102,7 @@ class _Body extends StatelessWidget {
         icon: LucideIcons.laptopMinimal300,
         title: 'No machines yet',
         message:
-            'Run Harness on a computer signed in to this account and it will '
+            'Run OpenHarness on a computer signed in to this account and it will '
             'appear here.',
       );
     }

@@ -3,6 +3,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 
+import 'composing_keyboard.dart';
+
 /// The search page's whole header: one bar, with the way out inside it.
 ///
 /// Drawn here rather than through [PhoneHeader]: the page has no title. The
@@ -131,8 +133,13 @@ class _QueryInput extends StatelessWidget {
       // that drops the keyboard and leaves the results up.
       textInputAction: TextInputAction.search,
       onSubmitted: (_) => focus.unfocus(),
-      autocorrect: false,
-      enableSuggestions: false,
+      // Composing stays on — or Telex types `thoi tiet` for `thời tiết`. See
+      // [ComposingKeyboard]; with autocorrect on, iOS would also start curling
+      // quotes and joining dashes, which a query means literally.
+      autocorrect: ComposingKeyboard.autocorrect,
+      enableSuggestions: ComposingKeyboard.enableSuggestions,
+      smartDashesType: SmartDashesType.disabled,
+      smartQuotesType: SmartQuotesType.disabled,
       // Agent names are ids as often as sentences — `Dijkstra-visualization.html`
       // — and a capital forced onto the first letter of one is a wrong query.
       textCapitalization: TextCapitalization.none,

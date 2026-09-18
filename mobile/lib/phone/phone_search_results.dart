@@ -23,9 +23,11 @@ import 'phone_section_label.dart';
 /// else, so the two cannot return different rows — or walk a different pager —
 /// for the same words.
 ///
-/// Opening it asks each connected machine, once, what was last said to the
-/// agents offered first (see [AgentRecallStore]); keystrokes only ever read that
-/// memory, so typing stays instant and costs no data.
+/// A word that matches no agent is looked for in what the agents were last
+/// asked and answered — [AppNotifier.sessionPreviews], the desktop's own store.
+/// Keystrokes only ever read it, so typing stays instant and costs no data;
+/// opening the search just moves the agents offered first to the front of its
+/// background reads.
 class PhoneSearchResults extends StatefulWidget {
   const PhoneSearchResults({
     super.key,
@@ -52,17 +54,17 @@ class PhoneSearchResults extends StatefulWidget {
 class _PhoneSearchResultsState extends State<PhoneSearchResults> {
   late final Listenable _changes = Listenable.merge([
     widget.notifier,
-    widget.notifier.agentRecall,
+    widget.notifier.sessionPreviews,
   ]);
 
   @override
   void initState() {
     super.initState();
     final notifier = widget.notifier;
-    notifier.agentRecall.warm([
+    notifier.sessionPreviews.warm([
       for (final entry in recentAgents(agentIndex(notifier)))
-        notifier.agentRecallKey(entry.machineId, entry.agent),
-    ]);
+        notifier.previewKey(entry.machineId, entry.agent),
+    ], prioritize: true);
   }
 
   @override

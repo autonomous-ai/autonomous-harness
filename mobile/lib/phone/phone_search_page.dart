@@ -19,8 +19,8 @@ import 'phone_search_results.dart';
 /// finds the same agent here.
 ///
 /// ⚠️ Keystrokes never ask a machine anything. They filter what the app already
-/// holds — the agent list, and the recall [PhoneSearchResults] fetched once as
-/// the search opened — so typing on two bars of signal stays instant.
+/// holds — the agent list, and the session content [PhoneSearchResults] reads —
+/// so typing on two bars of signal stays instant.
 ///
 /// Returns when the search closes, so a caller whose own chrome depends on
 /// being the top route can rebuild — see `terminal_page.dart`, where the header

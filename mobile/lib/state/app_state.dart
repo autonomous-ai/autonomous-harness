@@ -34,9 +34,9 @@ import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
 import '../terminal/remote_media_download.dart';
 import '../widgets/engine_identity.dart' show allEngines;
-import 'agent_recall.dart';
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
+import 'session_preview.dart';
 import 'terminal_pane.dart';
 import 'swarm.dart';
 import '../terminal/terminal_binary.dart';
@@ -206,6 +206,16 @@ class MachineState {
   String? pendingOfflineAgentId;
   final Set<String> processingAgentIds = {};
 
+  /// When this app last SAW each agent's conversation move — a turn starting,
+  /// beating or ending on this socket — by agentId.
+  ///
+  /// Newer than [Agent.updatedAt] whenever the machine has not re-sent that
+  /// agent since, which is the normal case: the daemon pushes an agent when the
+  /// agent changes, not on every turn. Without this, an agent somebody had just
+  /// talked to kept the age of its last list fetch and sank below idle ones the
+  /// moment its turn ended.
+  final Map<String, DateTime> agentActivityAt = {};
+
   /// Agents on this machine that have stopped to ask something, by agentId.
   /// At most one per agent: a pane shows one dialog at a time, and the daemon
   /// re-announces the same open question rather than queueing a second.
@@ -331,25 +341,45 @@ class AppNotifier extends ChangeNotifier {
   final WsConn Function(String machineId)? connectionForTest;
   final Map<String, Timer> _turnActivityWatchdogs = {};
 
-  /// Each agent's last few turns, as search matches them — see [AgentRecallStore].
+  /// What each agent was last asked and answered, as search matches it — the
+  /// desktop's own store (see `session_preview.dart`), fed the same two ways:
+  /// a small `agent_recent` read whenever the agent list arrives, and every
+  /// turn event this socket carries, so a reply is findable the moment it lands.
   ///
-  /// Asks only a machine this app is already connected to, and never dials one:
-  /// warming search must not be what wakes a relay socket.
-  late final AgentRecallStore agentRecall = AgentRecallStore(
-    fetch: (key) => _conn(key.machineId).request(
+  /// Read again after [freshFor] at the soonest, not the desktop's minute: a
+  /// phone pays for the bytes, and the live events already keep a connected
+  /// machine's agents current.
+  late final sessionPreviews = SessionPreviewStore(
+    canFetch: _canFetchPreview,
+    freshFor: const Duration(minutes: 5),
+    fetchRecent: (key) => _conn(key.machineId).request(
       'agent_recent',
       payload: {'agentId': key.agentId, 'n': 3},
       timeout: const Duration(seconds: 6),
     ),
-    canFetch: (key) =>
-        !_disposed &&
-        (_pool != null || connectionForTest != null) &&
-        machineStates[key.machineId]?.connectionStatus ==
-            ConnectionStatus.connected,
   );
 
-  AgentRecallKey agentRecallKey(String machineId, Agent agent) =>
+  SessionPreviewKey previewKey(String machineId, Agent agent) =>
       (machineId: machineId, agentId: agent.id, sessionId: agent.sessionId);
+
+  /// Asks only a machine this app is already connected to, and never dials one:
+  /// warming search must not be what wakes a relay socket.
+  bool _canFetchPreview(SessionPreviewKey key) {
+    if (_disposed || (_pool == null && connectionForTest == null)) return false;
+    final machine = machineStates[key.machineId];
+    return machine != null &&
+        machine.nodeOnline != false &&
+        !machine.needsLink &&
+        machine.connectionStatus == ConnectionStatus.connected &&
+        machine.agents.any(
+          (agent) =>
+              agent.id == key.agentId && agent.sessionId == key.sessionId,
+        );
+  }
+
+  void _warmPreviews(MachineState machine) => sessionPreviews.warm(
+    machine.agents.map((agent) => previewKey(machine.machine.machineId, agent)),
+  );
 
   /// When this launch became signed in, and by which route — until the first
   /// message of that session has been reported, after which it is null.
@@ -2346,18 +2376,19 @@ class AppNotifier extends ChangeNotifier {
       final updater = desktopUpdater ?? DesktopUpdater();
       final staged = await updater.downloadAndStage(info);
       if (staged == null) {
-        updateError = 'Could not download and verify Harness ${info.version}.';
+        updateError =
+            'Could not download and verify OpenHarness ${info.version}.';
         return false;
       }
       final applied = await updater.applyStaged(staged, selfPid: pid);
       if (!applied) {
         updateError =
-            'This copy of Harness cannot install updates automatically.';
+            'This copy of OpenHarness cannot install updates automatically.';
         return false;
       }
       exit(0);
     } catch (error) {
-      updateError = 'Could not install Harness ${info.version}: $error';
+      updateError = 'Could not install OpenHarness ${info.version}: $error';
       return false;
     } finally {
       isInstallingUpdate = false;
@@ -2527,6 +2558,7 @@ class AppNotifier extends ChangeNotifier {
     currentUser = null;
     machines = [];
     machineStates.clear();
+    sessionPreviews.clear();
     expandedMachines.clear();
     selectedMachineId = null;
     status = AppStatus.unauthenticated;
@@ -3562,6 +3594,18 @@ class AppNotifier extends ChangeNotifier {
 
   void _replaceAgents(MachineState machine, List<Agent> agents) {
     final nextIds = agents.map((agent) => agent.id).toSet();
+    for (final old in machine.agents.where(
+      (agent) => !nextIds.contains(agent.id),
+    )) {
+      sessionPreviews.removeAgent(machine.machine.machineId, old.id);
+    }
+    for (final agent in agents) {
+      sessionPreviews.retainAgent(
+        machine.machine.machineId,
+        agent.id,
+        agent.sessionId,
+      );
+    }
     for (final agentId in machine.processingAgentIds.difference(nextIds)) {
       _cancelTurnActivity(machine.machine.machineId, agentId);
     }
@@ -3588,6 +3632,7 @@ class AppNotifier extends ChangeNotifier {
       machine.pendingProcessingSessions.remove(sessionId);
       _markAgentProcessing(machine, agentId);
     }
+    _warmPreviews(machine);
   }
 
   void _upsertAgent(MachineState machine, Agent agent) {
@@ -3598,6 +3643,12 @@ class AppNotifier extends ChangeNotifier {
     } else {
       machine.agents = [...machine.agents]..[index] = agent;
     }
+    sessionPreviews.retainAgent(
+      machine.machine.machineId,
+      agent.id,
+      agent.sessionId,
+    );
+    sessionPreviews.warm([previewKey(machine.machine.machineId, agent)]);
     machine.sessionAgentIds.removeWhere((_, id) => id == agent.id);
     final sessionId = agent.sessionId;
     if (sessionId != null) {
@@ -3632,7 +3683,9 @@ class AppNotifier extends ChangeNotifier {
     machine.agents = machine.agents
         .where((agent) => agent.id != agentId)
         .toList();
+    sessionPreviews.removeAgent(machine.machine.machineId, agentId);
     machine.sessionAgentIds.removeWhere((_, id) => id == agentId);
+    machine.agentActivityAt.remove(agentId);
     _cancelTurnActivity(machine.machine.machineId, agentId);
     if (machine.activeAgentId == agentId) machine.activeAgentId = null;
     if (machine.pendingOfflineAgentId == agentId) {
@@ -3672,6 +3725,34 @@ class AppNotifier extends ChangeNotifier {
   ) {
     final session = payload['sessionId'] ?? event['dbSessionId'];
     return session is String && session.isNotEmpty ? session : null;
+  }
+
+  /// One session event into [sessionPreviews], as the desktop feeds its own —
+  /// dropped when it belongs to a session the agent has already moved on from,
+  /// so a late frame from before a `/clear` cannot write into the new one.
+  void _ingestPreview(
+    MachineState machine,
+    Map<String, dynamic> event,
+    String type,
+    Map<String, dynamic> payload,
+  ) {
+    final agentId = _eventAgentId(machine, event, payload);
+    final agent = machine.agents
+        .where((agent) => agent.id == agentId)
+        .firstOrNull;
+    if (agent == null) return;
+    final sessionId = _eventSessionId(event, payload);
+    if (sessionId != null &&
+        agent.sessionId != null &&
+        sessionId != agent.sessionId) {
+      return;
+    }
+    sessionPreviews.ingest(
+      previewKey(machine.machine.machineId, agent),
+      type,
+      payload,
+      streamingText: agent.engine == 'opencode' || agent.engine == 'kilo',
+    );
   }
 
   /// Starts the clock `app_first_message` measures. [from] is `sign_in` for a
@@ -5489,6 +5570,12 @@ class AppNotifier extends ChangeNotifier {
       }
       return;
     }
+    if (SessionPreviewStore.eventTypes.contains(type)) {
+      _ingestPreview(machine, event, type, payload);
+      // Content belongs to the preview's notifier. It must not invalidate the
+      // whole app for every token or tool event.
+      if (type != 'turn_started' && type != 'turn_ended') return;
+    }
     switch (type) {
       // ── the dial, over the cable, forwarded by the local daemon ──────────────────────────────────
       // Local-only frames (backend.sendLocal in the harness CLI): they describe a hand at THIS desk, so
@@ -5692,6 +5779,7 @@ class AppNotifier extends ChangeNotifier {
         var changed = false;
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
+          machine.agentActivityAt[agentId] = DateTime.now();
           changed = _markAgentProcessing(machine, agentId);
           // Only a START opens a stats turn, for the reason above: a heartbeat
           // is a turn already under way, and counting one would report an agent
@@ -5714,6 +5802,8 @@ class AppNotifier extends ChangeNotifier {
       case 'turn_ended':
         final agentId = _eventAgentId(machine, event, payload);
         if (agentId != null) {
+          // The answer just landed — the moment a recency sort should follow.
+          machine.agentActivityAt[agentId] = DateTime.now();
           _cancelTurnActivity(machine.machine.machineId, agentId);
         } else {
           final sessionId = _eventSessionId(event, payload);
@@ -5813,7 +5903,7 @@ class AppNotifier extends ChangeNotifier {
       swarm.panes.clear();
     }
     unawaited(_spokenTasks.close());
-    agentRecall.dispose();
+    sessionPreviews.dispose();
     super.dispose();
   }
 }

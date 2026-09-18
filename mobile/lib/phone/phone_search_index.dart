@@ -1,5 +1,5 @@
-import 'package:harness_mobile/state/agent_recall.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/state/session_preview.dart';
 
 import 'agent_index.dart';
 import 'phone_status.dart';
@@ -30,7 +30,7 @@ class PhoneSearchResult {
     required this.summary,
     required this.machineId,
     this.titleFields = 1,
-    this.recall,
+    this.preview,
     this.entry,
     this.machine,
   });
@@ -64,9 +64,10 @@ class PhoneSearchResult {
   /// it, and is ranked that way on the desktop too (its `titleFields`).
   final int titleFields;
 
-  /// What was last said to this agent and what it answered, when its machine
-  /// has told us — the fallback a word that matches no field is looked for in.
-  final AgentRecall? recall;
+  /// What was last asked of this agent and what it answered — cached from its
+  /// machine and kept live by its turn events. The fallback a word that matches
+  /// no field is looked for in, as on the desktop.
+  final SessionPreview? preview;
 
   final PhoneSummary summary;
 
@@ -93,13 +94,13 @@ List<PhoneSearchResult> phoneSearchIndex(AppNotifier notifier) => [
   for (final entry in recentAgents(agentIndex(notifier)))
     _agentResult(
       entry,
-      notifier.agentRecall.read(
-        notifier.agentRecallKey(entry.machineId, entry.agent),
+      notifier.sessionPreviews.read(
+        notifier.previewKey(entry.machineId, entry.agent),
       ),
     ),
 ];
 
-PhoneSearchResult _agentResult(AgentEntry entry, AgentRecall? recall) {
+PhoneSearchResult _agentResult(AgentEntry entry, SessionPreview? preview) {
   final agent = entry.agent;
   final engine = agent.engineDisplayName ?? agent.engine ?? '';
   final title = agent.title ?? '';
@@ -139,7 +140,7 @@ PhoneSearchResult _agentResult(AgentEntry entry, AgentRecall? recall) {
       branch,
     ].map((field) => field.toLowerCase()).where((field) => field.isNotEmpty).toList(),
     titleFields: title.isEmpty ? 1 : 2,
-    recall: recall,
+    preview: preview,
     summary: entry.summary,
     machineId: entry.machineId,
     entry: entry,

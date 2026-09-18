@@ -107,7 +107,7 @@ class HarnessApp extends StatelessWidget {
       codeSize: grid.AppFont.codeSize,
     );
     return MaterialApp(
-      title: 'Harness',
+      title: 'OpenHarness',
       // The corner ribbon stays. A phone carries both builds under one icon and
       // one name, and telling them apart otherwise means reading `dumpsys` over
       // a cable — by which point a bug has already been reported against the

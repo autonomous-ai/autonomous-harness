@@ -68,27 +68,30 @@ int? phoneFieldMatchScore(String field, String term, {required bool title}) {
   return best;
 }
 
-/// Whether [term] appears, as written, in what was last said to [row]'s agent.
+/// Whether [term] appears, as written, in what was last asked of [row]'s agent
+/// or what it answered — the desktop's content fallback.
 ///
-/// Literal only — never the scattered-letter match the fields get. Three turns of
-/// prose contain almost every short run of letters somewhere, so a fuzzy hit in
-/// them would return every agent on the account.
-bool phoneRecallHas(PhoneSearchResult row, String term) =>
-    row.recall?.searchText.contains(term) ?? false;
+/// Literal only — never the scattered-letter match the fields get. A few turns
+/// of prose contain almost every short run of letters somewhere, so a fuzzy hit
+/// in them would return every agent on the account.
+bool phoneContentHas(PhoneSearchResult row, String term) =>
+    row.preview?.searchText.contains(term) ?? false;
 
 /// What a word found only in the conversation costs: more than any metadata
-/// match can, so an agent that IS "llama" stays ahead of one that talked about it.
-const _recallScore = 256;
+/// match can, so an agent that IS "llama" stays ahead of one that talked about
+/// it. The desktop's figure.
+const _contentScore = 256;
 
 /// The rows [query] reaches, best first.
 ///
 /// An empty query keeps index order untouched: [phoneSearchIndex] already put
 /// the agents in the order worth offering before a word is typed.
 ///
-/// A word that matches no field is looked for in the agent's recall — what was
-/// last asked of it and what it answered — which is how "llama" finds the agent
-/// somebody asked about llama.cpp. Rows that needed the conversation to match
-/// rank after every row that matched on the agent itself, as on the desktop.
+/// A word that matches no field is looked for in the agent's session content —
+/// its recent requests, its latest answer, what it is writing right now — which
+/// is how "llama" finds the agent somebody asked about llama.cpp. Rows that
+/// needed the content to match rank after every row that matched on the agent
+/// itself, as on the desktop.
 ///
 /// ⚠️ Ties break on the row's position in the index, never on anything that
 /// moves by itself. An agent that starts working sorts upward in [agentIndex],
@@ -104,12 +107,12 @@ List<PhoneSearchResult> rankPhoneSearch(
   if (terms.isEmpty) return all;
 
   final ranked =
-      <({PhoneSearchResult row, int score, bool recalled, int index})>[];
+      <({PhoneSearchResult row, int score, bool content, int index})>[];
   for (final (index, row) in all.indexed) {
     // An exact hit on the name — or the title — wins outright, ahead of every
     // scored row. Typing one in full is the least ambiguous thing somebody can do.
     if (row.fields.take(row.titleFields).contains(needle)) {
-      ranked.add((row: row, score: -1, recalled: false, index: index));
+      ranked.add((row: row, score: -1, content: false, index: index));
       continue;
     }
     final match = _scoreRow(row, terms);
@@ -117,58 +120,63 @@ List<PhoneSearchResult> rankPhoneSearch(
     ranked.add((
       row: row,
       score: match.score,
-      recalled: match.recalled,
+      content: match.content,
       index: index,
     ));
   }
 
-  int byRecall(bool recalled) => recalled ? 1 : 0;
+  int byContent(bool content) => content ? 1 : 0;
   ranked.sort((a, b) {
-    var order = byRecall(a.recalled).compareTo(byRecall(b.recalled));
+    var order = byContent(a.content).compareTo(byContent(b.content));
     if (order == 0) order = a.score.compareTo(b.score);
     return order != 0 ? order : a.index.compareTo(b.index);
   });
   return [for (final row in ranked) row.row];
 }
 
-/// Every term's best score on [row] summed, and whether any needed the recall —
-/// or null when one term matches nothing at all.
+/// Every term's best score on [row] summed, and whether any needed the session
+/// content — or null when one term matches nothing at all.
 ///
 /// One word matching nothing drops the row: the words narrow, they do not
 /// accumulate. Without this, "review mac" would return everything either word
 /// touches.
-({int score, bool recalled})? _scoreRow(
+({int score, bool content})? _scoreRow(
   PhoneSearchResult row,
   List<String> terms,
 ) {
   var total = 0;
-  var recalled = false;
+  var content = false;
   for (final term in terms) {
     final best = phoneBestFieldMatch(row, term);
     if (best != null) {
       total += best.score;
       continue;
     }
-    if (!phoneRecallHas(row, term)) return null;
-    recalled = true;
-    total += _recallScore;
+    if (!phoneContentHas(row, term)) return null;
+    content = true;
+    total += _contentScore;
   }
-  return (score: total, recalled: recalled);
+  return (score: total, content: content);
 }
 
-/// The part of [row]'s recall worth quoting under its name: the line holding the
-/// first word that no field matched, from a little before that word.
+/// The line of [row]'s session content worth quoting under its name: the one
+/// holding the first word no field matched, from a little before that word.
 ///
 /// Null when every word matched the agent itself — the row's own subtitle then
 /// says why it is there, and a quote would only be noise.
-String? phoneRecallSnippet(PhoneSearchResult row, List<String> terms) {
-  final recall = row.recall;
-  if (recall == null) return null;
+String? phoneContentSnippet(PhoneSearchResult row, List<String> terms) {
+  final preview = row.preview;
+  if (preview == null) return null;
   for (final term in terms) {
     if (phoneBestFieldMatch(row, term) != null) continue;
-    for (final line in recall.lines) {
-      final at = line.toLowerCase().indexOf(term);
-      if (at >= 0) return _quote(line, at);
+    // Line by line: a saved answer runs to paragraphs, and a row has one line
+    // to quote from.
+    for (final part in preview.searchParts) {
+      for (final raw in part.split('\n')) {
+        final line = raw.trim();
+        final at = line.toLowerCase().indexOf(term);
+        if (at >= 0) return _quote(line, at);
+      }
     }
   }
   return null;

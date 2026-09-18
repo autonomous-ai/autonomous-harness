@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
@@ -12,7 +10,7 @@ import 'package:harness_mobile/phone/phone_search_groups.dart';
 import 'package:harness_mobile/phone/phone_search_index.dart';
 import 'package:harness_mobile/phone/phone_search_page.dart';
 import 'package:harness_mobile/phone/phone_search_rank.dart';
-import 'package:harness_mobile/state/agent_recall.dart';
+import 'package:harness_mobile/phone/terminal_search.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/state/pending_question.dart';
 import 'package:harness_mobile/ws/ws_conn.dart';
@@ -76,9 +74,10 @@ AppNotifier _app(List<MachineState> machines, {WsConn? conn}) {
   return app;
 }
 
-/// A machine that remembers what was asked of each agent, and answers nothing else.
-class _RecallConn extends WsConn {
-  _RecallConn(this.asks)
+/// A machine answering `agent_recent` with what was asked of each agent, and
+/// nothing else.
+class _RecentConn extends WsConn {
+  _RecentConn(this.asks)
     : super(
         wsBaseUrl: 'ws://fixture.invalid',
         autonomousEnv: 'test',
@@ -106,7 +105,7 @@ class _RecallConn extends WsConn {
   }
 }
 
-/// Lets every in-flight recall reply land.
+/// Lets every in-flight `agent_recent` reply land.
 Future<void> _settle() async {
   for (var i = 0; i < 8; i++) {
     await Future<void>.delayed(Duration.zero);
@@ -182,6 +181,29 @@ void main() {
     ]);
   });
 
+  test('a turn seen on the socket puts its agent ahead of idle ones', () async {
+    // The reported case: a reply had just landed on one agent, but the machine
+    // had not re-sent it, so it kept its 35m age under agents listed as 1m.
+    final machine = _machine('m', [
+      _agent('idle', minutesAgo: 1),
+      _agent('talked', minutesAgo: 35),
+    ]);
+    final app = _app([machine]);
+    addTearDown(app.dispose);
+    List<String> order() =>
+        recentAgents(agentIndex(app)).map((entry) => entry.agent.id).toList();
+    expect(order(), ['idle', 'talked']);
+
+    await app.handleEventForTest('m', {
+      'type': 'turn_ended',
+      'agentId': 'talked',
+      'payload': <String, dynamic>{},
+    });
+    expect(order(), ['talked', 'idle']);
+    final talked = agentIndex(app).firstWhere((e) => e.agent.id == 'talked');
+    expect(compactAge(talked.lastActiveAt!, DateTime.now()), 'now');
+  });
+
   group('search', () {
     final app = _app([
       _machine('box', [
@@ -237,73 +259,11 @@ void main() {
     });
   });
 
-  group('recall', () {
-    test('asks first, then each recap; cleaned, deduped, summaries only', () {
-      final recall = parseAgentRecall({
-        'asks': ['which \x1b[1mllama.cpp\x1b[0m build\nis this?', ''],
-        'events': [
-          {
-            'kind': 'summary',
-            'recap': 'Pinned llama.cpp b4521',
-            'text': 'Pinned llama.cpp b4521',
-          },
-          {'kind': 'tool', 'text': 'ls -la'},
-          'garbage',
-        ],
-      });
-      expect(recall.lines, [
-        'which llama.cpp build is this?',
-        'Pinned llama.cpp b4521',
-      ]);
-      expect(recall.searchText, contains('b4521'));
-    });
-
+  group('session content', () {
     test(
-      'warms two at a time, never re-asks lately, survives failures',
+      'a word only in what an agent was asked finds it, after fields',
       () async {
-        final pending = <String, Completer<Map<String, dynamic>>>{};
-        var now = DateTime(2026, 9, 18, 9);
-        final store = AgentRecallStore(
-          fetch: (key) => (pending[key.agentId] = Completer()).future,
-          canFetch: (key) => key.machineId != 'offline',
-          now: () => now,
-        );
-        addTearDown(store.dispose);
-        AgentRecallKey key(String agentId, [String machineId = 'box']) =>
-            (machineId: machineId, agentId: agentId, sessionId: null);
-
-        store.warm([key('a'), key('b'), key('c'), key('x', 'offline')]);
-        expect(pending.keys, ['a', 'b']);
-
-        pending['a']!.complete({
-          'agentId': 'a',
-          'asks': ['llama?'],
-        });
-        pending['b']!.completeError(StateError('socket dropped'));
-        await _settle();
-        expect(pending.keys, ['a', 'b', 'c']);
-        expect(store.read(key('a'))!.lines, ['llama?']);
-        expect(store.read(key('b')), isNull);
-        pending['c']!.complete({'agentId': 'c', 'asks': const []});
-        await _settle();
-
-        pending.clear();
-        store.warm([key('a'), key('b')]);
-        expect(
-          pending,
-          isEmpty,
-          reason: 'both were asked less than freshFor ago',
-        );
-        now = now.add(const Duration(minutes: 3));
-        store.warm([key('a'), key('b')]);
-        expect(pending.keys, ['a', 'b']);
-      },
-    );
-
-    test(
-      'a word only said to an agent finds it, after every field match',
-      () async {
-        final conn = _RecallConn({
+        final conn = _RecentConn({
           'said': ['which llama.cpp build is running?'],
           'quiet': ['fix the login redirect'],
         });
@@ -319,20 +279,47 @@ void main() {
           'named',
         ]);
 
-        app.agentRecall.warm([
+        app.sessionPreviews.warm([
           for (final agent in app.machineStates['box']!.agents)
-            app.agentRecallKey('box', agent),
+            app.previewKey('box', agent),
         ]);
         await _settle();
         final ranked = rankPhoneSearch(phoneSearchIndex(app), 'llama');
         expect(_agentIds(ranked), ['named', 'said']);
-        expect(phoneRecallSnippet(ranked.first, ['llama']), isNull);
+        expect(phoneContentSnippet(ranked.first, ['llama']), isNull);
         expect(
-          phoneRecallSnippet(ranked.last, ['llama']),
+          phoneContentSnippet(ranked.last, ['llama']),
           'which llama.cpp build is running?',
         );
       },
     );
+
+    test('an answer streaming in is findable before its turn ends', () async {
+      final app = _app([
+        _machine('box', [
+          _agent('live', minutesAgo: 30),
+          _agent('other', minutesAgo: 1),
+        ]),
+      ]);
+      addTearDown(app.dispose);
+      Future<void> event(String type, Map<String, dynamic> payload) =>
+          app.handleEventForTest('box', {
+            'type': type,
+            'agentId': 'live',
+            'payload': payload,
+          });
+      await event('turn_started', {
+        'userMessage': 'which llama.cpp build is running?',
+      });
+      await event('text_delta', {'content': 'It is llama.cpp b4521.'});
+
+      final ranked = rankPhoneSearch(phoneSearchIndex(app), 'b4521');
+      expect(_agentIds(ranked), ['live']);
+      expect(
+        phoneContentSnippet(ranked.single, ['b4521']),
+        'It is llama.cpp b4521.',
+      );
+    });
   });
 
   test('compactAge', () {
@@ -380,10 +367,10 @@ void main() {
     expect(find.byType(PhoneSearchFolderHeader), findsOneWidget);
   });
 
-  testWidgets('opening search asks for recall; the matching line is quoted', (
+  testWidgets('opening search warms content; the matching line is quoted', (
     tester,
   ) async {
-    final conn = _RecallConn({
+    final conn = _RecentConn({
       '3188': ['which llama.cpp build is running?'],
     });
     final app = _app([
@@ -394,7 +381,8 @@ void main() {
     ], conn: conn);
     addTearDown(app.dispose);
     await tester.pumpWidget(MaterialApp(home: PhoneSearchPage(notifier: app)));
-    await tester.pump();
+    // The store publishes on an 80 ms beat, as on the desktop.
+    await tester.pump(const Duration(milliseconds: 100));
     expect(conn.asked, ['3188', '2312']);
 
     await tester.enterText(find.byType(TextField), 'llama');
@@ -405,6 +393,58 @@ void main() {
       find.text('which llama.cpp build is running?', findRichText: true),
       findsOneWidget,
     );
+  });
+
+  group('the query field lets the keyboard compose', () {
+    final fields = <String, Widget Function(AppNotifier)>{
+      'search page': (app) => PhoneSearchPage(notifier: app),
+      'terminal search': (app) => Scaffold(
+        body: TerminalSearchOverlay(
+          notifier: app,
+          animation: const AlwaysStoppedAnimation(1),
+          onClose: () {},
+        ),
+      ),
+    };
+
+    Future<Map<String, dynamic>> attachedConfig(
+      WidgetTester tester,
+      Widget Function(AppNotifier) field,
+    ) async {
+      final app = _app([
+        _machine('box', [_agent('3188', minutesAgo: 4)]),
+      ]);
+      addTearDown(app.dispose);
+      await tester.pumpWidget(MaterialApp(home: field(app)));
+      await tester.pump();
+      return tester.testTextInput.setClientArgs!;
+    }
+
+    for (final MapEntry(key: name, value: field) in fields.entries) {
+      testWidgets(
+        '$name: iOS keeps the autocorrection its Telex conversion rides on',
+        (tester) async {
+          final config = await attachedConfig(tester, field);
+          expect(config['autocorrect'], isTrue);
+          expect(config['enableSuggestions'], isTrue);
+          expect(
+            config['smartQuotesType'],
+            SmartQuotesType.disabled.index.toString(),
+          );
+        },
+        variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+      );
+
+      testWidgets(
+        '$name: Android composes with suggestions and corrects nothing',
+        (tester) async {
+          final config = await attachedConfig(tester, field);
+          expect(config['enableSuggestions'], isTrue);
+          expect(config['autocorrect'], isFalse);
+        },
+        variant: TargetPlatformVariant.only(TargetPlatform.android),
+      );
+    }
   });
 
   testWidgets('one bar: no Cancel beside it, and its chevron closes search', (

@@ -150,7 +150,7 @@ class _Body extends StatelessWidget {
       const SettingsCaption('Appearance'),
       SettingsGroup(children: [_PaletteRow(), _TextSizeRow()]),
       const SettingsNote(
-        'Harness is dark-only, so a palette picks the shade rather than the mode.',
+        'OpenHarness is dark-only, so a palette picks the shade rather than the mode.',
       ),
       const SettingsCaption('About'),
       SettingsGroup(children: const [_VersionRow(), _BuildRow()]),

@@ -9,9 +9,9 @@ import 'phone_search_rank.dart';
 /// row's title.
 typedef PhoneFieldMatch = ({String field, String term, bool title});
 
-/// [terms] as matches on a recall quote (see [phoneRecallSnippet]): each term is
-/// its own field, so the emphasis lands on the word wherever the quote holds it.
-List<PhoneFieldMatch> phoneRecallMatches(List<String> terms) => [
+/// [terms] as matches on a content quote (see [phoneContentSnippet]): each term
+/// is its own field, so the emphasis lands on the word wherever the quote holds it.
+List<PhoneFieldMatch> phoneContentMatches(List<String> terms) => [
   for (final term in terms.take(12).toSet())
     (field: term, term: term, title: false),
 ];

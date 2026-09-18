@@ -24,7 +24,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
-        android:label="harness"
+        android:label="OpenHarness"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

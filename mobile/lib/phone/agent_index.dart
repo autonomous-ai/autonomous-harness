@@ -28,6 +28,16 @@ class AgentEntry {
 
   bool get isWorking => machine.processingAgentIds.contains(agent.id);
 
+  /// When its conversation last moved: the machine's own [Agent.updatedAt], or
+  /// a turn this app saw since ([MachineState.agentActivityAt]) — whichever is
+  /// later. Null when neither is known.
+  DateTime? get lastActiveAt {
+    final reported = agent.updatedAt;
+    final seen = machine.agentActivityAt[agent.id];
+    if (reported == null || seen == null) return seen ?? reported;
+    return seen.isAfter(reported) ? seen : reported;
+  }
+
   PhoneSummary get summary => phoneAgentSummary(machine, agent);
 }
 
@@ -82,15 +92,15 @@ List<AgentEntry> otherAgents(List<AgentEntry> entries) =>
 ///
 /// The recency is what the tabs deliberately do NOT sort on — a list somebody browses must not
 /// reshuffle — but a search is opened to reach one agent and closed again, and the agent somebody
-/// reaches for is overwhelmingly the one that just finished. Agents from a daemon too old to send
-/// [Agent.updatedAt] keep their index order after every dated one.
+/// reaches for is overwhelmingly the one that just finished — see [AgentEntry.lastActiveAt]. Agents
+/// with no date at all keep their index order after every dated one.
 List<AgentEntry> recentAgents(List<AgentEntry> entries) => _stableSorted(
   entries,
   (a, b) =>
       _firstWhere(a.isWaiting, b.isWaiting) ??
       _firstWhere(a.isWorking, b.isWorking) ??
       _firstWhere(a.agent.terminalAvailable, b.agent.terminalAvailable) ??
-      _newestFirst(a.agent.updatedAt, b.agent.updatedAt),
+      _newestFirst(a.lastActiveAt, b.lastActiveAt),
 );
 
 /// -1 when only [a] holds, 1 when only [b] does, null on a tie — so comparators chain with `??`.

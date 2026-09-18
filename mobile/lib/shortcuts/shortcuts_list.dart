@@ -264,7 +264,7 @@ class ShortcutsNote extends StatelessWidget {
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
     final text = Text(
-      'Harness shortcuts control your workspace. Other input goes to the '
+      'OpenHarness shortcuts control your workspace. Other input goes to the '
       'focused agent, where prompt editing and cancellation follow that '
       'coding agent’s behavior.',
       style: TextStyle(

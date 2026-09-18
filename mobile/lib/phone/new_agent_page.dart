@@ -190,7 +190,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
 
   /// Why the two rows are unavailable, or null while they are not.
   ///
-  /// Printed rather than left to a disabled row: "Update Harness on that machine" is something the
+  /// Printed rather than left to a disabled row: "Update OpenHarness on that machine" is something the
   /// person can act on, and a row that simply does nothing teaches them nothing.
   String? get _projectSourceNote {
     final machine = _machine;
@@ -198,7 +198,7 @@ class _NewAgentPageState extends State<NewAgentPage> {
     // Said only once the machine has actually answered. Before that, silence — a row must not call
     // a machine out of date on the strength of an answer that has not arrived.
     if (!machine.terminalCapabilityLoaded) return null;
-    return 'Update Harness on ${machine.machine.displayName} to create a '
+    return 'Update OpenHarness on ${machine.machine.displayName} to create a '
         'project or clone one there.';
   }
 

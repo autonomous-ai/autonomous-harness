@@ -162,7 +162,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       _heading(
         'Getting started',
         'Checking this computer',
-        'Checking the tools Harness needs to run your harnesses.',
+        'Checking the tools OpenHarness needs to run your harnesses.',
       ),
       _checkList(state, checking: true),
     ],
@@ -215,7 +215,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
             _notice(
               Icons.terminal,
               'Admin prompts stay in Terminal',
-              'Complete any installation prompts there, then return to Harness.',
+              'Complete any installation prompts there, then return to OpenHarness.',
             ),
             const SizedBox(height: 16),
           ],
@@ -241,8 +241,8 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       if (state.phase == EnvironmentSetupPhase.waitingForTerminal)
         _notice(
           Icons.lock_outline,
-          'Harness cannot see your password',
-          'Finish the prompts in Terminal, then return here. Harness checks progress automatically.',
+          'OpenHarness cannot see your password',
+          'Finish the prompts in Terminal, then return here. OpenHarness checks progress automatically.',
         ),
       const SizedBox(height: 18),
       _checkList(state, checking: true),
@@ -280,7 +280,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
       _heading(
         'Setup complete',
         'This computer is ready',
-        'Every required command passed. Continue to Harness sign-in.',
+        'Every required command passed. Continue to OpenHarness sign-in.',
       ),
       _checkList(state),
     ],
@@ -313,7 +313,7 @@ class _EnvironmentSetupScreenState extends State<EnvironmentSetupScreen> {
                 detail: _linuxClipboardDetail,
                 status: state.steps[EnvironmentStep.clipboard],
               ),
-            const _CheckSectionLabel('Harness components'),
+            const _CheckSectionLabel('OpenHarness components'),
             _CheckRow(
               label: 'Managed Node 20+ & Harness CLI',
               detail: '~/.harness/runtime · harness version',

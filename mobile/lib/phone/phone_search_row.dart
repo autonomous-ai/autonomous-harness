@@ -77,7 +77,7 @@ class _PhoneSearchRowState extends State<PhoneSearchRow> {
     final matches = phoneResultMatches(row, widget.terms);
     // A row that is here for something said in its conversation quotes it in
     // place of its subtitle: nothing else on the row would explain the match.
-    final quote = phoneRecallSnippet(row, widget.terms);
+    final quote = phoneContentSnippet(row, widget.terms);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapDown: (_) => _press(true),
@@ -122,7 +122,7 @@ class _PhoneSearchRowState extends State<PhoneSearchRow> {
                           (widget.placed ? row.placedSubtitle : row.subtitle),
                       matches: quote == null
                           ? matches
-                          : phoneRecallMatches(widget.terms),
+                          : phoneContentMatches(widget.terms),
                       style: TextStyle(
                         color: AppPalette.textFaint,
                         fontSize: 12.5,
