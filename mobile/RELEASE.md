@@ -67,8 +67,9 @@ icon size in thirty seconds instead of in an email twenty minutes later.
 | `1.0.0 (15)` | 2026-09-18 | TestFlight. The floating mic, Search and + are always there, on a see-through background |
 | `1.0.0 (17)` | 2026-09-18 | TestFlight. The terminal holds still as the keyboard opens. (16 went to Play only) |
 | `1.0.0 (18)` | 2026-09-18 | TestFlight. Tab, clear and `/` on the terminal's key bar; account-wide agents list in the terminal sheet; the phone sheet no longer cuts off its last rows |
+| `1.0.0 (19)` | 2026-09-18 | TestFlight. The floating mic, Search and + sit on frosted glass, so they stand out from the output under them |
 
-`pubspec.yaml` is therefore at `1.0.0+19`: the repo always holds the NEXT build number, so a release
+`pubspec.yaml` is therefore at `1.0.0+20`: the repo always holds the NEXT build number, so a release
 runs clean without anyone having to remember the last one.
 
 ### Why the app is iPhone-only
