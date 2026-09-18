@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Voxel World</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<!-- The Voxel Worlds agent replaces this placeholder with a real, walkable world. -->
+<p id="msg" style="color:#fff;font:16px monospace;margin:16px">Describe a world in the chat — a village, a volcano, a spaceport — and the agent will build it here.</p>
+<script>
+const c = document.body.appendChild(document.createElement('canvas'))
+const g = c.getContext('2d')
+function size() { c.width = innerWidth; c.height = innerHeight }
+size(); addEventListener('resize', size)
+// A flat placeholder ground so the pane shows something green and alive before the agent begins.
+function frame() {
+  g.fillStyle = '#87ceeb'; g.fillRect(0, 0, c.width, c.height)          // sky
+  g.fillStyle = '#4a8c3f'; g.fillRect(0, c.height * 0.6, c.width, c.height * 0.4) // grass
+  requestAnimationFrame(frame)
+}
+frame()
+</script>
+</body>
+</html>

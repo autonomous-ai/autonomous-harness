@@ -1,0 +1,34 @@
+{
+  "spec": 1,
+  "id": "autonomous/voxel-worlds",
+  "name": "Voxel Worlds",
+  "category": "Games",
+  "author": "Autonomous",
+  "description": "Turn a sentence into a playable 3D voxel world in one HTML file — describe a village, a volcano, a spaceport — and walk it in the pane. Place and break blocks, day/night cycle, live in the browser.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "world/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "VOXEL_DSH_DIR": "${dsh}"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}
