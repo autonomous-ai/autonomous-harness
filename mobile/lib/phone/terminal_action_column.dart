@@ -6,6 +6,7 @@ import 'package:harness_mobile/terminal/terminal_session.dart';
 
 import 'voice_input_controller.dart';
 import 'voice_mic_button.dart';
+import 'voice_mic_face.dart';
 import 'voice_mic_fab.dart';
 import 'voice_status_pill.dart';
 
@@ -56,13 +57,24 @@ class TerminalActionColumn extends StatelessWidget {
   /// How far the column sits from the terminal's right and bottom edges.
   static const double inset = VoiceMicFab.inset;
 
-  /// The gap from the mic's slot to the first button under it — the mic's
-  /// overhang plus the button's own, so the two targets meet and do not overlap.
-  static const double _underMic =
-      VoiceMicButton.touchOverhang + TerminalRoundAction.touchOverhang;
+  /// How far the column sits above the terminal's bottom edge — higher than
+  /// [inset], so the `＋` clears the agent's own status line under it.
+  static const double bottomInset = 172;
 
-  /// Between Search and New agent.
-  static const double _between = 10;
+  /// The DRAWN gap between one circle and the next, the same all the way down.
+  ///
+  /// ⚠️ No smaller than the mic's overhang plus a button's, less the slack
+  /// between the mic's slot and its drawn face — any closer and the mic's
+  /// target would swallow the top of Search's.
+  static const double _gap = 22;
+
+  /// The mic's slot is larger than its drawn circle, so the gap under the slot
+  /// is [_gap] less that slack.
+  static const double _underMic =
+      _gap - (VoiceMicButton.extent - VoiceMicCore.diameter) / 2;
+
+  /// Between Search and New agent: circles in slots of their own size.
+  static const double _between = _gap;
 
   @override
   Widget build(BuildContext context) {

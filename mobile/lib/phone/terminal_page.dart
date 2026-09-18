@@ -715,7 +715,7 @@ class _TerminalPageState extends State<TerminalPage>
                           if (!_ownsInput)
                             Positioned(
                               right: TerminalActionColumn.inset,
-                              bottom: TerminalActionColumn.inset,
+                              bottom: TerminalActionColumn.bottomInset,
                               child: TerminalActionColumn(
                                 voice: widget.voice,
                                 session: session,
