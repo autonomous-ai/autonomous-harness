@@ -80,6 +80,7 @@ import { TmuxBackend } from './lib/tmuxBackend.js'
 import { DEFAULT_HOST_THEME, loadHostTheme, saveHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
 import { restoreAgents } from './lib/restoreAgents.js'
+import { restoreLaunchRefusal, workdirAvailable } from './lib/workdirAvailable.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
@@ -3708,7 +3709,13 @@ async function runForeground(session: AuthSession): Promise<void> {
       // and a pane that outlived the daemon in a session discovery no longer lists still has its
       // engine, which a second pane resuming the same session would collide with.
       liveProcess: (entry, runtime) => resolvePaneEngineProcess(runtime.paneId, entry.engine),
+      cwdAvailable: (cwd) => workdirAvailable(cwd).ok,
       buildLaunch: async (entry, opts) => {
+        // Mirrors `agent_create` in the other direction too: a folder that is gone is refused BEFORE
+        // a pane exists. Opening one anyway is what left a corpse pane reading "harness: the selected
+        // working directory is unavailable" and a row blaming the engine for it.
+        const refusal = restoreLaunchRefusal(entry)
+        if (refusal) return refusal
         // Mirrors `agent_create`: the same grid env/argv (and the same vendor variables cleared), or
         // the same Codex profile with its hooks installed; the install check runs inside the pane's
         // own shell.
@@ -3904,11 +3911,8 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   backend.onCreateAgent = async ({ engine, cwd, bypassPermission, permissionMode, grid, codexHome, dsh, prompt, name, agent }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
-    try {
-      if (!statSync(cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
-    } catch {
-      return { ok: false, error: 'CWD_NOT_FOUND' }
-    }
+    const workdir = workdirAvailable(cwd)
+    if (!workdir.ok) return { ok: false, error: 'CWD_NOT_FOUND', detail: workdir.detail }
     // A domain-specific harness: put its files into the workspace first (template, AGENTS.md, skill
     // links) and take its env/argv for the launch. Refused, never approximated, when it is not here.
     let dshEnv: Record<string, string> | undefined

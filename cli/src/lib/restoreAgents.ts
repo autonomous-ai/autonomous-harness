@@ -57,6 +57,11 @@ export interface RestoreAgentsDeps {
   /** The engine process still running in this row's pane, or null when tmux does not know the pane
    *  at all — including when no tmux server is running — or the pane has become something else. */
   liveProcess: (entry: RegisteredSession, runtime: TmuxRuntimeRef) => Promise<ProcessIdentity | null>
+  /** Is this row's folder there right now? Only `CWD_NOT_FOUND` is allowed to retry itself, and only
+   *  because it is the one recorded failure whose precondition is observable from outside the agent:
+   *  put the folder back (recreate the worktree, remount the disk) and the row becomes launchable
+   *  again without anyone touching it. */
+  cwdAvailable: (cwd: string) => boolean
   /** The pane's launch — engine argv plus whatever puts it back on its grid / profile. A grid the
    *  machine cannot honour (unsupported engine, tmux too old, config dir unwritable) is a refusal. */
   buildLaunch: (entry: RegisteredSession, opts: { resumeSessionId?: string }) => Promise<RestoreLaunchResult>
@@ -94,6 +99,14 @@ const DEFAULT_SETTLE_MS = 10_000
 const SETTLE_POLL_MS = 500
 const HOLD_SLACK_MS = 30_000
 
+/** A row that failed for a missing folder, whose folder is back. Every other failure stays skipped:
+ *  nothing outside the agent says whether an engine that exited would exit again. */
+function workdirFailureCleared(deps: RestoreAgentsDeps, entry: RegisteredSession): boolean {
+  const launch = entry.launch
+  if (!launch || launch.state !== 'failed' || launch.error !== 'CWD_NOT_FOUND') return false
+  return !!entry.cwd && deps.cwdAvailable(entry.cwd)
+}
+
 function tmuxRuntime(entry: RegisteredSession): TmuxRuntimeRef | null {
   const runtime = entry.runtimes.find((candidate): candidate is TmuxRuntimeRef => candidate.backend === 'tmux')
   return runtime ?? null
@@ -130,7 +143,9 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
   for (const entry of deps.registry.list()) {
     const runtime = tmuxRuntime(entry)
     if (!runtime) { summary.skipped.push({ agentId: entry.agentId, reason: 'no tmux pane' }); continue }
-    if (entry.launch?.state === 'failed') { summary.skipped.push({ agentId: entry.agentId, reason: 'last launch failed' }); continue }
+    if (entry.launch?.state === 'failed' && !workdirFailureCleared(deps, entry)) {
+      summary.skipped.push({ agentId: entry.agentId, reason: 'last launch failed' }); continue
+    }
     const live = await deps.liveProcess(entry, runtime)
     if (live) {
       // Still running. A row that lost its identity without losing its pane (a reboot the boot
@@ -223,13 +238,17 @@ async function watchRestoredPane(
     // along to the agent itself, the stale binding goes, and the engine gets one fresh start.
     mayRetryFresh = false
     deps.log(`[restore] ${engine} · agent ${agentId} · did not come back up resuming its session — retrying fresh`)
-    deps.registry.inheritName(entry.sessionId, agentId)
-    deps.registry.unbindSession(entry.sessionId)
+    // BUILD FIRST. A launch that cannot be built at all — its folder is gone — must not also cost the
+    // agent the conversation it was resuming: the binding is the only thing that makes the row worth
+    // repairing, and a repair that has to re-find the transcript by hand is not a repair.
     const launch = await deps.buildLaunch(entry, {})
     if ('error' in launch) {
       fail(launch.error, launch.detail)
       return false
     }
+    // Only now is there something to put in the binding's place.
+    deps.registry.inheritName(entry.sessionId, agentId)
+    deps.registry.unbindSession(entry.sessionId)
     const spawned = await deps.respawn(runtime, launch)
     if (!spawned.ok) {
       fail('ENGINE_DID_NOT_START', `${engine} could not be relaunched fresh: ${spawned.reason ?? 'unknown reason'}`)
