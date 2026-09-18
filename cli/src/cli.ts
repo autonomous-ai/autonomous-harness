@@ -4977,6 +4977,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The dial's own carousel tick, borrowed: ring order and wrap from the cable host, `dial_focus` to
     // the window, `app_focus` back. Without a window the forward is a no-op, so say so up front.
     stepFocus: (direction, currentAgentId) => backend.hasLocalClient() ? cableHost.stepFocus(direction, currentAgentId) : Promise.resolve('no_app'),
+    // The dial's touchpad stroke, borrowed the same way: `dial_scroll` to the window's focused terminal.
+    scroll: (phase, dy, velocity) => { if (!backend.hasLocalClient()) return false; cableHost.scrolled(phase, dy, velocity); return true },
     agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
       state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
     submit: submitAgent,
