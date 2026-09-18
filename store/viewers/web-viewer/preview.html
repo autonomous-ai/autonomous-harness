@@ -1,34 +1,127 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Web Viewer</title>
 <style>
-  :root { color-scheme: light dark; font: 12px system-ui, sans-serif; }
-  body { margin: 0; height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: light-dark(#f4f4f4, #252525); }
-  #file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #status { margin-left: auto; opacity: .65; white-space: nowrap; }
-  button { color: inherit; background: transparent; border: 1px solid #8886; border-radius: 5px; padding: 4px 8px; cursor: pointer; }
-  button:hover { background: #8882; }
-  iframe { width: 100%; flex: 1; min-height: 0; border: 0; }
+  :root { color-scheme: light dark; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+         background: light-dark(#f6f6f4, #101014); color: light-dark(#1c1c1e, #ececf0); }
+
+  header { flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+           padding: max(6px, env(safe-area-inset-top)) 12px 6px 12px;
+           background: light-dark(#ffffff, #1a1a1f);
+           border-bottom: 1px solid light-dark(#e4e4e1, #292930); }
+
+  .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .logo { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 5px;
+          background: linear-gradient(135deg, #7c5cff, #22b8cf); }
+  #file { font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+          color: light-dark(#6b6b6f, #9a9aa3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+          font-size: 11.5px; font-weight: 600; letter-spacing: .01em;
+          background: light-dark(#f0f0ee, #26262d); border: 1px solid light-dark(#e0e0dd, #33333b);
+          color: light-dark(#55555b, #b8b8c2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: currentColor; }
+  .pill.live { color: light-dark(#147a3e, #46d47a); }
+  .pill.live .dot { animation: pulse 2s infinite; }
+  .pill.dead { color: light-dark(#9a5b14, #f0b243); }
+  .pill.dead .dot { animation: pulse 1.1s infinite; }
+  .pill.building .dot { background: transparent !important; border: 2px solid currentColor; border-top-color: transparent;
+                        border-radius: 50%; animation: spin .9s linear infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 currentColor; } 70% { box-shadow: 0 0 0 5px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .spacer { flex: 1; }
+  .hint { font-size: 11px; color: light-dark(#9a9a9f, #6f6f78); font-variant-numeric: tabular-nums; }
+  kbd { font: 11px ui-monospace, Menlo, Consolas, monospace; padding: 1px 5px; border-radius: 4px;
+        border: 1px solid light-dark(#d8d8d5, #383841); border-bottom-width: 2px;
+        background: light-dark(#fafafa, #23232a); color: light-dark(#55555b, #b8b8c2); }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+         color: inherit; background: transparent; border: 1px solid light-dark(#d8d8d5, #383841);
+         border-radius: 6px; padding: 4px 9px; font: inherit; font-weight: 550; }
+  .btn:hover { background: light-dark(#f2f2f0, #26262e); }
+  .btn:active { transform: translateY(1px); }
+
+  .stage { flex: 1; min-height: 0; position: relative; display: flex; }
+  iframe { width: 100%; height: 100%; border: 0; background: light-dark(#ffffff, #0d0d11); }
+
+  #empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+           justify-content: center; gap: 14px; text-align: center; padding: 24px;
+           background: light-dark(#fafaf8, #121217); }
+  #empty .ring { width: 40px; height: 40px; border-radius: 50%; border: 3px solid
+                 light-dark(#e4e4e1, #2c2c34); border-top-color: #7c5cff; animation: spin 1s linear infinite; }
+  #empty h2 { margin: 0; font-size: 15px; font-weight: 650; }
+  #empty p { margin: 0; font-size: 12.5px; line-height: 1.5; color: light-dark(#6b6b6f, #9a9aa3); max-width: 44ch; }
+
+  @media (max-width: 560px) { .hint, .open { display: none; } #file { max-width: 42vw; } }
+  @media (prefers-reduced-motion: reduce) {
+    .pill.live .dot, .pill.dead .dot, .pill.building .dot, #empty .ring { animation: none !important; }
+  }
 </style>
-<header><span id="file"></span><span id="status" role="status">Connecting…</span><button id="reload">Reload</button></header>
-<iframe id="preview" title="Workspace preview" sandbox="allow-scripts"></iframe>
+<header>
+  <span class="brand"><span class="logo"></span><span id="file"></span></span>
+  <span id="pill" class="pill" role="status"><span class="dot"></span><span id="pilltext">Connecting…</span></span>
+  <span class="spacer"></span>
+  <span class="hint">press <kbd>R</kbd> to reload</span>
+  <button id="open" class="btn open" title="Open the preview in a new tab">Open ↗</button>
+  <button id="reload" class="btn" title="Reload the preview (R)">↻ Reload</button>
+</header>
+<div class="stage">
+  <iframe id="preview" title="Workspace preview" sandbox="allow-scripts"></iframe>
+  <div id="empty" hidden>
+    <div class="ring"></div>
+    <h2>Building…</h2>
+    <p>The agent hasn't created <span id="emptyfile"></span> yet. This flips to the live piece the moment it does — no refresh needed.</p>
+  </div>
+</div>
 <script>
   const requested = new URLSearchParams(location.search).get('file') || 'index.html';
   const parts = requested.split(/[\\/]/);
   const file = parts.some(part => !part || part.startsWith('.')) ? 'index.html' : requested;
   const frame = document.querySelector('#preview');
-  const status = document.querySelector('#status');
+  const empty = document.querySelector('#empty');
+  const pill = document.querySelector('#pill');
+  const pillText = document.querySelector('#pilltext');
   document.querySelector('#file').textContent = file;
-  const reload = () => { frame.src = '/files/' + file.split('/').map(encodeURIComponent).join('/') + '?v=' + Date.now(); };
-  document.querySelector('#reload').addEventListener('click', reload);
-  reload();
+  document.querySelector('#emptyfile').textContent = file;
+  const encodePath = file.split('/').map(encodeURIComponent).join('/');
+
+  const setPill = (kind, text) => {
+    pill.className = 'pill' + (kind ? ' ' + kind : '');
+    pillText.textContent = text;
+  };
+
+  // Check the page exists so we can show a pleasant "building" state instead of a raw 404,
+  // then load it. The SSE stream re-runs this on every file change.
+  async function load() {
+    empty.hidden = true;
+    try {
+      const res = await fetch('/files/' + encodePath, { method: 'HEAD', cache: 'no-store' });
+      if (res.status === 404) { empty.hidden = false; return; }
+    } catch { /* fall through to loading the frame anyway */ }
+    frame.src = '/files/' + encodePath + '?v=' + Date.now();
+  }
+
+  document.querySelector('#reload').addEventListener('click', load);
+  document.querySelector('#open').addEventListener('click', () => {
+    window.open('/files/' + encodePath + '?v=' + Date.now(), '_blank', 'noopener');
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'r' || e.key === 'R') { e.preventDefault(); load(); }
+  });
+
   const events = new EventSource('/events');
-  events.onopen = () => { status.textContent = 'Live'; reload(); };
-  events.onerror = () => { status.textContent = 'Reconnecting…'; };
-  events.addEventListener('change', reload);
-  events.addEventListener('watch-error', () => { status.textContent = 'Use Reload to see changes'; });
+  events.onopen = () => { setPill('live', 'Live'); load(); };
+  events.onerror = () => setPill('dead', 'Reconnecting…');
+  events.addEventListener('change', () => { load(); });
+  events.addEventListener('watch-error', () => { setPill('dead', 'Reload to see changes'); });
+
+  setPill('building', 'Connecting…');
+  load();
 </script>
 </html>
