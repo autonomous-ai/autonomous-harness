@@ -17,16 +17,18 @@ import 'terminal_header.dart';
 /// while an identical one arrived from off-screen. Opening in place leaves the
 /// thing that was tapped exactly where it was.
 ///
-/// ⚠️ **Nothing here moves, and that took two tries to get right.** The bar
-/// first grew into the screen, then merely widened as Cancel opened beside it;
-/// both widened the field and then narrowed it again within the one gesture,
-/// which is felt as the row snapping about. The field is now laid out once, at
-/// one width, for the whole of the open. What changes is the header's trailing
-/// end, which cross-fades `+` and `⋯` for Cancel — see `_TrailingSwap` in
-/// `terminal_page.dart` — and the results, which fade up underneath.
+/// ⚠️ **One bar, no Cancel — the search page's shape.** The way out is the
+/// chevron at the field's leading edge, which the magnifier turns into as the
+/// search opens, exactly where [PhoneSearchField] keeps its own. A Cancel beside
+/// the bar was a second way out sitting next to the field's clear, and it cost
+/// the field the width of a word.
 ///
-/// The way out is that Cancel. The system back gesture reaches it too — see
-/// [TerminalSearchOverlay]'s [PopScope].
+/// ⚠️ **The field moves once, in one direction.** It starts on the header's own
+/// bar, then widens over `+` and `⋯` as they fade (see `_TrailingFade` in
+/// `terminal_page.dart`). An earlier Cancel widened the field and then narrowed
+/// it again within the one gesture, which is felt as the row snapping about;
+/// with nothing claiming the space back, that cannot happen. The system back
+/// gesture closes it too — see [TerminalSearchOverlay]'s [PopScope].
 ///
 /// ⚠️ **It must stay mounted only while searching.** The [TextField] inside
 /// autofocuses, so a copy left built behind the terminal would keep the keyboard
@@ -42,8 +44,8 @@ class TerminalSearchOverlay extends StatefulWidget {
 
   final AppNotifier notifier;
 
-  /// How much of the header's row its trailing slot is holding — the Cancel the
-  /// header swaps in as this opens. The field stops there; see [_Bar].
+  /// How much of the header's row its trailing slot is holding: where the
+  /// field starts from before it widens over that slot. See [_Bar].
   final double trailingExtent;
 
   /// The open/close animation the terminal page drives — 0 collapsed into the
@@ -98,23 +100,23 @@ class _TerminalSearchOverlayState extends State<TerminalSearchOverlay> {
       // for nothing.
       child: Column(
         children: [
-          // ⚠️ **The bar neither fades in nor changes size.** It lands exactly
-          // on the header's own, which hides its picture of a field while this
-          // real one is up. Nothing about this row moves: the whole transition
-          // is the header trading `+` and `⋯` for Cancel beside it — see
-          // `_TrailingSwap` in `terminal_page.dart`.
+          // ⚠️ **The bar never fades in.** It lands exactly on the header's
+          // own, which hides its picture of a field while this real one is up,
+          // and then only widens — see [_Bar].
           //
-          // ⚠️ Transparent, and that is what lets the swap be seen. This row
-          // sits directly over the header, so a fill here would cover the very
-          // controls whose exchange IS the animation.
+          // ⚠️ Transparent, and that is what lets the fade be seen. This row
+          // sits directly over the header, so a fill here would cover `+` and
+          // `⋯` stepping aside for the field.
           _Bar(
             controller: _controller,
             focus: _focus,
+            animation: widget.animation,
             onChanged: (value) => setState(() => _query = value),
+            onBack: _close,
             trailingExtent: widget.trailingExtent,
           ),
           // ⚠️ Fades on the back half of the animation alone. The header's
-          // controls are still trading places over the front half, and rows
+          // controls are still stepping aside over the front half, and rows
           // arriving under them is two things happening at once.
           Expanded(
             child: _FadeIn(
@@ -144,37 +146,44 @@ class _TerminalSearchOverlayState extends State<TerminalSearchOverlay> {
 
 /// The real field, drawn over the header's picture of one.
 ///
-/// ⚠️ **Exactly [TerminalHeader]'s geometry, and that is the whole job.** The
-/// header draws a tappable box that only looks like a field; this draws the
-/// [TextField] that replaces it, and the header hides its own for as long as
-/// this is up (see `barHidden`). The two must land on the same pixels — same
+/// ⚠️ **It starts on exactly [TerminalHeader]'s geometry.** The header draws a
+/// tappable box that only looks like a field; this draws the [TextField] that
+/// replaces it, and the header hides its own for as long as this is up (see
+/// `barHidden`). On the first frame the two must land on the same pixels — same
 /// height, same corner radius, same outer padding, same right edge — or the bar
-/// jumps on the frame the overlay takes over.
+/// jumps as the overlay takes over.
 ///
-/// ⚠️ It takes no animation. Nothing in this row moves: the field is laid out
-/// once at one width, and the only thing that changes across the open is which
-/// control the header paints at its trailing end. See `_TrailingSwap` in
-/// `terminal_page.dart`.
+/// From there it only widens: its right edge travels from the header's
+/// trailing slot to the header's own inset while `+` and `⋯` fade out of the
+/// way, so the open search is one bar across the row, as on the search page.
 class _Bar extends StatelessWidget {
   const _Bar({
     required this.controller,
     required this.focus,
+    required this.animation,
     required this.onChanged,
+    required this.onBack,
     required this.trailingExtent,
   });
 
   final TextEditingController controller;
   final FocusNode focus;
 
+  /// 0 sitting on the header's bar, 1 across the whole row.
+  final Animation<double> animation;
+
   final ValueChanged<String> onChanged;
 
+  /// Closes the search — the chevron at the field's leading edge.
+  final VoidCallback onBack;
+
   /// How much of the row the header's trailing slot is holding, so this field
-  /// stops exactly where the header's picture of it does.
+  /// starts exactly where the header's picture of it ends.
   ///
   /// ⚠️ Measured by the header rather than guessed at here. The slot's width
   /// depends on which controls the page is showing — `+` comes and goes with the
   /// machine's readiness, reclaim with the stream — and a field that assumed a
-  /// fixed number of them would overhang Cancel by the difference.
+  /// fixed number of them would start short of, or over, the header's own.
   final double trailingExtent;
 
   @override
@@ -182,119 +191,129 @@ class _Bar extends StatelessWidget {
     AppTheme.watch(context);
     // ⚠️ **No fill of its own.** The real header is directly underneath and is
     // already opaque — [_TerminalPageState] reveals it before opening this — so
-    // this row only has to draw the field. Filling it would cover the `+` and
-    // `⋯` whose fade into Cancel is the transition.
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        TerminalHeader.sideInset,
-        TerminalHeader.topInset,
-        // ⚠️ The header's own inset PLUS whatever its trailing slot is holding.
-        // The field ends where the header's picture of it ends; the controls
-        // beyond are the header's to draw, and this must not reach over them.
-        TerminalHeader.sideInset + trailingExtent,
-        TerminalHeader.bottomInset,
+    // this row only has to draw the field. Filling it would cover `+` and `⋯`
+    // fading out of the field's way.
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, field) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          TerminalHeader.sideInset,
+          TerminalHeader.topInset,
+          // The header's own inset, plus whatever of its trailing slot the
+          // field has not yet taken over.
+          TerminalHeader.sideInset + trailingExtent * (1 - animation.value),
+          TerminalHeader.bottomInset,
+        ),
+        child: field,
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: ListenableBuilder(
-              listenable: focus,
-              builder: (context, child) => AnimatedContainer(
-                duration: AppMotion.hover,
-                curve: AppMotion.curve,
-                height: TerminalHeader.barHeight,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: TerminalHeader.barPadding,
-                ),
-                decoration: BoxDecoration(
-                  color: AppGlass.rowFill,
-                  borderRadius: BorderRadius.circular(AppCard.radius),
-                  // Focus is said by the rim of the box the field fills, and by
-                  // the magnifier inside it — see the icon below.
-                  border: Border.all(
-                    color: focus.hasFocus
-                        ? AppPalette.accentOnSurface
-                        : AppGlass.hair,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    // ⚠️ **Inside the builder, not the child passed through
-                    // it.** The glyph lifts with focus, so it has to be rebuilt
-                    // when focus changes; left in the `child` it would be built
-                    // once and keep its resting ink for good.
-                    //
-                    // It climbs to the same accent the rim and the caret
-                    // already use, over the same beat as the rim, so the three
-                    // read as one state arriving rather than as three
-                    // decorations each doing their own thing.
-                    TweenAnimationBuilder<Color?>(
-                      duration: AppMotion.hover,
-                      curve: AppMotion.curve,
-                      // ⚠️ [begin] is the RESTING ink, not left null. A null
-                      // begin lerps from null on the first build, which hands
-                      // the icon a null colour for that frame — it falls back
-                      // to the theme's default ink, and the glyph flashes a
-                      // colour it never otherwise wears. The field autofocuses,
-                      // so that first build is on screen every time search
-                      // opens; starting from rest also makes the very first
-                      // climb an animation rather than a jump.
-                      tween: ColorTween(
-                        begin: AppPalette.textFaint,
-                        end: focus.hasFocus
-                            ? AppPalette.accentOnSurface
-                            : AppPalette.textFaint,
-                      ),
-                      builder: (context, color, _) => Icon(
-                        LucideIcons.search300,
-                        size: TerminalHeader.glyphSize,
-                        color: color,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // The field and its clear, built once and passed through:
-                    // neither depends on focus, and the field in particular must
-                    // not be rebuilt from a focus tick — see below.
-                    Expanded(child: child!),
-                  ],
-                ),
+      // ⚠️ **The field rides through as the builder's child.** Only the inset
+      // above changes per frame; the [TextField] holds the input connection and
+      // is not rebuilt for it.
+      child: ListenableBuilder(
+        listenable: focus,
+        builder: (context, child) => AnimatedContainer(
+          duration: AppMotion.hover,
+          curve: AppMotion.curve,
+          height: TerminalHeader.barHeight,
+          padding: const EdgeInsets.symmetric(
+            horizontal: TerminalHeader.barPadding,
+          ),
+          decoration: BoxDecoration(
+            color: AppGlass.rowFill,
+            borderRadius: BorderRadius.circular(AppCard.radius),
+            // Focus is said once, by the rim of the box the field fills. The
+            // accent is the same one the caret already uses.
+            border: Border.all(
+              color: focus.hasFocus
+                  ? AppPalette.accentOnSurface
+                  : AppGlass.hair,
+            ),
+          ),
+          child: child,
+        ),
+        // ⚠️ **Everything that does NOT change with focus stays here.** The
+        // [TextField] especially: it holds the input connection, and rebuilding
+        // it on every focus tick is work on the one widget that can least
+        // afford it.
+        child: Row(
+          children: [
+            _BackGlyph(animation: animation, onTap: onBack),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _Input(
+                controller: controller,
+                focus: focus,
+                onChanged: onChanged,
               ),
-              // ⚠️ **Everything that does NOT change with focus stays here.**
-              // The [TextField] especially: it holds the input connection, and
-              // rebuilding it on every focus tick is work on the one widget
-              // that can least afford it.
-              child: Row(
+            ),
+            _ClearButton(
+              controller: controller,
+              onTap: () {
+                controller.clear();
+                onChanged('');
+                // Clearing is a step back into browsing, not out of the
+                // search — the caret stays where the next query will go.
+                focus.requestFocus();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The field's leading glyph: the header's magnifier, turning into the chevron
+/// that closes the search as it opens.
+///
+/// ⚠️ **The magnifier's own footprint, and a thumb's reach.** Both glyphs are
+/// drawn in [TerminalHeader.glyphSize] on the spot the header's magnifier holds,
+/// so the hint beside them does not shift as one becomes the other;
+/// [TouchTarget] takes the tap to 44pt without moving either.
+class _BackGlyph extends StatelessWidget {
+  const _BackGlyph({required this.animation, required this.onTap});
+
+  final Animation<double> animation;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    return Semantics(
+      button: true,
+      label: 'Close search',
+      child: TouchTarget(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox.square(
+            dimension: TerminalHeader.glyphSize,
+            child: AnimatedBuilder(
+              animation: animation,
+              builder: (context, _) => Stack(
+                alignment: Alignment.center,
                 children: [
-                  Expanded(
-                    child: _Input(
-                      controller: controller,
-                      focus: focus,
-                      onChanged: onChanged,
+                  Opacity(
+                    opacity: 1 - animation.value,
+                    child: Icon(
+                      LucideIcons.search300,
+                      size: TerminalHeader.glyphSize,
+                      color: AppPalette.textFaint,
                     ),
                   ),
-                  _ClearButton(
-                    controller: controller,
-                    onTap: () {
-                      controller.clear();
-                      onChanged('');
-                      // Clearing is a step back into browsing, not out of the
-                      // search — the caret stays where the next query will go.
-                      focus.requestFocus();
-                    },
+                  Opacity(
+                    opacity: animation.value,
+                    child: Icon(
+                      LucideIcons.chevronLeft,
+                      size: TerminalHeader.glyphSize,
+                      color: AppPalette.textPrimary,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-          // ⚠️ **Cancel is NOT here — it belongs to the header, and must.** It
-          // once opened out of this row from zero width, which widened the field
-          // as it grew and then narrowed it again as the word claimed its place:
-          // two layout changes in opposite directions inside one tap, felt as
-          // the row snapping about. The header now cross-fades its `+` and `⋯`
-          // for Cancel inside a slot of one fixed width — see `_TrailingSwap` in
-          // `terminal_page.dart` — so the field is laid out once and never
-          // moves. This row draws the field and nothing else.
-        ],
+        ),
       ),
     );
   }
@@ -431,72 +450,6 @@ class _ClearButton extends StatelessWidget {
                 ),
               ),
             ),
-    );
-  }
-}
-
-/// The word, not a glyph. This is the one control on the row that leaves, and a
-/// second `×` beside the field's own would be two ways out sitting together.
-///
-/// ⚠️ **Superseded — Cancel is drawn by the header now.** It opened by WIDTH
-/// from nothing, taking its points off the field beside it, so the field widened
-/// while this grew and narrowed again as it settled. Two layout changes in
-/// opposite directions inside one tap read as the row snapping about, which is
-/// what replaced it: `_CancelSearchButton` in `terminal_page.dart` draws at a
-/// fixed size and arrives on a cross-fade, leaving the field still.
-///
-/// Kept for the geometry, should a width-opening control ever be wanted here.
-// ignore: unused_element
-class _CancelButton extends StatelessWidget {
-  const _CancelButton({required this.animation, required this.onTap});
-
-  final Animation<double> animation;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Semantics(
-      button: true,
-      label: 'Cancel search',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: SizedBox(
-          height: TerminalHeader.barHeight,
-          // ⚠️ Align + a widthFactor, not an animated `width`. The label must
-          // not reflow while the box narrows — a "Cancel" wrapping to "Canc /
-          // el" for four frames is what a `SizedBox(width: …)` around text
-          // does. This clips it instead, from the left, so the word slides out
-          // from behind the field's right edge.
-          child: ClipRect(
-            child: Align(
-              alignment: Alignment.centerRight,
-              widthFactor: animation.value,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 12, right: 2),
-                child: Center(
-                  child: Opacity(
-                    // The word itself catches up late, so it is legible the
-                    // moment there is room for it rather than smearing in.
-                    opacity: Curves.easeIn.transform(animation.value),
-                    child: Text(
-                      'Cancel',
-                      maxLines: 1,
-                      softWrap: false,
-                      style: TextStyle(
-                        color: AppPalette.accentOnSurface,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

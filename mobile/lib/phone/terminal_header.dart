@@ -66,9 +66,9 @@ class TerminalHeader extends StatelessWidget {
   /// The gap between the bar and whatever sits right of it.
   ///
   /// ⚠️ Carried by the trailing controls themselves, not laid in this row. The
-  /// page swaps those controls for a Cancel as search opens, and a gap sitting
-  /// outside that swap would be points neither side accounts for — see
-  /// `_TrailingSwap` in `terminal_page.dart`.
+  /// page sizes their slot from one count, and the search field is laid out
+  /// from that same number; a gap sitting outside the slot would be points
+  /// neither side accounts for — see `_TrailingFade` in `terminal_page.dart`.
   static const double barGap = 6;
 
   /// What the bar says it will search.
@@ -102,11 +102,10 @@ class TerminalHeader extends StatelessWidget {
             ),
           ),
           // ⚠️ **No gap of its own before these — see [barGap].** The page
-          // swaps these controls for a Cancel of a different width, and sizes
-          // the slot they share from one measurement. A spacer sitting outside
-          // that slot is points the measurement does not know about, so the
-          // search overlay's field — which is laid out from the same number —
-          // would stop short of where this row's own does, by exactly six.
+          // sizes their slot from one count. A spacer sitting outside that slot
+          // is points the count does not know about, so the search overlay's
+          // field — which is laid out from the same number — would stop short
+          // of where this row's own does, by exactly six.
           ...trailing,
         ],
       ),
