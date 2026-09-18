@@ -1312,6 +1312,7 @@ class AppNotifier extends ChangeNotifier {
   bool get hasAvailableUpdate => availableUpdate != null;
 
   static const offlineRetryInterval = Duration(seconds: 5);
+  static const localDaemonReconnectDelay = Duration(seconds: 1);
   static const agentSyncInterval = Duration(seconds: 60);
 
   MachineState? stateOf(String machineId) => machineStates[machineId];
@@ -1639,6 +1640,13 @@ class AppNotifier extends ChangeNotifier {
     // with no separate app-side readiness gate to wait on anymore.
     if (machine.isLocalMachine) {
       machine.transportMode = MachineTransportMode.localPlaintext;
+      // The socket that just connected IS the endpoint. A machine refresh that ran while the
+      // daemon was restarting (connection refused, or still scanning) had probed nothing and
+      // cleared this — and with it `usesLocalTransport`, which `_canAttachPane` and the pane
+      // header both read. The socket then came back on its own 1s retry, `nodeOnline` went true,
+      // the offline poll (the one thing that would have re-probed) stopped, and the tiles sat on
+      // "Offline" over a live terminal with nothing left to restore them. Measured 2026-09-18 21:50.
+      machine.localEndpoint ??= _cliEndpoint;
     } else {
       machine.transportMode = MachineTransportMode.cloudE2ee;
     }
@@ -2868,7 +2876,14 @@ class AppNotifier extends ChangeNotifier {
 
   void _onLocalFailure(String machineId, int code, String reason) {
     final machine = machineStates[machineId];
-    if (machine == null || code != 4404) return;
+    if (machine == null) return;
+    if (code == 4403) {
+      if (machine.isLocalMachine) {
+        unawaited(_onLocalMachineMismatch(machine, reason));
+      }
+      return;
+    }
+    if (code != 4404) return;
     // The local CLI's relay found no linked trust for this machine — it now owns E2EE entirely.
     // A `harness link connect` run in a terminal (or another app instance) has no way to notify
     // this one directly, so poll every few seconds until it's picked up instead of waiting for
@@ -2889,6 +2904,54 @@ class AppNotifier extends ChangeNotifier {
     notifyListeners();
     _startLinkRetry(machineId);
   }
+
+  /// The daemon on this computer closed our select with 4403: it serves a different machine id than
+  /// the row we hold for "this computer". Ask it which (`/api/status.machineId`), say so in the log —
+  /// this used to be a silent reconnect every 30s, forever — and stand its machine up beside the
+  /// stale row so the person can keep working; the stale row's tiles are told why they are dark. A
+  /// machine list refresh re-keys everything properly once the backend answers.
+  Future<void> _onLocalMachineMismatch(
+    MachineState machine,
+    String reason,
+  ) async {
+    final machineId = machine.machine.machineId;
+    if (!_localMismatchReported.add(machineId)) return;
+    final endpoint = viewer == null ? await _discovery.discover() : null;
+    final served = endpoint?.machineId;
+    appLog.warn(
+      'daemon',
+      'refused machine_select for $machineId ($reason) — the daemon serves '
+          '${served ?? 'an unknown machine id'}',
+    );
+    if (_disposed || served == null || served == machineId) return;
+    _markSessionsUnreachable(
+      machine,
+      'This computer now runs as a different machine (sign-in changed). Open it from the rail.',
+    );
+    // Awaited: the close reports `disconnected`, whose handler arms the offline retry — stopping
+    // it before that would be undone a microtask later. `_connectMachine` also refuses this id now.
+    await _pool?.closeMachine(machineId);
+    _stopOfflineRetry(machineId);
+    if (!machineStates.containsKey(served)) {
+      _adoptLocalMachineFromDaemon(
+        endpoint,
+        await _discovery.computerId(),
+        listUnavailable: _backendOnline == false,
+      );
+      final adopted = machineStates[served];
+      if (adopted != null) {
+        adopted.localEndpoint = endpoint;
+        adopted.transportMode = MachineTransportMode.localPlaintext;
+        _connectMachine(adopted);
+      }
+    }
+    notifyListeners();
+    if (_backendOnline != false) unawaited(retryMachines());
+  }
+
+  /// Local machine ids a 4403 has already been reported for — one log line and one adoption per
+  /// stale id, not one per 30s retry.
+  final Set<String> _localMismatchReported = {};
 
   void _ensurePool() {
     if (_pool != null) return;
@@ -3126,6 +3189,15 @@ class AppNotifier extends ChangeNotifier {
       state.transportMode = state.connectionStatus == ConnectionStatus.connected
           ? MachineTransportMode.localPlaintext
           : MachineTransportMode.localOffline;
+    } else if (state.localOnly &&
+        localEndpoint == null &&
+        state.localEndpoint != null &&
+        state.connectionStatus == ConnectionStatus.connected) {
+      // The probe found nothing this time (the daemon mid-restart, or mid-scan) but the socket to
+      // it is open and answering right now — the socket is the better witness. Keep the endpoint
+      // it was dialed through; demoting a live connection to "offline" on a missed probe is what
+      // took a working terminal's tiles dark.
+      state.transportMode = MachineTransportMode.localPlaintext;
     } else if (state.localOnly) {
       // The token still identifies this as local, but the CLI is offline or
       // failed its identity/capability check. Never fall back to cloud E2EE.
@@ -3219,6 +3291,11 @@ class AppNotifier extends ChangeNotifier {
       }
     }
     machineStates.removeWhere((id, _) => !visible.contains(id));
+    // A retired id the fresh list no longer carries has been re-keyed or removed — its 4403 verdict
+    // is over with it. One the list STILL carries keeps the verdict: on the loopback the daemon is
+    // the authority for which id it serves, and re-dialing on every 15s refresh would be a 4403
+    // and a log line each time.
+    _localMismatchReported.removeWhere((id) => !visible.contains(id));
     for (final machine in machines) {
       final state = machineStates.update(
         machine.machineId,
@@ -3554,6 +3631,9 @@ class AppNotifier extends ChangeNotifier {
         );
         if (endpoint == null || endpoint.computerId != localComputerId) return;
         machine.localEndpoint = endpoint;
+        // The gate never got here (the daemon was down at boot): this is the endpoint it would have
+        // recorded, and every later dial reads it.
+        _cliEndpoint ??= endpoint;
         machine.localOnly = true;
         machine.transportMode = MachineTransportMode.localPlaintext;
         machine.nodeOnline = true;
@@ -3715,6 +3795,10 @@ class AppNotifier extends ChangeNotifier {
 
   void _connectMachine(MachineState machine) {
     if (machine.machine.isShared) return;
+    // A row the daemon has refused as "not the machine I serve" is retired until a machine list
+    // re-keys it (_onLocalMachineMismatch): the offline poll and the 15s refresh both reconnect
+    // every row, and would otherwise dial that id again every few seconds, 4403 after 4403.
+    if (_localMismatchReported.contains(machine.machine.machineId)) return;
     // connFor() starts a new socket and reports `connecting` through onStatus,
     // or returns the existing socket with its current status intact. Do not
     // overwrite an already-connected socket when the user collapses and
@@ -3932,9 +4016,23 @@ class AppNotifier extends ChangeNotifier {
         : _pool!.connFor(
             machineId,
             transportKind: WsTransportKind.localPlaintext,
-            localWsUri: _cliEndpoint?.wsUri,
+            // The endpoint the offline poll (or the machine refresh) found for THIS row first; the
+            // boot gate's global one only as the fallback. `_cliEndpoint` is set only by a gate that
+            // succeeded, so a boot that found the daemon down and a poll that later found it up
+            // used to dial a null uri — a StateError per attempt, never a socket.
+            localWsUri:
+                machineStates[machineId]?.localEndpoint?.wsUri ??
+                _cliEndpoint?.wsUri,
             localProtocolVersion:
-                _cliEndpoint?.protocolVersion ?? localWsProtocolVersion,
+                machineStates[machineId]?.localEndpoint?.protocolVersion ??
+                _cliEndpoint?.protocolVersion ??
+                localWsProtocolVersion,
+            // This computer's own daemon: retry every second (see WsConn.fixedReconnectDelay). A
+            // relayed machine keeps the backoff — its select costs the daemon a backend dial.
+            fixedReconnectDelay:
+                machineStates[machineId]?.isLocalMachine == true
+                ? localDaemonReconnectDelay
+                : null,
           );
     _wireConnectionHooks(connection, machineId);
     return connection;
@@ -5631,6 +5729,15 @@ class AppNotifier extends ChangeNotifier {
       }
       // Do not send terminal_close: the adapter is already gone and the
       // next client attachment should be the only stream that owns the pane.
+      //
+      // Once per outage, not once per reconnect attempt: the local socket retries every second
+      // now, and each attempt lands here again through the `reconnecting` status. A pane already
+      // dark with this very message has nothing to learn and nothing to repaint.
+      if (session.status == TerminalSessionStatus.error &&
+          session.errorCode == 'TERMINAL_DISCONNECTED' &&
+          session.errorMessage == message) {
+        continue;
+      }
       session.transportLost(message);
     }
   }

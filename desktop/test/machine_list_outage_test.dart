@@ -56,18 +56,26 @@ class _Discovery extends LocalCliDiscovery {
   /// What the daemon says about its own backend link. The real probe reads `/api/status.connected`.
   bool backendOnline = true;
 
+  /// The machine id the daemon serves (`/api/status.machineId`).
+  String servedMachineId = 'local-machine';
+
+  /// The daemon is not answering the probe right now (restarting, or still scanning).
+  bool probeMisses = false;
+
   @override
   Future<String?> computerId() async => _computerId;
   @override
   Future<LocalCliEndpoint?> discover({String? expectedComputerId}) async =>
-      LocalCliEndpoint(
-        computerId: _computerId,
-        wsUri: Uri.parse('ws://127.0.0.1:18473/ws'),
-        protocolVersion: localWsProtocolVersion,
-        terminalProtocolVersion: 1,
-        machineId: 'local-machine',
-        backendOnline: backendOnline,
-      );
+      probeMisses
+      ? null
+      : LocalCliEndpoint(
+          computerId: _computerId,
+          wsUri: Uri.parse('ws://127.0.0.1:18473/ws'),
+          protocolVersion: localWsProtocolVersion,
+          terminalProtocolVersion: 1,
+          machineId: servedMachineId,
+          backendOnline: backendOnline,
+        );
 }
 
 class _Connection extends WsConn {
@@ -282,6 +290,73 @@ void main() {
 
     app.dispose();
     disposedEarly = true;
+  });
+
+  test('a daemon serving another machine id is adopted, and the stale row says why it is dark', () async {
+    // `harness logout` + `harness login` gave the account a new machine; the app still holds the
+    // old row and selects its id, which the daemon closes with 4403. That used to be a silent
+    // reconnect every 30s, forever. Now: the daemon is asked which id it serves, that machine is
+    // stood up so the person can work, and the old row's tiles are told.
+    app.discovery.backendOnline = false;
+    app.discovery.servedMachineId = 'new-machine';
+    final stale = app.machineStates['local-machine']!
+      ..connectionStatus = ConnectionStatus.connected
+      ..nodeOnline = true;
+
+    app.localFailureForTest('local-machine', 4403, 'machine mismatch');
+    await _tick();
+    await _tick();
+
+    final adopted = app.machineStates['new-machine'];
+    expect(adopted, isNotNull, reason: 'built from the id the daemon serves');
+    expect(adopted!.localOnly, isTrue);
+    expect(adopted.localEndpoint?.machineId, 'new-machine');
+    expect(adopted.transportMode, MachineTransportMode.localPlaintext);
+    expect(app.machines.map((m) => m.machineId), contains('new-machine'));
+    // Still there, so its tiles keep their context — but not retried as if it were merely offline.
+    expect(app.machineStates['local-machine'], same(stale));
+
+    // Reported once per stale id, not once per 30s retry.
+    app.localFailureForTest('local-machine', 4403, 'machine mismatch');
+    await _tick();
+    expect(
+      app.machineStates.keys.where((k) => k == 'new-machine'),
+      hasLength(1),
+    );
+
+    app.dispose();
+    disposedEarly = true;
+  });
+
+  test('a probe that misses while the socket is live does not take the local terminal dark', () async {
+    // The 15s refresh ran while the daemon was restarting: the list came from the cache, the
+    // probe found nothing. The socket to the daemon, meanwhile, was open and answering. The
+    // probe used to win — endpoint cleared, tiles "Offline", nothing to restore them since the
+    // socket never went down. Measured 2026-09-18 21:50.
+    final local = app.machineStates['local-machine']!
+      ..connectionStatus = ConnectionStatus.connected
+      ..nodeOnline = true;
+    final seed = app.refreshMachines();
+    await _tick();
+    api.lists.single.complete([_localMachine]);
+    await seed;
+    await _tick();
+    expect(local.localEndpoint, isNotNull);
+
+    app.discovery.probeMisses = true;
+    final refresh = app.refreshMachines();
+    await _tick();
+    api.lists.last.complete([_localMachine]);
+    await refresh;
+    await _tick();
+
+    expect(
+      local.usesLocalTransport,
+      isTrue,
+      reason: 'the live socket is the witness',
+    );
+    expect(local.transportMode, MachineTransportMode.localPlaintext);
+    expect(local.nodeOnline, isTrue);
   });
 
   test('a fresh answer ends the job', () async {

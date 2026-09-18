@@ -45,9 +45,12 @@ class WsPool {
     Uri? localWsUri,
     String? localApiKey,
     int localProtocolVersion = 1,
+    Duration? fixedReconnectDelay,
   }) {
+    // The reconnect policy is part of the key: a row that turns out to be this computer's after its
+    // socket was made gets a new socket with the flat delay, not the old backoff.
     final desiredKey = transportKind == WsTransportKind.localPlaintext
-        ? 'local:${localWsUri.toString()}'
+        ? 'local:${localWsUri.toString()}:${fixedReconnectDelay?.inMilliseconds ?? 'backoff'}'
         : 'cloud:$wsBaseUrl:$autonomousEnv';
     final current = _conns[machineId];
     if (current != null &&
@@ -77,6 +80,7 @@ class WsPool {
       localWsUri: localWsUri,
       localApiKey: localApiKey,
       localProtocolVersion: localProtocolVersion,
+      fixedReconnectDelay: fixedReconnectDelay,
     );
     _conns[machineId] = conn;
     unawaited(conn.connect());
