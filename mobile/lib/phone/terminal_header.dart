@@ -207,50 +207,64 @@ class _Identity extends StatelessWidget {
   );
 }
 
-/// Where an agent works, as the `⋯` sheet shows it under the names: the folder
-/// with its parent — `~/…/autonomous-harness/mobile` — then the branch.
+/// Where an agent runs, as the `⋯` sheet shows it under the agent's name, one
+/// line each behind its icon: the machine, the folder with its parent —
+/// `~/…/autonomous-harness/mobile` — and the branch.
 ///
 /// The header has room for the folder's own name alone; the sheet is where the
 /// rest of the path is read.
-class AgentPlaceLine extends StatelessWidget {
-  const AgentPlaceLine({super.key, required this.project});
+class AgentPlaceLines extends StatelessWidget {
+  const AgentPlaceLines({
+    super.key,
+    required this.machineName,
+    required this.project,
+  });
 
-  final AgentProject project;
+  /// Empty leaves the line out.
+  final String machineName;
+
+  final AgentProject? project;
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    final branch = project.branchLabel;
-    final style = TextStyle(color: AppPalette.textSecondary, fontSize: 13);
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 8,
-      runSpacing: 2,
+    final project = this.project;
+    final branch = project?.branchLabel;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(projectPathTrail(project.cwd), style: style),
-        if (branch != null)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                LucideIcons.gitBranch300,
-                size: 13,
-                color: AppPalette.textFaint,
-              ),
-              const SizedBox(width: 3),
-              Flexible(
-                child: Text(
-                  branch,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: style,
-                ),
-              ),
-            ],
-          ),
+        if (machineName.isNotEmpty)
+          _line(LucideIcons.laptopMinimal300, machineName),
+        if (project != null)
+          _line(LucideIcons.folder300, projectPathTrail(project.cwd)),
+        if (branch != null) _line(LucideIcons.gitBranch300, branch),
       ],
     );
   }
+
+  Widget _line(IconData icon, String text) => Padding(
+    padding: const EdgeInsets.only(top: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Nudged down to sit on the text's first line rather than its top.
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 13, color: AppPalette.textFaint),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: AppPalette.textSecondary, fontSize: 13),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 /// A folder with its parent, everything above them folded into `…` —

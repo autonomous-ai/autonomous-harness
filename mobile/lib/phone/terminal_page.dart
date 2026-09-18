@@ -839,10 +839,10 @@ class _TerminalPageState extends State<TerminalPage>
     showPhoneSheet(
       context,
       title: '$agentName · $machineName',
-      // Two lines — the agent, then its machine — shown in full, then where it works: the folder
-      // with its parent and the branch, which the header has no room for.
-      titleParts: [agentName, machineName],
-      titleDetail: project == null ? null : AgentPlaceLine(project: project),
+      // The agent, then where it runs — machine, folder with its parent, branch — one line each
+      // behind its icon. The header has no room for the path.
+      titleParts: [agentName],
+      titleDetail: AgentPlaceLines(machineName: machineName, project: project),
       // Two groups: what acts on THIS agent, and the two screens the app itself has. Machines is a
       // door like Settings rather than a list of its own — the list belongs on the page behind it,
       // where it has room for every machine and does not push the rest of this sheet down.

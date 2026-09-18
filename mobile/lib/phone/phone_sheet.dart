@@ -69,7 +69,7 @@ class PhoneSheetSection {
 ///
 /// [sections] draws captioned groups after [actions]; an empty section is left out.
 ///
-/// [titleDetail] is drawn under [titleParts] — the folder and branch, on an agent's sheet.
+/// [titleDetail] is drawn under [titleParts] — machine, folder and branch, on an agent's sheet.
 Future<void> showPhoneSheet(
   BuildContext context, {
   required String title,
