@@ -41,7 +41,13 @@ export class ViewerCapture {
     if (!browser) throw new Error('The owner needs Chrome or Chromium to share this viewer.')
     this.directory = await mkdtemp(join(tmpdir(), 'harness-shared-viewer-'))
     if (this.closed) { await this.stop(); return }
-    this.child = spawn(browser, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+    // NOT `--disable-gpu`. In the new headless mode that flag disables WebGL outright, and a viewer
+    // built on three.js (Blender's model-viewer, Solid, Workshop) throws at start-up — before it has even
+    // connected its event stream — so every frame a watcher got was "Looking for a model… Connecting"
+    // while the owner's own pane showed the model (owner, 2026-09-18: "bên máy kia đang ra cái xe đạp,
+    // bên này không thấy gì"). Without it Chrome renders on the GPU, or on SwiftShader where there is
+    // none; `--enable-unsafe-swiftshader` keeps that fallback available on Chrome builds that gate it.
+    this.child = spawn(browser, ['--headless=new', '--enable-unsafe-swiftshader', '--no-first-run', '--no-default-browser-check',
       '--disable-sync', '--disable-extensions', '--disable-background-networking', '--mute-audio',
       '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
       `--user-data-dir=${this.directory}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] })

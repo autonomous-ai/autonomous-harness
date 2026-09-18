@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
+import '../logging/app_log.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../shared/widgets/skeleton.dart';
 import '../state/app_state.dart';
@@ -48,6 +49,7 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
   /// noticed left the person looking at a terminal they cannot type into
   /// (owner, 2026-09-18: "chỉ thấy màn hình terminal").
   bool _viewerChosen = false;
+  String _lastViewerState = '';
   int _generation = 0;
   @override
   void initState() {
@@ -89,14 +91,35 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
         final type = frame['type'] as String,
             payload = Map<String, dynamic>.from(frame['payload'] as Map);
         if (type == 'observer_viewer') {
-          if (!mounted || _ended) return;
+          if (!mounted || _ended) {
+            appLog.warn(
+              'share',
+              'pane ${widget.pane.id} dropped viewer frame ${payload['state']} (mounted=$mounted ended=$_ended)',
+            );
+            return;
+          }
           Uint8List? next;
           try {
             if (payload['data'] is String) {
               next = base64Decode(payload['data'] as String);
             }
-          } on FormatException {
+          } on FormatException catch (error) {
+            appLog.warn(
+              'share',
+              'pane ${widget.pane.id} viewer frame did not decode: $error',
+            );
             return;
+          }
+          // On change only: live frames come 2–3 a second, and a line per frame
+          // would bury the one that matters — the first, and every refusal.
+          final state = '${payload['state']}';
+          if (state != _lastViewerState) {
+            _lastViewerState = state;
+            appLog.debug(
+              'share',
+              'pane ${widget.pane.id} viewer $state bytes=${next?.length ?? 0}'
+                  '${payload['message'] != null ? ' · ${payload['message']}' : ''}',
+            );
           }
           setState(() {
             if (next != null) {

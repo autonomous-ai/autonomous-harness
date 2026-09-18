@@ -47,12 +47,12 @@ class FakeAutonomousDeviceCli extends AutonomousDeviceCli {
     devices.add({
       'id': 'fingerprint-$deviceId',
       'fingerprint': 'fingerprint-$deviceId',
-      'label': 'Autonomous device',
+      'label': 'Autonomous robot',
       'online': true,
     });
     return {
       'state': 'paired',
-      'label': 'Autonomous device',
+      'label': 'Autonomous robot',
       'fingerprint': 'fingerprint-$deviceId',
     };
   }
@@ -113,7 +113,7 @@ void main() {
       expect(find.byType(SettingRow), findsOneWidget);
       expect(find.text('Pair'), findsOneWidget);
       expect(find.text('Refresh'), findsNothing);
-      expect(find.text('Pair an Autonomous device'), findsNothing);
+      expect(find.text('Pair an Autonomous robot'), findsNothing);
       expect(find.text('Computer address'), findsNothing);
       expect(find.text('Cancel pairing'), findsNothing);
     },
@@ -163,7 +163,7 @@ void main() {
     await submit(tester, 'ABC234');
     expect(cli.submissions, isEmpty);
     expect(
-      find.text('Select your discovered Autonomous device first.'),
+      find.text('Select your discovered Autonomous robot first.'),
       findsOneWidget,
     );
   });
@@ -222,7 +222,7 @@ void main() {
     await refresh(tester);
     expect(
       find.text(
-        'That code did not match. Generate a new code on your Autonomous device, then try again.',
+        'That code did not match. Generate a new code on your Autonomous robot, then try again.',
       ),
       findsOneWidget,
     );
@@ -263,7 +263,7 @@ void main() {
       final cli = FakeAutonomousDeviceCli()..discovered = [];
       await open(tester, cli);
       expect(
-        find.textContaining('No Autonomous devices found.'),
+        find.textContaining('No Autonomous robots found.'),
         findsOneWidget,
       );
       await submit(tester, 'ABC234');
@@ -285,7 +285,7 @@ void main() {
       ]);
       expect(
         find.text(
-          'That code did not match. Generate a new code on your Autonomous device, then try again.',
+          'That code did not match. Generate a new code on your Autonomous robot, then try again.',
         ),
         findsNothing,
       );
@@ -296,7 +296,7 @@ void main() {
   testWidgets('unsupported CLI offers update guidance', (tester) async {
     await open(tester, FakeAutonomousDeviceCli()..unsupported = true);
     expect(
-      find.text('Update Harness CLI to use Autonomous devices.'),
+      find.text('Update Harness CLI to use Autonomous robots.'),
       findsOneWidget,
     );
     expect(codeField, findsNothing);
