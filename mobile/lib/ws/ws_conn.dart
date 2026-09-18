@@ -7,6 +7,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../logging/app_log.dart';
 import '../logging/redact.dart';
+import '../logging/startup_trace.dart';
 import '../core/models.dart';
 import 'relay_codec.dart';
 import 'terminal_transport_plugin.dart';
@@ -199,6 +200,17 @@ class WsConn {
     if (_closing || _connecting) return;
     _connecting = true;
     _ready = false;
+    // ⚠️ **The outbound queue starts empty on every dial, and it did not used
+    // to.** `_outboundTail` is a chain each send appends itself to, so one link
+    // that never completes stalls every frame queued behind it — for the life of
+    // the connection, redials included, because the chain outlived them. A dial
+    // whose `machine_select` never reached the socket therefore could not be
+    // rescued by dialling again: the new select joined the same stuck queue.
+    //
+    // Safe to drop here because a new socket makes the old queue meaningless.
+    // Anything still pending on it was addressed to a channel that is gone, and
+    // `_flushQueue` re-sends what actually matters once the session is ready.
+    _outboundTail = Future<void>.value();
     WebSocketChannel? dialing;
     onStatus(
       _attempt == 0
@@ -206,16 +218,50 @@ class WsConn {
           : ConnectionStatus.reconnecting,
     );
     try {
-      final token = isLocal ? null : await accessTokenProvider(false, null);
+      // ⚠️ Started together, then awaited: the credential comes from the session
+      // (and may go to the network to refresh), while the codec comes off disk
+      // and mints an ephemeral key — neither has ever needed the other's result.
+      // In series they were two waits stacked in front of the dial, on the
+      // stretch the phone shows as "Connecting to your machine…", and every
+      // reconnect paid it again.
+      final codecs = isLocal ? null : relayCodecs;
+      final pendingToken = isLocal
+          ? null
+          : StartupTrace.time(
+              'ws.accessToken',
+              () => accessTokenProvider(false, null),
+            );
+      // ⚠️ **The codec's own failure is captured HERE, where the future is made,
+      // not where it is awaited.** The credential is awaited first and can
+      // throw — a refresh against a dead network does — and every path out of
+      // this method from that point leaves nobody to await the codec. An
+      // unhandled rejection on that abandoned future reaches the zone's error
+      // handler and is reported as a crash, for a dial that merely failed.
+      //
+      // ⚠️ Captured, NOT flattened to null: a null codec means "this device has
+      // no link to that machine", which [_refusePeer] answers by closing the
+      // connection for good. A failed READ of the link is a different thing —
+      // the file was locked, or briefly unreadable — and must stay retryable, so
+      // it is rethrown below into the catch that schedules the reconnect.
+      final pendingCodec = codecs == null
+          ? null
+          : StartupTrace.time('ws.relayCodec', () => codecs(machineId))
+                .then<({RelayCodec? codec, Object? error})>(
+                  (codec) => (codec: codec, error: null),
+                  onError: (Object error) => (codec: null, error: error),
+                );
+      final token = await pendingToken;
       if (!isLocal && (token == null || token.isEmpty)) {
         throw StateError('WebSocket credential is missing');
       }
       if (_closing) return;
       _tokenUsed = token;
-      final codecs = isLocal ? null : relayCodecs;
-      if (codecs != null) {
-        final codec = await codecs(machineId);
+      if (pendingCodec != null) {
+        final result = await pendingCodec;
         if (_closing) return;
+        final failure = result.error;
+        if (failure != null) throw failure;
+        final codec = result.codec;
         if (codec == null) {
           _refusePeer('NO_PEER_LINK');
           return;
@@ -247,9 +293,28 @@ class WsConn {
           ? WebSocketChannel.connect(uri)
           : WebSocketChannel.connect(uri, protocols: [token!]);
       _channel = channel;
-      await channel.ready.timeout(_dialTimeout);
+      await StartupTrace.time(
+        'ws.dial',
+        () => channel.ready.timeout(_dialTimeout),
+      );
       if (_closing || !identical(_channel, channel)) {
+        // Logged because this is a silent exit from a dial that otherwise looks
+        // successful — the trace shows `ws.dial` completing and then nothing at
+        // all, which is indistinguishable from a relay that went quiet.
+        final superseded = !identical(_channel, channel);
+        appLog.warn(
+          'ws',
+          'dial abandoned after ready (closing=$_closing '
+          'superseded=$superseded) $machineId',
+        );
         await channel.sink.close();
+        // ⚠️ A superseded dial must leave a live connection behind it. This used
+        // to just return, on the assumption that whoever replaced `_channel` was
+        // finishing the job — but the replacement is a `connect()` that
+        // `_connecting` had already turned away, so there was nobody to finish
+        // it. The guard in [reconnectNow] stops the overlap happening at all;
+        // this makes the outcome survivable if it ever does again.
+        if (superseded && !_closing && _channel == null) _scheduleReconnect();
         return;
       }
       _sub = channel.stream.listen(
@@ -259,6 +324,19 @@ class WsConn {
       );
       final forceRelayReconnect = _forceRelayReconnect;
       _forceRelayReconnect = false;
+      // ⚠️ **Armed BEFORE the send, and deliberately not after it.** `sendFrame`
+      // queues behind `_outboundTail`, so it resolves when this frame reaches
+      // the socket — which is not guaranteed to be soon, and on a fresh dial was
+      // observed never to happen at all. Arming afterwards made the watchdog
+      // itself unreachable in exactly the case it exists for: the launch hung
+      // with the last log line being the dial, and no select, no answer and no
+      // retry after it.
+      //
+      // Armed first, the timer covers the whole of "asked and not answered",
+      // whether the asking stalled in the queue or the answering stalled at the
+      // relay. Cancelled by [_markReady], by [_onDone] and by [close].
+      _armSelectWatchdog();
+      appLog.debug('ws', '→ machine_select $machineId');
       await sendFrame({
         'type': 'machine_select',
         'payload': {
@@ -269,7 +347,12 @@ class WsConn {
       });
     } on WsCredentialRevoked catch (error) {
       _signOut(error.message);
-    } catch (_) {
+    } catch (error) {
+      // Swallowed for control flow — a failed dial is retried, not surfaced —
+      // but not silently: this branch covers the credential, the codec, the
+      // dial itself and the select, and with no line of its own a launch that
+      // died in any of them looked exactly like one that simply stopped.
+      appLog.warn('ws', 'dial failed $machineId', error: error);
       _abandonDial(dialing);
       if (!_closing) _scheduleReconnect();
     } finally {
@@ -353,7 +436,52 @@ class WsConn {
         });
   }
 
+  /// How long the relay gets to answer `machine_select` before this redials.
+  ///
+  /// Measured against the real thing: a relay that answers at all answers in
+  /// well under a second (dial ~0.8s, then `machines_status` and the E2EE
+  /// welcome within ~1.3s). Six seconds is far outside that and still far inside
+  /// a person's patience.
+  static const _selectTimeout = Duration(seconds: 6);
+
+  Timer? _selectWatchdog;
+
+  /// Redial if the relay never answers the select.
+  ///
+  /// ⚠️ **A dial can complete and then go quiet, and nothing else notices.** The
+  /// socket opens, `machine_select` goes out, and the relay simply never sends
+  /// `machines_status` — observed on the FIRST dial of a launch, reproducibly,
+  /// against a machine that was up the whole time. There is no close, no error
+  /// and no frame: `_onDone` never runs, the reconnect backoff never arms, and
+  /// the connection sits there looking healthy forever.
+  ///
+  /// It used to be papered over from a long way away: `agents_list` would time
+  /// out after ten seconds, be misread as the machine having gone offline, and
+  /// `forceReconnect()` would redial — which worked, and cost twelve seconds and
+  /// a spurious "Disconnected" on screen. Removing that accidental rescue is
+  /// what turned this from slow into a permanent hang, which is how it was
+  /// finally found.
+  ///
+  /// Handled here, where the evidence is: this connection asked a question and
+  /// got no answer, so it asks again on a new socket. Six seconds rather than
+  /// ten, and no state anywhere else is told the machine is offline, because
+  /// nothing here says it is.
+  void _armSelectWatchdog() {
+    _selectWatchdog?.cancel();
+    _selectWatchdog = Timer(_selectTimeout, () {
+      if (_closing || _ready || _channel == null) return;
+      appLog.warn('ws', 'machine_select unanswered; redialling $machineId');
+      // Through the ordinary dial path, so the attempt counter and its backoff
+      // apply: a relay that is genuinely down must not be hammered every six
+      // seconds by a client that thinks it is being helpful.
+      _abandonDial(_channel);
+      _scheduleReconnect();
+    });
+  }
+
   void _markReady() {
+    _selectWatchdog?.cancel();
+    _selectWatchdog = null;
     _ready = true;
     _attempt = 0;
     onStatus(ConnectionStatus.connected);
@@ -381,7 +509,15 @@ class WsConn {
         }
         return;
       case 'e2e_welcome':
-        if (await codec.handleWelcome(payload)) {
+        // The verify and key agreement behind this are pure-Dart Ed25519/X25519
+        // on the UI isolate, so this span is CPU on the very thread drawing the
+        // spinner — worth its own line to tell it apart from time spent waiting
+        // on the machine to answer.
+        if (await StartupTrace.time(
+          'ws.e2eeWelcome',
+          () => codec.handleWelcome(payload),
+        )) {
+          StartupTrace.mark('ws.ready');
           _markReady();
           _plugin?.onSessionReady();
         } else {
@@ -734,6 +870,11 @@ class WsConn {
     _codec = null;
     _disposePlugin();
     _ready = false;
+    // The socket answered by closing, which is an answer — the watchdog is for
+    // a socket that says nothing at all. Cancelled here so the redial below is
+    // the only one, rather than one of two racing each other.
+    _selectWatchdog?.cancel();
+    _selectWatchdog = null;
     _rejectPending('WS disconnected');
     if (_closing) {
       onStatus(ConnectionStatus.disconnected);
@@ -799,8 +940,23 @@ class WsConn {
   ///
   /// ⚠️ A no-op when [_closing]. That flag means somebody decided this connection should stop —
   /// signed out, machine unlinked, 4403 — and resuming the app is not a reason to revive it.
+  /// ⚠️ **A no-op while a dial is already in flight, which `_channel` alone does
+  /// not tell you.** `_channel` is assigned only after `channel.ready` resolves,
+  /// so for the ~800ms a relay dial takes there is a connect running with a null
+  /// channel — and this would start a SECOND one. The second overwrote
+  /// `_channel`, the first then found itself superseded and bailed out without
+  /// sending `machine_select`, and the second never sent one either because
+  /// `connect()`'s own `_connecting` guard had turned it away. The socket was
+  /// open, the relay was waiting to be told which machine, and neither side ever
+  /// spoke: the launch hung on "Connecting to your machine…" indefinitely.
+  ///
+  /// Reachable on every launch, not just on a real resume: the phone's shell
+  /// calls `handleAppResumed` as it mounts, which is a few hundred milliseconds
+  /// after the warm start has begun dialling.
   void reconnectNow() {
-    if (_closing || _channel != null) return;
+    if (_closing || _connecting || _channel != null) {
+      return;
+    }
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     // The clock restarts too. Failures from BEFORE the app went away say nothing about the network
@@ -829,6 +985,10 @@ class WsConn {
     _disposePlugin();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    // A watchdog left running would redial a connection somebody deliberately
+    // closed — see [_armSelectWatchdog].
+    _selectWatchdog?.cancel();
+    _selectWatchdog = null;
     _rejectPending('WS closed');
     final sub = _sub;
     _sub = null;
@@ -852,6 +1012,9 @@ class WsConn {
     if (_closing || (!isLocal && relayCodecs == null)) return;
     _forceRelayReconnect = true;
     _reconnectTimer?.cancel();
+    // This dials again itself; a pending watchdog would make that two dials.
+    _selectWatchdog?.cancel();
+    _selectWatchdog = null;
     _ready = false;
     _codec = null;
     _disposePlugin();

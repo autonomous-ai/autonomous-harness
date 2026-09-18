@@ -1,3 +1,4 @@
+import '../logging/startup_trace.dart';
 import '../phone/voice_language_store.dart';
 import '../shared/theme/appearance_prefs_store.dart';
 import '../stats/harness_stats.dart';
@@ -26,20 +27,41 @@ Future<void> loadPersistedSettings({
   // Independent stores may load together, but all must finish before runApp.
   // Font and appearance share a serialized file store; each reads its related
   // preferences as one snapshot. Stats uses a separate file and can overlap.
+  //
+  // ⚠️ **"Together" is the intent, not the outcome, for four of these five.**
+  // Every store but `stats` is backed by [HarnessFileStore], which serializes
+  // ALL of its operations behind one process-wide queue and one exclusive file
+  // lock (`core/harness_file_store.dart`) — so this `Future.wait` starts four
+  // reads that then stand in a line, each taking the lock and re-parsing the
+  // whole of `state.json`. Timing them individually is what makes that visible
+  // in the log: four spans that start together and end one after another are a
+  // queue, not parallelism.
   await Future.wait([
-    (terminalFont ?? terminalFontStore).load(),
+    StartupTrace.time(
+      'prefs.terminalFont',
+      (terminalFont ?? terminalFontStore).load,
+    ),
     // Beside the font, and for the same reason: loading the scheme after the
     // first frame paints every pane on the default ground and then snaps it to
     // the saved one, which reads as a flash of the wrong colour at every launch.
-    (terminalTheme ?? terminalThemeStore).load(),
+    StartupTrace.time(
+      'prefs.terminalTheme',
+      (terminalTheme ?? terminalThemeStore).load,
+    ),
     // Every control box uses these values. A late load would move the whole
     // window's geometry after its first frame, as well as changing its palette.
-    (appearance ?? appearancePrefsStore).load(),
+    StartupTrace.time(
+      'prefs.appearance',
+      (appearance ?? appearancePrefsStore).load,
+    ),
     // Counters begin moving with the first agent event. Loading them later
     // could overwrite a new event with the old count from disk.
-    (stats ?? harnessStats).load(),
+    StartupTrace.time('prefs.stats', (stats ?? harnessStats).load),
     // The language the mic transcribes in. Read late, a first take could be sent to the backend
     // in the phone's language by somebody who chose another.
-    (voiceLanguage ?? voiceLanguageStore).load(),
+    StartupTrace.time(
+      'prefs.voiceLanguage',
+      (voiceLanguage ?? voiceLanguageStore).load,
+    ),
   ]);
 }

@@ -4,6 +4,7 @@ import 'relay_codec.dart';
 import 'terminal_transport_plugin.dart';
 
 import '../core/models.dart';
+import '../logging/app_log.dart';
 import 'ws_conn.dart';
 
 /// Owns one SSO-authenticated [WsConn] per machine.
@@ -55,7 +56,17 @@ class WsPool {
         !current.isClosed) {
       return current;
     }
-    if (current != null) unawaited(current.close());
+    if (current != null) {
+      // Replacing a live connection is a real event — it closes a socket and
+      // starts a fresh handshake — and it used to leave no trace at all, which
+      // made a launch that did it twice impossible to read in the log.
+      appLog.warn(
+        'ws',
+        'replacing connection $machineId '
+        '(was ${current.endpointKey}, now $desiredKey)',
+      );
+      unawaited(current.close());
+    }
     final conn = WsConn(
       wsBaseUrl: wsBaseUrl,
       autonomousEnv: autonomousEnv,
@@ -99,7 +110,14 @@ class WsPool {
 
   Future<void> closeMachine(String machineId) async {
     final conn = _conns.remove(machineId);
-    if (conn != null) await conn.close();
+    if (conn != null) {
+      // Closing a machine's socket is deliberate and rare — a machine leaving
+      // the account, a re-link, a sign-out — so it is worth a line. A close that
+      // lands mid-dial looks, from inside `connect()`, exactly like being
+      // superseded, and without this there was no way to tell the two apart.
+      appLog.warn('ws', 'closeMachine $machineId');
+      await conn.close();
+    }
   }
 
   Future<void> closeAll() async {

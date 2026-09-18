@@ -28,10 +28,22 @@ class ConfigStore {
   String? get skippedDesktopUpdateVersion => _cachedSkippedDesktopUpdateVersion;
 
   Future<AppConfig> load() async {
-    // Keep the tiny startup path sequential and predictable.
-    final baseUrl = await _storage.read(_baseUrlKey);
-    final environment = await _storage.read(_environmentKey);
-    final skippedUpdate = await _storage.read(_skippedDesktopUpdateVersionKey);
+    // ⚠️ **One `readMany`, not three `read`s, and the difference is not cosmetic.**
+    // Every operation on [HarnessFileStore] takes an exclusive file lock and
+    // re-parses the whole of `state.json`, and they are queued process-wide — so
+    // three reads of three keys from one file cost three locks and three parses,
+    // strictly one after another, on the launch path. `readMany` answers all
+    // three from a single locked read. These keys are also a consistent set: a
+    // base URL from before a write and an environment from after it would
+    // describe a backend that was never configured.
+    final saved = await _storage.readMany([
+      _baseUrlKey,
+      _environmentKey,
+      _skippedDesktopUpdateVersionKey,
+    ]);
+    final baseUrl = saved[_baseUrlKey];
+    final environment = saved[_environmentKey];
+    final skippedUpdate = saved[_skippedDesktopUpdateVersionKey];
     _cachedBaseUrl = baseUrl ?? defaultBaseUrl;
     _cachedEnvironment = environment == 'stag' ? 'stag' : 'prod';
     _cachedSkippedDesktopUpdateVersion = skippedUpdate?.trim().isEmpty ?? true

@@ -31,8 +31,36 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
 
   final Directory directory;
 
+  /// The parsed document, held between operations — **only where this app is the
+  /// only writer.**
+  ///
+  /// ⚠️ **On a phone, and only on a phone.** Every read here costs a directory
+  /// create, a lock file open, an exclusive `flock`, a full re-read and re-parse,
+  /// an unlock and a close — and they are queued process-wide, so a launch that
+  /// touches a dozen keys pays that toll a dozen times in series. Measured on a
+  /// simulator, loading three config keys this way took 196ms for a 3 KB file.
+  ///
+  /// Sound because a viewer's state file has exactly one writer: the app itself,
+  /// in its own sandbox, where no `harness` CLI exists and no second process can
+  /// reach the container. On a DESKTOP the CLI writes this same file — the whole
+  /// reason for the lock — so the cache stays off there and every read goes to
+  /// disk exactly as before.
+  ///
+  /// It is a cache of the LAST READ DOCUMENT, refreshed by every write this
+  /// store makes, so it cannot serve values older than this process's own last
+  /// change. [_invalidate] drops it when a write fails and the file's true
+  /// contents are no longer known.
+  Map<String, String>? _cached;
+
+  /// Whether this store may hold [_cached] at all. See its doc comment.
+  final bool _cacheable;
+
   HarnessFileStore({Directory? directory})
-    : directory = directory ?? Directory(defaultDirectoryPath());
+    : directory = directory ?? Directory(defaultDirectoryPath()),
+      // Only the shared, default-location store on a phone: a store pointed at a
+      // directory a caller chose is a test's, or a second copy of the same file,
+      // and neither may assume it is the only writer.
+      _cacheable = isMobileHost && directory == null;
 
   /// [name] names the sibling under `~/.harness`; it defaults to this store's own.
   static String defaultDirectoryPath({
@@ -60,8 +88,16 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
   File get _lockFile => File(_join(directory.path, lockFileName));
 
   @override
-  Future<String?> read(String key) =>
-      _serialized(() async => (await _readDocument())[key]);
+  Future<String?> read(String key) {
+    final cached = _cached;
+    // Answered without touching the filesystem, and without joining the queue:
+    // where this store is the only writer, the held document IS the file. A
+    // `SynchronousFuture` would let this resolve inside the caller's own
+    // microtask, but an ordinary one keeps every caller's ordering identical to
+    // the uncached path, which is worth more than the hop it saves.
+    if (cached != null) return Future.value(cached[key]);
+    return _serialized(() async => (await _readDocument())[key]);
+  }
 
   /// One lock and document read for related preferences. The snapshot is scoped
   /// to this call: later reads still observe intervening writes, including
@@ -71,6 +107,10 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
   Future<Map<String, String?>> readMany(Iterable<String> keys) {
     final requested = keys.toSet();
     if (requested.isEmpty) return Future.value(const <String, String?>{});
+    final cached = _cached;
+    if (cached != null) {
+      return Future.value({for (final key in requested) key: cached[key]});
+    }
     return _serialized(() async {
       final values = await _readDocument();
       return {for (final key in requested) key: values[key]};
@@ -128,9 +168,16 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
     }
   }
 
+  /// The document on disk, and — where [_cacheable] — what [_cached] becomes.
+  ///
+  /// ⚠️ **Always returns a map the caller may mutate.** `write` and `delete`
+  /// edit what this returns and hand it to [_writeDocument], so handing back
+  /// `_cached` itself would let a write that later fails leave its change in the
+  /// cache, where it would be served as though it had been persisted. Every exit
+  /// below builds a fresh map, and [_remember] copies rather than aliases.
   Future<Map<String, String>> _readDocument() async {
     final file = stateFile;
-    if (!await file.exists()) return <String, String>{};
+    if (!await file.exists()) return _remember(<String, String>{});
     try {
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map<String, dynamic>) {
@@ -150,18 +197,42 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
         }
         values[entry.key as String] = entry.value as String;
       }
-      return values;
+      return _remember(values);
     } on UnsupportedStateVersionException {
+      // NOT remembered: this one leaves the file untouched and intact, so the
+      // next read must go and look again rather than answer from a document
+      // this store never managed to understand.
       rethrow;
     } on Object {
+      // The corrupt file has been moved aside, so an empty document is now the
+      // truth on disk and is safe to hold.
       await _quarantineCorruptState(file);
-      return <String, String>{};
+      return _remember(<String, String>{});
     }
   }
+
+  /// Hold [values] as the known contents, and return it for the caller to use.
+  ///
+  /// The COPY is the one kept: callers mutate what they are given (see
+  /// [_readDocument]), and a cache aliased to that map would follow their edits
+  /// before those edits reached the disk.
+  Map<String, String> _remember(Map<String, String> values) {
+    if (_cacheable) _cached = Map<String, String>.from(values);
+    return values;
+  }
+
+  /// Forget the held document: the file's contents are no longer known.
+  void _invalidate() => _cached = null;
 
   Future<void> _writeDocument(Map<String, String> values) async {
     final suffix = '${pid}_${DateTime.now().microsecondsSinceEpoch}';
     final temporary = File(_join(directory.path, '.$fileName.$suffix.tmp'));
+    // ⚠️ Dropped BEFORE the write and only restored once the rename lands. A
+    // write that throws halfway leaves a file this store can no longer describe,
+    // and serving the pre-write document from memory would be a lie that
+    // outlives the process's next read. Cleared first, the next read goes to
+    // disk and finds out.
+    _invalidate();
     try {
       await temporary.writeAsString(
         '${const JsonEncoder.withIndent('  ').convert({'version': schemaVersion, 'values': values})}\n',
@@ -170,6 +241,8 @@ class HarnessFileStore implements BatchLocalKeyValueStore {
       await _makePrivateFile(temporary);
       await temporary.rename(stateFile.path);
       await _makePrivateFile(stateFile);
+      // The rename is the commit: past it, `values` is exactly what is on disk.
+      _remember(values);
     } finally {
       if (await temporary.exists()) await temporary.delete();
     }
