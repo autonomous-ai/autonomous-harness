@@ -683,7 +683,9 @@ print_logo() {
 # The explicit commands keep browser SSO and the long-lived daemon lifecycle understandable and
 # scriptable: nothing here signs in or starts anything. Desktop mode is the app installing its own
 # CLI — the app takes the person through sign-in itself, so it gets the one line and not the guide.
-installed_version="$("$LAUNCHER" version 2>/dev/null || true)"
+# One line of it: `harness version` prints the version alone today, and a notice it might add
+# tomorrow must not land inside this sentence.
+installed_version="$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)"
 if [ "$INSTALL_MODE" = "desktop" ]; then
   echo ""
   echo "  harness${installed_version:+ $installed_version} installed."
