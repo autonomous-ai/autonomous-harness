@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev calls the best buy as a shop's prices stream in, live",
+  "examples": [
+    {
+      "prompt": "Set Jev Shopper up as a weekend-camp haul — a few pieces of gear with divergent price drifts. Give Jev a decisive momentum style line, then watch it read the window each tick, call the steepest faller, and commit the paper budget when the signal is clear. Crank the volatility to see its calls start to flip.",
+      "caption": "Jev's Shop — a fast decision model calling the best buy on every live price tick"
+    }
+  ]
+}

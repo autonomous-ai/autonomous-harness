@@ -1,0 +1,15 @@
+{
+  "title": "Jev Shopper",
+  "description": "Jev watches prices stream in and calls the best buy, live.",
+  "instrument": "SHOPPER",
+  "tickMs": 500,
+  "vol": 0.08,
+  "cash": 100,
+  "products": [
+    { "name": "Espresso Machine", "price": 240, "drift": 0.02 },
+    { "name": "Hiking Boots", "price": 120, "drift": -0.05 },
+    { "name": "Noise Cancellers", "price": 180, "drift": 0.01 },
+    { "name": "Desk Lamp", "price": 45, "drift": -0.03 }
+  ],
+  "style": "Watch the recent price stream and pick the product whose price is most likely still falling — the best value right now. Be decisive."
+}
