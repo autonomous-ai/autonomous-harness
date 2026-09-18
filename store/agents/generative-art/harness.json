@@ -1,0 +1,34 @@
+{
+  "spec": 1,
+  "id": "autonomous/generative-art",
+  "name": "Generative Art",
+  "category": "Original art",
+  "author": "Autonomous",
+  "description": "Describe a piece or a series — a flow field, a study in sand, a raymarched world — and get a seedable, reproducible artwork with a live preview in the pane. Rendered on your machine, exportable to print, video, or an onchain edition.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "sketch/main.js",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "GENART_DSH_DIR": "${dsh}"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}
