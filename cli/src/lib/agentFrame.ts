@@ -96,22 +96,31 @@ export interface AgentFrameContext {
 }
 
 /**
- * One agent as every client consumes it.
+ * When the conversation last moved, in epoch ms: the transcript's mtime, else the last time the engine
+ * reported in (a hook, or a session bind — the agent's creation at the latest).
  *
- * `updatedAt` prefers the transcript's mtime over the registry's own bookkeeping so a client sorting
- * by recency follows the conversation rather than the daemon's housekeeping; an unreadable or absent
- * transcript falls back to the registry, never to "now".
+ * ⚠️ Never the registry's `updatedAt`. That is bookkeeping: discovery rewrites it on every pass
+ * (`updateRuntimes`), so falling back to it stamped every agent without a readable transcript "now"
+ * — and a client sorting by recency put exactly those agents above the ones just used.
  */
+export async function lastActivityAt(s: RegisteredSession): Promise<number> {
+  const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
+  return st?.mtimeMs ?? s.lastHookAt
+}
+
 function frameTitle(s: RegisteredSession): string | null {
   const title = sessionDisplayTitle(s)
   return title && title !== projectDisplayName(s) ? title : null
 }
 
+/**
+ * One agent as every client consumes it. `updatedAt` is {@link lastActivityAt}, so a client sorting by
+ * recency follows the conversation rather than the daemon's housekeeping.
+ */
 export async function agentFrame(
   s: RegisteredSession,
   { selectedModel, terminalAvailable, dsh }: AgentFrameContext,
 ): Promise<AgentFrame> {
-  const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
   return {
     id: s.agentId,
     sessionId: s.sessionId,
@@ -121,7 +130,7 @@ export async function agentFrame(
     status: s.active ? 'active' : 'offline',
     launch: s.launch ?? { state: 'ready' },
     createdAt: new Date(s.registeredAt).toISOString(),
-    updatedAt: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
+    updatedAt: new Date(await lastActivityAt(s)).toISOString(),
     tmuxPane: s.tmuxPane || null,
     terminal: { available: terminalAvailable, primary: s.primaryRuntimeKey, runtimes: s.runtimes },
     engine: s.engine,

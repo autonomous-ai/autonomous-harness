@@ -3,10 +3,18 @@ import 'package:flutter/widgets.dart';
 import 'package:harness_mobile/core/fuzzy_match.dart';
 
 import 'phone_search_index.dart';
+import 'phone_search_rank.dart';
 
 /// Which field earned each query term its score, and whether that field is the
 /// row's title.
 typedef PhoneFieldMatch = ({String field, String term, bool title});
+
+/// [terms] as matches on a recall quote (see [phoneRecallSnippet]): each term is
+/// its own field, so the emphasis lands on the word wherever the quote holds it.
+List<PhoneFieldMatch> phoneRecallMatches(List<String> terms) => [
+  for (final term in terms.take(12).toSet())
+    (field: term, term: term, title: false),
+];
 
 /// The field each term actually matched, so only that one is emphasised.
 ///

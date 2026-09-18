@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';
 
+import 'keyboard_fakes.dart';
+
 /// The phone has no composer box under its pane — see `phone/terminal_page.dart`
 /// — so the terminal's own input connection is the only place a software
 /// keyboard has to compose in. Whatever this config says, a Vietnamese Telex or
@@ -136,21 +138,6 @@ void main() {
   );
 
   group('with delete detection, as a phone runs it', () {
-    /// What UIKit's `deleteBackward` does to the buffer it holds: one character
-    /// fewer, and NOTHING at all once the buffer is empty.
-    Future<void> deleteBackward(WidgetTester tester) async {
-      final text = tester.testTextInput.editingState!['text'] as String;
-      if (text.isEmpty) return;
-      final left = text.substring(0, text.length - 1);
-      tester.testTextInput.updateEditingValue(
-        TextEditingValue(
-          text: left,
-          selection: TextSelection.collapsed(offset: left.length),
-        ),
-      );
-      await tester.pump();
-    }
-
     testWidgets('Backspace keeps rubbing out a line the keyboard never typed', (
       tester,
     ) async {

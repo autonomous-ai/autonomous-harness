@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../clipboard/native_clipboard.dart';
-import '../core/host_platform.dart';
 import '../state/app_state.dart';
 
 import 'agent_drag.dart';
@@ -1399,11 +1398,16 @@ class _TerminalPanelState extends State<TerminalPanel>
                           // iOS answers Backspace over an empty native buffer
                           // with nothing at all (`deleteBackward` in
                           // FlutterTextInputPlugin.mm), so a line the keyboard
-                          // did not type — a voice transcript, a recalled
-                          // command — could not be rubbed out. xterm keeps a
-                          // padding for Backspace to eat instead — see
-                          // test/terminal_ime_input_test.dart.
-                          deleteDetection: isMobileHost,
+                          // did not type — text typed on the desktop, a voice
+                          // transcript, a recalled command — could not be
+                          // rubbed out. xterm keeps a padding for Backspace to
+                          // eat instead — see test/terminal_ime_input_test.dart.
+                          //
+                          // Unconditional: this package builds for iOS and
+                          // Android only. ⚠️ Lost once already in a merge
+                          // (cb47ba35 → TestFlight build 11), which is why
+                          // test/terminal_panel_backspace_test.dart pins it.
+                          deleteDetection: true,
                           theme: terminalThemeFor(
                             grid.AppTheme.palette.value,
                             terminalThemeStore.value,

@@ -39,7 +39,7 @@ import { engineInstallRecipe } from './lib/engineInstall.js'
 import { parseProjectFolder, prepareProjectFolder, ProjectFolderError } from './lib/projectFolder.js'
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { projectPreview } from './lib/projectPreview.js'
-import { agentFrame, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
+import { agentFrame, lastActivityAt, type AgentDshContext, type AgentFrame } from './lib/agentFrame.js'
 import { installedDsh } from './dsh/installed.js'
 import { engineLabel } from './lib/agentNames.js'
 import { DSH_ID_RE } from './dsh/manifest.js'
@@ -1327,14 +1327,13 @@ export class BackendSocket {
           // lands, instead of pinning `currentSessionId` to an id no event will ever carry.
           if (!s || !s.sessionId) { reply(type, requestId, { sessions: [] }); return }
           const lines = s.transcriptPath ? await tailFile(s.transcriptPath, Infinity) : []
-          const st = s.transcriptPath ? await stat(s.transcriptPath).catch(() => null) : null
           reply(type, requestId, {
             sessions: [{
               id: s.sessionId,
               title: projectDisplayName(s),
               timestamp: new Date(s.registeredAt).toISOString(),
               messageCount: lines.length,
-              lastActivity: new Date(st?.mtimeMs ?? s.updatedAt).toISOString(),
+              lastActivity: new Date(await lastActivityAt(s)).toISOString(),
               participants: [],
             }],
           })

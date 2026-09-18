@@ -4,8 +4,9 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/widgets/engine_identity.dart';
 
-import 'compact_age.dart';
 import 'phone_search_index.dart';
+import 'phone_search_rank.dart';
+import 'phone_search_row_trailing.dart';
 import 'phone_status.dart';
 import 'search_result_text.dart';
 import 'status_pill.dart';
@@ -23,6 +24,7 @@ class PhoneSearchRow extends StatefulWidget {
     required this.terms,
     required this.now,
     required this.onTap,
+    this.placed = false,
   });
 
   final PhoneSearchResult row;
@@ -32,6 +34,10 @@ class PhoneSearchRow extends StatefulWidget {
   /// disagree about what "4m" means.
   final DateTime now;
   final VoidCallback onTap;
+
+  /// Whether the row has to say where it is itself — no folder header over it,
+  /// as in the Recent list. See [PhoneSearchResult.placedSubtitle].
+  final bool placed;
 
   @override
   State<PhoneSearchRow> createState() => _PhoneSearchRowState();
@@ -69,6 +75,9 @@ class _PhoneSearchRowState extends State<PhoneSearchRow> {
     AppTheme.watch(context);
     final row = widget.row;
     final matches = phoneResultMatches(row, widget.terms);
+    // A row that is here for something said in its conversation quotes it in
+    // place of its subtitle: nothing else on the row would explain the match.
+    final quote = phoneRecallSnippet(row, widget.terms);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapDown: (_) => _press(true),
@@ -109,8 +118,11 @@ class _PhoneSearchRowState extends State<PhoneSearchRow> {
                     ),
                     const SizedBox(height: 3),
                     SearchResultText(
-                      row.subtitle,
-                      matches: matches,
+                      quote ??
+                          (widget.placed ? row.placedSubtitle : row.subtitle),
+                      matches: quote == null
+                          ? matches
+                          : phoneRecallMatches(widget.terms),
                       style: TextStyle(
                         color: AppPalette.textFaint,
                         fontSize: 12.5,
@@ -119,7 +131,11 @@ class _PhoneSearchRowState extends State<PhoneSearchRow> {
                   ],
                 ),
               ),
-              _Trailing(row: row, openable: _openable, now: widget.now),
+              PhoneSearchTrailing(
+                row: row,
+                openable: _openable,
+                now: widget.now,
+              ),
             ],
           ),
         ),
@@ -164,107 +180,6 @@ class _Mark extends StatelessWidget {
             color: phoneToneColor(row.summary.tone),
           ),
         },
-      ),
-    );
-  }
-}
-
-/// The row's trailing edge: why it cannot be opened, or else how fresh it is.
-///
-/// An agent that opens says when its conversation last moved — `4m` — or that
-/// it is `working` right now, which is what explains a row sorted above a
-/// fresher one. Unboxed and faint: it is read after the name, never instead.
-///
-/// A boxed word is kept for what a tap would NOT make obvious: a machine's
-/// Unlock or Offline, and an agent whose terminal has gone. Dimming alone leaves
-/// the person tapping a row that cannot answer and reading nothing about why.
-class _Trailing extends StatelessWidget {
-  const _Trailing({
-    required this.row,
-    required this.openable,
-    required this.now,
-  });
-
-  final PhoneSearchResult row;
-  final bool openable;
-  final DateTime now;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    final badge = _badge;
-    if (badge != null) return _Badge(badge);
-    final entry = row.entry;
-    if (entry == null) return const SizedBox.shrink();
-    if (entry.isWorking) {
-      return _Recency('working', color: phoneToneColor(PhoneTone.busy));
-    }
-    final at = entry.agent.updatedAt;
-    if (at == null) return const SizedBox.shrink();
-    return _Recency(compactAge(at, now), color: AppPalette.textFaint);
-  }
-
-  String? get _badge {
-    final machine = row.machine;
-    return switch (row.kind) {
-      PhoneSearchKind.agent => openable ? null : 'No terminal',
-      PhoneSearchKind.machine => switch (machine == null
-          ? null
-          : phoneMachineStatusOf(machine)) {
-        PhoneMachineStatus.offline => 'Offline',
-        PhoneMachineStatus.needsPassword => 'Unlock',
-        // Its state, not a verb: the tap brings a sheet of actions, and "View"
-        // promised a screen that is no longer there.
-        _ => 'Connected',
-      },
-    };
-  }
-}
-
-class _Recency extends StatelessWidget {
-  const _Recency(this.text, {required this.color});
-
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(left: 8),
-    child: Text(
-      text,
-      style: TextStyle(
-        color: color,
-        fontSize: 12,
-        fontFeatures: AppFont.tabularFigures,
-      ),
-    ),
-  );
-}
-
-class _Badge extends StatelessWidget {
-  const _Badge(this.label);
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: AppGlass.hair),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: AppPalette.textFaint,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       ),
     );
   }

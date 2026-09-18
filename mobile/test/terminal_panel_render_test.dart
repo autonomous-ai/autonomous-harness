@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness_mobile/auth/auth_session.dart';
-import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 import 'package:xterm/xterm.dart';
+
+import 'terminal_panel_fixture.dart';
 
 /// What a phone terminal draws while it is not the page being read, or while
 /// the keyboard is still sliding.
@@ -20,25 +20,14 @@ void main() {
   late List<Map<String, dynamic>> resizes;
 
   setUp(() {
-    notifier = AppNotifier(
-      config: AppConfig.dev,
-      authSession: AuthSession(),
-      configStore: null,
-    );
+    notifier = panelNotifier();
     resizes = [];
-    session = TerminalSession(
-      machineId: 'm',
-      agentId: 'a',
-      agentName: 'Agent',
-      engineId: 'claude',
+    session = controllingSession(
       send: (type, payload) async {
         if (type == 'terminal_resize') resizes.add(payload);
         return true;
       },
-      sendBinary: (_) async => true,
     );
-    session.status = TerminalSessionStatus.controlling;
-    session.streamId = 's';
     for (var line = 0; line < 200; line++) {
       session.terminal.write('output line $line\r\n');
     }

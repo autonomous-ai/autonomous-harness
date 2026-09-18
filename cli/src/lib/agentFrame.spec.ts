@@ -1,3 +1,6 @@
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { agentFrame } from './agentFrame.js'
 import type { RegisteredSession } from './registry.js'
@@ -75,5 +78,36 @@ describe('agentFrame', () => {
     legacy.launch = { state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'See terminal.' }
     expect(await agentFrame(legacy, { selectedModel: null, terminalAvailable: true }))
       .toMatchObject({ launch: { state: 'failed', error: 'ENGINE_DID_NOT_START', detail: 'See terminal.' } })
+  })
+})
+
+describe('agentFrame updatedAt', () => {
+  const context = { selectedModel: null, terminalAvailable: true }
+  const lastHook = Date.UTC(2026, 8, 17, 7)
+
+  // The regression: discovery rewrites the registry's `updatedAt` on every pass, so an agent with no
+  // readable transcript was stamped "now" forever and a phone sorting by recency put it on top.
+  it('follows the last hook without a transcript, never the bookkeeping clock', async () => {
+    const row = { ...session(null), updatedAt: Date.now(), lastHookAt: lastHook }
+    expect((await agentFrame(row, context)).updatedAt).toBe('2026-09-17T07:00:00.000Z')
+  })
+
+  it('an unreadable transcript falls back to the last hook too', async () => {
+    const row = { ...session(null), transcriptPath: '/nonexistent/agent-frame.jsonl', updatedAt: Date.now(), lastHookAt: lastHook }
+    expect((await agentFrame(row, context)).updatedAt).toBe('2026-09-17T07:00:00.000Z')
+  })
+
+  it("prefers the transcript's mtime", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agent-frame-'))
+    try {
+      const transcriptPath = join(dir, 'session.jsonl')
+      await writeFile(transcriptPath, '{}\n')
+      const written = new Date('2026-09-18T01:02:03.000Z')
+      await utimes(transcriptPath, written, written)
+      const row = { ...session(null), transcriptPath, updatedAt: Date.now(), lastHookAt: lastHook }
+      expect((await agentFrame(row, context)).updatedAt).toBe(written.toISOString())
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -5,8 +5,7 @@ import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/touch_target.dart';
 import 'package:harness_mobile/state/app_state.dart';
 
-import 'phone_search_index.dart';
-import 'phone_search_page.dart' show PhoneSearchResults;
+import 'phone_search_results.dart';
 import 'terminal_header.dart';
 
 /// Search, opened in place over a terminal rather than pushed as a page.
@@ -81,56 +80,45 @@ class _TerminalSearchOverlayState extends State<TerminalSearchOverlay> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _close();
       },
-      child: ListenableBuilder(
-        listenable: widget.notifier,
-        builder: (context, _) {
-          final all = phoneSearchIndex(widget.notifier);
-          final rows = rankPhoneSearch(all, _query);
-          final terms = phoneSearchTerms(_query);
-          return Column(
-            children: [
-              // ⚠️ **The bar is NOT faded in over the header's own.** The two
-              // are the same shape in the same place, so cross-fading them
-              // looked like nothing happening at all — which is exactly what
-              // this screen was reported as doing. It is opaque from frame one
-              // and animates its WIDTH instead: Cancel opens out of the right
-              // edge while `+` and `⋯` collapse behind it, and the field takes
-              // the space. That is the move the tap promises.
-              _Bar(
-                controller: _controller,
-                focus: _focus,
-                animation: widget.animation,
-                onChanged: (value) => setState(() => _query = value),
-                onCancel: _close,
-              ),
-              // ⚠️ Fades AND rises, on the second half of the animation alone.
-              // Rows arriving while the bar is still opening read as two things
-              // at once; waiting until the bar is nearly home makes it one move
-              // — the bar opens, the list comes up into it.
-              Expanded(
-                child: _Rise(
-                  animation: widget.animation,
-                  child: ColoredBox(
-                    color: AppPalette.windowBg,
-                    child: PhoneSearchResults(
-                      notifier: widget.notifier,
-                      rows: rows,
-                      terms: terms,
-                      query: _query,
-                      total: all.length,
-                      // ⚠️ Nothing pops this search — opening an agent swaps
-                      // the terminal underneath it instead — so tapping a row
-                      // has to close it by hand. Without this the keyboard
-                      // would still be up over an agent nobody asked to type
-                      // into.
-                      onOpen: _close,
-                    ),
-                  ),
+      child: Column(
+        children: [
+          // ⚠️ **The bar is NOT faded in over the header's own.** The two
+          // are the same shape in the same place, so cross-fading them
+          // looked like nothing happening at all — which is exactly what
+          // this screen was reported as doing. It is opaque from frame one
+          // and animates its WIDTH instead: Cancel opens out of the right
+          // edge while `+` and `⋯` collapse behind it, and the field takes
+          // the space. That is the move the tap promises.
+          _Bar(
+            controller: _controller,
+            focus: _focus,
+            animation: widget.animation,
+            onChanged: (value) => setState(() => _query = value),
+            onCancel: _close,
+          ),
+          // ⚠️ Fades AND rises, on the second half of the animation alone.
+          // Rows arriving while the bar is still opening read as two things
+          // at once; waiting until the bar is nearly home makes it one move
+          // — the bar opens, the list comes up into it.
+          Expanded(
+            child: _Rise(
+              animation: widget.animation,
+              child: ColoredBox(
+                color: AppPalette.windowBg,
+                child: PhoneSearchResults(
+                  notifier: widget.notifier,
+                  query: _query,
+                  // ⚠️ Nothing pops this search — opening an agent swaps
+                  // the terminal underneath it instead — so tapping a row
+                  // has to close it by hand. Without this the keyboard
+                  // would still be up over an agent nobody asked to type
+                  // into.
+                  onOpen: _close,
                 ),
               ),
-            ],
-          );
-        },
+            ),
+          ),
+        ],
       ),
     );
   }

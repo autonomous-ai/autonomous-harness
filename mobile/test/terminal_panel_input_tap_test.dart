@@ -1,12 +1,12 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:harness_mobile/auth/auth_session.dart';
-import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/state/app_state.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 import 'package:xterm/xterm.dart';
+
+import 'terminal_panel_fixture.dart';
 
 /// On the phone the page decides what a tap on the terminal does — it types
 /// what the mic heard into the prompt before it raises the keyboard. The panel
@@ -18,21 +18,8 @@ void main() {
   late int inputTaps;
 
   setUp(() {
-    notifier = AppNotifier(
-      config: AppConfig.dev,
-      authSession: AuthSession(),
-      configStore: null,
-    );
-    session = TerminalSession(
-      machineId: 'm',
-      agentId: 'a',
-      agentName: 'Agent',
-      engineId: 'claude',
-      send: (_, _) async => true,
-      sendBinary: (_) async => true,
-    );
-    session.status = TerminalSessionStatus.controlling;
-    session.streamId = 's';
+    notifier = panelNotifier();
+    session = controllingSession();
     inputTaps = 0;
   });
 

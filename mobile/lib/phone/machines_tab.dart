@@ -14,6 +14,7 @@ import 'phone_card.dart';
 import 'phone_header.dart';
 import 'phone_navigation.dart';
 import 'phone_search_button.dart';
+import 'phone_section_label.dart';
 import 'phone_status.dart';
 import 'phone_sheet.dart';
 import 'unlink_machine.dart';
@@ -113,12 +114,13 @@ class _Body extends StatelessWidget {
         padding: phoneListPadding(context),
         children: [
           if (working.isNotEmpty) ...[
-            const _SectionLabel('Linked'),
+            const PhoneSectionLabel('Linked'),
             for (final state in working) _tile(context, state),
             const SizedBox(height: 6),
           ],
           if (needsAttention.isNotEmpty) ...[
-            if (working.isNotEmpty) const _SectionLabel('Needs your attention'),
+            if (working.isNotEmpty)
+              const PhoneSectionLabel('Needs your attention'),
             for (final state in needsAttention) _tile(context, state),
           ],
         ],
@@ -177,29 +179,6 @@ class _Body extends StatelessWidget {
           onTap: () => unawaited(unlinkThisPhone(context, notifier, state)),
         ),
       ],
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
-      child: Text(
-        text.toUpperCase(),
-        style: TextStyle(
-          color: AppPalette.textFaint,
-          fontSize: 11.5,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.5,
-        ),
-      ),
     );
   }
 }

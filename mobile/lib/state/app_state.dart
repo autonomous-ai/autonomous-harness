@@ -34,6 +34,7 @@ import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
 import '../terminal/remote_media_download.dart';
 import '../widgets/engine_identity.dart' show allEngines;
+import 'agent_recall.dart';
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
@@ -329,6 +330,26 @@ class AppNotifier extends ChangeNotifier {
   @visibleForTesting
   final WsConn Function(String machineId)? connectionForTest;
   final Map<String, Timer> _turnActivityWatchdogs = {};
+
+  /// Each agent's last few turns, as search matches them — see [AgentRecallStore].
+  ///
+  /// Asks only a machine this app is already connected to, and never dials one:
+  /// warming search must not be what wakes a relay socket.
+  late final AgentRecallStore agentRecall = AgentRecallStore(
+    fetch: (key) => _conn(key.machineId).request(
+      'agent_recent',
+      payload: {'agentId': key.agentId, 'n': 3},
+      timeout: const Duration(seconds: 6),
+    ),
+    canFetch: (key) =>
+        !_disposed &&
+        (_pool != null || connectionForTest != null) &&
+        machineStates[key.machineId]?.connectionStatus ==
+            ConnectionStatus.connected,
+  );
+
+  AgentRecallKey agentRecallKey(String machineId, Agent agent) =>
+      (machineId: machineId, agentId: agent.id, sessionId: agent.sessionId);
 
   /// When this launch became signed in, and by which route — until the first
   /// message of that session has been reported, after which it is null.
@@ -5792,6 +5813,7 @@ class AppNotifier extends ChangeNotifier {
       swarm.panes.clear();
     }
     unawaited(_spokenTasks.close());
+    agentRecall.dispose();
     super.dispose();
   }
 }

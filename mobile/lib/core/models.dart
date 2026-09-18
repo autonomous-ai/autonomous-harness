@@ -134,6 +134,18 @@ class Agent {
   final String? engineDisplayName;
   final String? engineIconHint;
   final String? codexHome;
+
+  /// The model a grid launch pinned (`qwen3-coder`, a llama.cpp GGUF), null when
+  /// the agent is on its engine's own login or the engine chose.
+  final String? gridModel;
+
+  /// The runtime profile's model for this session (`gpt-5-codex`, `opus`), null
+  /// when the daemon has none to report.
+  final String? selectedModel;
+
+  /// A domain-specific harness's display name ("Model manager"), null for a
+  /// plain engine.
+  final String? dshName;
   final String? parentAgentId;
   final AgentProject? project;
   final String status;
@@ -153,6 +165,9 @@ class Agent {
     this.engineDisplayName,
     this.engineIconHint,
     this.codexHome,
+    this.gridModel,
+    this.selectedModel,
+    this.dshName,
     this.parentAgentId,
     this.project,
     this.status = 'active',
@@ -187,6 +202,7 @@ class Agent {
       'failed' => 'failed',
       _ => 'ready',
     };
+    final grid = j['grid'];
     return Agent(
       id: j['id'] as String,
       sessionId: _safeLabel(j['sessionId']),
@@ -197,6 +213,9 @@ class Agent {
       engineDisplayName: _safeLabel(j['engineDisplayName']),
       engineIconHint: _safeLabel(j['engineIconHint']),
       codexHome: j['engine'] == 'codex' ? _safeCodexHome(j['codexHome']) : null,
+      gridModel: grid is Map ? _safeLabel(grid['model']) : null,
+      selectedModel: _safeLabel(j['selectedModel']),
+      dshName: _safeLabel(j['dshName']),
       parentAgentId: _safeLabel(j['parentAgentId'] ?? j['parentId']),
       project: AgentProject.fromJson(j['project']),
       status: (j['status'] as String?) ?? 'active',
@@ -223,6 +242,9 @@ class Agent {
     engineDisplayName: engineDisplayName,
     engineIconHint: engineIconHint,
     codexHome: codexHome,
+    gridModel: gridModel,
+    selectedModel: selectedModel,
+    dshName: dshName,
     parentAgentId: parentAgentId,
     project: project,
     status: status,
