@@ -3,7 +3,7 @@
   "id": "autonomous/kicad",
   "name": "KiCad",
   "category": "PCB",
-  "author": "Autonomous",
+  "author": "KiCad",
   "formerly": [
     "autonomous/solder"
   ],
