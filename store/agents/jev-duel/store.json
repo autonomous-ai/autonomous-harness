@@ -1,0 +1,14 @@
+{
+  "$schema": "https://autonomous.null.land/store.schema.json",
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev plays both sides of a Reversi war, and a third Jev referees",
+  "screenshots": [],
+  "examples": [
+    {
+      "prompt": "Stage a grudge match: a patient corner-lover called Patience against a greedy opportunist called Greed. Make their personalities clash and watch the referee call it as the game tips.",
+      "caption": "The Quiet War — patience vs greed on a 6x6 board"
+    }
+  ]
+}
