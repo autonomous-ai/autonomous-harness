@@ -27,10 +27,9 @@ import 'package:flutter/widgets.dart';
 /// that simply went would have left the page with no way to search or to reach
 /// the actions until somebody scrolled back for it.
 ///
-/// ⚠️ **The foot row is not driven from here and must not be.** An earlier
-/// version hid it on any scroll at all. It costs the terminal one short line and
-/// carries what the mic needs somebody to read, which is wanted most while
-/// things are moving.
+/// ⚠️ **The floating mic, Search and New agent are not driven from here and
+/// must not be.** They carry what the mic needs somebody to read, which is
+/// wanted most while things are moving.
 ///
 /// ⚠️ **A value, not a boolean, and it animates.** The page reads it as 0 (fully
 /// down) to 1 (fully gone) so the row can slide rather than blink.

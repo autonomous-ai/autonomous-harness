@@ -14,8 +14,12 @@ enum VoiceMicFace {
   /// The microphone is opening: tap to call it off.
   starting,
 
-  /// Recording: tap to send what was said. It breathes while it listens.
+  /// Recording: tap when done, and what was said is written into the prompt.
+  /// It breathes while it listens.
   listening,
+
+  /// What was said is in the prompt, unsent: tap to send it.
+  send,
 
   /// Transcribing or sending: nothing to tap until that is back.
   busy,
@@ -140,9 +144,17 @@ class _Glyph extends StatelessWidget {
         // pressing this, it is sent by letting go. The mic stays up for the
         // whole take and the thumb never leaves it, so there is no second press
         // for an arrow to describe.
+        //
+        // ⚠️ In hold-to-talk the arrow would be a lie: nothing is sent by
+        // pressing this, it is sent by letting go. The mic stays up for the
+        // whole take and the thumb never leaves it, so there is no second press
+        // for an arrow to describe.
+        //
+        // Tap mode: a tick, "done talking" — the tap writes the words into the
+        // prompt, it does not send them. The arrow is the NEXT tap's.
         VoiceMicFace.listening =>
-          micHoldsToTalk ? LucideIcons.mic300 : LucideIcons.arrowUp300,
-        VoiceMicFace.retry => LucideIcons.arrowUp300,
+          micHoldsToTalk ? LucideIcons.mic300 : LucideIcons.check300,
+        VoiceMicFace.send || VoiceMicFace.retry => LucideIcons.arrowUp300,
         VoiceMicFace.cancelling => LucideIcons.x300,
         VoiceMicFace.off => LucideIcons.micOff300,
         VoiceMicFace.talk ||

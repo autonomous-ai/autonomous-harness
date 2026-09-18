@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:xterm/xterm.dart' show TerminalKey;
 
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
@@ -26,15 +27,27 @@ VoiceMicAction voiceMicAction(
   TerminalSession session,
 ) => micHoldsToTalk ? _holdAction(voice, session) : _tapAction(voice, session);
 
-/// Tap to start, tap again to send — [VoiceMicMode.tapToToggle].
+/// Tap to talk, tap when done, tap to send — [VoiceMicMode.tapToToggle].
+///
+/// The second tap does NOT send. It writes what was heard into the terminal's
+/// prompt — [typeIntoPrompt] — so it can be read, and corrected with the
+/// keyboard, before it goes; the arrow that face turns into is the send. `×`
+/// in the pill beside the mic is the way out at every step.
 ///
 /// ⚠️ Tapping while the microphone is still OPENING calls it off rather than
-/// sending: there is no take yet, and a send of nothing would leave the
-/// recording to start behind the person's back.
+/// writing: there is no take yet, and leaving the recording to start behind
+/// the person's back is worse than asking for one more tap.
 VoiceMicAction _tapAction(VoiceInputController voice, TerminalSession session) {
-  void send() => unawaited(voice.submit(session.sendComposerText));
   final canSend = session.acceptsInput;
   if (voice.isSending) return _face(VoiceMicFace.busy);
+  if (voice.isStagedIn(session)) {
+    return _face(
+      VoiceMicFace.send,
+      onPressed: canSend
+          ? () => voice.sendStaged(() => pressEnter(session))
+          : null,
+    );
+  }
   return switch (voice.status) {
     VoiceInputStatus.transcribing => _face(VoiceMicFace.busy),
     VoiceInputStatus.starting => _face(
@@ -43,11 +56,17 @@ VoiceMicAction _tapAction(VoiceInputController voice, TerminalSession session) {
     ),
     VoiceInputStatus.listening => _face(
       VoiceMicFace.listening,
-      onPressed: send,
+      onPressed: () => unawaited(
+        voice.stage(session, (text) => typeIntoPrompt(session, text)),
+      ),
     ),
+    // Words held from a write or send that did not land: sent as a composer
+    // turn, which is the one path that does not depend on the prompt.
     _ when voice.transcript.isNotEmpty => _face(
       VoiceMicFace.retry,
-      onPressed: canSend ? send : null,
+      onPressed: canSend
+          ? () => unawaited(voice.submit(session.sendComposerText))
+          : null,
     ),
     VoiceInputStatus.unavailable => _face(
       VoiceMicFace.off,
@@ -58,6 +77,38 @@ VoiceMicAction _tapAction(VoiceInputController voice, TerminalSession session) {
       onPressed: canSend ? () => unawaited(voice.startListening()) : null,
     ),
   };
+}
+
+/// Types [text] into the terminal's prompt, as the keyboard would, without
+/// pressing Return. False when the terminal is not taking input.
+///
+/// Typed rather than pasted: it is what the keyboard's own path does with words
+/// said before a tap on the terminal, and it is what Backspace can take back
+/// one character at a time — see [eraseFromPrompt].
+bool typeIntoPrompt(TerminalSession session, String text) {
+  if (!session.acceptsInput || text.isEmpty) return false;
+  session.terminal.textInput(text);
+  return true;
+}
+
+/// Presses Return in the terminal — the send for words [typeIntoPrompt] wrote.
+bool pressEnter(TerminalSession session) {
+  if (!session.acceptsInput) return false;
+  session.terminal.keyInput(TerminalKey.enter);
+  return true;
+}
+
+/// Takes [text] back out of the prompt it was typed into: one Backspace per
+/// character, from the end, where the words were left.
+///
+/// ⚠️ Per character, counted in runes — `String.length` counts UTF-16 units,
+/// and an emoji would cost two Backspaces for the one character it is,
+/// deleting a character that was there before the words.
+void eraseFromPrompt(TerminalSession session, String text) {
+  if (!session.acceptsInput) return;
+  for (var i = 0; i < text.runes.length; i++) {
+    session.terminal.keyInput(TerminalKey.backspace);
+  }
 }
 
 /// Hold to talk, release to send — [VoiceMicMode.holdToTalk].
@@ -171,8 +222,16 @@ VoiceMicAction _face(
 /// naming the state: the thumb is already down and holding, so "Listening…" is
 /// the one thing the person can see for themselves, and what happens when they
 /// let go is the thing they cannot.
-String? voiceActivityLabel(VoiceInputController voice) {
+///
+/// [session] is the terminal the mic is on: words waiting in ITS prompt say
+/// how to send them. Words waiting in another agent's prompt are not this
+/// page's business.
+String? voiceActivityLabel(
+  VoiceInputController voice, [
+  TerminalSession? session,
+]) {
   if (voice.isSending) return 'Sending…';
+  if (session != null && voice.isStagedIn(session)) return 'Tap ↑ to send';
   return switch (voice.status) {
     // ⚠️ "Wait" rather than "Starting…" in hold mode, and it is the difference
     // between working and not. Opening the microphone is real hardware time, and
@@ -186,7 +245,7 @@ String? voiceActivityLabel(VoiceInputController voice) {
     VoiceInputStatus.listening =>
       micHoldsToTalk
           ? 'Listening… release to send, slide off to cancel'
-          : 'Listening…',
+          : 'Listening… tap ✓ when done',
     VoiceInputStatus.transcribing => 'Transcribing…',
     VoiceInputStatus.idle || VoiceInputStatus.unavailable => null,
   };

@@ -24,15 +24,13 @@ import 'phone_sheet.dart';
 import 'phone_status.dart';
 import 'settings_page.dart';
 import 'status_pill.dart';
+import 'terminal_action_column.dart';
 import 'terminal_chrome_scroll.dart';
-import 'terminal_foot_bar.dart';
 import 'terminal_header.dart';
 import 'terminal_header_floats.dart';
 import 'terminal_input_dock.dart';
 import 'terminal_search.dart';
 import 'voice_input_controller.dart';
-import 'voice_mic_fab.dart';
-import 'voice_mic_mode.dart';
 
 /// One agent's terminal, filling the phone. The header says whose it is and whether it is live;
 /// everything below it is the same [TerminalPanel] a desktop tile draws, minus that tile's own
@@ -172,18 +170,6 @@ class _TerminalPageState extends State<TerminalPage>
   /// the remote resize until this clears.
   bool _keyboardSettling = false;
 
-  /// Whether a hold in progress on the mic has been dragged off it, so letting
-  /// go would throw the take away.
-  ///
-  /// Kept here rather than in either widget because it crosses between them: the
-  /// floating button is what feels the finger leave, and the foot row at the
-  /// other end of the page is what can say so in words — the thumb is covering
-  /// the button itself.
-  ///
-  /// [VoiceMicMode.tapToToggle] leaves it false forever; that mode has no hold
-  /// to slide out of.
-  bool _micSlippedOff = false;
-
   /// Drives search opening out of the header bar and collapsing back into it.
   ///
   /// ⚠️ **One controller for both halves of the move, read by both.** The search
@@ -285,32 +271,16 @@ class _TerminalPageState extends State<TerminalPage>
     super.dispose();
   }
 
-  /// The three the header held, for when the row is not on screen to hold them.
+  /// What the header held, for when the row is not on screen to hold it: `⋯`.
   ///
-  /// ⚠️ Built from the same conditions as the header's own row, so the column
-  /// never offers something the row would have withheld — `+` needs a machine
-  /// that is answering, `⋯` needs an agent that has loaded. That also means the
-  /// column can be two buttons rather than three, which is why its height is
-  /// computed rather than fixed.
+  /// ⚠️ Built from the same condition as the header's own row, so the float
+  /// never offers something the row would have withheld — `⋯` needs an agent
+  /// that has loaded. Search and New agent are not here: they float in the
+  /// bottom-right corner with the mic whether the header is up or not.
   List<TerminalHeaderChoice> _headerChoices(
     MachineState? machine,
     Agent? agent,
   ) => [
-    TerminalHeaderChoice(
-      icon: LucideIcons.search300,
-      label: 'Search',
-      onTap: _openSearch,
-    ),
-    if (machine != null &&
-        phoneMachineStatusOf(machine) == PhoneMachineStatus.ready)
-      TerminalHeaderChoice(
-        icon: LucideIcons.plus300,
-        label: 'New agent',
-        onTap: () async {
-          await openNewAgent(context, widget.notifier, widget.machineId);
-          if (mounted) setState(() {});
-        },
-      ),
     if (agent != null)
       TerminalHeaderChoice(
         icon: LucideIcons.ellipsis300,
@@ -324,71 +294,50 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Where each floating button starts its flight, relative to where it lands.
   ///
-  /// ⚠️ **Worked out from the header's own constants rather than measured.** A
-  /// [GlobalKey] on each control would give the true rectangles, but the header
-  /// is being taken apart at exactly the moment these are read — its render
-  /// objects are mid-shrink, and half of them are already gone. Constants are
-  /// the only description of where the row's controls WERE that survives the row
-  /// leaving.
-  ///
-  /// The trade is that the origins drift if the header's layout changes without
-  /// this changing with it. That shows up as buttons flying from slightly the
-  /// wrong place, never as a crash or a missed target.
+  /// ⚠️ **Worked out from the header's own constants rather than measured.** The
+  /// header is being taken apart at exactly the moment these are read, so
+  /// constants are the only description of where its controls WERE that
+  /// survives the row leaving. The trade is that the origins drift if the
+  /// header's layout changes without this changing with it — buttons flying
+  /// from slightly the wrong place, never a crash or a missed target.
   List<Offset> _headerOrigins(int count) {
-    // The column's own geometry: each button rests [pitch] below the one above,
-    // with the first at [inset] from the top.
     const inset = TerminalHeaderFloats.inset;
     const pitch = TerminalHeaderFloats.pitch;
     const extent = TerminalHeaderFloats.extent;
-
-    // Where the header's controls sat, as centres measured from the top-right of
-    // the safe area. The trailing actions are [_HeaderAction]s: 24px boxes with
-    // 7 either side, laid from the right edge inwards past the header's own
-    // 14pt inset.
+    // The trailing actions are [_HeaderAction]s: 24px boxes with 7 either side,
+    // the last one's trailing pad dropped, laid from the right edge inwards past
+    // the header's own inset.
     const actionPitch = 24 + _HeaderAction.gap * 2;
-    final headerMidY = TerminalHeader.topInset + TerminalHeader.barHeight / 2;
-
+    const headerMidY = TerminalHeader.topInset + TerminalHeader.rowHeight / 2;
     return [
       for (var i = 0; i < count; i++)
         () {
-          // ⚠️ The FIRST choice is search, and it came from the bar — which
-          // spans the row rather than sitting at a point. Its left end is where
-          // the magnifier is, and that is what the button flies from.
-          final fromRight = i == 0
-              ? _searchGlyphFromRight(context)
-              : TerminalHeader.sideInset +
-                    actionPitch * (count - 1 - i) +
-                    actionPitch / 2;
-          final restFromRight = inset + extent / 2;
+          final fromRight =
+              TerminalHeader.sideInset + actionPitch * (count - 1 - i) + 12;
+          const restFromRight = inset + extent / 2;
           final restY = inset + i * pitch + extent / 2;
           return Offset(restFromRight - fromRight, headerMidY - restY);
         }(),
     ];
   }
 
-  /// How far the search bar's magnifier sits from the screen's right edge.
+  /// Opens the machine's new-agent form.
   ///
-  /// The bar fills what the trailing actions leave, so this is the whole width
-  /// less the row's insets and the glyph's own place inside the bar.
-  double _searchGlyphFromRight(BuildContext context) =>
-      MediaQuery.sizeOf(context).width -
-      TerminalHeader.sideInset -
-      TerminalHeader.barPadding -
-      TerminalHeader.glyphSize / 2;
+  /// Awaited: the form may be backed out of rather than completed, and this page
+  /// gets no rebuild when it lands back on top.
+  Future<void> _newAgent() async {
+    await openNewAgent(context, widget.notifier, widget.machineId);
+    if (mounted) setState(() {});
+  }
 
-  /// Grows the header's bar into the search screen.
+  /// Fades the search screen up over the terminal.
   ///
   /// ⚠️ The overlay is mounted on THIS frame and the animation started on it,
-  /// so the field is there to take the keyboard as the bar opens. Starting the
-  /// animation first and mounting at the end would land the caret after the
-  /// move, which is a beat too late for a bar that was tapped to type in.
+  /// so the field is there to take the keyboard as the screen opens. Mounting
+  /// at the end of the fade would land the caret a beat too late for a button
+  /// that was tapped to type in.
   void _openSearch() {
     if (_searching) return;
-    // The bar being tapped may be a bar that scrolling had slid halfway off. It
-    // has to be home before the overlay's copy grows out of it, or the two start
-    // from different places and the expansion reads as a jump.
-    //
-    _chrome.reveal();
     setState(() {
       _searching = true;
       // ⚠️ Handed over, not left standing. The bar can be tapped with the
@@ -402,8 +351,8 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Collapses it back into the bar, and takes the overlay down once it is home.
   ///
-  /// ⚠️ **Guarded on the controller's own status, not on [_searching].** The
-  /// field's chevron and the system back gesture can both arrive while the reverse is already
+  /// ⚠️ **Guarded on the controller's own status, not on [_searching].** Cancel
+  /// and the system back gesture can both arrive while the reverse is already
   /// running — a second `reverse()` restarts it from wherever it had got to, and
   /// the bar visibly bounces.
   void _closeSearch() {
@@ -504,8 +453,7 @@ class _TerminalPageState extends State<TerminalPage>
       widget.isActive && !_searching && (_keyboardIsUp || _keyboardRequested);
 
   /// A tap on the terminal while no keyboard is up or coming: the keyboard.
-  /// Voice is the mic at the foot of the page, never this tap — see
-  /// [TerminalFootBar].
+  /// Voice is the floating mic, never this tap — see [TerminalActionColumn].
   ///
   /// What was said and not sent is typed into the prompt on the way rather than
   /// dropped, so the keyboard picks up where the voice left off — to correct a
@@ -531,8 +479,8 @@ class _TerminalPageState extends State<TerminalPage>
     if (_keyboardRequested) setState(() => _keyboardRequested = false);
   }
 
-  /// Whether the keyboard on screen is THIS page's — the question the foot row
-  /// asks, which [_keyboardUp] alone answers wrongly.
+  /// Whether the keyboard on screen is THIS page's — the question the floating
+  /// controls ask, which [_keyboardUp] alone answers wrongly.
   ///
   /// ⚠️ [_keyboardUp] means "an inset exists", not "this page raised it". A
   /// pushed page with a text field — search, rename — raises one of its own,
@@ -619,8 +567,9 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      // Not the voice controller: what the mic hears repaints the foot row,
-      // which listens for itself, and never rebuilds the terminal above it.
+      // Not the voice controller: what the mic hears repaints the floating mic
+      // and its pill, which listen for themselves, and never rebuilds the
+      // terminal under them.
       listenable: widget.notifier,
       builder: (context, _) {
         AppTheme.watch(context);
@@ -649,26 +598,12 @@ class _TerminalPageState extends State<TerminalPage>
             .where((a) => a.id == widget.agentId)
             .firstOrNull;
         final reclaim = phoneReclaimAction(session);
-        // The header's trailing controls, counted before they are built: their
-        // slot is sized from this, and the search field is laid out against
-        // that same width. The conditions must match the ones guarding each
-        // control below — see [_TrailingFade.extentFor].
-        //
-        // ⚠️ [reclaim] is counted too, though it is a labelled button rather
-        // than one of the fixed 24px icon boxes. It cannot be measured from a
-        // constant — its width is its label's — so the slot treats it as a
-        // MINIMUM rather than a fixed size: see [_TrailingFade], which floors
-        // the width it is given instead of forcing it. Sizing it exactly is not
-        // worth a second TextPainter for a button that shows only on a
-        // read-only stream.
-        final headerActions =
-            (machine != null &&
-                    phoneMachineStatusOf(machine) == PhoneMachineStatus.ready
-                ? 1
-                : 0) +
-            (agent != null ? 1 : 0) +
-            (reclaim != null ? 1 : 0);
-        final trailingExtent = _TrailingFade.extentFor(context, headerActions);
+        // Creating needs the machine to list its folders and name its engines,
+        // so one that is offline or still wants its password cannot host a new
+        // agent — the same gate the Agents tab puts on its fab.
+        final canCreate =
+            machine != null &&
+            phoneMachineStatusOf(machine) == PhoneMachineStatus.ready;
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
           // ⚠️ No fab. New agent is the `+` in the header — see the note there.
@@ -768,28 +703,26 @@ class _TerminalPageState extends State<TerminalPage>
                                     ),
                             ),
                           ),
-                          // The mic — the one voice control the page has,
-                          // floating over the terminal's bottom right corner
-                          // rather than sitting in a row of its own.
+                          // The mic, Search and New agent, floating in the
+                          // terminal's bottom-right corner — see
+                          // [TerminalActionColumn].
                           //
-                          // ⚠️ Hidden while this page owns the keyboard, the
-                          // same gate the foot row takes. Typing is the other
-                          // way of saying the same thing, the key bar is
-                          // already under the thumb, and a button floating
-                          // over it would be in the way of both.
-                          if (session != null && !_ownsInput)
+                          // ⚠️ Hidden while this page owns the keyboard.
+                          // Typing is the other way of saying what the mic
+                          // says, the key bar is already under the thumb, and
+                          // a column floating over the prompt being typed into
+                          // would be in the way of both.
+                          if (!_ownsInput)
                             Positioned(
-                              right: VoiceMicFab.inset,
-                              bottom: VoiceMicFab.inset,
-                              child: VoiceMicFab(
+                              right: TerminalActionColumn.inset,
+                              bottom: TerminalActionColumn.inset,
+                              child: TerminalActionColumn(
                                 voice: widget.voice,
                                 session: session,
-                                onSlipChanged: (off) {
-                                  if (!mounted || off == _micSlippedOff) {
-                                    return;
-                                  }
-                                  setState(() => _micSlippedOff = off);
-                                },
+                                onSearch: _openSearch,
+                                onNewAgent: canCreate
+                                    ? () => unawaited(_newAgent())
+                                    : null,
                               ),
                             ),
                         ],
@@ -820,36 +753,6 @@ class _TerminalPageState extends State<TerminalPage>
                                 _sendImage(session, ImageSource.camera),
                               )
                             : null,
-                      ),
-                    // Who this terminal belongs to, and what the mic is doing
-                    // while it is doing it — the words the floating button
-                    // has nowhere to put.
-                    //
-                    // ⚠️ Below the key bar, not above it. The bar is what the
-                    // thumb works, and a line that moves every time it
-                    // appears would shift the keys under it. Here it is the
-                    // last row on the page and nothing it does moves
-                    // anything above it.
-                    //
-                    // ⚠️ Hidden while this page owns the keyboard. The key
-                    // bar is already tall, and a line wedged under it is a
-                    // row of chrome the terminal loses for nothing — who the
-                    // agent is is not what is being read mid-typing.
-                    //
-                    // ⚠️ **It does not move with scrolling, and an earlier
-                    // version that did was wrong.** This row is one line
-                    // of identity and the mic's running commentary — it
-                    // costs the terminal 20 points, and hiding it whenever
-                    // the content moved meant the words the mic needs read
-                    // went away exactly while somebody was looking for
-                    // them.
-                    if (!_ownsInput)
-                      TerminalFootBar(
-                        name: machine?.machine.displayName ?? '',
-                        voice: widget.voice,
-                        agent: agent,
-                        status: phoneSessionSummary(session),
-                        slippedOff: _micSlippedOff,
                       ),
                   ],
                 ),
@@ -887,113 +790,41 @@ class _TerminalPageState extends State<TerminalPage>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           TerminalHeader(
-                            // ⚠️ Grows in place — no route is pushed. [openPhoneSearch]
-                            // is still what the LIST screens use, and this page used it
-                            // too until the bar arrived: pushing slid a fresh screen in
-                            // from the right, so the bar the finger had just touched left
-                            // the frame while an identical one came in from off-screen.
-                            // See `terminal_search.dart`.
-                            onSearch: _openSearch,
-                            // ⚠️ Tracks [_searching], NOT the animation's value:
-                            // the overlay's own bar exists for exactly as long as
-                            // the overlay is mounted, including the closing frames
-                            // where the animation is already near zero. Reading the
-                            // value here would paint this row's field back under
-                            // the overlay's for the tail of every collapse.
-                            barHidden: _searching,
-                            // ⚠️ No title and no engine mark up here any more: the search
-                            // bar takes the row, and the agent's name moved to
-                            // [TerminalFootBar] at the foot of the page, where it reads
-                            // as identity rather than as chrome.
-                            //
-                            // ⚠️ **Wrapped so they can step aside for search.** They act
-                            // on the agent underneath, which is not what is on screen once
-                            // search is up — so they fade out while the search field
-                            // widens over their place. No Cancel takes it: the way out
-                            // is the chevron at the field's own leading edge. See
-                            // [_TrailingFade] and `terminal_search.dart`.
+                            agent: agent,
+                            machineName: machine?.machine.displayName ?? '',
+                            status: phoneSessionSummary(session),
                             trailing: [
-                              _TrailingFade(
-                                progress: _searchCurve,
-                                extent: trailingExtent,
-                                children: [
-                                  // Read-only is a state to get OUT of, so its way out is a
-                                  // labelled button in the header rather than a line in the
-                                  // actions sheet: the sheet is where you go having decided
-                                  // to do something, and this is the thing telling you that
-                                  // typing will go nowhere until you do.
-                                  if (reclaim != null)
-                                    _ReclaimButton(
-                                      action: reclaim,
-                                      onPressed: () =>
-                                          widget.notifier.selectAgent(
-                                            widget.machineId,
-                                            widget.agentId,
-                                          ),
-                                    ),
-                                  // New agent, search and the actions menu: the three the
-                                  // page offers, in the order they are reached for — create,
-                                  // find, then everything else.
-                                  //
-                                  // ⚠️ They are spaced by [_HeaderAction], not drawn bare.
-                                  // [AppIconButton] is a fixed 24px box whatever glyph size
-                                  // it is given, so a 22px search glyph fills its box edge to
-                                  // edge while a 20px ellipsis sits inside one — three
-                                  // buttons butted together then read as unevenly spaced
-                                  // when the gaps are in fact identical. One glyph size and
-                                  // one padding across the three is what evens the rhythm.
-                                  //
-                                  // ⚠️ `+` here rather than floating over the terminal. A fab
-                                  // covers the last line of output — the line being read —
-                                  // and this page has no list to scroll it clear of.
-                                  //
-                                  // Gated on the machine ANSWERING, the same gate the Agents
-                                  // tab puts on its fab: creating needs the machine to list
-                                  // its folders and name its engines, so one that is offline
-                                  // or still wants its password cannot host a new agent.
-                                  if (machine != null &&
-                                      phoneMachineStatusOf(machine) ==
-                                          PhoneMachineStatus.ready)
-                                    _HeaderAction(
-                                      icon: LucideIcons.plus300,
-                                      size: 21,
-                                      tooltip: 'New agent',
-                                      // Awaited for the same reason search is: the form may
-                                      // be backed out of rather than completed, and this page
-                                      // gets no rebuild when it lands back on top.
-                                      onPressed: () async {
-                                        await openNewAgent(
-                                          context,
-                                          widget.notifier,
-                                          widget.machineId,
-                                        );
-                                        if (mounted) setState(() {});
-                                      },
-                                    ),
-                                  // ⚠️ Both stay put while the keyboard is up. They were once
-                                  // hidden while typing to spare the row — but the row was
-                                  // never what was short, and the controls jumping position
-                                  // on every keyboard raise cost more than the two columns
-                                  // bought back. A header that holds still is worth more.
-                                  //
-                                  // Null while the agent is not loaded: there is nothing to act on yet, and a
-                                  // menu of actions that all fail is worse than no menu.
-                                  if (agent != null)
-                                    _HeaderAction(
-                                      icon: LucideIcons.ellipsis300,
-                                      size: 21,
-                                      tooltip: 'Agent actions',
-                                      // Last in the row, so its padding stops at the header's
-                                      // own right inset rather than adding to it.
-                                      last: true,
-                                      onPressed: () => _showActions(
-                                        machineName:
-                                            machine?.machine.displayName ?? '',
-                                        agentName: agent.name,
-                                      ),
-                                    ),
-                                ],
-                              ),
+                              // Read-only is a state to get OUT of, so its way
+                              // out is a labelled button in the header rather
+                              // than a line in the actions sheet: the sheet is
+                              // where you go having decided to do something,
+                              // and this is the thing telling you that typing
+                              // will go nowhere until you do.
+                              if (reclaim != null)
+                                _ReclaimButton(
+                                  action: reclaim,
+                                  onPressed: () => widget.notifier.selectAgent(
+                                    widget.machineId,
+                                    widget.agentId,
+                                  ),
+                                ),
+                              // Null while the agent is not loaded: there is
+                              // nothing to act on yet, and a menu of actions
+                              // that all fail is worse than no menu.
+                              if (agent != null)
+                                _HeaderAction(
+                                  icon: LucideIcons.ellipsis300,
+                                  size: 21,
+                                  tooltip: 'Agent actions',
+                                  // Last in the row, so its padding stops at
+                                  // the header's own right inset.
+                                  last: true,
+                                  onPressed: () => _showActions(
+                                    machineName:
+                                        machine?.machine.displayName ?? '',
+                                    agentName: agent.name,
+                                  ),
+                                ),
                             ],
                           ),
                           Divider(height: 1, color: AppGlass.hair),
@@ -1029,25 +860,14 @@ class _TerminalPageState extends State<TerminalPage>
                     );
                   },
                 ),
-                // Search, grown out of the header bar. Only built while it is
+                // Search, faded up over the whole page. Only built while it is
                 // on its way in, up, or on its way out — see [_searching].
-                //
-                // ⚠️ **No fade and no scale on the whole overlay.** It carries
-                // its own move — the bar widening, the list rising into it —
-                // and dipping the opacity of the lot on top of that only made
-                // the terminal show through the gaps. It is opaque from its
-                // first frame.
                 if (_searching)
                   Positioned.fill(
                     child: TerminalSearchOverlay(
                       notifier: widget.notifier,
                       animation: _searchCurve,
                       onClose: _closeSearch,
-                      // What the header's trailing slot holds — where the field
-                      // starts from before it widens over the fading controls.
-                      // The same number the header lays that slot out from, so
-                      // the two agree on the first frame.
-                      trailingExtent: trailingExtent,
                     ),
                   ),
               ],
@@ -1312,93 +1132,15 @@ const int _titleMaxChars = 20;
 /// string; that one still catches a 20-character name on a narrow screen, and
 /// neither makes the other redundant.
 ///
-/// ⚠️ **Nothing calls it since the title left the header** — the name is drawn
-/// in [TerminalFootBar] now, where it has a whole row and ellipses on width
-/// alone. Kept because a title may come back to the chrome, and this is the
-/// rune-correct cut it would want.
+/// ⚠️ **Nothing calls it** — [TerminalHeader] ellipses the name on width alone,
+/// beside the machine. Kept because a count cut may be wanted there again, and
+/// this is the rune-correct one it would want.
 // ignore: unused_element
 String _clipTitle(String name) {
   final runes = name.runes.toList();
   if (runes.length <= _titleMaxChars) return name;
   // Trailing space before the ellipsis reads as a typo, so it goes.
   return '${String.fromCharCodes(runes.take(_titleMaxChars)).trimRight()}…';
-}
-
-/// The header's trailing end, fading its controls out as search opens — in a
-/// column whose width the search field can count on.
-///
-/// There is no Cancel to swap in: the way out of search is the chevron at the
-/// field's leading edge, as on the search page. The field widens over this slot
-/// as the controls fade, one move in one direction; see `_Bar` in
-/// `terminal_search.dart`.
-///
-/// ⚠️ **The slot is given an explicit width, not sized by its children.** The
-/// search overlay draws its field up to this slot's left edge on the first frame
-/// of the open, so it must be able to predict that edge. [extentFor] is that
-/// number, and both this and the overlay are laid out from it.
-class _TrailingFade extends StatelessWidget {
-  const _TrailingFade({
-    required this.progress,
-    required this.children,
-    required this.extent,
-  });
-
-  /// 0 the page's own controls are showing, 1 search is fully open.
-  final Animation<double> progress;
-
-  /// The header's controls: `+`, `⋯`, and reclaim when the stream is read-only.
-  final List<Widget> children;
-
-  /// The slot's width, from [extentFor].
-  final double extent;
-
-  /// How wide a slot holding [actions] controls must be.
-  ///
-  /// ⚠️ Counts [TerminalHeader.barGap] once, at the front: the gap between the
-  /// field and the controls belongs to the slot, so the field's right edge is
-  /// the slot's left one.
-  static double extentFor(BuildContext context, int actions) {
-    // Each action is [AppIconButton]'s fixed 24px box with [_HeaderAction.gap]
-    // either side, except the last, whose trailing pad is dropped so the row
-    // stops on the header's own inset.
-    const box = 24.0;
-    final controls = actions == 0
-        ? 0.0
-        : actions * (box + _HeaderAction.gap * 2) - _HeaderAction.gap;
-    return TerminalHeader.barGap + controls;
-  }
-
-  @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: progress,
-    builder: (context, child) => ConstrainedBox(
-      // ⚠️ A MINIMUM, not a fixed width. The reclaim button is labelled, so its
-      // width is its text's and no constant describes it — forcing the counted
-      // width on the row would clip it.
-      constraints: BoxConstraints(minWidth: extent),
-      child: Align(
-        // Against the right edge, so the controls end on the header's own inset
-        // rather than floating inside the slot.
-        alignment: Alignment.centerRight,
-        widthFactor: 1,
-        child: Opacity(
-          // Gone by the midpoint: the field is widening into this space, and
-          // controls still lit under it read as two things fighting for it.
-          opacity: (1 - progress.value * 2).clamp(0.0, 1.0),
-          child: IgnorePointer(
-            // Untappable from the first frame of the open: they act on the
-            // agent underneath, and search is what is on screen now.
-            ignoring: progress.value > 0,
-            child: child,
-          ),
-        ),
-      ),
-    ),
-    // ⚠️ No gap of its own before these — the slot's width already carries
-    // [TerminalHeader.barGap], and a second one here would push the controls
-    // off the header's right inset.
-    child: Row(mainAxisSize: MainAxisSize.min, children: children),
-  );
 }
 
 /// One of the header's trailing controls, padded so the three sit evenly.

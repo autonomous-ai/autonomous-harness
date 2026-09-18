@@ -102,26 +102,109 @@ class VoiceInputController extends ChangeNotifier {
   /// [clear], where words arriving late would bring back what was dropped.
   int _take = 0;
 
+  /// Words already written into a terminal's prompt by [stage], waiting for the
+  /// second tap to send them — and the terminal they were written into.
+  ///
+  /// ⚠️ **Kept apart from [transcript], and that is what stops them being typed
+  /// twice.** These are ON the remote screen already; [transcript] is words
+  /// held here and nowhere else. Handing these to the keyboard, or sending them
+  /// as a composer turn, would put them in the prompt a second time.
+  String? _staged;
+  Object? _stagedIn;
+
   bool get isSending => _isSending;
   VoiceInputStatus get status => _status;
   String get transcript => _heard;
   String? get notice => _notice;
 
-  /// Nothing being recorded, heard or sent — the mic at rest. A refused
-  /// microphone is at rest too: nothing is in flight.
+  /// The words sitting unsent in a prompt, or null. See [isStagedIn].
+  String? get staged => _staged;
+
+  /// Whether [staged] words are waiting in [target]'s prompt — the terminal the
+  /// mic is being looked at on. A page swiped to afterwards is not it: its mic
+  /// is at rest, and a take started there forgets the words left behind.
+  bool isStagedIn(Object target) =>
+      _staged != null && identical(_stagedIn, target);
+
+  /// Nothing being recorded, heard, waiting in a prompt or sent — the mic at
+  /// rest. A refused microphone is at rest too: nothing is in flight.
   bool get isIdle =>
       (_status == VoiceInputStatus.idle ||
           _status == VoiceInputStatus.unavailable) &&
       _heard.isEmpty &&
+      _staged == null &&
       !_isSending;
 
   /// Drops the take in progress, the words held from a send that failed, and
   /// the notice. A send already on its way is not recalled.
+  ///
+  /// Words already written into a prompt are FORGOTTEN here, not erased: they
+  /// stay on the remote screen, where the keyboard can finish them. Erasing is
+  /// [discardStaged].
   void clear() {
     if (_disposed) return;
     _abandonTake();
     _heard = '';
+    _forgetStaged();
     _setStatus(VoiceInputStatus.idle);
+  }
+
+  /// Ends the take and writes its words into the prompt through [write] —
+  /// typed, not sent. The next tap on the mic sends them ([sendStaged]); `×`
+  /// takes them back out ([discardStaged]).
+  ///
+  /// [target] is the terminal written into — see [isStagedIn].
+  ///
+  /// [write] answers false when the terminal will not take input. The words are
+  /// then held as [transcript] instead, and the mic offers to send them the old
+  /// way, as a composer turn, once the terminal is back.
+  ///
+  /// Tapped while the microphone is still opening, there is no take yet: it is
+  /// called off rather than written.
+  Future<void> stage(Object target, bool Function(String text) write) async {
+    if (_isSending || _disposed) return;
+    if (_status == VoiceInputStatus.starting) {
+      _abandonTake();
+      _setStatus(VoiceInputStatus.idle);
+      return;
+    }
+    if (_status != VoiceInputStatus.listening) return;
+    if (await _transcribeTake() != _Take.heard) return;
+    final text = _heard.trim();
+    if (text.isEmpty || _disposed) return;
+    if (!write(text)) {
+      _setStatus(VoiceInputStatus.idle, notice: VoiceNotice.notSent);
+      return;
+    }
+    _heard = '';
+    _staged = text;
+    _stagedIn = target;
+    _setStatus(VoiceInputStatus.idle);
+  }
+
+  /// Sends the words [stage] wrote — [enter] presses Return in that prompt, and
+  /// answers false when the terminal would not take it.
+  void sendStaged(bool Function() enter) {
+    if (_staged == null || _disposed) return;
+    if (!enter()) {
+      _setStatus(_status, notice: VoiceNotice.notSent);
+      return;
+    }
+    _forgetStaged();
+    _setStatus(VoiceInputStatus.idle);
+  }
+
+  /// Takes the words [stage] wrote back out of the prompt — [erase] is handed
+  /// them, to delete as many characters — and puts the mic back at rest.
+  void discardStaged(void Function(String text) erase) {
+    final staged = _staged;
+    if (staged != null) erase(staged);
+    clear();
+  }
+
+  void _forgetStaged() {
+    _staged = null;
+    _stagedIn = null;
   }
 
   Future<void> startListening() async {
@@ -131,6 +214,9 @@ class VoiceInputController extends ChangeNotifier {
       return;
     }
     final take = ++_take;
+    // A new take is a new message. Words left waiting in another agent's prompt
+    // stay there for its keyboard; this mic is no longer about them.
+    _forgetStaged();
     _setStatus(VoiceInputStatus.starting);
     if (!await _micAllowed()) {
       if (take != _take) return;
