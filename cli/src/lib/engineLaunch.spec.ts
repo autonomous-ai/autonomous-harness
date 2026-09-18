@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import {
   LAUNCH_RESUME_FLAG,
   NAMED_AGENT_ARGS,
   NamedAgentUnsupportedError,
+  HARNESS_WORDMARK_LINES,
   PERMISSION_MODES,
   terminalHintLines,
   buildEngineCommandArgv,
@@ -141,23 +142,40 @@ describe('buildEngineLaunchArgv', () => {
       expect(out.toString()).toContain('reached')
     })
 
-    it('greets every new tile with the guide — where it is, agents, `harness remote` — before its prompt', () => {
+    it('greets every new tile with the banner — wordmark, where it is, agents, `harness remote` — before its prompt', () => {
       const argv = buildEngineLaunchArgv('terminal', { terminalHint: { machineName: 'MacbookPro.local' } }, '/bin/sh')
       expect(argv.slice(3)).toEqual(['harness-terminal', '', '/bin/sh'])
       expect(() => execFileSync('/bin/sh', ['-n', '-c', argv[2]])).not.toThrow()
       const run = (): string => execFileSync('/bin/sh', ['-c', argv[2], 'harness-terminal', '', '/bin/sh', '-c', 'echo prompt'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString()
       // Every time, not once per machine: a new tile is a new person at a new prompt.
       for (const out of [run(), run()]) {
-        for (const line of terminalHintLines('MacbookPro.local')) expect(out).toContain(line)
-        expect(out).toContain('Terminal on MacbookPro.local.')
+        // Every line as drawn — the wordmark's backslashes and backtick included.
+        expect(out).toContain(terminalHintLines('MacbookPro.local').join('\n'))
+        expect(out).toContain('  Terminal on MacbookPro.local')
         expect(out).toContain('harness remote')
         expect(out.trim().endsWith('prompt')).toBe(true)
       }
     })
 
-    it('the guide names the machine, falls back to "this machine", and fits an 80-column pane unwrapped', () => {
-      expect(terminalHintLines('  ')[0]).toBe('harness: Terminal on this machine.')
+    it('the banner names the machine, falls back to "this machine", and fits an 80-column pane unwrapped', () => {
+      expect(terminalHintLines('  ')).toContain('  Terminal on this machine')
       for (const line of terminalHintLines('office-imac')) expect(line.length).toBeLessThanOrEqual(78)
+      // A hostname longer than the line has room for is cut, never wrapped.
+      const long = terminalHintLines('a'.repeat(120))
+      for (const line of long) expect(line.length).toBeLessThanOrEqual(78)
+      expect(long.find((line) => line.startsWith('  Terminal on'))).toMatch(/^  Terminal on a{61}…$/)
+      // A blank line first and last: the wordmark does not sit on the pane's top edge, nor the prompt on the guide.
+      const lines = terminalHintLines('office-imac')
+      expect([lines[0], lines[lines.length - 1]]).toEqual(['', ''])
+    })
+
+    it('the wordmark is the one the installer prints, line for line', () => {
+      // install.sh's print_logo, run for real: what a person sees at the end of an install is what a
+      // tile shows them next — two copies, held to one drawing.
+      const installer = readFileSync(join(process.cwd(), 'scripts', 'install.sh'), 'utf8')
+      const printLogo = installer.slice(installer.indexOf('print_logo() {'), installer.indexOf('\n}\n', installer.indexOf('print_logo() {')) + 3)
+      const printed = execFileSync('/bin/sh', ['-c', `${printLogo}\nprint_logo`], { encoding: 'utf8' }).split('\n').filter((line) => line.trim() !== '')
+      expect(printed).toEqual([...HARNESS_WORDMARK_LINES])
     })
 
     it('with no guide asked for (restore, restart, a test) the pane says nothing before its prompt', () => {

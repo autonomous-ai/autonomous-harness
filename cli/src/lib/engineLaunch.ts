@@ -210,9 +210,10 @@ export interface LaunchCommandOptions {
    */
   firstPrompt?: string
   /**
-   * Terminal only: print the tile's guide before the first prompt — what this pane is, that an
-   * agent typed here becomes the tile, and `harness remote`. Every NEW terminal tile gets it
-   * (`agent_create`); a pane rebuilt by restore or restart is not a new tile and names nothing here.
+   * Terminal only: print the tile's banner before the first prompt — the wordmark, where this pane
+   * is, that an agent typed here becomes the tile, and `harness remote`. Every NEW terminal tile
+   * gets it (`agent_create`); a pane rebuilt by restore or restart is not a new tile and names
+   * nothing here.
    */
   terminalHint?: { machineName: string }
   /**
@@ -474,6 +475,47 @@ export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tm
 }
 
 /**
+ * The wordmark, as `cli/scripts/install.sh` prints it when an install is done (its `print_logo`);
+ * `engineLaunch.spec.ts` holds the two to the same five lines. Printed through `printf '%s\n'` with
+ * every line single-quoted, so the backslashes and the backtick reach the pane as drawn.
+ */
+export const HARNESS_WORDMARK_LINES: readonly string[] = [
+  '    _',
+  '   | |__   __ _ _ __ _ __   ___  ___ ___',
+  "   | '_ \\ / _` | '__| '_ \\ / _ \\/ __/ __|",
+  '   | | | | (_| | |  | | | |  __/\\__ \\__ \\',
+  '   |_| |_|\\__,_|_|  |_| |_|\\___||___/___/',
+]
+
+/**
+ * What a new terminal tile says before its prompt, every time one is opened — the installer's
+ * finale, in the tile: the wordmark, where this pane is, and three things to type, each explained
+ * in a column. An agent typed here becomes the tile (and the shell is back when it exits);
+ * `harness remote` is the one thing only a tile can act on, since it swaps the tile it is typed in.
+ * Every line stays under 78 columns — a pane is 80 wide when it prints them, before the app has
+ * sized it, and a wrapped line stays wrapped in the scrollback. The block ends on a blank line, so
+ * the prompt does not sit against it.
+ */
+export function terminalHintLines(machineName: string): string[] {
+  // A hostname can be long (a cloud VM's FQDN runs to 50 characters); past the width the line has
+  // left it is cut with an ellipsis rather than wrapped, which is the one thing the block promises.
+  const name = machineName.trim() || 'this machine'
+  const where = name.length > 62 ? `${name.slice(0, 61)}…` : name
+  const row = (command: string, what: string): string => `    ${command.padEnd(29)}  ${what}`
+  return [
+    '',
+    ...HARNESS_WORDMARK_LINES,
+    '',
+    `  Terminal on ${where}`,
+    '',
+    row('claude · codex · opencode …', 'run an agent here — this tile becomes it'),
+    row('harness remote', 'open a terminal on another machine'),
+    row('harness --help', 'everything else'),
+    '',
+  ]
+}
+
+/**
  * Full argv for a plain terminal pane: the user's login shell, nothing exec'd over it.
  *
  * The outer `-c` shell is non-interactive on purpose — it loads no rc files, only raises the
@@ -485,23 +527,6 @@ export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tm
  * `interactiveEngineShell`). Without a resolvable shell the pane runs `/bin/sh`, which at least
  * gives the person a prompt.
  */
-/**
- * What a new terminal tile says before its prompt, every time one is opened: where it is, that an
- * agent typed here becomes the tile (and the shell is back when it exits), and `harness remote` —
- * the one thing only a tile can act on, since it swaps the tile it is typed in. Three lines, each
- * under 78 columns — a pane is 80 wide when it prints them, before the app has sized it, and a
- * wrapped line stays wrapped in the scrollback — in the same `harness:` voice as every other line
- * a pane prints.
- */
-export function terminalHintLines(machineName: string): string[] {
-  const where = machineName.trim() || 'this machine'
-  return [
-    `harness: Terminal on ${where}.`,
-    'harness: Run an agent here (claude, codex, …) and this tile becomes it.',
-    'harness: Terminal on another of your machines:  harness remote',
-  ]
-}
-
 export function buildTerminalLaunchArgv(
   opts: Pick<LaunchCommandOptions, 'cwd' | 'terminalHint'> = {},
   shell: string | undefined = undefined,
@@ -513,7 +538,7 @@ export function buildTerminalLaunchArgv(
     ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\n`
     : ''
   const hintPrelude = opts.terminalHint
-    ? `printf '%s\\n' ${terminalHintLines(opts.terminalHint.machineName).map(shellSingleQuote).join(' ')} ''\n`
+    ? `printf '%s\\n' ${terminalHintLines(opts.terminalHint.machineName).map(shellSingleQuote).join(' ')}\n`
     : ''
   return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + hintPrelude + 'shift\nexec "$@"', 'harness-terminal', opts.cwd ?? '', path, ...loginArgs]
 }
