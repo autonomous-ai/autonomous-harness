@@ -10,15 +10,11 @@
 </head>
 <body>
   <main id="grid-app">
-    <header class="chrome">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>GRID</span><span class="brand-divider"></span><span class="grid-name" id="grid-name">Your grid</span></div>
-      <div class="connection"><span id="connection-dot" class="status-dot pending"></span><span id="connection-label">Connecting</span><span id="mode" class="mode"></span></div>
-    </header>
     <section class="workspace">
       <div class="main-column">
         <div class="view-toolbar">
           <div class="segmented" aria-label="Fleet view"><button id="topology-button" type="button" aria-pressed="true">Topology</button><button id="rack-button" type="button" aria-pressed="false">Rack</button></div>
-          <label class="metric-select">Show <select id="metric"><option value="tokS">Decode speed</option><option value="temperatureC">Temperature</option><option value="utilizationPct">GPU load</option><option value="memoryUsedGb">Memory used</option><option value="powerW">Power</option></select></label>
+          <div class="toolbar-selects"><div class="menu"><button type="button" class="menu-button" id="grid-select" aria-haspopup="listbox" aria-expanded="false"><span class="menu-kicker">Grid</span><span class="menu-value" id="grid-value">Choose your grid</span><span class="menu-chevron" aria-hidden="true">▾</span></button><div class="menu-list" id="grid-list" role="listbox" aria-label="Grid" hidden></div></div><div class="menu"><button type="button" class="menu-button" id="metric" aria-haspopup="listbox" aria-expanded="false"><span class="menu-kicker">Show</span><span class="menu-value" id="metric-value">Decode speed</span><span class="menu-chevron" aria-hidden="true">▾</span></button><div class="menu-list" id="metric-list" role="listbox" aria-label="Show" hidden></div></div></div>
         </div>
         <div class="topology" id="topology">
           <canvas id="connections" aria-hidden="true"></canvas>
@@ -28,7 +24,7 @@
           <div class="map-empty" id="map-empty" hidden><span class="empty-orbit" aria-hidden="true">◎</span><h1>Your fleet starts here.</h1><p id="empty-message">Ask the Grid agent to discover this machine and connect your first model.</p></div>
           <div class="map-controls"><span id="map-legend">Links show Grid membership</span><button type="button" id="motion" aria-pressed="false">Pause motion</button></div>
         </div>
-        <section class="rack" id="rack" aria-label="Engine rack" hidden></section>
+        <section class="rack scrolls" id="rack" aria-label="Engine rack" hidden></section>
         <div class="fleet-totals">
           <div><span class="total-label">ENGINES ONLINE</span><strong id="total-engines">—</strong><span id="total-known"></span></div>
           <div><span class="total-label">MODELS SERVING</span><strong id="total-models">—</strong><span>across your grid</span></div>
@@ -36,9 +32,8 @@
         </div>
         <section class="activity"><div class="section-heading"><h2>Activity</h2><span id="observed">Waiting for Grid</span></div><div id="activity-list" aria-live="polite"><div class="quiet">Listening for your fleet.</div></div></section>
       </div>
-      <aside class="inspector" id="inspector" aria-label="Fleet details"></aside>
+      <aside class="inspector scrolls" id="inspector" aria-label="Fleet details"></aside>
     </section>
-    <footer class="footer"><span><span class="footer-dot"></span> Your machines. Your models.</span><span id="footer-status">Talk to Grid in the agent pane.</span></footer>
     <div class="toast" id="toast" role="status" hidden></div>
   </main>
 </body>

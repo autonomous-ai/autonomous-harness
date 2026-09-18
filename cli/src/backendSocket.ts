@@ -32,7 +32,7 @@ import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCliPresence } from './lib/gridExec.js'
 import { GridFleetRpc, GRID_FLEET_PROTOCOL, GRID_FLEET_MAX_TIMEOUT_MS, parseGridFleetRequest } from './lib/gridFleetRpc.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
-import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
+import { listAllGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { deriveHarnessGridName } from './lib/gridDerive.js'
 import { AGENT_NAME_RE, FirstPromptUnsupportedError, MAX_FIRST_PROMPT_CHARS, NamedAgentUnsupportedError, permissionModeApproves, permissionModeFlags, supportsFirstPrompt, supportsNamedAgent } from './lib/engineLaunch.js'
 import { readAccountUsage, type AccountUsageReading } from './lib/accountUsage.js'
@@ -1783,12 +1783,14 @@ export class BackendSocket {
         }
 
         case 'grid_models_list': {
-          // Only the account's OWN private grid: the picker is "models my machines serve", not a
-          // catalogue of every grid this computer's `grid` CLI happens to be signed into.
+          // Every grid this computer is signed into, in sections, the account's own first. `gridName`
+          // and `models` keep naming the own grid alone, for an app that predates `grids`.
           const gridName = await this.resolveGridName()
+          const grids = await listAllGridModels(gridName)
           reply(type, requestId, {
             gridName,
-            models: await listGridModels(gridName),
+            models: grids.find((g) => g.own)?.models ?? [],
+            grids,
             // Which engines a Local model can be offered to at all. Static per CLI version — it is
             // the set of launch contracts in `gridLaunch.ts` — and answered here, beside the list,
             // so the picker can say "Cursor runs only on its own login" instead of offering a row
@@ -2190,7 +2192,12 @@ export class BackendSocket {
           // not know. A client that sends the full `grid` object still works unchanged.
           const picked = typeof payload.gridModel === 'string' ? payload.gridModel : ''
           if (picked && payload.grid === undefined && !clear) {
-            const resolved = await resolveGridTarget(await this.resolveGridName(), picked)
+            // The grid the model was picked FROM, when the picker says (a shared grid's section);
+            // the account's own grid otherwise, as before.
+            const pickedGrid = typeof payload.gridName === 'string' && payload.gridName.trim()
+              ? payload.gridName.trim()
+              : await this.resolveGridName()
+            const resolved = await resolveGridTarget(pickedGrid, picked)
             if (!resolved) {
               reply(type, requestId, { error: 'GRID_UNAVAILABLE', detail: 'Could not read this machine\'s grid endpoint.' })
               return

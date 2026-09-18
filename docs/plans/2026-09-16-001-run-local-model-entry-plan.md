@@ -1,5 +1,12 @@
 # Talk to Model manager: one button, one dialog, one agent that starts it
 
+> **Superseded (2026-09-18).** The door opens the **Grid** Store harness (`autonomous/autonomous-grid`)
+> on the chosen machine — the same path as the Store's Open button — and the Store's page for Grid when
+> it is not installed there. The dialog, the opencode `harness-compute` agent, its skill and the CLI
+> installer for them are gone; the skill's verified facts moved into `store/agents/autonomous-grid`.
+> The picker and `agent_retarget` (Changes 4/5 below) stay as built.
+
+
 Status: proposed · 2026-09-16
 Builds on: `2026-09-14-004-harness-grid-plan.md` (the private grid), `docs/skills/harness-compute.md`
 (the skill an agent follows), commits `9dc4232`/`2d0cdf7` (the two model pickers) and `6bf3569`

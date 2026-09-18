@@ -18,6 +18,7 @@ class _Conn extends WsConn {
     this.localModelEngines,
     this.gridName,
     this.gridCli,
+    this.grids,
     this.fails = false,
   }) : super(
          wsBaseUrl: 'ws://fixture.invalid',
@@ -43,6 +44,10 @@ class _Conn extends WsConn {
   /// that does not say.
   final String? gridCli;
 
+  /// Every grid the machine is signed into, in sections (`grids`); null = an older daemon that
+  /// sends only the own grid's `models`.
+  final List<Map<String, Object?>>? grids;
+
   /// Make the request FAIL, the way an offline machine or a daemon too old for the call does.
   final bool fails;
 
@@ -58,6 +63,7 @@ class _Conn extends WsConn {
       'models': models,
       if (localModelEngines != null) 'localModelEngines': localModelEngines,
       if (gridCli != null) 'gridCli': gridCli,
+      if (grids != null) 'grids': grids,
     };
   }
 }
@@ -70,6 +76,7 @@ void main() {
     List<String>? localModelEngines,
     String? gridName,
     String? gridCli,
+    List<Map<String, Object?>>? grids,
     bool fails = false,
   }) {
     notifier = AppNotifier(
@@ -81,6 +88,7 @@ void main() {
         localModelEngines: localModelEngines,
         gridName: gridName,
         gridCli: gridCli,
+        grids: grids,
         fails: fails,
       ),
     );
@@ -133,7 +141,7 @@ void main() {
     // carries — this control cannot put an agent on an API provider, so offering one would be a
     // choice that goes nowhere.
     expect(find.text('Subscription'), findsOneWidget);
-    expect(find.text('Local'), findsOneWidget);
+    expect(find.text('Local models on your machines'), findsOneWidget);
     expect(find.text('API'), findsNothing);
 
     // A picker that can only move an agent ONTO a grid is a one-way door, so the engine's own login
@@ -194,7 +202,7 @@ void main() {
       await open(tester);
       expect(find.text('Nothing is being served yet.'), findsNothing);
       expect(find.text('Could not reach this machine.'), findsNothing);
-      expect(find.text('Talk to Model manager'), findsOneWidget);
+      expect(find.text('Open Grid'), findsOneWidget);
     },
   );
 
@@ -232,8 +240,71 @@ void main() {
     expect(find.text('Qwen3.5-4B'), findsOneWidget);
     expect(find.text('LFM2.5-8B'), findsOneWidget);
     // Still one menu, redrawn — not a second one over the first.
-    expect(find.text('Local'), findsOneWidget);
+    expect(find.text('Local models on your machines'), findsOneWidget);
   });
+
+  testWidgets(
+    'every grid the machine is in gets a section, own first as Local',
+    (tester) async {
+      // A person in a team's grid has models there they can switch to just the same; the daemon
+      // now lists every grid, and the picker draws one section each — the account's own as
+      // "Local", the shared ones by name — and a pick carries the grid it came from.
+      GridModel? picked;
+      build(
+        gridName: 'someone-7f3a91c4',
+        models: const [
+          {'id': 'Qwen3.5-4B', 'node': 'macbook'},
+        ],
+        grids: const [
+          {
+            'name': 'someone-7f3a91c4',
+            'own': true,
+            'models': [
+              {'id': 'Qwen3.5-4B', 'node': 'macbook'},
+            ],
+          },
+          {
+            'name': 'autonomous.ai',
+            'own': false,
+            'models': [
+              {'id': 'DeepSeek-V4-Flash', 'node': 'scholes-60001'},
+            ],
+          },
+          {'name': 'BBB', 'own': false, 'models': <Object?>[]},
+        ],
+      );
+      await open(tester, onSelected: (m) => picked = m);
+
+      expect(find.text('Local models on your machines'), findsOneWidget);
+      expect(find.text('Models shared with you'), findsOneWidget);
+      expect(find.text('autonomous.ai'), findsOneWidget);
+      expect(find.text('Qwen3.5-4B'), findsOneWidget);
+      expect(find.text('DeepSeek-V4-Flash'), findsOneWidget);
+      // Own first: Local sits above the shared grids.
+      expect(
+        tester.getTopLeft(find.text('Local models on your machines')).dy <
+            tester.getTopLeft(find.text('Models shared with you')).dy,
+        isTrue,
+      );
+      // The general fact is the heading; the specific grid is the name under it, not the same
+      // line — "Models shared with you" reads once, "autonomous.ai" reads as which one.
+      expect(
+        tester.getTopLeft(find.text('Models shared with you')).dy <
+            tester.getTopLeft(find.text('autonomous.ai')).dy,
+        isTrue,
+      );
+      // A shared grid serving nothing is not listed: nothing on it can be picked.
+      expect(find.text('BBB'), findsNothing);
+      expect(find.textContaining('BBB'), findsNothing);
+      // Never the word "grid" for the person.
+      expect(find.textContaining('grid'), findsNothing);
+
+      await tester.tap(find.text('DeepSeek-V4-Flash'));
+      await tester.pumpAndSettle();
+      expect(picked?.id, 'DeepSeek-V4-Flash');
+      expect(picked?.grid, 'autonomous.ai');
+    },
+  );
 
   testWidgets('a short menu is not as wide as the widest menu could be', (
     tester,
@@ -481,9 +552,11 @@ void main() {
     // whatever the surface underneath asked for — an arrow over the rows that are the whole point of
     // the menu. The subscription row and each Local model are choices; they should look like it
     // before they are clicked.
-    build(models: [
-      {'id': 'Qwen-Test', 'node': 'macbook-m1max'},
-    ]);
+    build(
+      models: [
+        {'id': 'Qwen-Test', 'node': 'macbook-m1max'},
+      ],
+    );
     await open(tester);
 
     for (final row in ['Anthropic', 'Qwen-Test']) {
@@ -499,7 +572,10 @@ void main() {
       // could be set to `basic` and this test still passed. Two carrying it is what proves both.
       final asking = tester
           .widgetList<MouseRegion>(
-            find.ancestor(of: find.text(row), matching: find.byType(MouseRegion)),
+            find.ancestor(
+              of: find.text(row),
+              matching: find.byType(MouseRegion),
+            ),
           )
           .where((region) => region.cursor == SystemMouseCursors.click)
           .length;
@@ -562,9 +638,9 @@ void main() {
       build(models: served);
       await open(tester);
       final caption = tester.getTopLeft(
-        find.text('Want to manage local models?'),
+        find.text('Manage the models on your machines'),
       );
-      final button = tester.getTopLeft(find.text('Talk to Model manager'));
+      final button = tester.getTopLeft(find.text('Open Grid'));
       final model = tester.getBottomLeft(find.text('Qwen-Test'));
 
       // Under the list, not among it: the models are places this agent can go and this starts
@@ -588,12 +664,12 @@ void main() {
       await open(tester);
       final model = tester.getBottomLeft(find.text('Qwen-Test'));
       final caption = tester.getTopLeft(
-        find.text('Want to manage local models?'),
+        find.text('Manage the models on your machines'),
       );
       final captionBottom = tester.getBottomLeft(
-        find.text('Want to manage local models?'),
+        find.text('Manage the models on your machines'),
       );
-      final button = tester.getTopLeft(find.text('Talk to Model manager'));
+      final button = tester.getTopLeft(find.text('Open Grid'));
       expect(caption.dy - model.dy, greaterThan(8));
       expect(button.dy - captionBottom.dy, greaterThan(8));
     });
@@ -607,7 +683,7 @@ void main() {
       final box = tester.getSize(
         find
             .ancestor(
-              of: find.text('Talk to Model manager'),
+              of: find.text('Open Grid'),
               matching: find.byType(Container),
             )
             .first,
@@ -621,7 +697,7 @@ void main() {
       (tester) async {
         // A person with no Local models is exactly who needs it, so it does not wait for a list.
         await open(tester);
-        expect(find.text('Talk to Model manager'), findsOneWidget);
+        expect(find.text('Open Grid'), findsOneWidget);
         // Never the plumbing's name, in this block as in the rest of the menu.
         expect(find.textContaining('grid'), findsNothing);
       },
@@ -646,7 +722,7 @@ void main() {
         final button = tester.widget<Container>(
           find
               .ancestor(
-                of: find.text('Talk to Model manager'),
+                of: find.text('Open Grid'),
                 matching: find.byType(Container),
               )
               .first,
@@ -669,7 +745,7 @@ void main() {
         onOwnLogin: () => logins++,
         onSelected: (m) => picked = m,
       );
-      await tester.tap(find.text('Talk to Model manager'));
+      await tester.tap(find.text('Open Grid'));
       await tester.pumpAndSettle();
       expect(runs, 1);
       // Not a move: the agent stays where it was. `currentModel` is set so a stray own-login call
@@ -677,7 +753,7 @@ void main() {
       expect(logins, 0);
       expect(picked, isNull);
       // The menu closed on the press, as it does on any choice.
-      expect(find.text('Talk to Model manager'), findsNothing);
+      expect(find.text('Open Grid'), findsNothing);
     });
   });
 

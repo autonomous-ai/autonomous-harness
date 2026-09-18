@@ -54,10 +54,11 @@ class GridModelPicker extends StatefulWidget {
   /// have to know a command for.
   final VoidCallback? onUseOwnLogin;
 
-  /// Called when the last row under Local — "Talk to Model manager" — is chosen. An action, not a
-  /// destination: it opens the flow that puts a model on the user's own computer, which is the
-  /// answer to the empty section this menu otherwise stops at. Always offered, whether or not
-  /// anything is being served yet: a person with no Local models is exactly who needs the door.
+  /// Called when the Local section's action — "Open Grid" — is chosen. An action, not a
+  /// destination: it opens the Grid harness, the agent that puts models on the user's machines,
+  /// which is the answer to the empty section this menu otherwise stops at. Always offered,
+  /// whether or not anything is being served yet: a person with no Local models is exactly who
+  /// needs the door.
   final VoidCallback? onRunLocalModel;
 
   /// The grid model this agent is on right now, or null when it is on its own login. Drives the
@@ -231,35 +232,51 @@ class _GridModelPickerState extends State<GridModelPicker> {
           ),
         ),
         Divider(height: 9, thickness: 1, color: AppColors.border),
-        paneMenuHeader('Local'),
-        // An engine with no way onto a Local model (Cursor talks only to its own API; the daemon
-        // refuses the move) is told so here, instead of being offered rows whose click would do
-        // nothing. The daemon names the capable engines beside the list; an older daemon names
-        // none, and then every row is offered as before.
-        if (!_shown!.canRunLocally(widget.engineLabel))
-          paneMenuEmpty(
-            '${engineIdentity(widget.engineLabel).label} can only run on its own login.',
-          )
-        // Two different facts, two sentences. "We could not ask" and "this account has no grid"
-        // send a person to two different places, and the one that used to cover both told a
-        // signed-in user to sign in again. "The grid is serving nothing" is NOT a sentence here:
-        // the "Talk to Model manager" row that ends this section is the answer, and a line saying the
-        // list is empty above an empty list is noise.
-        else if (_shown!.models.isEmpty && _emptySentence(_shown!) != null)
-          paneMenuEmpty(_emptySentence(_shown!)!),
-        if (_shown!.canRunLocally(widget.engineLabel))
-          for (final model in _shown!.models)
-            paneMenuItem(
-              onTap: () => close(_Choice.model(model)),
-              child: PaneMenuRow(
-                selected: widget.currentModel == model.id,
-                title: model.id,
-                // Which of the user's machines answers it — the part that makes a private grid
-                // legible, and the reason `node` is carried through at all.
-                status: model.node.isEmpty ? null : model.node,
-                subtitle: _subtitleFor(model),
+        // One section per grid with something to offer, the account's own first as "Local"
+        // (its rows are the user's own computers), the shared ones by name — the same shape as
+        // Subscription above, so a model on a team's grid is one row away like any other.
+        // With no grid at all there is still a "Local" heading, so the sentence under it has a
+        // place to be. Each heading carries a few words saying what the group is: a grid's name
+        // alone ("autonomous.ai") over a model's id read as two entries of the same kind.
+        for (final (index, section) in _sectionsToDraw(_shown!).indexed) ...[
+          if (index > 0) const SizedBox(height: 4),
+          // Own: one plain sentence, nothing under it — "your machines" was a second half of the
+          // same fact and read oddly split onto its own clause. Shared: the general fact as the
+          // heading, the specific grid as the name under it — the two are different kinds of
+          // information (why the rows are here vs. which fleet they are), not one sentence.
+          section.own
+              ? paneMenuHeader('Local models on your machines')
+              : paneMenuHeader('Models shared with you', caption: section.name),
+          // An engine with no way onto a Local model (Cursor talks only to its own API; the
+          // daemon refuses the move) is told so here, instead of being offered rows whose click
+          // would do nothing. The daemon names the capable engines beside the list; an older
+          // daemon names none, and then every row is offered as before.
+          if (!_shown!.canRunLocally(widget.engineLabel))
+            paneMenuEmpty(
+              '${engineIdentity(widget.engineLabel).label} can only run on its own login.',
+            )
+          // Two different facts, two sentences. "We could not ask" and "this account has no
+          // grid" send a person to two different places, and the one that used to cover both
+          // told a signed-in user to sign in again. "The grid is serving nothing" is NOT a
+          // sentence here: the "Open Grid" row that ends the menu is the answer, and a line
+          // saying the list is empty above an empty list is noise.
+          else if (section.models.isEmpty &&
+              _emptySentence(_shown!, section) != null)
+            paneMenuEmpty(_emptySentence(_shown!, section)!),
+          if (_shown!.canRunLocally(widget.engineLabel))
+            for (final model in section.models)
+              paneMenuItem(
+                onTap: () => close(_Choice.model(model)),
+                child: PaneMenuRow(
+                  selected: widget.currentModel == model.id,
+                  title: model.id,
+                  // Which machine answers it — on the own grid one of the user's own computers,
+                  // which is the useful part of the answer.
+                  status: model.node.isEmpty ? null : model.node,
+                  subtitle: _subtitleFor(model),
+                ),
               ),
-            ),
+        ],
         // The way to GET a Local model, under the ones there are and behind a rule of its own.
         //
         // Not a row among the models: those are places this agent can go, and this starts something
@@ -293,17 +310,42 @@ class _GridModelPickerState extends State<GridModelPicker> {
   /// Two sentences, because they are two different situations and only one of them is about the
   /// account. Folding them together is what put "sign in again to set them up" in front of a
   /// signed-in user whose daemon happened to be offline — advice that was wrong, and that would
-  /// not have helped even if the diagnosis had been right. A reachable grid serving nothing says
-  /// nothing (null): the "Talk to Model manager" row under it is what a person does about that.
-  String? _emptySentence(GridModels answer) {
+  /// not have helped even if the diagnosis had been right. A reachable own grid serving nothing
+  /// still answers the sentence below, so "Local models on your machines" is never left to end
+  /// at an empty list that reads as a rendering gap.
+  String? _emptySentence(GridModels answer, GridSection section) {
     if (!answer.reachable) return 'Could not reach this machine.';
     // The machine's gap before the account's: with no `grid` on this computer there is nothing a
     // sign-in could set up here, and the feature's name is the only word for it a person knows.
     if (answer.gridCli == GridCli.missing) {
       return "Harness Compute isn't installed on this machine.";
     }
-    if (answer.gridName == null) return 'No local models on this account yet.';
+    // The account's rest are the models on the user's own machines; an empty list there needs a
+    // sentence under the heading. Shared grids are never drawn empty (see _sectionsToDraw), so
+    // this branch only ever fires for the own grid.
+    if (section.own) {
+      return 'No local models on this account yet.';
+    }
     return null;
+  }
+
+  /// The sections worth a heading: "Local" always (so the empty-state sentence has a place),
+  /// and a shared grid only while it serves something. A team grid with nothing running is not
+  /// a choice this menu can offer, and a heading over "nothing here" was a line to read for no
+  /// gain — the menu is for picking a model, not for surveying grids.
+  List<GridSection> _sectionsToDraw(GridModels answer) {
+    final sections = answer.sections
+        .where((s) => s.own || s.models.isNotEmpty)
+        .toList();
+    if (sections.any((s) => s.own)) return sections;
+    return [
+      GridSection(
+        name: answer.gridName ?? '',
+        own: true,
+        models: answer.models,
+      ),
+      ...sections,
+    ];
   }
 
   /// The pane menu ([showPaneMenu]), with this picker's two hooks: the entry, so a refresh that
@@ -459,7 +501,7 @@ class _ManagerInvitationState extends State<_ManagerInvitation> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Text(
-                  'Want to manage local models?',
+                  'Manage the models on your machines',
                   style: TextStyle(
                     fontSize: 10.5,
                     letterSpacing: .2,
@@ -488,7 +530,7 @@ class _ManagerInvitationState extends State<_ManagerInvitation> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  'Talk to Model manager',
+                  'Open Grid',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,

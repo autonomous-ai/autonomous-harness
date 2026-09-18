@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { connectWorkspace, initializeWorkspace, readStatus } from '../lib/connect.mjs';
+import { connectWorkspace, initializeWorkspace, pickPrivateGrid, readStatus } from '../lib/connect.mjs';
 import { atomicJson, DEFAULT_CONFIG, gridJson, readConfig } from '../lib/fleet.mjs';
 import { createCollector } from '../lib/telemetry.mjs';
 
@@ -21,18 +21,52 @@ test('a fresh workspace reuses the remembered remote fleet and imports machines'
   assert.equal(result.config.controller,'local');assert.equal(result.config.machines[0].name,'This computer');
   assert.equal(result.connection.source,'remembered fleet');
 });
-test('fresh initialization follows a reachable active remote selection, not the template local mode',async t=>{
-  const {dir,profilePath}=await setup(t),calls=[];
-  const runJson=async(_host,mode,args)=>{calls.push([mode,...args]);return {ok:true,value:args[0]==='mode'?{mode:'remote'}:args[0]==='use'?{active:'my-fleet'}:[]};};
-  const {config}=await initializeWorkspace(dir,{profilePath,discover,runJson});
-  assert.equal(config.mode,'remote');assert.equal(config.grid,'my-fleet');
-  assert.deepEqual(calls,[['local','mode'],['remote','use'],['remote','engines','my-fleet']]);
+test('the private grid is recognised from the sign-in: email slug, eight hex, permissioned-public, exactly one',()=>{
+  const rows=[{grid:'autonomous.ai',type:'private-domain'},{grid:'tuan-dev-991371e4',type:'permissioned-public'},{grid:'tuan-dev-11111111',type:'domain-restricted'},{grid:'BBB',type:'domain-restricted'}];
+  assert.equal(pickPrivateGrid('Tuan.Dev@autonomous.ai',rows),'tuan-dev-991371e4');
+  assert.equal(pickPrivateGrid('someone@x.io',rows),null);
+  assert.equal(pickPrivateGrid('tuan.dev@x.io',[...rows,{grid:'tuan-dev-aaaaaaaa',type:'permissioned-public'}]),null,'two matches are nobody\'s answer');
 });
-test('an unreachable active grid and ambiguous inventory never silently select old home',async t=>{
+test('fresh initialization follows the CLI\'s active selection when there is one',async t=>{
+  const {dir,profilePath}=await setup(t),calls=[];
+  const ls={remote:[{grid:'autonomous.ai',type:'private-domain'},{grid:'tuan-dev-991371e4',type:'permissioned-public'}],local:[{grid:'home'}]};
+  const runJson=async(_host,mode,args)=>{calls.push([mode,...args]);return {ok:true,value:args[0]==='mode'?{mode:'remote'}:args[0]==='use'?{mode:'remote',active:'autonomous.ai'}:args[0]==='ls'?ls[mode]:[]};};
+  const selected=[];const select=async(_host,mode,grid)=>{selected.push([mode,grid]);return {ok:true,active:grid};};
+  const {config,connection}=await initializeWorkspace(dir,{profilePath,discover,runJson,select,email:async()=>'tuan.dev@autonomous.ai'});
+  assert.equal(config.grid,'autonomous.ai');assert.equal(connection.source,'Grid selection');
+  assert.deepEqual(calls.filter(c=>c[1]==='engines'),[['remote','engines','autonomous.ai']]);
+  assert.deepEqual(selected,[],'an existing selection is never rewritten');
+});
+test('with no selection yet, the signed-in user\'s own private grid is chosen AND selected, so the CLI agrees',async t=>{
+  const {dir,profilePath}=await setup(t),calls=[];
+  const ls={remote:[{grid:'autonomous.ai',type:'private-domain'},{grid:'tuan-dev-991371e4',type:'permissioned-public'}],local:[{grid:'home'}]};
+  const runJson=async(_host,mode,args)=>{calls.push([mode,...args]);return {ok:true,value:args[0]==='mode'?{mode:'remote'}:args[0]==='use'?{mode:'remote',active:null}:args[0]==='ls'?ls[mode]:[]};};
+  const selected=[];const select=async(_host,mode,grid)=>{selected.push([mode,grid]);return {ok:true,active:grid};};
+  const {config,connection}=await initializeWorkspace(dir,{profilePath,discover,runJson,select,email:async()=>'tuan.dev@autonomous.ai'});
+  assert.equal(config.mode,'remote');assert.equal(config.grid,'tuan-dev-991371e4');assert.equal(connection.source,'your private grid');
+  // Selected through the WRITE path (`grid use <name>`, prose answer), never through the JSON
+  // reader — that call form printed a sentence, and parsing it as JSON was what reported every
+  // successful switch as a failure.
+  assert.deepEqual(selected,[['remote','tuan-dev-991371e4']]);
+  assert.ok(!calls.some(c=>c[1]==='use'&&c.length===3),'the JSON reader never runs the write form of use');
+});
+test('the collector follows a changed selection on its next poll',async t=>{
+  const {dir}=await setup(t);
+  await writeFile(join(dir,'grid-fleet.json'),JSON.stringify({spec:1,mode:'remote',grid:'autonomous.ai',controller:'this',machines:[{id:'this',name:'here',transport:'local'}]}));
+  let active='autonomous.ai';const asked=[];
+  const runJson=async(_host,_mode,args)=>{asked.push(args);if(args[0]==='use')return {ok:true,value:{mode:'remote',active}};return {ok:true,value:[]};};
+  const collect=createCollector(dir,{runJson});
+  assert.equal((await collect()).grid,'autonomous.ai');
+  active='tuan-dev-991371e4';
+  assert.equal((await collect()).grid,'tuan-dev-991371e4');
+  assert.equal((await readConfig(dir)).grid,'tuan-dev-991371e4');
+  assert.ok(asked.some(a=>a[0]==='engines'&&a[1]==='tuan-dev-991371e4'),'the new grid is what gets polled');
+});
+test('no private grid and an ambiguous inventory selects nothing and tells the agent to ask',async t=>{
   const {dir,profilePath}=await setup(t);
-  const runJson=async(_host,mode,args)=>args[0]==='mode'?{ok:true,value:{mode:'remote'}}:args[0]==='use'?{ok:true,value:{active:'broken'}}:args[0]==='engines'?{ok:false,error:'unreachable'}:{ok:true,value:mode==='local'?[{grid:'home'}]:[{grid:'working'},{grid:'other'}]};
-  const result=await initializeWorkspace(dir,{profilePath,discover,runJson});
-  assert.equal(result.config.grid,null);assert.equal(result.connection.candidates.length,3);
+  const runJson=async(_host,mode,args)=>args[0]==='mode'?{ok:true,value:{mode:'remote'}}:args[0]==='engines'?{ok:false,error:'unreachable'}:{ok:true,value:mode==='local'?[{grid:'home'}]:[{grid:'working'},{grid:'other'}]};
+  const result=await initializeWorkspace(dir,{profilePath,discover,runJson,email:async()=>'someone@x.io'});
+  assert.equal(result.config.grid,null);assert.equal(result.connection.candidates.length,3);assert.match(result.connection.message,/Ask the user which fleet/);
   let calls=0;const snapshot=await createCollector(dir,{runJson:async()=>{calls++;throw new Error('do not contact a default grid');}})();
   assert.equal(calls,0);assert.equal(snapshot.status,'unconfigured');assert.deepEqual(snapshot.nodes,[]);
 });
@@ -44,7 +78,8 @@ test('an existing explicit workspace keeps its selection and preferences',async 
 });
 test('connect verifies service before changing workspace or remembered defaults',async t=>{
   const {dir,profilePath}=await setup(t);
-  const fail={profilePath,discover,runJson:async()=>({ok:false,error:'Grid unreachable'})};
+  // `select` stubbed: the real one runs `grid use` on this machine, which a test must never do.
+  const fail={profilePath,discover,runJson:async()=>({ok:false,error:'Grid unreachable'}),select:async(_h,_m,grid)=>({ok:true,active:grid})};
   await assert.rejects(connectWorkspace(dir,{mode:'remote',grid:'broken',remember:true},fail),/unreachable/);
   assert.equal((await readConfig(dir)).grid,null);await assert.rejects(readFile(profilePath),{code:'ENOENT'});
   const ok={...fail,runJson:async()=>({ok:true,value:[{name:'node',api_key:'must-not-save'}]})};

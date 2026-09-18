@@ -777,7 +777,11 @@ class GridModel {
   /// grid this is one of the user's own computers, which is the useful part of the answer.
   final String node;
 
-  const GridModel({required this.id, required this.node});
+  /// The grid it is served on — the section it was listed under. Null on an older daemon that
+  /// sends only the own grid's list, which the retarget then targets as it always did.
+  final String? grid;
+
+  const GridModel({required this.id, required this.node, this.grid});
 }
 
 /// Which `grid` a machine would run, as its daemon reports beside the model list (`gridCli`).
@@ -801,11 +805,30 @@ enum GridCli {
 
 /// The picker's whole answer: which grid was asked, and what it offers.
 ///
+/// One grid the machine is signed into, with what it serves. [own] marks the account's private
+/// grid — the picker calls that one "Local"; a shared grid goes by its name.
+class GridSection {
+  final String name;
+  final bool own;
+  final List<GridModel> models;
+
+  const GridSection({
+    required this.name,
+    required this.own,
+    required this.models,
+  });
+}
+
 /// `gridName` is null when the machine has no grid yet — told apart from "a grid with nothing on
 /// it", because the two need different sentences in front of a person.
 class GridModels {
   final String? gridName;
   final List<GridModel> models;
+
+  /// Every grid the machine is signed into, own grid first, each with its live models — the
+  /// picker's sections. Empty on an older daemon, which sends only [models] for the own grid; the
+  /// picker then draws that one section as it always did.
+  final List<GridSection> grids;
 
   /// The engines a Local model can be offered to at all, as the daemon on that machine names them
   /// (`localModelEngines`; the set of launch contracts in its `gridLaunch.ts`). Null when the
@@ -827,16 +850,26 @@ class GridModels {
   const GridModels({
     required this.gridName,
     required this.models,
+    this.grids = const [],
     this.localModelEngines,
     this.gridCli,
     this.reachable = true,
   });
+
+  /// The sections to draw: [grids] when the daemon sent them, else the own grid alone.
+  List<GridSection> get sections => grids.isNotEmpty
+      ? grids
+      : [
+          if (gridName != null)
+            GridSection(name: gridName!, own: true, models: models),
+        ];
 
   /// The machine could not be asked. Says nothing about the account, because nothing is known —
   /// including which engines it would have offered, or whether it has a `grid`.
   const GridModels.unreachable()
     : gridName = null,
       models = const [],
+      grids = const [],
       localModelEngines = null,
       gridCli = null,
       reachable = false;
