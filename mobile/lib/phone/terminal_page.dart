@@ -23,6 +23,7 @@ import 'package:harness_mobile/widgets/terminal_panel.dart';
 
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
+import 'held_height.dart';
 import 'machines_tab.dart';
 import 'phone_navigation.dart' show phoneRoute;
 import 'phone_sheet.dart';
@@ -236,6 +237,26 @@ class _TerminalPageState extends State<TerminalPage>
   /// it goes back to. See [_closeSearch].
   bool _keyboardBeforeSearch = false;
 
+  /// What this page's own chrome showed for the keyboard when search opened —
+  /// [_keyboardUp] then — held for as long as [_heldForSearch]. See
+  /// [_terminalKeyboardUp].
+  bool _keyboardUpAtSearch = false;
+
+  /// Whether the terminal is still ignoring the search's keyboard: from search
+  /// opening until that keyboard is gone — which is AFTER search has closed.
+  ///
+  /// ⚠️ **Not [_searching], and the difference is the whole bug.** iOS takes
+  /// the keyboard's view away at once, but the inset it reports falls over
+  /// ~0.5s — longer than search's fade out. Released with [_searching], the
+  /// terminal took the still-falling inset as its own keyboard: its key bar came
+  /// up, its floating column went, and it shrank and grew back over a few
+  /// frames right after the search had gone. Held until the inset reaches zero
+  /// — or [_searchHoldLimit], so a keyboard that never reports zero cannot hold
+  /// the terminal still for good.
+  bool _heldForSearch = false;
+  Timer? _searchHoldTimer;
+  static const _searchHoldLimit = Duration(milliseconds: 800);
+
   /// The header getting out of the way as the terminal is scrolled. See
   /// [TerminalChromeScroll].
   late final TerminalChromeScroll _chrome = TerminalChromeScroll(vsync: this);
@@ -292,6 +313,7 @@ class _TerminalPageState extends State<TerminalPage>
   @override
   void dispose() {
     _cancelSettle();
+    _searchHoldTimer?.cancel();
     _chrome.dispose();
     _searchOpen.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -316,8 +338,11 @@ class _TerminalPageState extends State<TerminalPage>
   void _openSearch() {
     if (_searching) return;
     _keyboardBeforeSearch = _keyboardIsUp;
+    _keyboardUpAtSearch = _keyboardUp;
+    _searchHoldTimer?.cancel();
     setState(() {
       _searching = true;
+      _heldForSearch = true;
       // ⚠️ Handed over, not left standing. The bar can be tapped with the
       // terminal's own keyboard already up, and a claim still outstanding would
       // race the search field for it the moment the inset ticks — the panel
@@ -329,15 +354,15 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Collapses it back into the bar, and takes the overlay down once it is home.
   ///
-  /// ⚠️ **Guarded on the controller's own status, not on [_searching].** Cancel
-  /// and the system back gesture can both arrive while the reverse is already
+  /// ⚠️ **Guarded on the controller's own status, not on [_searching].** The
+  /// field's chevron and the system back gesture can both arrive while the reverse is already
   /// running — a second `reverse()` restarts it from wherever it had got to, and
   /// the bar visibly bounces.
   void _closeSearch() {
     if (!_searching || _searchOpen.status == AnimationStatus.reverse) return;
     // ⚠️ **The keyboard up now is the SEARCH field's, not the terminal's.** Its
     // inset set [_keyboardIsUp], and left standing, the terminal read that as
-    // its own the moment search came down — Cancel, Back or opening an agent
+    // its own the moment search came down — the chevron, Back or opening an agent
     // brought up a keyboard nobody had asked the terminal for. Put away like a
     // swipe's, unless the terminal had one up before search opened.
     if (!_keyboardBeforeSearch) dismissKeyboardForSwipe();
@@ -347,7 +372,23 @@ class _TerminalPageState extends State<TerminalPage>
       // the field down then would drop the keyboard it has just been given.
       if (!mounted || _searchOpen.status != AnimationStatus.dismissed) return;
       setState(() => _searching = false);
+      // The overlay is down, but its keyboard may still be falling — see
+      // [_heldForSearch]. A terminal that had its own keyboard up before search
+      // is going back to one, so there is nothing to wait out.
+      if (_keyboardUpAtSearch || _lastInset == 0) {
+        _releaseSearchHold();
+      } else {
+        _searchHoldTimer = Timer(_searchHoldLimit, _releaseSearchHold);
+      }
     });
+  }
+
+  /// Hands the terminal back its own reading of the keyboard.
+  void _releaseSearchHold() {
+    _searchHoldTimer?.cancel();
+    _searchHoldTimer = null;
+    if (!mounted || _searching || !_heldForSearch) return;
+    setState(() => _heldForSearch = false);
   }
 
   /// Watches the keyboard through [View], because MediaQuery lies to this page.
@@ -400,6 +441,9 @@ class _TerminalPageState extends State<TerminalPage>
     // up costs one needless 80ms hold, and nothing else.
     final previous = _lastInset;
     _lastInset = inset;
+    // Search's keyboard has finished leaving: the terminal may read the
+    // keyboard as its own again. See [_heldForSearch].
+    if (!up && _heldForSearch && !_searching) _releaseSearchHold();
     if (inset != previous) {
       _settleTimer?.cancel();
       _settleTimer = Timer(_settleWindow, () {
@@ -434,7 +478,9 @@ class _TerminalPageState extends State<TerminalPage>
   /// takes the input connection back and every letter typed into the search box
   /// would be sent to the shell instead.
   bool get _shouldFocus =>
-      widget.isActive && !_searching && (_keyboardIsUp || _keyboardRequested);
+      widget.isActive &&
+      !_heldForSearch &&
+      (_keyboardIsUp || _keyboardRequested);
 
   /// A tap on the terminal while no keyboard is up or coming: the keyboard.
   /// Voice is the floating mic, never this tap — see [TerminalActionColumn].
@@ -482,7 +528,20 @@ class _TerminalPageState extends State<TerminalPage>
   /// keyboard ITSELF, which is screen-wide, and a covered page must keep
   /// tracking it to know what to do when it is uncovered.
   bool get _ownsInput =>
-      _keyboardUp && (ModalRoute.of(context)?.isCurrent ?? true);
+      _terminalKeyboardUp && (ModalRoute.of(context)?.isCurrent ?? true);
+
+  /// The keyboard as the TERMINAL sees it.
+  ///
+  /// ⚠️ While search is open the keyboard up is the search field's, raised over
+  /// an overlay that is not a route — so it reaches this page's
+  /// [didChangeMetrics] as if it were the terminal's own. Read as such, the key
+  /// bar came up and the floating column went away under the search, then both
+  /// flipped back as it faded out: the terminal visibly re-laid out on every
+  /// close. So until that keyboard is gone, the terminal keeps what it had
+  /// when search opened — see [_heldForSearch], [_keyboardUpAtSearch], and
+  /// [HeldHeight] for its height.
+  bool get _terminalKeyboardUp =>
+      _heldForSearch ? _keyboardUpAtSearch : _keyboardUp;
 
   /// Guards against a second picker while one is already up.
   ///
@@ -635,163 +694,172 @@ class _TerminalPageState extends State<TerminalPage>
                 // as the same object growing — fading this one out underneath
                 // it made the row flicker on every open, which is the opposite
                 // of what the expansion is for.
-                Column(
-                  children: [
-                    Expanded(
-                      // ⚠️ The mic floats INSIDE this box, over the terminal
-                      // — not over the whole page. Stacked any higher it
-                      // would hang over the key bar while the keyboard is
-                      // up, which is the one row the thumb is working.
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            // ⚠️ The chrome is driven from OUT HERE, not
-                            // from inside the panel. xterm's own
-                            // [Scrollable] is several widgets down and is
-                            // remounted whenever the agent changes;
-                            // listening for its notifications as they
-                            // bubble past is what survives that, and costs
-                            // the panel no knowledge of the page's chrome.
-                            child: NotificationListener<ScrollNotification>(
-                              onNotification: _chrome.onNotification,
-                              child: agentGone
-                                  ? _AgentGone(
-                                      name: _cachedAgentName,
-                                      onPickAnother: _pickAnotherAgent,
-                                    )
-                                  : pane == null || session == null
-                                  ? const _Attaching()
-                                  : TerminalPanel(
-                                      key: ValueKey(pane.id),
-                                      notifier: widget.notifier,
-                                      session: session,
-                                      // Only the page on screen takes the keyboard — see
-                                      // [TerminalPage.isActive]. `visible` is the same answer for the
-                                      // panel's other half: a page parked beside this one releases
-                                      // focus, stops rendering and stops resizing its remote shell.
-                                      //
-                                      // Whether it also HOLDS one that is already
-                                      // up is a separate question, and the pager asks
-                                      // it on every swipe — see [_shouldFocus].
-                                      focused: _shouldFocus,
-                                      visible: widget.isActive,
-                                      // Hold the remote resize while the keyboard
-                                      // slides. Separate from `visible` because this
-                                      // must NOT release focus — the animation being
-                                      // waited on is the one that focus started.
-                                      //
-                                      // The keyboard is the only thing left that
-                                      // moves this pane's height: the header slides
-                                      // OVER the terminal rather than out of its
-                                      // column — see [_SlideAway].
-                                      //
-                                      // ⚠️ Held for as long as search is open, too:
-                                      // its keyboard is typing a query over a faded
-                                      // terminal, and resizing the agent's shell for
-                                      // it redrew the whole TUI on the way in and
-                                      // again on the way out.
-                                      settling: _keyboardSettling || _searching,
-                                      // ⚠️ The tap is taken in the panel, not by a
-                                      // `Listener` over it. xterm's own `_onTapDown`
-                                      // calls `requestKeyboard()`, so anything that
-                                      // merely ALSO reacted to the tap would raise
-                                      // the keyboard before the words said were typed
-                                      // into the prompt — and a re-armed claim on top
-                                      // of it was measured asking Android twice per
-                                      // tap, which answers a show mid-animation by
-                                      // cancelling and restarting it. Null while the
-                                      // keyboard is up or coming, so the tap is
-                                      // xterm's and the keyboard stays.
-                                      onInputTap: _shouldFocus
-                                          ? null
-                                          : () => unawaited(
-                                              _raiseKeyboard(session),
-                                            ),
-                                      showHeader: false,
-                                      // No composer, and so no grip above it: the
-                                      // page hands the pane its full height and the
-                                      // software keyboard drives the terminal
-                                      // directly. The mic's send is what kept the
-                                      // composer's batched turn.
-                                    ),
-                            ),
-                          ),
-                          // ⚠️ **The skeleton is laid OVER the live panel, not
-                          // swapped in for it, and that is not a stylistic
-                          // choice.** [TerminalPanel.initState] calls
-                          // `session.attachViewport`, which is how the machine
-                          // learns how many rows and columns to draw; a page
-                          // that showed a skeleton INSTEAD would leave the
-                          // session with no viewport, and the first keyframe
-                          // would arrive sized for nothing.
-                          //
-                          // So the panel mounts, measures and resizes as always,
-                          // and this covers the empty emulator buffer it paints
-                          // meanwhile. `session == null` upstream keeps its own
-                          // branch for the frames before a session exists at all.
-                          //
-                          // ⚠️ **This is also the bug that made the skeleton
-                          // invisible.** The only gate used to be `session ==
-                          // null`, and `selectAgent` creates the pane and the
-                          // session in one frame — so the branch above was
-                          // essentially never taken, and what a person actually
-                          // waited in front of was a mounted terminal with an
-                          // empty buffer: a black rectangle, for as long as the
-                          // keyframe took.
-                          if (session != null && !session.hasRenderedFrame)
-                            const Positioned.fill(child: _Attaching()),
-                          // The mic, Search and New agent, floating in the
-                          // terminal's bottom-right corner — see
-                          // [TerminalActionColumn].
-                          //
-                          // ⚠️ Hidden while this page owns the keyboard.
-                          // Typing is the other way of saying what the mic
-                          // says, the key bar is already under the thumb, and
-                          // a column floating over the prompt being typed into
-                          // would be in the way of both.
-                          if (!_ownsInput)
-                            Positioned(
-                              right: TerminalActionColumn.inset,
-                              bottom: TerminalActionColumn.bottomInset,
-                              child: TerminalActionColumn(
-                                voice: widget.voice,
-                                session: session,
-                                onSearch: _openSearch,
-                                onNewAgent: canCreate
-                                    ? () => unawaited(_newAgent())
-                                    : null,
+                // ⚠️ **Held at its height while search is open.** The search
+                // field's keyboard shrinks this page like any other; followed,
+                // the terminal shrank under the search and grew back through it
+                // as it faded out — the flash seen on every close. Nothing here
+                // is on screen while search covers it, so nothing here moves.
+                HeldHeight(
+                  hold: _heldForSearch,
+                  child: Column(
+                    children: [
+                      Expanded(
+                        // ⚠️ The mic floats INSIDE this box, over the terminal
+                        // — not over the whole page. Stacked any higher it
+                        // would hang over the key bar while the keyboard is
+                        // up, which is the one row the thumb is working.
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              // ⚠️ The chrome is driven from OUT HERE, not
+                              // from inside the panel. xterm's own
+                              // [Scrollable] is several widgets down and is
+                              // remounted whenever the agent changes;
+                              // listening for its notifications as they
+                              // bubble past is what survives that, and costs
+                              // the panel no knowledge of the page's chrome.
+                              child: NotificationListener<ScrollNotification>(
+                                onNotification: _chrome.onNotification,
+                                child: agentGone
+                                    ? _AgentGone(
+                                        name: _cachedAgentName,
+                                        onPickAnother: _pickAnotherAgent,
+                                      )
+                                    : pane == null || session == null
+                                    ? const _Attaching()
+                                    : TerminalPanel(
+                                        key: ValueKey(pane.id),
+                                        notifier: widget.notifier,
+                                        session: session,
+                                        // Only the page on screen takes the keyboard — see
+                                        // [TerminalPage.isActive]. `visible` is the same answer for the
+                                        // panel's other half: a page parked beside this one releases
+                                        // focus, stops rendering and stops resizing its remote shell.
+                                        //
+                                        // Whether it also HOLDS one that is already
+                                        // up is a separate question, and the pager asks
+                                        // it on every swipe — see [_shouldFocus].
+                                        focused: _shouldFocus,
+                                        visible: widget.isActive,
+                                        // Hold the remote resize while the keyboard
+                                        // slides. Separate from `visible` because this
+                                        // must NOT release focus — the animation being
+                                        // waited on is the one that focus started.
+                                        //
+                                        // The keyboard is the only thing left that
+                                        // moves this pane's height: the header slides
+                                        // OVER the terminal rather than out of its
+                                        // column — see [_SlideAway].
+                                        //
+                                        // ⚠️ Held for as long as search is open, too:
+                                        // its keyboard is typing a query over a faded
+                                        // terminal, and resizing the agent's shell for
+                                        // it redrew the whole TUI on the way in and
+                                        // again on the way out.
+                                        settling:
+                                            _keyboardSettling || _heldForSearch,
+                                        // ⚠️ The tap is taken in the panel, not by a
+                                        // `Listener` over it. xterm's own `_onTapDown`
+                                        // calls `requestKeyboard()`, so anything that
+                                        // merely ALSO reacted to the tap would raise
+                                        // the keyboard before the words said were typed
+                                        // into the prompt — and a re-armed claim on top
+                                        // of it was measured asking Android twice per
+                                        // tap, which answers a show mid-animation by
+                                        // cancelling and restarting it. Null while the
+                                        // keyboard is up or coming, so the tap is
+                                        // xterm's and the keyboard stays.
+                                        onInputTap: _shouldFocus
+                                            ? null
+                                            : () => unawaited(
+                                                _raiseKeyboard(session),
+                                              ),
+                                        showHeader: false,
+                                        // No composer, and so no grip above it: the
+                                        // page hands the pane its full height and the
+                                        // software keyboard drives the terminal
+                                        // directly. The mic's send is what kept the
+                                        // composer's batched turn.
+                                      ),
                               ),
                             ),
-                        ],
+                            // ⚠️ **The skeleton is laid OVER the live panel, not
+                            // swapped in for it, and that is not a stylistic
+                            // choice.** [TerminalPanel.initState] calls
+                            // `session.attachViewport`, which is how the machine
+                            // learns how many rows and columns to draw; a page
+                            // that showed a skeleton INSTEAD would leave the
+                            // session with no viewport, and the first keyframe
+                            // would arrive sized for nothing.
+                            //
+                            // So the panel mounts, measures and resizes as always,
+                            // and this covers the empty emulator buffer it paints
+                            // meanwhile. `session == null` upstream keeps its own
+                            // branch for the frames before a session exists at all.
+                            //
+                            // ⚠️ **This is also the bug that made the skeleton
+                            // invisible.** The only gate used to be `session ==
+                            // null`, and `selectAgent` creates the pane and the
+                            // session in one frame — so the branch above was
+                            // essentially never taken, and what a person actually
+                            // waited in front of was a mounted terminal with an
+                            // empty buffer: a black rectangle, for as long as the
+                            // keyframe took.
+                            if (session != null && !session.hasRenderedFrame)
+                              const Positioned.fill(child: _Attaching()),
+                            // The mic, Search and New agent, floating in the
+                            // terminal's bottom-right corner — see
+                            // [TerminalActionColumn].
+                            //
+                            // ⚠️ Hidden while this page owns the keyboard.
+                            // Typing is the other way of saying what the mic
+                            // says, the key bar is already under the thumb, and
+                            // a column floating over the prompt being typed into
+                            // would be in the way of both.
+                            if (!_ownsInput)
+                              Positioned(
+                                right: TerminalActionColumn.inset,
+                                bottom: TerminalActionColumn.bottomInset,
+                                child: TerminalActionColumn(
+                                  voice: widget.voice,
+                                  session: session,
+                                  onSearch: _openSearch,
+                                  onNewAgent: canCreate
+                                      ? () => unawaited(_newAgent())
+                                      : null,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                    // The bottom of this page IS just above the keyboard:
-                    // `PhoneShell`'s Scaffold has already resized for it —
-                    // the same resize that empties this page's MediaQuery
-                    // insets (see [didChangeMetrics]).
-                    if (session != null)
-                      TerminalInputDock(
-                        session: session,
-                        keyboardUp: _keyboardUp || _keyboardRequested,
-                        onDismiss: _dismissInput,
-                        // Only where the far side can actually take one: an
-                        // older CLI never advertises the binary kind, so the
-                        // upload would go nowhere silently. Null leaves the
-                        // buttons undrawn rather than drawn dead.
-                        onPickImage:
-                            machine?.terminalImagePasteAvailable == true
-                            ? () => unawaited(
-                                _sendImage(session, ImageSource.gallery),
-                              )
-                            : null,
-                        onTakePhoto:
-                            machine?.terminalImagePasteAvailable == true
-                            ? () => unawaited(
-                                _sendImage(session, ImageSource.camera),
-                              )
-                            : null,
-                      ),
-                  ],
+                      // The bottom of this page IS just above the keyboard:
+                      // `PhoneShell`'s Scaffold has already resized for it —
+                      // the same resize that empties this page's MediaQuery
+                      // insets (see [didChangeMetrics]).
+                      if (session != null)
+                        TerminalInputDock(
+                          session: session,
+                          keyboardUp: _terminalKeyboardUp || _keyboardRequested,
+                          onDismiss: _dismissInput,
+                          // Only where the far side can actually take one: an
+                          // older CLI never advertises the binary kind, so the
+                          // upload would go nowhere silently. Null leaves the
+                          // buttons undrawn rather than drawn dead.
+                          onPickImage:
+                              machine?.terminalImagePasteAvailable == true
+                              ? () => unawaited(
+                                  _sendImage(session, ImageSource.gallery),
+                                )
+                              : null,
+                          onTakePhoto:
+                              machine?.terminalImagePasteAvailable == true
+                              ? () => unawaited(
+                                  _sendImage(session, ImageSource.camera),
+                                )
+                              : null,
+                        ),
+                    ],
+                  ),
                 ),
                 // The header, laid OVER the terminal rather than above it in the
                 // column.
@@ -1264,8 +1332,8 @@ class _AttachingState extends State<_Attaching>
     // rather than of whatever happens to be behind them, and the terminal's
     // background is read from the user's chosen scheme so a light terminal theme
     // gets bars that are darker than its ground rather than lighter.
-    final light = ThemeData.estimateBrightnessForColor(ground) ==
-        Brightness.light;
+    final light =
+        ThemeData.estimateBrightnessForColor(ground) == Brightness.light;
     final rest = Color.alphaBlend(
       (light ? Colors.black : Colors.white).withValues(alpha: 0.10),
       ground,
@@ -1279,113 +1347,113 @@ class _AttachingState extends State<_Attaching>
       child: _RevealDown(
         listenable: _reveal,
         child: ColoredBox(
-        // Opaque, because this covers a live [TerminalPanel] — see the note at
-        // the call site. Without it the empty emulator buffer shows between the
-        // bars and the two grounds differ by a hair, which reads as a smudge.
-        color: ground,
-        child: Padding(
-          // ⚠️ The terminal view's OWN padding (`TerminalPanel` passes
-          // `EdgeInsets.all(10)` to the xterm view), so a bar starts on the
-          // column the first character will occupy. A different gutter here
-          // would shift every line sideways the moment the keyframe lands.
-          padding: const EdgeInsets.all(10),
-          child: Pulse(
-            // The breath `shared/widgets/skeleton.dart` sets for a placeholder;
-            // one controller for the whole block rather than one per bar, so
-            // the rows pulse together instead of shimmering independently.
-            duration: const Duration(milliseconds: 1100),
-            builder: (context, t, _) {
-              final fill = Color.lerp(rest, peak, t)!;
-              // The prompt's banner sits on its own ground, a step above the
-              // terminal's — the band an agent paints behind the line it is
-              // answering, and the one element that makes this block read as a
-              // transcript rather than as a list of lines.
-              //
-              // 0.08, not the 0.05 this started at: the banner has to be legible
-              // as a BAND at arm's length on a phone, and at 0.05 over `#181818`
-              // it was a shade nobody would notice. Still well under the bars
-              // themselves (0.10–0.17), so it reads as the ground behind them
-              // rather than as another bar.
-              final banner = Color.lerp(
-                ground,
-                light ? Colors.black : Colors.white,
-                0.08,
-              )!;
-              final bar = (fontSize * 0.62).clamp(5.0, 12.0).toDouble();
-              return LayoutBuilder(
-                builder: (context, constraints) {
-                  // ⚠️ **As many turns as the pane is tall, not a fixed four.**
-                  // A fixed list left the top half of a tall phone empty, which
-                  // reads as a page that has finished loading and has almost
-                  // nothing on it. One extra turn is added beyond the measured
-                  // fit so the topmost one is genuinely cut by the edge rather
-                  // than ending a few pixels short of it.
-                  final height = constraints.maxHeight;
-                  final perTurn = _turnHeight(
-                    _shapes[0],
-                    lineHeight: lineHeight,
-                  );
-                  final count = height.isFinite && perTurn > 0
-                      ? (height / perTurn).ceil() + 1
-                      : _shapes.length;
-                  final turns = [
-                    for (var i = 0; i < count; i++)
-                      // Cycled from the back, so the LAST shape is always the
-                      // one at the bottom edge: it is the only one written
-                      // without a closing meta line, which is what an in-progress
-                      // turn looks like.
-                      _shapes[(_shapes.length - 1 - i % _shapes.length)],
-                  ].reversed.toList();
-                  final blocks = <Widget>[
-                    for (var i = 0; i < turns.length; i++)
-                      Opacity(
-                        // Oldest at 0.4, newest at full: the block nearest the
-                        // top edge is the one about to be clipped by it, so it
-                        // fades INTO that edge rather than ending against it.
-                        opacity: turns.length == 1
-                            ? 1
-                            : 0.4 + (i / (turns.length - 1)) * 0.6,
-                        child: _turn(
-                          turns[i],
-                          lineHeight: lineHeight,
-                          bar: bar,
-                          fill: fill,
-                          banner: banner,
-                          // The newest turn ends at the bottom edge, as the live
-                          // screen's does; only the ones above it are separated.
-                          last: i == turns.length - 1,
+          // Opaque, because this covers a live [TerminalPanel] — see the note at
+          // the call site. Without it the empty emulator buffer shows between the
+          // bars and the two grounds differ by a hair, which reads as a smudge.
+          color: ground,
+          child: Padding(
+            // ⚠️ The terminal view's OWN padding (`TerminalPanel` passes
+            // `EdgeInsets.all(10)` to the xterm view), so a bar starts on the
+            // column the first character will occupy. A different gutter here
+            // would shift every line sideways the moment the keyframe lands.
+            padding: const EdgeInsets.all(10),
+            child: Pulse(
+              // The breath `shared/widgets/skeleton.dart` sets for a placeholder;
+              // one controller for the whole block rather than one per bar, so
+              // the rows pulse together instead of shimmering independently.
+              duration: const Duration(milliseconds: 1100),
+              builder: (context, t, _) {
+                final fill = Color.lerp(rest, peak, t)!;
+                // The prompt's banner sits on its own ground, a step above the
+                // terminal's — the band an agent paints behind the line it is
+                // answering, and the one element that makes this block read as a
+                // transcript rather than as a list of lines.
+                //
+                // 0.08, not the 0.05 this started at: the banner has to be legible
+                // as a BAND at arm's length on a phone, and at 0.05 over `#181818`
+                // it was a shade nobody would notice. Still well under the bars
+                // themselves (0.10–0.17), so it reads as the ground behind them
+                // rather than as another bar.
+                final banner = Color.lerp(
+                  ground,
+                  light ? Colors.black : Colors.white,
+                  0.08,
+                )!;
+                final bar = (fontSize * 0.62).clamp(5.0, 12.0).toDouble();
+                return LayoutBuilder(
+                  builder: (context, constraints) {
+                    // ⚠️ **As many turns as the pane is tall, not a fixed four.**
+                    // A fixed list left the top half of a tall phone empty, which
+                    // reads as a page that has finished loading and has almost
+                    // nothing on it. One extra turn is added beyond the measured
+                    // fit so the topmost one is genuinely cut by the edge rather
+                    // than ending a few pixels short of it.
+                    final height = constraints.maxHeight;
+                    final perTurn = _turnHeight(
+                      _shapes[0],
+                      lineHeight: lineHeight,
+                    );
+                    final count = height.isFinite && perTurn > 0
+                        ? (height / perTurn).ceil() + 1
+                        : _shapes.length;
+                    final turns = [
+                      for (var i = 0; i < count; i++)
+                        // Cycled from the back, so the LAST shape is always the
+                        // one at the bottom edge: it is the only one written
+                        // without a closing meta line, which is what an in-progress
+                        // turn looks like.
+                        _shapes[(_shapes.length - 1 - i % _shapes.length)],
+                    ].reversed.toList();
+                    final blocks = <Widget>[
+                      for (var i = 0; i < turns.length; i++)
+                        Opacity(
+                          // Oldest at 0.4, newest at full: the block nearest the
+                          // top edge is the one about to be clipped by it, so it
+                          // fades INTO that edge rather than ending against it.
+                          opacity: turns.length == 1
+                              ? 1
+                              : 0.4 + (i / (turns.length - 1)) * 0.6,
+                          child: _turn(
+                            turns[i],
+                            lineHeight: lineHeight,
+                            bar: bar,
+                            fill: fill,
+                            banner: banner,
+                            // The newest turn ends at the bottom edge, as the live
+                            // screen's does; only the ones above it are separated.
+                            last: i == turns.length - 1,
+                          ),
+                        ),
+                    ];
+                    // ⚠️ Aligned to the BOTTOM and clipped at the top, which is how
+                    // a terminal itself sits: the newest output is at the bottom
+                    // edge and history runs off the top. `OverflowBox` lets the
+                    // column exceed the pane — the extra turn above guarantees it
+                    // does — and `ClipRect` cuts what runs past, instead of Flutter
+                    // painting an overflow stripe over the whole thing.
+                    return ClipRect(
+                      child: OverflowBox(
+                        alignment: Alignment.bottomLeft,
+                        minHeight: 0,
+                        maxHeight: double.infinity,
+                        // ⚠️ The pane's own width is pinned back on, because
+                        // `OverflowBox` relaxes BOTH axes and the rows inside are
+                        // `FractionallySizedBox` — against an unbounded width they
+                        // would have no fraction to take and the layout would throw.
+                        minWidth: constraints.maxWidth,
+                        maxWidth: constraints.maxWidth,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: blocks,
                         ),
                       ),
-                  ];
-                  // ⚠️ Aligned to the BOTTOM and clipped at the top, which is how
-                  // a terminal itself sits: the newest output is at the bottom
-                  // edge and history runs off the top. `OverflowBox` lets the
-                  // column exceed the pane — the extra turn above guarantees it
-                  // does — and `ClipRect` cuts what runs past, instead of Flutter
-                  // painting an overflow stripe over the whole thing.
-                  return ClipRect(
-                    child: OverflowBox(
-                      alignment: Alignment.bottomLeft,
-                      minHeight: 0,
-                      maxHeight: double.infinity,
-                      // ⚠️ The pane's own width is pinned back on, because
-                      // `OverflowBox` relaxes BOTH axes and the rows inside are
-                      // `FractionallySizedBox` — against an unbounded width they
-                      // would have no fraction to take and the layout would throw.
-                      minWidth: constraints.maxWidth,
-                      maxWidth: constraints.maxWidth,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        mainAxisSize: MainAxisSize.min,
-                        children: blocks,
-                      ),
-                    ),
-                  );
-                },
-              );
-            },
+                    );
+                  },
+                );
+              },
+            ),
           ),
-        ),
         ),
       ),
     );
@@ -1403,10 +1471,7 @@ class _AttachingState extends State<_Attaching>
   /// lines, gap and meta line, trailing gap. A drift here does not break the
   /// layout — the column is clipped either way — it just means a turn too few
   /// (a band of empty ground at the top) or one too many (wasted build).
-  static double _turnHeight(
-    _SkeletonTurn turn, {
-    required double lineHeight,
-  }) =>
+  static double _turnHeight(_SkeletonTurn turn, {required double lineHeight}) =>
       lineHeight + // the prompt banner
       lineHeight * 0.35 + // the gap under it
       lineHeight * turn.answer.length +
@@ -1579,11 +1644,7 @@ class _RevealDown extends StatelessWidget {
           colors: const [Colors.white, Colors.white, Colors.transparent],
           // Clamped because a stop list must be non-decreasing and within 0..1;
           // at the extremes of the travel above, both terms run outside it.
-          stops: [
-            0,
-            (edge - _feather).clamp(0.0, 1.0),
-            edge.clamp(0.0, 1.0),
-          ],
+          stops: [0, (edge - _feather).clamp(0.0, 1.0), edge.clamp(0.0, 1.0)],
         ).createShader(bounds),
         child: built,
       );

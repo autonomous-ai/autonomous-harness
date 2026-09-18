@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/auth/auth_session.dart';
 import 'package:harness_mobile/core/config.dart';
+import 'package:harness_mobile/phone/phone_search_results.dart';
+import 'package:harness_mobile/phone/terminal_action_column.dart';
 import 'package:harness_mobile/phone/terminal_header.dart';
+import 'package:harness_mobile/phone/terminal_key_bar.dart';
 import 'package:harness_mobile/phone/terminal_page.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/state/app_state.dart';
@@ -124,6 +127,64 @@ void main() {
     // The terminal is faded behind the search screen: resizing the agent's shell
     // for a keyboard that is typing a query redraws its whole TUI for nothing,
     // and again when the search closes.
+    expect(resizes, isEmpty);
+  });
+
+  testWidgets('the terminal under search holds still through open and close', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TerminalPage(
+          notifier: notifier,
+          machineId: 'm',
+          agentId: 'a',
+          voice: voice,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    final size = tester.getSize(find.byType(TerminalView));
+    resizes.clear();
+    // The terminal as it was — its height, no key bar, its floating column.
+    void expectUntouched() {
+      expect(tester.getSize(find.byType(TerminalView)), size);
+      expect(find.byType(TerminalKeyBar), findsNothing);
+      expect(find.byType(TerminalActionColumn), findsOneWidget);
+    }
+
+    await tester.tap(find.byKey(const ValueKey('terminal-search')));
+    await tester.pump();
+    addTearDown(tester.view.resetViewInsets);
+    for (final inset in const [300.0, 600.0, 900.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: inset);
+      await tester.pump(const Duration(milliseconds: 16));
+      expectUntouched();
+    }
+    await tester.pump(const Duration(seconds: 1));
+    expectUntouched();
+    // The search itself still sits above its keyboard.
+    expect(
+      tester.getBottomLeft(find.byType(PhoneSearchResults)).dy,
+      lessThanOrEqualTo(size.height),
+    );
+
+    // Closed the way iOS does it: the keyboard's view goes at once, but the
+    // inset it reports falls over ~0.5s — past the end of search's fade. Every
+    // frame, through the fade AND after it, shows the terminal search opened
+    // over; releasing it with the fade let the falling inset raise its key bar.
+    await tester.tap(find.bySemanticsLabel('Back'));
+    await tester.pump();
+    for (var ms = 0; ms <= 700; ms += 16) {
+      tester.view.viewInsets = FakeViewPadding(
+        bottom: ms >= 500 ? 0 : 900 * (1 - ms / 500),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+      expectUntouched();
+    }
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(PhoneSearchResults), findsNothing);
+    expectUntouched();
     expect(resizes, isEmpty);
   });
 

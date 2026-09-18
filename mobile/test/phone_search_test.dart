@@ -5,6 +5,7 @@ import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/phone/agent_index.dart';
 import 'package:harness_mobile/phone/compact_age.dart';
+import 'package:harness_mobile/phone/phone_search_field.dart';
 import 'package:harness_mobile/phone/phone_search_folder_header.dart';
 import 'package:harness_mobile/phone/phone_search_groups.dart';
 import 'package:harness_mobile/phone/phone_search_index.dart';
@@ -484,6 +485,34 @@ void main() {
         variant: TargetPlatformVariant.only(TargetPlatform.android),
       );
     }
+  });
+
+  testWidgets('terminal search: the same one bar, its chevron closes it', (
+    tester,
+  ) async {
+    final app = _app([
+      _machine('box', [_agent('3188', minutesAgo: 4)]),
+    ]);
+    addTearDown(app.dispose);
+    var closed = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalSearchOverlay(
+            notifier: app,
+            animation: const AlwaysStoppedAnimation(1),
+            onClose: () => closed++,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(PhoneSearchField), findsOneWidget);
+    expect(find.text('Cancel'), findsNothing);
+
+    await tester.tap(find.bySemanticsLabel('Back'));
+    await tester.pump();
+    expect(closed, 1);
   });
 
   testWidgets('one bar: no Cancel beside it, and its chevron closes search', (
