@@ -83,6 +83,19 @@ Future<void> showPhoneSheet(
   useRootNavigator: true,
   showDragHandle: true,
   backgroundColor: AppPalette.panelBg,
+  // ⚠️ **Without this the sheet is capped at 9/16 of the screen**, which is Flutter's default and
+  // is not a height anything here asked for. An agent's sheet — three actions, two captions, a
+  // three-line title detail — outgrows it on a normal phone, and the row that fell past the cap was
+  // Settings: the column below scrolls, so nothing was broken, but a sheet that ends mid-list with
+  // no bottom edge in sight reads as the whole menu rather than as a scrollable one.
+  isScrollControlled: true,
+  // A ceiling of its own, because `isScrollControlled` alone removes the cap altogether and lets a
+  // long sheet stand up the full height of the screen — voice input's six languages would. Short of
+  // the top on purpose: the gap is what says a sheet is a layer over the page rather than a page of
+  // its own, and it keeps the terminal underneath recognisable while its own menu is open.
+  constraints: BoxConstraints(
+    maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+  ),
   builder: (sheetContext) => SafeArea(
     child: Column(
       mainAxisSize: MainAxisSize.min,
