@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev is the flight computer, bringing a booster down soft, live",
+  "examples": [
+    {
+      "prompt": "Set Jev Lander up as a rough descent — boost the gravity and cut the fuel. Give Jev a decisive burn-early style line, then watch it read the telemetry every tick, throttle the booster down the pad, and land soft (or slam in when gravity is too high and the burns go twitchy).",
+      "caption": "Jev's Landing — a fast decision model flying a booster down to a soft touchdown on every tick"
+    }
+  ]
+}

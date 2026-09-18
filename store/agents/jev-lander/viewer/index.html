@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Lander</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Lander</h1></div>
+    <div class="stats">
+      <div class="stat"><label>Altitude</label><span id="alt">—</span></div>
+      <div class="stat"><label>Vert speed</label><span id="vy">—</span></div>
+      <div class="stat"><label>Throttle</label><span id="thrust">COAST</span></div>
+      <div class="stat"><label>Fuel</label><span id="fuel">—</span></div>
+      <div class="stat"><label>Gravity</label><span id="gravity">g1.2</span></div>
+      <div class="stat"><label>Ticks</label><span id="ticks">0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="tick">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <main>
+    <section id="stage">
+      <div class="panel panel-stage">
+        <div class="panel-title">The landing pad</div>
+        <div id="sky">
+          <canvas id="scene"></canvas>
+          <div id="readout">
+            <div class="ro"><label>ALT</label><span id="r-alt">—</span></div>
+            <div class="ro"><label>VY</label><span id="r-vy">—</span></div>
+            <div class="ro"><label>FUEL</label><span id="r-fuel">—</span></div>
+            <div class="ro"><label>G</label><span id="r-g">—</span></div>
+          </div>
+          <div id="banner" class="hidden"></div>
+        </div>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Jev, the flight computer</div>
+        <div class="how">
+          A booster is falling out of the sky. Every tick Jev reads
+          <b>altitude, vertical speed and fuel</b> and sets a throttle:
+          <code>CUT</code> (none), <code>COAST</code> (idle), <code>HOVER</code>
+          (hold) or <code>BURN</code> (full). Touch down soft and it's a clean
+          landing; hit hard and the booster is scrap.<br><br>
+          Edit <code>lander.json</code>: crank <code>gravity</code> up and Jev's
+          burns get twitchy and landings start to crash; shrink <code>fuel</code>
+          and it has less room to recover.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Flight log</div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+</body>
+</html>

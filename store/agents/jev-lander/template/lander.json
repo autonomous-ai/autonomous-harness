@@ -1,0 +1,12 @@
+{
+  "title": "Jev Lander",
+  "description": "Jev is the flight computer: throttle a booster down to a soft landing.",
+  "instrument": "LANDER",
+  "tickMs": 300,
+  "gravity": 1.2,
+  "fuel": 260,
+  "startAlt": 80,
+  "altitude": 80,
+  "safeSpeed": 2.0,
+  "style": "The booster is falling under gravity. Bring it down to the pad gently: watch altitude and vertical speed, burn early and hard enough to keep descent in check, and ease off so you touch down soft. A fast touchdown is a crash — go for the gentle landing."
+}
