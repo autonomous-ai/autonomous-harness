@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-archer",
+  "name": "Jev Archer",
+  "category": "Sports",
+  "author": "Autonomous",
+  "description": "A live archery range. Jev — TypeSafe's System One model — is the archer, tracking a target sliding across a line. Every tick Jev reads the target and the aim point and nudges the aim to track it, releasing an arrow each window. Speed the target up and Jev's aim trails and misses pile up.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "archer.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

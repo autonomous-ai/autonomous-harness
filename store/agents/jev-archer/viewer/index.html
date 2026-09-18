@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Archer</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Archer</h1></div>
+    <div class="stats">
+      <div class="stat"><label>Arrow</label><span id="arrow">—</span></div>
+      <div class="stat"><label>Aim</label><span id="move">—</span></div>
+      <div class="stat"><label>Speed</label><span id="speed">—</span></div>
+      <div class="stat"><label>Bullseyes</label><span id="hits">0</span></div>
+      <div class="stat"><label>Missed</label><span id="misses">0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="tick">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <main>
+    <section id="stage">
+      <div class="panel panel-stage">
+        <div class="panel-title">The range</div>
+        <div id="range">
+          <canvas id="scene"></canvas>
+          <div id="banner" class="hidden"></div>
+        </div>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Jev, the archer</div>
+        <div class="how">
+          Jev is on the line. A target slides back and forth, and every tick it reads the target's
+          position and nudges its aim <code>LEFT</code> / <code>RIGHT</code> to track it, releasing
+          an arrow each window. Land it in the bullseye to score; miss and it flies by.<br><br>
+          Edit <code>archer.json</code>: crank <code>speed</code> up and the target outruns Jev's
+          aim and the misses pile up; shrink <code>bullHalf</code> and Jev has to be exact.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Session log</div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+</body>
+</html>
