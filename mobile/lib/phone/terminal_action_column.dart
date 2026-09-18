@@ -40,15 +40,18 @@ class TerminalActionColumn extends StatelessWidget {
 
   final VoiceInputController voice;
 
-  /// Null while the terminal is still attaching: no mic, since there is nothing
-  /// to talk to yet, but Search and New agent stay where the thumb expects them.
+  /// Null while the terminal is still attaching: the mic is drawn dimmed and
+  /// dead, since there is nothing to talk to yet.
   final TerminalSession? session;
 
   final VoidCallback onSearch;
 
-  /// Null when the machine cannot host a new agent right now — offline, or
-  /// still asking for its password. The button is left out rather than drawn
-  /// dead.
+  /// Null when the machine cannot host a new agent right now — offline, still
+  /// asking for its password, or not loaded yet after a restart.
+  ///
+  /// ⚠️ **Drawn dimmed, never left out.** All three buttons are always there:
+  /// a `+` that came and went with the machine's state made the column jump,
+  /// and read as a missing button rather than one not ready yet.
   final VoidCallback? onNewAgent;
 
   /// The column's width: the mic's slot, which the smaller buttons centre under.
@@ -80,12 +83,11 @@ class TerminalActionColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     final session = this.session;
-    final onNewAgent = this.onNewAgent;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (session != null) ...[
+        if (session != null)
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -105,9 +107,11 @@ class TerminalActionColumn extends StatelessWidget {
               const SizedBox(width: 6),
               VoiceMicFab(voice: voice, session: session),
             ],
-          ),
-          const SizedBox(height: _underMic),
-        ],
+          )
+        else
+          // Still attaching: the mic in its place, dimmed and dead.
+          const VoiceMicButton(face: VoiceMicFace.talk, onPressed: null),
+        const SizedBox(height: _underMic),
         _centred(
           TerminalRoundAction(
             key: const ValueKey('terminal-search'),
@@ -116,17 +120,15 @@ class TerminalActionColumn extends StatelessWidget {
             onTap: onSearch,
           ),
         ),
-        if (onNewAgent != null) ...[
-          const SizedBox(height: _between),
-          _centred(
-            TerminalRoundAction(
-              key: const ValueKey('terminal-new-agent'),
-              icon: LucideIcons.plus300,
-              label: 'New agent',
-              onTap: onNewAgent,
-            ),
+        const SizedBox(height: _between),
+        _centred(
+          TerminalRoundAction(
+            key: const ValueKey('terminal-new-agent'),
+            icon: LucideIcons.plus300,
+            label: 'New agent',
+            onTap: onNewAgent,
           ),
-        ],
+        ),
       ],
     );
   }
@@ -154,7 +156,8 @@ class TerminalRoundAction extends StatelessWidget {
   /// For screen readers and the long-press tooltip.
   final String label;
 
-  final VoidCallback onTap;
+  /// Null draws the button dimmed and dead, the way the mic is.
+  final VoidCallback? onTap;
 
   /// The drawn circle.
   static const double diameter = 42;
@@ -167,8 +170,10 @@ class TerminalRoundAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
+    final live = onTap != null;
     return Semantics(
       button: true,
+      enabled: live,
       label: label,
       child: Tooltip(
         message: label,
@@ -178,24 +183,35 @@ class TerminalRoundAction extends StatelessWidget {
             maxWidth: touchExtent,
             maxHeight: touchExtent,
             child: GestureDetector(
+              // Opaque even when dead: a tap on a dimmed button must not fall
+              // through to the terminal and raise the keyboard.
               behavior: HitTestBehavior.opaque,
               onTap: onTap,
               child: SizedBox.square(
                 dimension: touchExtent,
-                child: Center(
-                  child: Container(
-                    width: diameter,
-                    height: diameter,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      // The mic's resting look: see-through, so the output
-                      // under the button stays readable, with a light shadow
-                      // to keep the edge — see [floatingButtonFill].
-                      color: floatingButtonFill,
-                      border: Border.all(color: AppGlass.lift),
-                      boxShadow: floatingButtonShadow,
+                child: AnimatedOpacity(
+                  // The mic's dimmed opacity, so the three read alike.
+                  duration: const Duration(milliseconds: 160),
+                  opacity: live ? 1 : 0.4,
+                  child: Center(
+                    child: Container(
+                      width: diameter,
+                      height: diameter,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        // The mic's resting look: see-through, so the output
+                        // under the button stays readable, with a light shadow
+                        // to keep the edge — see [floatingButtonFill].
+                        color: floatingButtonFill,
+                        border: Border.all(color: AppGlass.lift),
+                        boxShadow: floatingButtonShadow,
+                      ),
+                      child: Icon(
+                        icon,
+                        size: 20,
+                        color: AppPalette.textPrimary,
+                      ),
                     ),
-                    child: Icon(icon, size: 20, color: AppPalette.textPrimary),
                   ),
                 ),
               ),
