@@ -31,6 +31,83 @@ const downloadToolsOf = (source: string) =>
     source.indexOf('  echo "▸ Installing the Harness Node runtime'),
   );
 
+// Steps 5 and 6 — the verification, the wordmark and the guide, and the PATH reminder — as one
+// runnable unit, from the constants down so BIN_DIR and LAUNCHER resolve the way they do in the script.
+const finaleOf = (source: string) =>
+  source.slice(source.indexOf('METADATA_URL="${HARNESS_METADATA_URL'), source.indexOf("# Shared by every download")) +
+  source.slice(source.indexOf("# 5. Final verification"));
+
+// A ~/.local/bin with a launcher that answers `version`, plus the node and tmux the verification runs.
+const installedFixture = (scratch: string) => {
+  const home = join(scratch, "home");
+  const bin = join(home, ".local", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeCommand(bin, "harness", ['[ "$1" = version ] && echo 0.2.60', "exit 0"]);
+  writeCommand(scratch, "node", ["exit 0"]);
+  writeCommand(scratch, "tmux", ['echo "tmux 3.7"']);
+  return { home, node: join(scratch, "node") };
+};
+
+const runFinale = (mode: "standalone" | "desktop", pathHasBin: boolean) => {
+  const source = readFileSync(installer, "utf8");
+  const scratch = mkdtempSync(join(tmpdir(), "harness-finale-"));
+  try {
+    const { home, node } = installedFixture(scratch);
+    const bin = join(home, ".local", "bin");
+    return spawnSync("/bin/sh", ["-c", finaleOf(source)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        INSTALL_MODE: mode,
+        NODE_BIN: node,
+        PATH: pathHasBin ? `${bin}:${scratch}:/usr/bin:/bin` : `${scratch}:/usr/bin:/bin`,
+      },
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+};
+
+const LOGO = [
+  "    _",
+  "   | |__   __ _ _ __ _ __   ___  ___ ___",
+  "   | '_ \\ / _` | '__| '_ \\ / _ \\/ __/ __|",
+  "   | | | | (_| | |  | | | |  __/\\__ \\__ \\",
+  "   |_| |_|\\__,_|_|  |_| |_|\\___||___/___/",
+];
+
+describe("scripts/install.sh: what it says once it is done", () => {
+  it("ends with the wordmark and the guide — login, start, remote password, then harness remote — in that order", () => {
+    const result = runFinale("standalone", true);
+    expect(result.status).toBe(0);
+    const out = result.stdout;
+    for (const line of LOGO) expect(out).toContain(line);
+    expect(out).toContain("✓ harness 0.2.60 installed.");
+    const order = ["harness login", "harness start", "harness remote-password set", "harness remote  ", "harness machines", "harness status", "harness --help"];
+    const at = order.map((command) => out.indexOf(command));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+    expect(out.indexOf(LOGO[1])).toBeLessThan(out.indexOf("harness login"));
+    // Every command is explained, and nothing is run: the fixture launcher only answered `version`.
+    expect(out).toContain("# 1. sign in");
+    expect(out).toContain("# 3. let your OTHER machines reach this one");
+    expect(out).not.toContain("'harness' is installed in ~/.local/bin");
+  }, 20_000);
+
+  it("the PATH reminder still comes after the guide when ~/.local/bin is not on PATH", () => {
+    const out = runFinale("standalone", false).stdout;
+    expect(out.indexOf("harness --help")).toBeLessThan(out.indexOf("'harness' is installed in ~/.local/bin"));
+  }, 20_000);
+
+  it("desktop mode gets the one line and no guide: the app takes the person through sign-in", () => {
+    const out = runFinale("desktop", true).stdout;
+    expect(out).toContain("harness 0.2.60 installed.");
+    expect(out).not.toContain("Get started");
+    expect(out).not.toContain(LOGO[1]);
+  }, 20_000);
+});
+
 describe("scripts/install.sh command contract", () => {
   it("rejects a legacy machine-token argument before installing", () => {
     const result = spawnSync("sh", [installer, "legacy-token"], { encoding: "utf8" });
