@@ -34,8 +34,12 @@ The coding agent is still the heart of the work, and OpenHarness is built around
   [workspace guide](docs/app.md) and [keybindings](docs/keyboard.md) cover the rest.
 
 <p align="center">
-  <img src=".github/assets/screenshots/coding-agents.jpg" width="960" alt="The Harness app with Claude Code, Codex, Cursor and OpenCode working in four panes, on agents spread across a laptop, a home server, an office desktop and a datacenter machine">
+
+<img width="1280" height="716" alt="ezgif-3355e1eae4366c76" src="https://github.com/user-attachments/assets/e3401aae-9402-4710-a46d-1da150ff96bf" />
+
+
 </p>
+
 
 ### Run it
 
