@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
-import 'package:harness_mobile/core/models.dart' show Agent;
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/app_icon_button.dart';
 import 'package:harness_mobile/state/app_state.dart';
@@ -27,7 +26,6 @@ import 'status_pill.dart';
 import 'terminal_action_column.dart';
 import 'terminal_chrome_scroll.dart';
 import 'terminal_header.dart';
-import 'terminal_header_floats.dart';
 import 'terminal_input_dock.dart';
 import 'terminal_search.dart';
 import 'voice_input_controller.dart';
@@ -269,56 +267,6 @@ class _TerminalPageState extends State<TerminalPage>
     _searchOpen.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  /// What the header held, for when the row is not on screen to hold it: `⋯`.
-  ///
-  /// ⚠️ Built from the same condition as the header's own row, so the float
-  /// never offers something the row would have withheld — `⋯` needs an agent
-  /// that has loaded. Search and New agent are not here: they float in the
-  /// bottom-right corner with the mic whether the header is up or not.
-  List<TerminalHeaderChoice> _headerChoices(
-    MachineState? machine,
-    Agent? agent,
-  ) => [
-    if (agent != null)
-      TerminalHeaderChoice(
-        icon: LucideIcons.ellipsis300,
-        label: 'Agent actions',
-        onTap: () => _showActions(
-          machineName: machine?.machine.displayName ?? '',
-          agentName: agent.name,
-        ),
-      ),
-  ];
-
-  /// Where each floating button starts its flight, relative to where it lands.
-  ///
-  /// ⚠️ **Worked out from the header's own constants rather than measured.** The
-  /// header is being taken apart at exactly the moment these are read, so
-  /// constants are the only description of where its controls WERE that
-  /// survives the row leaving. The trade is that the origins drift if the
-  /// header's layout changes without this changing with it — buttons flying
-  /// from slightly the wrong place, never a crash or a missed target.
-  List<Offset> _headerOrigins(int count) {
-    const inset = TerminalHeaderFloats.inset;
-    const pitch = TerminalHeaderFloats.pitch;
-    const extent = TerminalHeaderFloats.extent;
-    // The trailing actions are [_HeaderAction]s: 24px boxes with 7 either side,
-    // the last one's trailing pad dropped, laid from the right edge inwards past
-    // the header's own inset.
-    const actionPitch = 24 + _HeaderAction.gap * 2;
-    const headerMidY = TerminalHeader.topInset + TerminalHeader.rowHeight / 2;
-    return [
-      for (var i = 0; i < count; i++)
-        () {
-          final fromRight =
-              TerminalHeader.sideInset + actionPitch * (count - 1 - i) + 12;
-          const restFromRight = inset + extent / 2;
-          final restY = inset + i * pitch + extent / 2;
-          return Offset(restFromRight - fromRight, headerMidY - restY);
-        }(),
-    ];
   }
 
   /// Opens the machine's new-agent form.
@@ -773,9 +721,8 @@ class _TerminalPageState extends State<TerminalPage>
                 // does. The rows under it are the oldest on the screen, and the
                 // first push of a scroll is what slides it away from them.
                 //
-                // What stands in for it while it is gone is [TerminalHeaderFloats]
-                // — the same controls, as floating buttons down the right edge,
-                // each one flown out of the place it held in this row.
+                // Nothing stands in for it while it is gone: `⋯` comes back with
+                // the header on the first scroll the other way.
                 Positioned(
                   top: 0,
                   left: 0,
@@ -832,33 +779,6 @@ class _TerminalPageState extends State<TerminalPage>
                       ),
                     ),
                   ),
-                ),
-                // The header's controls, floating down the right edge once
-                // the row itself has scrolled away.
-                //
-                // ⚠️ **Built on the animation, not on a flag the page keeps.**
-                // These have to be somewhere on every frame of the slide — they
-                // fly out of the header as it goes — so their position is read
-                // per frame. A boolean flipped in a callback would put them
-                // there in one jump, which is the thing this replaced.
-                AnimatedBuilder(
-                  animation: _chrome.header,
-                  builder: (context, _) {
-                    if (_chrome.header.value == 0) {
-                      return const SizedBox.shrink();
-                    }
-                    final choices = _headerChoices(machine, agent);
-                    if (choices.isEmpty) return const SizedBox.shrink();
-                    return Positioned(
-                      top: TerminalHeaderFloats.inset,
-                      right: TerminalHeaderFloats.inset,
-                      child: TerminalHeaderFloats(
-                        choices: choices,
-                        progress: _chrome.header,
-                        origins: _headerOrigins(choices.length),
-                      ),
-                    );
-                  },
                 ),
                 // Search, faded up over the whole page. Only built while it is
                 // on its way in, up, or on its way out — see [_searching].

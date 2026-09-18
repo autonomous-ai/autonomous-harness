@@ -26,9 +26,8 @@ import 'status_pill.dart';
 /// bottom-right corner with the mic — see `terminal_action_column.dart` — so
 /// this row is identity plus `⋯`, and nothing competes with the names for width.
 ///
-/// ⚠️ **It leaves on a scroll, and `⋯` carries on without it.** The page slides
-/// this row away as the terminal is scrolled forward, and `⋯` flies out of it to
-/// become a floating button at the top-right — see `terminal_header_floats.dart`.
+/// ⚠️ **It leaves on a scroll, and `⋯` leaves with it.** The page slides this
+/// row away as the terminal is scrolled forward; nothing floats in its place.
 /// Nothing here knows about that; the row is either laid out or it is not.
 class TerminalHeader extends StatelessWidget {
   const TerminalHeader({

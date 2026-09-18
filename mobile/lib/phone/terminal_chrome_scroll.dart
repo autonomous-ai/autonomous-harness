@@ -20,12 +20,9 @@ import 'package:flutter/widgets.dart';
 /// every notification the page gets carrying `min=-Infinity max=Infinity`, so
 /// there is no zero to be near. Distance is what survives both buffers.
 ///
-/// ⚠️ **What replaces it is not nothing.** The row's controls fly out of it as
-/// it goes and come to rest as floating buttons down the right edge — see
-/// `terminal_header_floats.dart`. They ride the same value, so there is no
-/// moment where the header has gone and its controls have not arrived. A header
-/// that simply went would have left the page with no way to search or to reach
-/// the actions until somebody scrolled back for it.
+/// ⚠️ **Nothing replaces it.** `⋯` goes with the row and comes back with it;
+/// Search and New agent never lived here, so a hidden header costs nothing but
+/// the actions sheet until the first scroll the other way.
 ///
 /// ⚠️ **The floating mic, Search and New agent are not driven from here and
 /// must not be.** They carry what the mic needs somebody to read, which is
