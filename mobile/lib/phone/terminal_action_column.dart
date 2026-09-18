@@ -100,7 +100,7 @@ class TerminalActionColumn extends StatelessWidget {
                               24)
                           .clamp(0, double.infinity),
                 ),
-                child: VoiceStatusPill(voice: voice, session: session),
+                child: VoiceStatusPill(voice: voice),
               ),
               const SizedBox(width: 6),
               VoiceMicFab(voice: voice, session: session),

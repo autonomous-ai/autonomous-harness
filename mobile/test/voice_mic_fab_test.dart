@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness_mobile/phone/voice_input_controller.dart';
 import 'package:harness_mobile/phone/voice_mic_fab.dart';
+import 'package:harness_mobile/phone/voice_notice.dart';
 import 'package:harness_mobile/phone/voice_status_pill.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
 import 'voice_fakes.dart';
 
-/// The mic over the terminal: tap to talk, tap when done — the words are typed
-/// into the prompt, unsent — and tap again to send them with Return. `×` in the
-/// pill beside it calls the take off, or takes the typed words back out.
+/// The mic over the terminal: tap to talk, tap to send — the words go as a
+/// composer turn. `×` in the pill beside it calls the take off.
 void main() {
   late FakeVoiceRecorder recorder;
   late FakeTranscriber backend;
@@ -59,9 +59,7 @@ void main() {
   Widget fab() => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Flexible(
-        child: VoiceStatusPill(voice: voice, session: session),
-      ),
+      Flexible(child: VoiceStatusPill(voice: voice)),
       VoiceMicFab(voice: voice, session: session),
     ],
   );
@@ -80,7 +78,10 @@ void main() {
       if (type == 'message') payload['content'],
   ];
 
-  testWidgets('tap, talk, tap Send: the words are typed and Return pressed', (
+  // Never typed into the pane with a Return behind them: arriving together, a
+  // TUI reads the pair as a paste and the Return becomes a newline — Codex left
+  // the words in its prompt, unsent. See `_tapAction`.
+  testWidgets('tap, talk, tap Send: the words go as a composer turn', (
     tester,
   ) async {
     await pumpFab(tester);
@@ -93,10 +94,37 @@ void main() {
     await tester.tap(mic);
     await tester.pumpAndSettle();
 
-    expect(typed, ['ship it', '\r']);
-    expect(sentTurns(), isEmpty);
+    expect(sentTurns(), ['ship it']);
+    expect(typed, isEmpty);
     expect(voice.isIdle, isTrue);
-    expect(find.text('Tap ↑ to send'), findsNothing);
+  });
+
+  testWidgets('a send that cannot land keeps the words for the next tap', (
+    tester,
+  ) async {
+    await pumpFab(tester);
+    backend.replies.add('ship it');
+
+    await tester.tap(mic);
+    await tester.pump();
+    session.status = TerminalSessionStatus.takenOver;
+    session.notifyListeners();
+    await tester.pump();
+    await tester.tap(mic);
+    await tester.pumpAndSettle();
+
+    expect(sentTurns(), isEmpty);
+    expect(voice.transcript, 'ship it');
+    expect(voice.notice, VoiceNotice.notSent);
+
+    session.status = TerminalSessionStatus.controlling;
+    session.notifyListeners();
+    await tester.pump();
+    await tester.tap(mic);
+    await tester.pumpAndSettle();
+
+    expect(sentTurns(), ['ship it']);
+    expect(voice.isIdle, isTrue);
   });
 
   testWidgets('× while talking throws the take away', (tester) async {
@@ -123,26 +151,5 @@ void main() {
 
     expect(recorder.starts, 0);
     expect(frames, isEmpty);
-  });
-
-  testWidgets('words typed on another agent do not arm this send', (
-    tester,
-  ) async {
-    await pumpFab(tester);
-    backend.replies.add('for the other one');
-    final other = Object();
-    await voice.startListening();
-    await voice.stage(other, (_) => true);
-    await tester.pump();
-
-    // This page's mic is at rest: a tap starts a new take rather than
-    // pressing Return in a prompt nobody here is looking at.
-    expect(find.text('Tap ↑ to send'), findsNothing);
-    await tester.tap(mic);
-    await tester.pump();
-    expect(voice.status, VoiceInputStatus.listening);
-    expect(typed, isEmpty);
-    voice.clear();
-    await tester.pumpAndSettle();
   });
 }

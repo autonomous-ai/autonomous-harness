@@ -62,8 +62,9 @@ icon size in thirty seconds instead of in an email twenty minutes later.
 | `1.0.0 (10)` | 2026-09-17 | TestFlight. Smoother swipes and scrolling: parked and keyboard-sliding terminals keep painting; the header folds over the terminal instead of resizing it |
 | `1.0.0 (11)` | 2026-09-17 | TestFlight. Agents either side of the one on screen open in advance, so a swipe lands on output instead of "Attaching…" |
 | `1.0.0 (12)` | 2026-09-18 | TestFlight. Named OpenHarness on the home screen and in the app; Backspace on the phone erases text typed on the desktop; Machines moved into the ⋯ sheet; hold-to-talk hardened |
+| `1.0.0 (13)` | 2026-09-18 | TestFlight. Search reads what agents said (the desktop's content index), recent first; Vietnamese Telex in the search field; terminal search has no Cancel, and the terminal holds still as it closes |
 
-`pubspec.yaml` is therefore at `1.0.0+13`: the repo always holds the NEXT build number, so a release
+`pubspec.yaml` is therefore at `1.0.0+14`: the repo always holds the NEXT build number, so a release
 runs clean without anyone having to remember the last one.
 
 ### Why the app is iPhone-only

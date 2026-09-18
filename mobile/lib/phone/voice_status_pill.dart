@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:harness_mobile/shared/theme/app_theme.dart';
-import 'package:harness_mobile/terminal/terminal_session.dart';
 
 import 'voice_input_controller.dart';
 import 'voice_mic_action.dart';
@@ -11,28 +10,19 @@ import 'voice_mic_action.dart';
 /// calls it off.
 ///
 /// ```
-///   ( Listening… tap ✓ when done   × )  (✓)
+///   ( Listening… tap to send   × )  (🎤)
 /// ```
 ///
-/// ⚠️ **The `×` is the way out of every step, and what it undoes depends on
-/// the step.** While the mic is opening, recording or transcribing, it throws
-/// the take away. Once the words are written into the prompt, it takes them
-/// back OUT of the prompt — they are on the remote screen by then, and a cancel
-/// that left them there would not be one. With a notice up, it dismisses it.
+/// The `×` is the way out of every step: while the mic is opening, recording
+/// or transcribing it throws the take away, with words held from a failed send
+/// it drops them, and with a notice up it dismisses it.
 ///
 /// ⚠️ **Nothing at rest.** The pill exists only while there is something to
 /// read; a label that stayed would sit over the terminal's newest lines.
 class VoiceStatusPill extends StatelessWidget {
-  const VoiceStatusPill({
-    super.key,
-    required this.voice,
-    required this.session,
-  });
+  const VoiceStatusPill({super.key, required this.voice});
 
   final VoiceInputController voice;
-
-  /// The terminal the mic is on — whose prompt staged words are erased from.
-  final TerminalSession session;
 
   /// The pill's height: the mic's visible circle, less a little, so the two
   /// read as one control rather than two of a size.
@@ -47,7 +37,7 @@ class VoiceStatusPill extends StatelessWidget {
         final notice = voice.notice;
         final label =
             notice ??
-            voiceActivityLabel(voice, session) ??
+            voiceActivityLabel(voice) ??
             (voice.transcript.isNotEmpty ? 'Tap ↑ to send again' : null);
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 180),
@@ -65,19 +55,11 @@ class VoiceStatusPill extends StatelessWidget {
                   warn: notice != null,
                   // A send already on its way cannot be recalled, so no `×`
                   // offers to.
-                  onCancel: voice.isSending ? null : _cancel,
+                  onCancel: voice.isSending ? null : voice.clear,
                 ),
         );
       },
     );
-  }
-
-  void _cancel() {
-    if (voice.isStagedIn(session)) {
-      voice.discardStaged((text) => eraseFromPrompt(session, text));
-    } else {
-      voice.clear();
-    }
   }
 }
 

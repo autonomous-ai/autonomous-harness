@@ -14,13 +14,9 @@ enum VoiceMicFace {
   /// The microphone is opening: tap to call it off.
   starting,
 
-  /// Recording: tap Send, and what was said is written into the prompt and
-  /// sent. It breathes while it listens.
+  /// Recording: tap Send, and what was said is sent. It breathes while it
+  /// listens.
   listening,
-
-  /// What was said is in the prompt and its Return did not land: tap to send
-  /// it again.
-  send,
 
   /// Transcribing or sending: nothing to tap until that is back.
   busy,
@@ -157,7 +153,7 @@ class _Glyph extends StatelessWidget {
         // The mic stays the glyph while it listens; the blue fill is what
         // says the next tap sends — see [voiceMicTint].
         VoiceMicFace.listening => LucideIcons.mic300,
-        VoiceMicFace.send || VoiceMicFace.retry => LucideIcons.arrowUp300,
+        VoiceMicFace.retry => LucideIcons.arrowUp300,
         VoiceMicFace.cancelling => LucideIcons.x300,
         VoiceMicFace.off => LucideIcons.micOff300,
         VoiceMicFace.talk ||
