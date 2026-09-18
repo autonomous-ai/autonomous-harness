@@ -26,6 +26,7 @@ class PhoneSearchResult {
     required this.title,
     required this.subtitle,
     required this.placedSubtitle,
+    required this.machinedSubtitle,
     required this.fields,
     required this.summary,
     required this.machineId,
@@ -52,6 +53,14 @@ class PhoneSearchResult {
   /// Recent list, which is one run rather than folders: the work, then the
   /// folder and the machine.
   final String placedSubtitle;
+
+  /// The line under it when a MACHINE header above the row already names the
+  /// machine but nothing names the folder — the agents list, which groups by
+  /// machine and no deeper. [placedSubtitle] minus the machine: repeating it
+  /// down every row of a group whose header just said it is the noise the
+  /// header was added to remove, and the folder is what tells the group's own
+  /// rows apart.
+  final String machinedSubtitle;
 
   /// Every searchable string, lowercased, title first. Not everything in here is
   /// drawn — an agent's engine id is matched but never shown as itself — which is
@@ -116,6 +125,7 @@ PhoneSearchResult _agentResult(AgentEntry entry, SessionPreview? preview) {
     // the mark's to show and is only spelled out when nothing else is known.
     subtitle: _joined([title, branch]).ifEmpty(engine),
     placedSubtitle: _joined([title, folder, entry.machineName]).ifEmpty(engine),
+    machinedSubtitle: _joined([title, folder]).ifEmpty(engine),
     fields: [
       agent.name,
       title,

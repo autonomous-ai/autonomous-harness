@@ -21,6 +21,7 @@ import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/widgets/rename_agent_dialog.dart';
 import 'package:harness_mobile/widgets/terminal_panel.dart';
 
+import 'agents_list_page.dart';
 import 'agents_page.dart' show openNewAgent;
 import 'delete_agent.dart';
 import 'held_height.dart';
@@ -399,6 +400,17 @@ class _TerminalPageState extends State<TerminalPage>
   /// gets no rebuild when it lands back on top.
   Future<void> _newAgent() async {
     await openNewAgent(context, widget.notifier, widget.machineId);
+    if (mounted) setState(() {});
+  }
+
+  /// Opens the account-wide agent list.
+  ///
+  /// Awaited for the same reason [_newAgent] is: the list is backed out of as often as it is tapped
+  /// through, and this page gets no rebuild when it lands back on top.
+  Future<void> _openAgentList() async {
+    await Navigator.of(context).push(
+      phoneRoute((_) => AgentsListPage(notifier: widget.notifier)),
+    );
     if (mounted) setState(() {});
   }
 
@@ -1121,9 +1133,9 @@ class _TerminalPageState extends State<TerminalPage>
       // behind its icon. The header has no room for the path.
       titleParts: [agentName],
       titleDetail: AgentPlaceLines(machineName: machineName, project: project),
-      // Two groups: what acts on THIS agent, and the two screens the app itself has. Machines is a
-      // door like Settings rather than a list of its own — the list belongs on the page behind it,
-      // where it has room for every machine and does not push the rest of this sheet down.
+      // Two groups: what acts on THIS agent, and the screens the app itself has. Each of those is a
+      // door rather than a list of its own — the lists belong on the pages behind them, where they
+      // have room for every row and do not push the rest of this sheet down.
       sections: [
         PhoneSheetSection(
           caption: 'Agent',
@@ -1132,6 +1144,17 @@ class _TerminalPageState extends State<TerminalPage>
         PhoneSheetSection(
           caption: 'App',
           actions: [
+            // Every agent on the account, not just this machine's: the sheet is opened from inside
+            // one agent, and the thing somebody wants from here is another agent — which is as
+            // often on the other laptop as on this one.
+            //
+            // [AgentsListPage] draws them, with the magnifier in its header for when the list is
+            // longer than a screenful.
+            PhoneSheetAction(
+              icon: LucideIcons.squareTerminal300,
+              label: 'Agents',
+              onTap: () => unawaited(_openAgentList()),
+            ),
             PhoneSheetAction(
               icon: LucideIcons.laptopMinimal300,
               label: 'Machines',

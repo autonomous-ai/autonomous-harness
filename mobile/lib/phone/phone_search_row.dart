@@ -11,6 +11,35 @@ import 'phone_status.dart';
 import 'search_result_text.dart';
 import 'status_pill.dart';
 
+/// How much of where an agent lives the row has to say for itself, which is
+/// decided by what the list draws ABOVE it.
+///
+/// One enum rather than a second boolean beside [PhoneSearchRow.placed] was:
+/// the three cases are exclusive, and a row that answered to two flags could be
+/// asked to repeat the machine its header just named.
+enum PhoneRowContext {
+  /// A folder header over the row names both the folder and the machine, so the
+  /// row's second line is free for what tells its agents apart.
+  grouped(),
+
+  /// Nothing above the row places it: it names its own work, folder and
+  /// machine. The search's Recent run.
+  placed(),
+
+  /// A machine header over the row names the machine and nothing else, so the
+  /// row still owes the folder. [AgentsListPage].
+  machined();
+
+  const PhoneRowContext();
+
+  /// The line this context asks [row] for.
+  String subtitleOf(PhoneSearchResult row) => switch (this) {
+    PhoneRowContext.grouped => row.subtitle,
+    PhoneRowContext.placed => row.placedSubtitle,
+    PhoneRowContext.machined => row.machinedSubtitle,
+  };
+}
+
 /// One result: the mark, the two lines, and what is worth knowing before a tap.
 ///
 /// Shorter than the tabs' 70pt [PhoneCard] and without its fill. A result list
@@ -24,7 +53,7 @@ class PhoneSearchRow extends StatefulWidget {
     required this.terms,
     required this.now,
     required this.onTap,
-    this.placed = false,
+    this.place = PhoneRowContext.grouped,
   });
 
   final PhoneSearchResult row;
@@ -35,9 +64,9 @@ class PhoneSearchRow extends StatefulWidget {
   final DateTime now;
   final VoidCallback onTap;
 
-  /// Whether the row has to say where it is itself — no folder header over it,
-  /// as in the Recent list. See [PhoneSearchResult.placedSubtitle].
-  final bool placed;
+  /// How much of where the agent lives this row still owes — see
+  /// [PhoneRowContext], which is decided by the header the list draws over it.
+  final PhoneRowContext place;
 
   @override
   State<PhoneSearchRow> createState() => _PhoneSearchRowState();
@@ -118,8 +147,7 @@ class _PhoneSearchRowState extends State<PhoneSearchRow> {
                     ),
                     const SizedBox(height: 3),
                     SearchResultText(
-                      quote ??
-                          (widget.placed ? row.placedSubtitle : row.subtitle),
+                      quote ?? widget.place.subtitleOf(row),
                       matches: quote == null
                           ? matches
                           : phoneContentMatches(widget.terms),

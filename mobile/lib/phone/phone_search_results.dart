@@ -113,7 +113,7 @@ class _PhoneSearchResultsState extends State<PhoneSearchResults> {
             row: row,
             terms: const [],
             now: now,
-            placed: true,
+            place: PhoneRowContext.placed,
             onTap: () => _open(rows, row),
           ),
       ],

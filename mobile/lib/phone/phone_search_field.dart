@@ -23,14 +23,27 @@ class PhoneSearchField extends StatelessWidget {
     required this.focus,
     required this.onChanged,
     required this.onClear,
-    required this.onBack,
+    this.onBack,
+    this.autofocus = true,
   });
 
   final TextEditingController controller;
   final FocusNode focus;
   final ValueChanged<String> onChanged;
   final VoidCallback onClear;
-  final VoidCallback onBack;
+
+  /// The chevron inside the bar. Null leaves it out, for a field that is not the
+  /// page's whole header — [AgentsListPage] has a [PhoneHeader] of its own above
+  /// it, whose back band is the way out, and a second chevron under the first
+  /// would be two ways back stacked one over the other.
+  final VoidCallback? onBack;
+
+  /// Whether the field takes the keyboard as it appears.
+  ///
+  /// True on [PhoneSearchPage], which exists only to be typed into. False where
+  /// the field sits over a list worth reading first: raising the keyboard there
+  /// would bury half of what the person opened the screen to look at.
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -63,12 +76,18 @@ class PhoneSearchField extends StatelessWidget {
         ),
         child: Row(
           children: [
-            _BackButton(onTap: onBack),
+            if (onBack != null)
+              _BackButton(onTap: onBack!)
+            else
+              // The chevron's place, so the text starts on the same vertical
+              // whether or not the bar carries one.
+              const SizedBox(width: 14),
             Expanded(
               child: _QueryInput(
                 controller: controller,
                 focus: focus,
                 onChanged: onChanged,
+                autofocus: autofocus,
               ),
             ),
             _ClearButton(controller: controller, onTap: onClear),
@@ -114,11 +133,13 @@ class _QueryInput extends StatelessWidget {
     required this.controller,
     required this.focus,
     required this.onChanged,
+    required this.autofocus,
   });
 
   final TextEditingController controller;
   final FocusNode focus;
   final ValueChanged<String> onChanged;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -126,7 +147,7 @@ class _QueryInput extends StatelessWidget {
     return TextField(
       controller: controller,
       focusNode: focus,
-      autofocus: true,
+      autofocus: autofocus,
       onChanged: onChanged,
       // The list is already filtered by the time a key is released; there is
       // nothing left for the return key to submit, so it stays a plain "done"
