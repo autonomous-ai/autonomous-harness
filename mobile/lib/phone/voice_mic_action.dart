@@ -27,12 +27,14 @@ VoiceMicAction voiceMicAction(
   TerminalSession session,
 ) => micHoldsToTalk ? _holdAction(voice, session) : _tapAction(voice, session);
 
-/// Tap to talk, tap when done, tap to send — [VoiceMicMode.tapToToggle].
+/// Tap to talk, tap Send — [VoiceMicMode.tapToToggle].
 ///
-/// The second tap does NOT send. It writes what was heard into the terminal's
-/// prompt — [typeIntoPrompt] — so it can be read, and corrected with the
-/// keyboard, before it goes; the arrow that face turns into is the send. `×`
-/// in the pill beside the mic is the way out at every step.
+/// The second tap ends the take, types what was heard into the terminal's
+/// prompt — [typeIntoPrompt] — and presses Return, the same as Enter on the
+/// keyboard. `×` in the pill beside the mic is the way out while it listens.
+///
+/// The arrow face is only left for a Return that did not land: the words are in
+/// the prompt, and the next tap presses it again.
 ///
 /// ⚠️ Tapping while the microphone is still OPENING calls it off rather than
 /// writing: there is no take yet, and leaving the recording to start behind
@@ -56,9 +58,7 @@ VoiceMicAction _tapAction(VoiceInputController voice, TerminalSession session) {
     ),
     VoiceInputStatus.listening => _face(
       VoiceMicFace.listening,
-      onPressed: () => unawaited(
-        voice.stage(session, (text) => typeIntoPrompt(session, text)),
-      ),
+      onPressed: () => unawaited(_writeAndSend(voice, session)),
     ),
     // Words held from a write or send that did not land: sent as a composer
     // turn, which is the one path that does not depend on the prompt.
@@ -77,6 +77,21 @@ VoiceMicAction _tapAction(VoiceInputController voice, TerminalSession session) {
       onPressed: canSend ? () => unawaited(voice.startListening()) : null,
     ),
   };
+}
+
+/// Ends the take, types its words into [session]'s prompt, and presses Return.
+///
+/// Two steps on the controller rather than one: [VoiceInputController.stage]
+/// is what leaves the words in the prompt, and a Return that does not land
+/// leaves them staged there — the arrow face — for the next tap to send.
+Future<void> _writeAndSend(
+  VoiceInputController voice,
+  TerminalSession session,
+) async {
+  await voice.stage(session, (text) => typeIntoPrompt(session, text));
+  if (voice.isStagedIn(session)) {
+    voice.sendStaged(() => pressEnter(session));
+  }
 }
 
 /// Types [text] into the terminal's prompt, as the keyboard would, without
@@ -245,7 +260,7 @@ String? voiceActivityLabel(
     VoiceInputStatus.listening =>
       micHoldsToTalk
           ? 'Listening… release to send, slide off to cancel'
-          : 'Listening… tap ✓ when done',
+          : 'Listening… tap to send',
     VoiceInputStatus.transcribing => 'Transcribing…',
     VoiceInputStatus.idle || VoiceInputStatus.unavailable => null,
   };

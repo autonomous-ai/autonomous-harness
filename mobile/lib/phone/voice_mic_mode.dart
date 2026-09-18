@@ -6,11 +6,10 @@
 /// listens for, the faces it can show, and what a release does — and nothing
 /// else in the app branches on it.
 enum VoiceMicMode {
-  /// Tap to start talking, tap again when done — the words are written into the
-  /// terminal's prompt, unsent — and tap a third time to send them. `×` beside
-  /// the mic calls the take off, or takes the words back out of the prompt.
-  /// The button holds the recording open with nothing held down, so a long
-  /// sentence costs no thumb, and nothing is sent before it has been read.
+  /// Tap to start talking, tap Send when done — the words are written into the
+  /// terminal's prompt and Return is pressed. `×` beside the mic calls the take
+  /// off. The button holds the recording open with nothing held down, so a
+  /// long sentence costs no thumb.
   ///
   /// Long-press stays the language shortcut here, because nothing else wants it.
   tapToToggle,

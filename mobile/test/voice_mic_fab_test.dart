@@ -80,39 +80,21 @@ void main() {
       if (type == 'message') payload['content'],
   ];
 
-  testWidgets('tap, talk, tap: the words are typed into the prompt, unsent', (
+  testWidgets('tap, talk, tap Send: the words are typed and Return pressed', (
     tester,
   ) async {
     await pumpFab(tester);
-    backend.replies.add('summarise the diff');
+    backend.replies.add('ship it');
 
     await tester.tap(mic);
     await tester.pump();
     expect(voice.status, VoiceInputStatus.listening);
 
     await tester.tap(mic);
-    await tester.pump();
-    await tester.pump();
-
-    expect(typed, ['summarise the diff']);
-    expect(sentTurns(), isEmpty);
-    expect(find.text('Tap ↑ to send'), findsOneWidget);
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('a third tap sends them with Return', (tester) async {
-    await pumpFab(tester);
-    backend.replies.add('ship it');
-
-    await tester.tap(mic);
-    await tester.pump();
-    await tester.tap(mic);
-    await tester.pump();
-    await tester.pump();
-    await tester.tap(mic);
     await tester.pumpAndSettle();
 
     expect(typed, ['ship it', '\r']);
+    expect(sentTurns(), isEmpty);
     expect(voice.isIdle, isTrue);
     expect(find.text('Tap ↑ to send'), findsNothing);
   });
@@ -129,25 +111,6 @@ void main() {
     expect(recorder.cancels, 1);
     expect(backend.calls, isEmpty);
     expect(typed, isEmpty);
-    expect(voice.isIdle, isTrue);
-  });
-
-  testWidgets('× once the words are typed takes them back out', (tester) async {
-    await pumpFab(tester);
-    backend.replies.add('xin chào');
-
-    await tester.tap(mic);
-    await tester.pump();
-    await tester.tap(mic);
-    await tester.pump();
-    await tester.pump();
-    await tester.tap(cancel);
-    await tester.pumpAndSettle();
-
-    // One Backspace per character, counted in runes.
-    expect(typed.first, 'xin chào');
-    expect(typed.skip(1), List.filled('xin chào'.runes.length, '\x7f'));
-    expect(frames, isEmpty);
     expect(voice.isIdle, isTrue);
   });
 
