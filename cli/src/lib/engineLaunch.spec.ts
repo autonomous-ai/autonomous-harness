@@ -12,7 +12,7 @@ import {
   NAMED_AGENT_ARGS,
   NamedAgentUnsupportedError,
   PERMISSION_MODES,
-  TERMINAL_HINT_LINES,
+  terminalHintLines,
   buildEngineCommandArgv,
   buildEngineLaunchArgv,
   commandAvailableInInteractiveShell,
@@ -106,20 +106,20 @@ describe('buildEngineLaunchArgv', () => {
     it('is the login shell itself behind a non-interactive wrapper that only raises the limit and enters the folder', () => {
       expect(buildEngineLaunchArgv('terminal', { cwd: '/work/project' }, '/bin/zsh')).toEqual([
         '/bin/zsh', '-c',
-        `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\nshift 2\nexec "$@"`,
-        'harness-terminal', '/work/project', '', '/bin/zsh', '-l',
+        `${RAISE_OPEN_FILES_SH}if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\nshift\nexec "$@"`,
+        'harness-terminal', '/work/project', '/bin/zsh', '-l',
       ])
     })
 
     it('gives bash no login flag (its rc file is where Ubuntu keeps PATH edits), and no folder means no cd', () => {
       expect(buildEngineLaunchArgv('terminal', {}, '/bin/bash')).toEqual([
-        '/bin/bash', '-c', `${RAISE_OPEN_FILES_SH}shift 2\nexec "$@"`, 'harness-terminal', '', '', '/bin/bash',
+        '/bin/bash', '-c', `${RAISE_OPEN_FILES_SH}shift\nexec "$@"`, 'harness-terminal', '', '/bin/bash',
       ])
     })
 
     it('falls back to /bin/sh rather than to an engine command when no shell resolves', () => {
       expect(buildEngineLaunchArgv('terminal', {}, 'relative-shell')).toEqual([
-        '/bin/sh', '-c', `${RAISE_OPEN_FILES_SH}shift 2\nexec "$@"`, 'harness-terminal', '', '', '/bin/sh',
+        '/bin/sh', '-c', `${RAISE_OPEN_FILES_SH}shift\nexec "$@"`, 'harness-terminal', '', '/bin/sh',
       ])
     })
 
@@ -137,30 +137,33 @@ describe('buildEngineLaunchArgv', () => {
       expect(() => execFileSync('/bin/sh', ['-n', '-c', script])).not.toThrow()
       // The wrapper's `exec "$@"` runs the shell handed in argv; `true` in its place proves the
       // wrapper reaches the exec even when the cd failed (the terminal still opens, at $HOME).
-      const out = execFileSync('/bin/sh', ['-c', script, 'harness-terminal', '/nowhere/at/all', '', '/bin/sh', '-c', 'echo reached'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      const out = execFileSync('/bin/sh', ['-c', script, 'harness-terminal', '/nowhere/at/all', '/bin/sh', '-c', 'echo reached'], { stdio: ['ignore', 'pipe', 'pipe'] })
       expect(out.toString()).toContain('reached')
     })
 
-    it('says how `harness remote` works before the first prompt on a machine, and never again', () => {
-      const dir = mkdtempSync(join(tmpdir(), 'terminal-hint-'))
-      const marker = join(dir, 'shown')
-      const argv = buildEngineLaunchArgv('terminal', { terminalHintMarker: marker }, '/bin/sh')
-      expect(argv.slice(4, 6)).toEqual(['', marker])
+    it('greets every new tile with the guide — where it is, agents, `harness remote` — before its prompt', () => {
+      const argv = buildEngineLaunchArgv('terminal', { terminalHint: { machineName: 'MacbookPro.local' } }, '/bin/sh')
+      expect(argv.slice(3)).toEqual(['harness-terminal', '', '/bin/sh'])
       expect(() => execFileSync('/bin/sh', ['-n', '-c', argv[2]])).not.toThrow()
-      const run = (): string => execFileSync('/bin/sh', ['-c', argv[2], 'harness-terminal', '', marker, '/bin/sh', '-c', 'echo prompt'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString()
-      const first = run()
-      for (const line of TERMINAL_HINT_LINES) expect(first).toContain(line)
-      expect(first.trim().endsWith('prompt')).toBe(true)
-      expect(existsSync(marker)).toBe(true)
-      const second = run()
-      expect(second).not.toContain('harness remote')
-      expect(second.trim()).toBe('prompt')
-      rmSync(dir, { recursive: true, force: true })
+      const run = (): string => execFileSync('/bin/sh', ['-c', argv[2], 'harness-terminal', '', '/bin/sh', '-c', 'echo prompt'], { stdio: ['ignore', 'pipe', 'pipe'] }).toString()
+      // Every time, not once per machine: a new tile is a new person at a new prompt.
+      for (const out of [run(), run()]) {
+        for (const line of terminalHintLines('MacbookPro.local')) expect(out).toContain(line)
+        expect(out).toContain('Terminal on MacbookPro.local.')
+        expect(out).toContain('harness remote')
+        expect(out.trim().endsWith('prompt')).toBe(true)
+      }
     })
 
-    it('with no marker named (a test, an older caller) there is no hint', () => {
+    it('the guide names the machine, falls back to "this machine", and fits an 80-column pane unwrapped', () => {
+      expect(terminalHintLines('  ')[0]).toBe('harness: Terminal on this machine.')
+      for (const line of terminalHintLines('office-imac')) expect(line.length).toBeLessThanOrEqual(78)
+    })
+
+    it('with no guide asked for (restore, restart, a test) the pane says nothing before its prompt', () => {
       const script = buildEngineLaunchArgv('terminal', {}, '/bin/sh')[2]
       expect(script).not.toContain('harness remote')
+      expect(script).not.toContain('Terminal on')
     })
   })
 

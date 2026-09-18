@@ -210,11 +210,11 @@ export interface LaunchCommandOptions {
    */
   firstPrompt?: string
   /**
-   * Terminal only: a file whose absence means this machine has not yet been told about
-   * `harness remote`; the shell prints the hint before its prompt and writes the file. The daemon
-   * names one under its data dir; a test names none and gets no hint.
+   * Terminal only: print the tile's guide before the first prompt — what this pane is, that an
+   * agent typed here becomes the tile, and `harness remote`. Every NEW terminal tile gets it
+   * (`agent_create`); a pane rebuilt by restore or restart is not a new tile and names nothing here.
    */
-  terminalHintMarker?: string
+  terminalHint?: { machineName: string }
   /**
    * Extra argv the caller has already composed, appended last.
    *
@@ -486,18 +486,24 @@ export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tm
  * gives the person a prompt.
  */
 /**
- * What the first terminal on a machine says before its prompt — once, ever: the marker file names
- * the machine as told. Only a tile can act on it (`harness remote` swaps the tile it is typed in),
- * and a tile is where every terminal the daemon opens lives.
+ * What a new terminal tile says before its prompt, every time one is opened: where it is, that an
+ * agent typed here becomes the tile (and the shell is back when it exits), and `harness remote` —
+ * the one thing only a tile can act on, since it swaps the tile it is typed in. Three lines, each
+ * under 78 columns — a pane is 80 wide when it prints them, before the app has sized it, and a
+ * wrapped line stays wrapped in the scrollback — in the same `harness:` voice as every other line
+ * a pane prints.
  */
-export const TERMINAL_HINT_LINES = [
-  'harness: a terminal on this machine. To open one on another of your machines, type',
-  'harness:   harness remote',
-  'harness: pick the machine, and this tile switches to it.',
-] as const
+export function terminalHintLines(machineName: string): string[] {
+  const where = machineName.trim() || 'this machine'
+  return [
+    `harness: Terminal on ${where}.`,
+    'harness: Run an agent here (claude, codex, …) and this tile becomes it.',
+    'harness: Terminal on another of your machines:  harness remote',
+  ]
+}
 
 export function buildTerminalLaunchArgv(
-  opts: Pick<LaunchCommandOptions, 'cwd' | 'terminalHintMarker'> = {},
+  opts: Pick<LaunchCommandOptions, 'cwd' | 'terminalHint'> = {},
   shell: string | undefined = undefined,
 ): string[] {
   const candidate = shell === undefined ? currentUserShell() : shell
@@ -506,13 +512,10 @@ export function buildTerminalLaunchArgv(
   const cwdPrelude = opts.cwd
     ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\n`
     : ''
-  // `$2` is the marker: absent, the hint is printed and the marker written, so it is said once per
-  // machine. Written with `:>` rather than touch, so nothing outside the shell is needed; a folder
-  // that cannot be written just says it again next time.
-  const hintPrelude = opts.terminalHintMarker
-    ? `if [ -n "$2" ] && [ ! -e "$2" ]; then printf '%s\\n' ${TERMINAL_HINT_LINES.map(shellSingleQuote).join(' ')} ''; : > "$2" 2>/dev/null || true; fi\n`
+  const hintPrelude = opts.terminalHint
+    ? `printf '%s\\n' ${terminalHintLines(opts.terminalHint.machineName).map(shellSingleQuote).join(' ')} ''\n`
     : ''
-  return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + hintPrelude + 'shift 2\nexec "$@"', 'harness-terminal', opts.cwd ?? '', opts.terminalHintMarker ?? '', path, ...loginArgs]
+  return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + hintPrelude + 'shift\nexec "$@"', 'harness-terminal', opts.cwd ?? '', path, ...loginArgs]
 }
 
 /**

@@ -104,7 +104,7 @@ describe('pickMachine', () => {
     await new Promise((resolve) => setTimeout(resolve, 5))
     io.press('up', 'enter')  // onto machine-remote-1 (offline)
     await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(io.written()).toContain('machine-remote-1 is offline — run `harness start` there, or choose one that is online.')
+    expect(io.written()).toContain('machine-remote-1 is offline. Run `harness start` there, or choose an online machine.')
     io.press('down', 'enter')
     expect(await picked).toEqual(machines[2])
   })
@@ -181,7 +181,7 @@ describe('remoteCommand', () => {
     for (const tmuxPane of [undefined, '', '%x']) {
       const d = deps({ tmuxPane })
       expect(await remoteCommand(d)).toBe(1)
-      expect(d.errors[0]).toContain('inside one of the Harness app')
+      expect(d.errors[0]).toContain('inside a Harness terminal tile')
       expect(d.io.written()).toBe('')
     }
   })
@@ -211,7 +211,7 @@ describe('remoteCommand', () => {
     expect(d.links).toEqual(['box-2:hunter2'])
     expect(d.io.written()).toContain('machine-remote-2 is not linked to this computer yet.')
     expect(d.io.written()).toContain('✓ Linked machine-remote-2 (fingerprint AB:CD)')
-    expect(d.io.written()).toContain('Switching this tile to machine-remote-2')
+    expect(d.io.written()).toContain('Terminal opened on machine-remote-2. Switching this tile…')
   })
 
   it('an empty password, or a link the other machine refuses, stops before anything opens', async () => {
@@ -241,7 +241,7 @@ describe('remoteCommand', () => {
     expect(await run).toBe(0)
     expect(d.errors).toEqual([])
     expect(d.io.written()).toContain('Opening a terminal on machine-remote-2')
-    expect(d.io.written()).toContain('Switching this tile to machine-remote-2')
+    expect(d.io.written()).toContain('Terminal opened on machine-remote-2. Switching this tile…')
     expect(daemon.sent.map((frame) => frame.type)).toEqual(['machine_select', 'agent_create', 'machine_select', 'remote_terminal_handoff'])
   })
 
@@ -262,7 +262,7 @@ describe('remoteCommand', () => {
     await new Promise((resolve) => setTimeout(resolve, 5))
     d.io.press('enter')
     expect(await run).toBe(0)
-    expect(d.io.written()).toContain('no Harness window is here')
+    expect(d.io.written()).toContain('No Harness window is open here')
   })
 
   it('a pin the daemon does not accept is linked again, once, and the open retried', async () => {
@@ -279,7 +279,7 @@ describe('remoteCommand', () => {
     d.io.press('enter')
     expect(await run).toBe(0)
     expect(d.links).toEqual(['box-2:hunter2'])
-    expect(d.io.written()).toContain('Switching this tile to machine-remote-2')
+    expect(d.io.written()).toContain('Terminal opened on machine-remote-2. Switching this tile…')
     // And when the second link is refused too, the command says what to run.
     const stubborn = new FakeDaemon((socket, frame) => { if (frame.type === 'machine_select') socket.emit('close', 4404, 'NO_PEER_LINK') })
     const e = deps({ connect: stubborn.connect })

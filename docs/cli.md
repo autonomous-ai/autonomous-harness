@@ -22,7 +22,7 @@ works the same on a headless Linux server; the app is not required on a machine,
 | `harness browser-link` | Print a reusable seven-day setup link for browsers. |
 | `harness remote-password set\|status\|clear` | This machine's persistent password for machine-to-machine links. |
 | `harness link connect <id> [--name=<label>]` · `harness link list` · `harness link unlink <id>` | Let this machine reach another of yours, terminating E2EE here; list; unlink. |
-| `harness remote` | From a terminal tile in the app: pick another of your machines (↑/↓, Enter; Online/Offline shown, offline not takeable), link it on the spot if it is not yet, open a terminal there and switch the tile to it — the shell it was typed in is ended. Only inside a Harness tile. |
+| `harness remote` | From a Harness terminal tile: choose another of your machines (linking it on the spot if needed), open a terminal there and move this tile to it. |
 | `harness grid login [--force] [--json]` · `harness grid logout` | Sign the `grid` CLI in with this computer's account, no second browser. |
 | `harness flash [flags]` | Re-flash a plugged-in Harness device over USB. Flags pass straight to the flasher. |
 | `harness autonomous-device discover\|status\|list\|pair\|revoke` | Pair Autonomous OS devices found on the LAN, directly, with no relay. |

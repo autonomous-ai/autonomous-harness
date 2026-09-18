@@ -94,7 +94,7 @@ export function pickMachine(
     const draw = (): void => {
       if (drawn) output.write(`\x1b[${drawn}A\x1b[J`)
       const lines = [
-        '  Open a terminal on:  ↑/↓ choose · Enter open · Esc cancel',
+        '  Open a terminal on another machine   ↑/↓ choose · Enter open · Esc cancel',
         ...choices.map((choice, at) => {
           const mark = at === index ? '❯' : ' '
           const status = isOnline(choice) ? 'Online' : 'Offline'
@@ -115,7 +115,7 @@ export function pickMachine(
       if ((key.ctrl && key.name === 'c') || key.name === 'escape' || key.name === 'q') { finish(null); return }
       if (key.name === 'return' || key.name === 'enter') {
         const choice = choices[index]
-        if (choice && !isOnline(choice)) { note = `${choice.label} is offline — run \`harness start\` there, or choose one that is online.`; draw(); return }
+        if (choice && !isOnline(choice)) { note = `${choice.label} is offline. Run \`harness start\` there, or choose an online machine.`; draw(); return }
         finish(choice ?? null); return
       }
       if (key.name === 'up' || key.name === 'k') index = (index - 1 + choices.length) % choices.length
@@ -273,7 +273,7 @@ export function remoteFailureLine(error: unknown, machine: RemoteMachineChoice):
 async function linkNow(deps: RemoteCommandDeps, choice: RemoteMachineChoice): Promise<boolean> {
   const { output, error } = deps
   output.write(`  ${choice.label} is not linked to this computer yet.\n`)
-  output.write('  Enter the remote password set on THAT machine (`harness remote-password set` there).\n')
+  output.write('  Enter that machine\'s remote password (set there with `harness remote-password set`).\n')
   const password = (await deps.promptPassword(`  Remote password for ${choice.label}: `)).trim()
   if (!password) { error('  ✗ No password entered; nothing was linked.'); return false }
   const linked = await deps.link(choice.machineId, password)
@@ -286,8 +286,8 @@ async function linkNow(deps: RemoteCommandDeps, choice: RemoteMachineChoice): Pr
 export async function remoteCommand(deps: RemoteCommandDeps): Promise<number> {
   const { tmuxPane, output, error } = deps
   if (!tmuxPane || !TMUX_PANE_RE.test(tmuxPane)) {
-    error('`harness remote` works inside one of the Harness app\'s terminal tiles (New Harness → Terminal, or ⌘⇧T).')
-    error('Open one there and run it again.')
+    error('`harness remote` runs inside a Harness terminal tile (⌘⇧T, or New Harness ▸ Terminal).')
+    error('Open one and run it there.')
     return 1
   }
   if (!deps.input.isTTY || !output.isTTY) { error('`harness remote` needs a terminal to choose a machine in.'); return 1 }
@@ -329,14 +329,14 @@ export async function remoteCommand(deps: RemoteCommandDeps): Promise<number> {
   try {
     const { windows } = await handoffTerminal(deps, deps.localMachineId, { tmuxPane, machineId: choice.machineId, agentId })
     if (windows === 0) {
-      output.write(`  ✓ Terminal open on ${choice.label} — no Harness window is here to switch this tile; find it in the app's agent list.\n`)
+      output.write(`  ✓ Terminal opened on ${choice.label}. No Harness window is open here to switch this tile — find it in the app's agent list.\n`)
       return 0
     }
-    output.write(`  ✓ Switching this tile to ${choice.label}.\n`)
+    output.write(`  ✓ Terminal opened on ${choice.label}. Switching this tile…\n`)
     return 0
   } catch (failure) {
     error(`  ✗ ${remoteFailureLine(failure, choice)}`)
-    error(`    The terminal is open on ${choice.label} all the same (agent ${agentId.slice(0, 8)}); find it in the app's agent list.`)
+    error(`    The terminal is open on ${choice.label} all the same (agent ${agentId.slice(0, 8)}) — find it in the app's agent list.`)
     return 1
   }
 }

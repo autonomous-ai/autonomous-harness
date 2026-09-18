@@ -214,9 +214,6 @@ import {
   prepareLogFile, trimLogFile, LOG_CHECK_INTERVAL_MS,
 } from './lib/log.js'
 
-/** Written once the first terminal on this machine has said how `harness remote` works (engineLaunch.ts). */
-const TERMINAL_HINT_MARKER = join(env.ADAPTER_DATA_DIR, 'terminal-remote-hint-shown')
-
 // Claude's Stop hook fires when the agent finishes, but the transcript can lag a moment behind
 // (docs: "the transcript file may lag behind the in-memory conversation"). Acting immediately races
 // that flush → an empty recap + a premature close. So the Stop hook is a DELAYED fallback: poll, and
@@ -238,6 +235,10 @@ const COMPUTER_ID_FILE = env.ADAPTER_COMPUTER_ID_FILE
 // The machine's display name, mirrored from the backend (`machine_meta` on connect + web renames) by the
 // daemon so the separate `harness status` process can print it. Absent = unnamed machine.
 const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
+/** The name a new terminal tile greets with: the machine's display name the backend gave it, else the host's. */
+function terminalHintMachineName(): string {
+  try { return readFileSync(MACHINE_NAME_FILE, 'utf-8').trim() || hostname() } catch { return hostname() }
+}
 
 // The dial's session, held at module scope for the same reason `backendRef` is: shutdown() is defined
 // before the wiring that creates it, and the port has to be released on the way out.
@@ -339,7 +340,7 @@ Machine:
   harness logs export          zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness machines             list the machines on this account (this computer's is marked)
   harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
-  harness remote               from a Harness terminal tile: open a terminal on another machine and switch to it
+  harness remote               from a Harness terminal tile: open a terminal on another of your machines and move this tile to it
   harness version              print the installed version (v${VERSION})
   harness update [--force]     update to the latest build now (it also self-updates in the background;
                                neither touches a local install-cli.sh build without --force)
@@ -3901,7 +3902,6 @@ async function runForeground(session: AuthSession): Promise<void> {
         const { env: launchEnv, extraArgs, clearEnv } = built.overrides
         const argv = buildEngineLaunchArgv(entry.engine, {
           ...opts,
-          terminalHintMarker: TERMINAL_HINT_MARKER,
           bypassPermission: entry.bypassPermission === true,
           ...(entry.permissionMode ? { permissionMode: entry.permissionMode } : {}),
           installIfMissing: enginePathOverride(entry.engine) ? undefined : engineInstallRecipe(entry.engine),
@@ -4258,7 +4258,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
     // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
     // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
-    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}), terminalHintMarker: TERMINAL_HINT_MARKER }
+    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}), terminalHint: { machineName: terminalHintMachineName() } }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
