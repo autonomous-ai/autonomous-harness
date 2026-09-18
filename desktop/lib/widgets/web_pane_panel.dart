@@ -82,6 +82,9 @@ class _WebPanePanelState extends State<WebPanePanel> {
   bool _loading = false;
   String? _failure;
 
+  /// The appearance last stamped on the page, so a rebuild that changed nothing runs no script.
+  Brightness? _stampedBrightness;
+
   @override
   void initState() {
     super.initState();
@@ -107,7 +110,12 @@ class _WebPanePanelState extends State<WebPanePanel> {
             _loading = true;
             _failure = null;
           }),
-          onPageFinished: (_) => _set(() => _loading = false),
+          onPageFinished: (_) {
+            _set(() => _loading = false);
+            // A fresh document has no stamp; give it the app's appearance before it is looked at.
+            _stampedBrightness = null;
+            _stampTheme();
+          },
           onWebResourceError: (error) {
             // Only the page itself: a harness's viewer pulls fonts, models
             // and images of its own, and one of those failing is its business
@@ -148,6 +156,25 @@ class _WebPanePanelState extends State<WebPanePanel> {
     controller.loadRequest(uri);
   }
 
+  /// Tell the page which appearance the app is in.
+  ///
+  /// The web view follows the SYSTEM's light/dark setting on its own (`prefers-color-scheme`),
+  /// not the app's — so an app set to dark on a light Mac showed a light viewer inside a dark
+  /// window, and the two disagreed. The stamp is the same `data-theme` on the document root that
+  /// the app's own artifact pages honour; a viewer that styles for it follows the app, and one
+  /// that does not is unaffected. Runs on every load and whenever the app's theme changes.
+  void _stampTheme() {
+    final controller = _controller;
+    if (controller == null || _loadedUrl == null) return;
+    final brightness = grid.AppTheme.brightness.value;
+    if (brightness == _stampedBrightness) return;
+    _stampedBrightness = brightness;
+    final theme = brightness == Brightness.dark ? 'dark' : 'light';
+    controller
+        .runJavaScript("document.documentElement.setAttribute('data-theme','$theme')")
+        .catchError((_) {});
+  }
+
   void _reload() {
     if (_controller == null) return;
     if (_loadedUrl != widget.pane.url) {
@@ -170,6 +197,8 @@ class _WebPanePanelState extends State<WebPanePanel> {
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
+    // The theme is a dependency of this build; a change here reaches the page too.
+    _stampTheme();
     return ColoredBox(
       color: grid.AppPalette.windowBg,
       child: Column(

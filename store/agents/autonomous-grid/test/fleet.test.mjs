@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicJson, DEFAULT_CONFIG, execute, invocation, operations, runTracked, validateConfig } from '../lib/fleet.mjs';
+import { atomicJson, DEFAULT_CONFIG, execute, gridSelect, invocation, operations, runTracked, validateConfig } from '../lib/fleet.mjs';
 
 const temporary = async t => { const dir=await mkdtemp(join(tmpdir(),'grid-harness-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));return dir; };
 test('inventory accepts explicit targets and refuses duplicates, SSH options and malformed paths',()=>{
@@ -48,4 +48,20 @@ test('invalid and abandoned operation files cannot crash the viewer',async t=>{
   await atomicJson(join(dir,'.harness/grid/operations/a.json'),{id:'a',phase:'running',pid:2147483647,startedAt:'2026-09-18T00:00:00Z'});
   await atomicJson(join(dir,'.harness/grid/operations/b.json'),{unrelated:true});
   const rows=await operations(dir);assert.equal(rows.length,1);assert.equal(rows[0].phase,'interrupted');
+});
+
+test('gridSelect runs the write form of use as a plain command and confirms it by reading the selection back',async()=>{
+  // `grid use <name> --json` prints a sentence, not JSON — parsed as JSON, every successful switch
+  // from the viewer read as "did not return valid JSON". The write is plain; the read confirms.
+  const machine={id:'local',transport:'local'},ran=[];
+  const run=async(_m,args)=>{ran.push(args);return {ok:true,code:0,stdout:'active grid for remote mode: autonomous.ai\n',stderr:''};};
+  const readJson=async(_m,_mode,args)=>{ran.push(['json',...args]);return {ok:true,value:{mode:'remote',active:'autonomous.ai'}};};
+  assert.deepEqual(await gridSelect(machine,'remote','autonomous.ai',{},{run,readJson}),{ok:true,active:'autonomous.ai'});
+  assert.deepEqual(ran,[['--remote','use','autonomous.ai'],['json','use']]);
+  // The CLI accepted the name but ended up somewhere else: said, not hidden.
+  const elsewhere=await gridSelect(machine,'remote','other',{},{run,readJson});
+  assert.equal(elsewhere.ok,false);assert.match(elsewhere.error,/active grid is autonomous\.ai, not other/);
+  // A failed write is a failure, with the exit code, before any read.
+  const failed=await gridSelect(machine,'remote','x',{},{run:async()=>({ok:false,code:2,stdout:'',stderr:'no such grid'}),readJson:async()=>{throw new Error('must not read');}});
+  assert.equal(failed.ok,false);assert.match(failed.error,/grid use failed \(2\)/);
 });

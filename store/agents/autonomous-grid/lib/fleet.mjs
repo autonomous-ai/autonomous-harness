@@ -124,6 +124,24 @@ export async function gridJson(machine, mode, args, options) {
   } catch { return { ok: false, error: `grid ${args[0]} did not return valid JSON.` }; }
 }
 
+/**
+ * Make [grid] the CLI's active selection for [mode] (`grid use <name>`), and confirm it took.
+ *
+ * ⚠️ Not through gridJson: the WRITE form of `use` ignores `--json` and prints a sentence
+ * (`active grid for remote mode: autonomous.ai`, exit 0). Parsing that as JSON failed every
+ * time, so every switch from the viewer's dropdown reported "grid use did not return valid
+ * JSON" over a switch that had in fact happened. Only the READ form (`grid use --json`, no name)
+ * answers in JSON — so that is what confirms the write here.
+ */
+export async function gridSelect(machine, mode, grid, options, { run = execute, readJson = gridJson } = {}) {
+  const written = await run(machine, [`--${mode}`, 'use', grid], options);
+  if (!written.ok) return { ok: false, error: written.code === 127 ? written.error : `grid use failed (${written.code}). Run it in the agent terminal for details.` };
+  const read = await readJson(machine, mode, ['use'], options);
+  const active = typeof read.value?.active === 'string' ? read.value.active : null;
+  if (read.ok && active !== null && active !== grid) return { ok: false, error: `grid use answered, but the active grid is ${active}, not ${grid}.` };
+  return { ok: true, active: active ?? grid };
+}
+
 export async function operations(workspace) {
   const folder = join(stateDir(workspace), 'operations');
   const names = await readdir(folder).catch(() => []);

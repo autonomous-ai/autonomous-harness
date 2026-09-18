@@ -3,8 +3,8 @@
  *
  * `harness login` used to CHECK for `grid` and, finding none, print "install the grid CLI yourself"
  * and skip the grid half of sign-in. Every fresh install — a new machine, a colleague's laptop —
- * landed there, and everything the Harness Compute skill does shells out to `grid`, so on those
- * machines the Model manager could only report that nothing was installed. The plan's answer
+ * landed there, and everything the Grid harness does shells out to `grid`, so on those
+ * machines the Grid harness could only report that nothing was installed. The plan's answer
  * (`docs/plans/2026-09-14-004-harness-grid-plan.md`, Change 2c) is a signed, pinned managed
  * runtime, which is release-pipeline work nobody has done. This is the interim that closes the gap
  * today: run the installer grid itself publishes and maintains, `https://grid.autonomous.ai/install.sh`

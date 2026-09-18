@@ -83,6 +83,45 @@ export async function listGridModels(gridName: string | null): Promise<GridModel
   return models
 }
 
+/** One grid this computer is signed into, with what it serves — the picker's section. */
+export interface GridSection {
+  /** The grid's name as `grid ls` prints it. */
+  name: string
+  /** `permissioned-public` is the account's own private grid; the others are shared. */
+  type: string
+  /** True for the account's private grid — the picker labels that one "Local". */
+  own: boolean
+  models: GridModel[]
+}
+
+/**
+ * Every grid this computer is signed into, each with its live models, own grid first.
+ *
+ * The picker used to ask only the private grid ("models my machines serve"). A person in a
+ * shared grid (a team's, a company's) has models there they can switch an agent to just the
+ * same, and had to leave the app to find out. So all of them, in sections, the private one first
+ * and marked so the app can call it Local. Listed concurrently: each grid costs a `grid models`
+ * spawn and a relay round trip, and three of them one after another was the whole of what a
+ * person waited through. A grid that fails to answer is an empty section, not a missing one.
+ */
+export async function listAllGridModels(ownGridName: string | null): Promise<GridSection[]> {
+  const { value: rows } = await gridJson<Array<{ grid?: unknown; type?: unknown }>>(['--remote', 'ls'])
+  if (!Array.isArray(rows)) {
+    return ownGridName ? [{ name: ownGridName, type: 'permissioned-public', own: true, models: await listGridModels(ownGridName) }] : []
+  }
+  const grids = rows
+    .filter((row): row is { grid: string; type?: unknown } => typeof row.grid === 'string' && row.grid.trim().length > 0)
+    .map((row) => ({ name: row.grid.trim(), type: typeof row.type === 'string' ? row.type : '' }))
+  const sections = await Promise.all(grids.map(async (grid) => ({
+    name: grid.name,
+    type: grid.type,
+    own: grid.name === ownGridName,
+    models: await listGridModels(grid.name),
+  })))
+  sections.sort((a, b) => Number(b.own) - Number(a.own))
+  return sections
+}
+
 /**
  * The last answer for a grid, for a few seconds.
  *

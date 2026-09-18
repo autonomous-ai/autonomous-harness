@@ -121,8 +121,26 @@ export function assemble(config, reads, previous = null, observedAt = now()) {
 
 export function createCollector(workspace, { runJson = gridJson, intervalMs = 8000 } = {}) {
   let inFlight, deviceCache = new Map(), previous;
+  async function followSelection(config) {
+    // Only a workspace that HAS a grid follows the selection; one with none waits for `connect`
+    // (initialization already consulted the selection once) and contacts nothing meanwhile.
+    if (config.mode !== 'remote' || !config.grid) return null;
+    const controller = config.machines.find(m => m.id === config.controller);
+    const active = await runJson(controller, 'remote', ['use'], { timeoutMs: 5000 }).catch(() => null);
+    const selected = typeof active?.value?.active === 'string' ? active.value.active.trim() : '';
+    if (!selected || selected.startsWith('-') || selected === config.grid) return null;
+    const next = { ...config, grid: selected };
+    await atomicJson(join(workspace, 'grid-fleet.json'), next);
+    return next;
+  }
   async function collect() {
-    const config = await readConfig(workspace);
+    let config = await readConfig(workspace);
+    // Follow the CLI's selection: `grid use` is the one place a grid is chosen, and a workspace
+    // that kept its own copy showed a team's grid for the rest of the day after the person had
+    // switched to their own in a terminal. Read every poll (a local file, no network); a change
+    // is written back so the next poll, and the agent, read the same grid.
+    const followed = await followSelection(config);
+    if (followed) config = followed;
     if (!config.grid) {
       const observedAt=now(),message='Choose a grid with fleet connect --mode local|remote --grid NAME. No fleet has been selected for this workspace.';
       const snapshot={spec:1,scope:JSON.stringify([config.mode,config.grid,config.controller]),observedAt,mode:config.mode,grid:'Choose your grid',status:'unconfigured',nodes:[],models:[],machines:[],history:{},events:[],operations:[],sources:{configuration:{ok:false,error:message,observedAt}},summary:{},preferences:config.preferences,pollIntervalMs:intervalMs};
@@ -133,11 +151,18 @@ export function createCollector(workspace, { runJson = gridJson, intervalMs = 80
     const controller = config.machines.find(m => m.id === config.controller);
     const selector = config.grid ? [config.grid] : [];
     const names = ['info', 'engines', 'models', ...(config.mode === 'remote' ? ['stats'] : [])];
-    const results = await Promise.allSettled(names.map(command => runJson(controller, config.mode, [command, ...selector])));
-    const reads = Object.fromEntries(results.map((result,i) => [names[i], result.status === 'fulfilled' ? result.value : { ok: false, error: `grid ${names[i]} could not be read.` }]));
+    // `ls` beside the per-grid reads: the viewer's grid dropdown is every grid this account is in,
+    // read fresh each poll so a grid joined a minute ago is offered without a restart.
+    const results = await Promise.allSettled([...names.map(command => runJson(controller, config.mode, [command, ...selector])), runJson(controller, config.mode, ['ls'])]);
+    const reads = Object.fromEntries(results.slice(0, names.length).map((result,i) => [names[i], result.status === 'fulfilled' ? result.value : { ok: false, error: `grid ${names[i]} could not be read.` }]));
+    const listed = results[names.length];
+    const grids = listed.status === 'fulfilled' && Array.isArray(listed.value?.value)
+      ? listed.value.value.map(row => ({ name: text(row.grid || row.name || row.id), type: text(row.type) })).filter(g => g.name && !g.name.startsWith('-'))
+      : previous?.grids || [];
     previous ||= await readJson(join(stateDir(workspace), 'snapshot.json'), null).catch(() => null);
     const observedAt = now();
     const snapshot = assemble(config, reads, previous, observedAt);
+    snapshot.grids = grids;
     snapshot.machines = await Promise.all(config.machines.map(async machine => {
       const cacheKey = JSON.stringify(machine);
       let cached = deviceCache.get(cacheKey);

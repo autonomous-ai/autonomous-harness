@@ -5,8 +5,8 @@
  * `backendSocket.ts`); that is the source of truth. But a backend that predates the route pushes
  * nothing, and then every picker on every pane was empty while `grid models <name>` listed the
  * model fine — the daemon knew how to ask, just not what to ask about. The name is recognisable
- * without asking anyone, by the same rule the Harness Compute skill gives its agents
- * (`docs/skills/harness-compute.md`, "Which grid"): the signed-in email's local part, lowercased,
+ * without asking anyone, by the same rule the Grid harness gives its agent
+ * (`store/agents/autonomous-grid`, "Which grid"): the signed-in email's local part, lowercased,
  * runs of non-alphanumerics folded to `-`, followed by `-` and eight hex digits, of type
  * `permissioned-public`. Exactly one grid this computer is signed into matches, or the answer is
  * null — never a guess, because names are global and a wrong one is someone else's grid.

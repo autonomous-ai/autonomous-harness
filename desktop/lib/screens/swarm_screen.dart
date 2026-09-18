@@ -485,11 +485,22 @@ class _SwarmScreenState extends State<SwarmScreen> {
   void _syncModels() {
     final payload = {
       'subscriptions': _modelsMenu?.rows ?? [],
-      // The Local section used to be two hardcoded names. A menu that names a model nobody is
-      // serving is worse than one admitting it has none, so this carries what the account's own
-      // grid actually answers with — refreshed below, and empty until the first read lands.
+      // Back-compat: the own grid's models, as the native menu understood them before sections.
       'local': [
-        for (final m in _localModels) {'id': m.id, 'node': m.node},
+        for (final s in _localSections)
+          if (s.own)
+            for (final m in s.models) {'id': m.id, 'node': m.node},
+      ],
+      // The picker's sections, own grid first then each shared grid — what the native menu draws.
+      'sections': [
+        for (final s in _localSections)
+          {
+            'name': s.name,
+            'own': s.own,
+            'models': [
+              for (final m in s.models) {'id': m.id, 'node': m.node},
+            ],
+          },
       ],
     };
     final encoded = jsonEncode(payload);
@@ -498,12 +509,12 @@ class _SwarmScreenState extends State<SwarmScreen> {
     unawaited(_channel.invokeMethod<void>('modelsState', payload));
   }
 
-  /// What the account's private grid is serving, for the native Models menu.
+  /// What the picker's sections answer for the native Models menu.
   ///
   /// Read from a machine this window is connected to — the grid is per ACCOUNT, so any of them
   /// answers the same, and the local one is asked first because its daemon is a loopback away.
   /// Never throws and never blocks the menu: a machine that cannot answer leaves the list as it was.
-  List<GridModel> _localModels = const [];
+  List<GridSection> _localSections = const [];
 
   DateTime? _localModelsAt;
 
@@ -527,15 +538,36 @@ class _SwarmScreenState extends State<SwarmScreen> {
     );
     final answer = await app.gridModels(preferred.machineId);
     if (!mounted) return;
-    final same =
-        answer.models.length == _localModels.length &&
-        [
-          for (var i = 0; i < answer.models.length; i++)
-            answer.models[i].id == _localModels[i].id,
-        ].every((x) => x);
-    if (same) return;
-    _localModels = answer.models;
+    final sections = _sectionsForModelMenu(answer);
+    if (_sameSections(sections, _localSections)) return;
+    _localSections = sections;
     _syncModels();
+  }
+
+  /// The sections the Models menu draws, matching the pane picker's own: the account's own grid
+  /// first as "Local", then each shared grid that serves something. A shared grid with nothing
+  /// running is not a menu a person can pick from, so it is not drawn.
+  List<GridSection> _sectionsForModelMenu(GridModels answer) {
+    final sections = answer.sections
+        .where((s) => s.own || s.models.isNotEmpty)
+        .toList();
+    if (sections.any((s) => s.own)) return sections;
+    return [
+      GridSection(name: answer.gridName ?? '', own: true, models: answer.models),
+      ...sections,
+    ];
+  }
+
+  static bool _sameSections(List<GridSection> a, List<GridSection> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].name != b[i].name || a[i].own != b[i].own) return false;
+      if (a[i].models.length != b[i].models.length) return false;
+      for (var j = 0; j < a[i].models.length; j++) {
+        if (a[i].models[j].id != b[i].models[j].id) return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _onNative(MethodCall call) async {
@@ -669,11 +701,11 @@ class _SwarmScreenState extends State<SwarmScreen> {
       case 'newTerminal':
         unawaited(_newTerminal());
       case 'runLocalModel':
-        // The native Models menu's one command. Wrapped like Link Machine…
-        // because the notifier may open its dialog here, and the pane it then
-        // creates takes focus the same way a New Agent does. With more than one
-        // machine linked the menu lists them and names the chosen one here;
-        // with one, or none, the notifier picks.
+        // The native Models menu's one command: open Grid. Wrapped like Link
+        // Machine… because the notifier opens New Agent here, and the tab it
+        // then creates takes focus. With more than one machine linked the menu
+        // lists them and names the chosen one here; with one, or none, the
+        // notifier picks.
         await _dialog(
           () => app.runLocalModel(
             context,

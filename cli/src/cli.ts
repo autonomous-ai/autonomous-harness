@@ -46,7 +46,6 @@ import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
-import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
 import { PID_FILE, daemonPort, isAlive, isDaemonRunning, readPid } from './lib/daemonState.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
@@ -3730,9 +3729,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     installCodexHooks(hookPort)
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
-    installOpencodeHarnessComputeSkill()
-    // The `grid` CLI the Harness Compute skill shells out to, for a machine that signed in before
-    // this existed or whose sign-in could not fetch it. In the background: a download must not hold
+    // The `grid` CLI the Grid harness shells out to, for a machine that signed in before this
+    // existed or whose sign-in could not fetch it. In the background: a download must not hold
     // the daemon's own start, and nothing here waits on it.
     void ensureGridInstalled().then((result) => {
       if (result.status !== 'present') console.log(`[grid] ${result.message}`)

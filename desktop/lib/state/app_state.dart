@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Platform, exit, pid;
+import 'dart:io' show exit, pid;
 import 'dart:math' show Random;
 
 import 'package:dio/dio.dart';
@@ -44,7 +44,7 @@ import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
 import '../widgets/engine_identity.dart'
     show allEngines, engineIdentity, isTerminalEngine;
-import '../widgets/run_local_model_dialog.dart' show showRunLocalModelDialog;
+import '../store/store_screen.dart' show openStoreAgent;
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
 import 'terminal_pane.dart';
@@ -670,9 +670,18 @@ class AppNotifier extends ChangeNotifier {
   /// over a New Tab. One store tab per window, like one New Tab: when it is
   /// already open somewhere, that one is selected. From a tab with panes it
   /// gets a tab of its own.
-  void openStore() {
+  ///
+  /// [harness] opens the Store straight on that harness's page — the model
+  /// picker's door when Grid is not installed yet. Held until the Store tab
+  /// reads it ([takePendingStoreHarness]): the tab may exist already, or be
+  /// about to be built, and either way the page turns exactly once.
+  void openStore({String? harness}) {
+    if (harness != null) _pendingStoreHarness = harness;
     final current = activeSwarm;
-    if (current.isStore) return;
+    if (current.isStore) {
+      if (harness != null) notifyListeners();
+      return;
+    }
     final existing = swarms.where((swarm) => swarm.isStore).firstOrNull;
     if (existing != null) {
       selectSwarm(existing.id);
@@ -697,6 +706,16 @@ class AppNotifier extends ChangeNotifier {
     );
     swarms.add(swarm);
     selectSwarm(swarm.id);
+  }
+
+  String? _pendingStoreHarness;
+
+  /// The harness page [openStore] was asked for, handed over once. The Store
+  /// tab reads it when it is built and on every change while it is open.
+  String? takePendingStoreHarness() {
+    final id = _pendingStoreHarness;
+    _pendingStoreHarness = null;
+    return id;
   }
 
   void selectSwarm(String id, {bool attachPending = true}) {
@@ -3612,15 +3631,22 @@ class AppNotifier extends ChangeNotifier {
   /// credential from its own signed-in `grid`, so neither travels over the relay and the app never
   /// holds a grid key. Moving an agent re-execs its pane, which is why this is an explicit choice in
   /// a menu rather than something that can happen by hovering.
+  /// [gridName] is the grid the model was picked from — a shared grid's section in the picker.
+  /// Absent, the daemon uses the account's own grid, as it always did.
   Future<void> retargetAgentToGridModel(
     String machineId,
     String agentId,
-    String modelId,
-  ) async {
+    String modelId, {
+    String? gridName,
+  }) async {
     try {
       await _conn(machineId).request(
         'agent_retarget',
-        payload: {'agentId': agentId, 'gridModel': modelId},
+        payload: {
+          'agentId': agentId,
+          'gridModel': modelId,
+          if (gridName != null) 'gridName': gridName,
+        },
         timeout: const Duration(seconds: 30),
       );
     } on WsRequestFailure catch (failure) {
@@ -3653,9 +3679,34 @@ class AppNotifier extends ChangeNotifier {
           .where((m) => m.id.isNotEmpty)
           .toList();
       final capable = response['localModelEngines'];
+      List<GridModel> parseModels(Object? raw) => (raw as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map(
+            (m) => GridModel(
+              id: (m['id'] as String?) ?? '',
+              node: (m['node'] as String?) ?? '',
+            ),
+          )
+          .where((m) => m.id.isNotEmpty)
+          .toList();
+      final grids = (response['grids'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .where((g) => (g['name'] as String?)?.isNotEmpty == true)
+          .map(
+            (g) => GridSection(
+              name: g['name'] as String,
+              own: g['own'] == true,
+              models: [
+                for (final m in parseModels(g['models']))
+                  GridModel(id: m.id, node: m.node, grid: g['name'] as String),
+              ],
+            ),
+          )
+          .toList();
       return GridModels(
         gridName: response['gridName'] as String?,
         models: models,
+        grids: grids,
         localModelEngines: capable is List
             ? capable.whereType<String>().map((e) => e.toLowerCase()).toSet()
             : null,
@@ -3669,78 +3720,56 @@ class AppNotifier extends ChangeNotifier {
     }
   }
 
-  /// The opencode agent the pane is opened AS (`opencode --agent harness-compute`):
-  /// the definition `harness start` installs beside the harness-compute skill,
-  /// whose whole job is that skill. Not a first prompt — the person opens the
-  /// conversation, and the agent's identity is what makes the pane read as
-  /// "the thing that starts a local model" rather than a terminal that happens
-  /// to be running opencode.
-  static const localModelAgent = 'harness-compute';
+  /// The Store harness every "Open Grid" door opens: Grid, the agent that
+  /// manages the models on a machine or a fleet, with its live viewer.
+  static const gridHarness = 'autonomous/autonomous-grid';
 
-  /// What the pane is called before, and if never, the engine names its
-  /// session.
-  static const localModelAgentName = 'Model manager';
-
-  /// The one action behind every "Talk to Model manager" entry: explain once,
-  /// then open opencode as the agent that starts one.
+  /// The one action behind every "Open Grid" entry — the pane picker's button
+  /// and the Models menu — and it is exactly what the Store's Open button
+  /// does: a draft tab of its own, then New Agent with Grid already chosen on
+  /// [machineId]. Not a dialog of this feature's own: a second way to open a
+  /// harness would be a second definition of what opening one means.
   ///
-  /// The dialog decides, and Start is what creates. Nothing here reports
-  /// progress: the pane appearing is the confirmation, and a refusal lands in
-  /// [lastError] like any other create.
+  /// Grid not installed on that machine → the Store, open on Grid's page,
+  /// whose Install is the way in. Nothing here reports progress: the tab
+  /// appearing is the confirmation.
   ///
-  /// Takes the caller's [context] because the dialog needs one and this
+  /// Takes the caller's [context] because New Agent needs one and this
   /// notifier holds none — the same shape as every other dialog a door opens.
   ///
-  /// [machineId] is the computer the manager opens on — the pane's own machine
-  /// from a pane's picker, the one chosen from the Models menu's list. Absent
-  /// (a menu with one machine, or none named), it is this computer's own when
-  /// the app has one, else whatever the person is looking at. Never guessed
-  /// past a named machine: a picker on a remote pane that opened the manager
-  /// on this computer was the bug this argument exists to end.
-  ///
-  /// [chooseMachine] is whether the dialog offers the other machines. A pane's
-  /// picker is a question about THAT pane's computer, so it does not (the
-  /// machine is named, not offered); the Models menu is about the account, so
-  /// it does.
-  Future<void> runLocalModel(
-    BuildContext context, {
-    String? machineId,
-    bool chooseMachine = true,
-  }) async {
+  /// [machineId] is the computer Grid opens on — the pane's own machine from a
+  /// pane's picker, the one chosen from the Models menu's list. Absent (a menu
+  /// with one machine, or none named), it is this computer's own when the app
+  /// has one, else whatever the person is looking at. Never guessed past a
+  /// named machine: a picker on a remote pane that opened on this computer was
+  /// the bug this argument exists to end.
+  Future<void> runLocalModel(BuildContext context, {String? machineId}) async {
     final machine = machineId != null
         ? machineStates[machineId]
         : _localModelMachine();
     if (machine == null) {
       _lastError = machineId != null
           ? 'That machine is no longer linked.'
-          : 'Connect a machine before starting a local model.';
+          : 'Connect a machine before opening Grid.';
       _lastErrorRetryable = false;
       notifyListeners();
       return;
     }
     machineId = machine.machine.machineId;
-    final decision = await showRunLocalModelDialog(
-      context,
-      this,
-      machineId,
-      chooseMachine: chooseMachine,
-    );
-    if (decision == null) return;
-    // The dialog may list the machines, and the person may have moved the choice.
-    machineId = decision.machineId;
-    final error = await _startLocalModelAgent(
-      machineId,
-      prompt: decision.prompt,
-    );
-    if (error != null) {
-      _lastError = error;
-      _lastErrorRetryable = false;
-      notifyListeners();
+    // Whether Grid is installed THERE, from the machine's own list — a stored
+    // answer is fine here, since an install this app started is pushed into
+    // it as it lands.
+    await probeDsh(machineId);
+    if (machine.dsh[gridHarness]?.installed != true) {
+      openStore(harness: gridHarness);
+      return;
     }
+    if (!context.mounted) return;
+    await openStoreAgent(context, this, gridHarness, machineId);
   }
 
-  /// The machine a local model belongs on: this computer's own when the app
-  /// has one, else whatever the person is looking at.
+  /// The machine Grid belongs on when no door named one: this computer's own
+  /// when the app has one, else whatever the person is looking at.
   MachineState? _localModelMachine() {
     final local = machineStates.values
         .where((state) => state.isLocalMachine)
@@ -3749,67 +3778,6 @@ class AppNotifier extends ChangeNotifier {
     final focused = focusedPane?.machineId ?? selectedMachineId;
     return (focused == null ? null : machineStates[focused]) ??
         machineStates.values.firstOrNull;
-  }
-
-  /// What a start stands for: opencode, in the user's home, opened as the
-  /// `harness-compute` agent. Home rather than a project because the model is
-  /// not about any one repo.
-  ///
-  /// [prompt] is the opening move the dialog's button stood for, handed to
-  /// opencode's own `--prompt`: the pane opens with that message already
-  /// submitted, so the first thing in it is the manager's answer rather than an
-  /// empty composer. Null is the third option — the plain door, for a person who
-  /// would rather word it themselves — and then nothing is sent, exactly as
-  /// before this dialog had buttons.
-  ///
-  /// Null on success, else the sentence for the person.
-  Future<String?> _startLocalModelAgent(
-    String machineId, {
-    String? prompt,
-  }) async {
-    final machine = machineStates[machineId];
-    if (machine == null) return 'Machine not found';
-    final home = await _homeFolderOf(machine);
-    if (home == null) {
-      return 'Could not find the home folder on ${machine.machine.displayName}.';
-    }
-    final error = await createAgent(
-      machineId,
-      engine: 'opencode',
-      folder: home,
-      agent: localModelAgent,
-      name: localModelAgentName,
-      prompt: prompt,
-    );
-    if (error != null) return error;
-    // A daemon that predates `agent`/`name` does not refuse them — it ignores
-    // them, opens a plain opencode pane and names it itself. The pane exists,
-    // so the person is told what it is rather than left to notice that the
-    // manager never introduces itself: the name coming back is the tell.
-    final created = machine.agents
-        .where((a) => a.name == localModelAgentName)
-        .isNotEmpty;
-    if (!created) {
-      return 'Harness on ${machine.machine.displayName} is too old to open '
-          'Model manager: it opened a plain opencode pane instead. '
-          'Update Harness there and try again.';
-    }
-    return null;
-  }
-
-  /// The user's home on [machine]. This computer's is in the environment; a
-  /// remote machine's is known only to that machine, which is what
-  /// `fs_list_dir` with no path answers from (its `listDir` defaults to the
-  /// home directory).
-  Future<String?> _homeFolderOf(MachineState machine) async {
-    if (machine.isLocalMachine) {
-      final home =
-          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
-      if (home != null && home.isNotEmpty) return home;
-    }
-    final listing = await listRemoteFolder(machine.machine.machineId, null);
-    final path = listing['path'];
-    return path is String && path.isNotEmpty ? path : null;
   }
 
   WsConn _conn(String machineId) {

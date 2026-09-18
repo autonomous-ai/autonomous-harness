@@ -63,7 +63,8 @@ test('collector coalesces concurrent refreshes, caches hardware and writes a tru
   await atomicJson(join(dir,'grid-fleet.json'),config);
   const calls=[];
   const collect=createCollector(dir,{runJson:async(_machine,mode,args)=>{calls.push(args[0]);await new Promise(r=>setTimeout(r,2));return args[0]==='device-info'?{ok:true,value:device}:reads[args[0]];}});
-  const [a,b]=await Promise.all([collect(),collect()]);assert.equal(a,b);assert.equal(calls.length,5);
+  // Five reads, plus the selection check (`use`) before them and the grid list (`ls`) beside them.
+  const [a,b]=await Promise.all([collect(),collect()]);assert.equal(a,b);assert.equal(calls.length,7);
   await collect();assert.equal(calls.filter(c=>c==='device-info').length,1);
   const verdict=JSON.parse(await readFile(join(dir,'.harness/verdict.json'),'utf8'));assert.equal(verdict.ready,true);assert.match(verdict.summary,/7 engines/);
 });

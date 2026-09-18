@@ -114,7 +114,10 @@ class _StoreTabState extends State<StoreTab> {
   late _Shelf _shelf = widget.initialHarness == null
       ? _place.shelf
       : const _Discover();
-  late String? _selected = widget.initialHarness ?? _place.selected;
+  late String? _selected =
+      widget.initialHarness ??
+      widget.notifier.takePendingStoreHarness() ??
+      _place.selected;
   late final _search = TextEditingController(
     text: widget.initialHarness == null ? _place.query : '',
   );
@@ -183,6 +186,10 @@ class _StoreTabState extends State<StoreTab> {
   }
 
   void _onAppChanged() {
+    // A door asked for a harness page while this tab was already open: the
+    // constructor's read is too late for that, so the page turns here.
+    final pending = widget.notifier.takePendingStoreHarness();
+    if (pending != null && pending != _selected) _openPage(pending);
     final connecting = <MachineState>[];
     for (final machine in [?widget.notifier.localMachineState]) {
       final id = machine.machine.machineId;
@@ -301,7 +308,12 @@ class _StoreTabState extends State<StoreTab> {
       return;
     }
     unawaited(
-      _openStoreAgent(context, widget.notifier, entry, local.machine.machineId),
+      openStoreAgent(
+        context,
+        widget.notifier,
+        entry.id,
+        local.machine.machineId,
+      ),
     );
   }
 
@@ -676,10 +688,16 @@ bool _canGetOnMachine(MachineState machine, DshEntry entry) {
       machine.dsh.runs[entry.id]?.inProgress != true;
 }
 
-Future<void> _openStoreAgent(
+/// Open a Store harness on [machineId] the way the Store's Open button does: a
+/// draft tab of its own, then New Agent with the harness already chosen.
+///
+/// Public because it is the ONE way a harness is opened from anywhere — the
+/// Store page, and the model picker's "Open Grid" — so the two cannot drift
+/// into two definitions of what opening a harness means.
+Future<void> openStoreAgent(
   BuildContext context,
   AppNotifier notifier,
-  DshEntry entry,
+  String harnessId,
   String machineId, {
   String? prompt,
 }) async {
@@ -691,7 +709,7 @@ Future<void> _openStoreAgent(
     notifier,
     machineId,
     source: 'store',
-    initialEngine: entry.id,
+    initialEngine: harnessId,
     initialPrompt: prompt,
     swarmId: target,
   );
@@ -814,10 +832,10 @@ class _ProductPageState extends State<_ProductPage> {
     if (widget.notifier.localMachineState?.machine.machineId != machineId) {
       return;
     }
-    await _openStoreAgent(
+    await openStoreAgent(
       context,
       widget.notifier,
-      widget.entry,
+      widget.entry.id,
       machineId,
       prompt: prompt,
     );
