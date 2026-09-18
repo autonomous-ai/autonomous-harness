@@ -13,13 +13,19 @@ import 'terminal_header.dart';
 /// ⚠️ **Not a route, and that is the point of the whole file.** The bar sits in
 /// the terminal's header, and pushing [PhoneSearchPage] slid a fresh screen in
 /// from the right — the bar the finger had just touched went out of the frame
-/// while an identical one arrived from off-screen. Growing out of the bar keeps
-/// the thing that was tapped on screen and expands it, which is what the gesture
-/// says will happen.
+/// while an identical one arrived from off-screen. Opening in place leaves the
+/// thing that was tapped exactly where it was.
 ///
-/// The way out is Cancel beside the bar, which collapses it the way it came. The
-/// system back gesture reaches it too — see [TerminalSearchOverlay]'s
-/// [PopScope].
+/// ⚠️ **Nothing here moves, and that took two tries to get right.** The bar
+/// first grew into the screen, then merely widened as Cancel opened beside it;
+/// both widened the field and then narrowed it again within the one gesture,
+/// which is felt as the row snapping about. The field is now laid out once, at
+/// one width, for the whole of the open. What changes is the header's trailing
+/// end, which cross-fades `+` and `⋯` for Cancel — see `_TrailingSwap` in
+/// `terminal_page.dart` — and the results, which fade up underneath.
+///
+/// The way out is that Cancel. The system back gesture reaches it too — see
+/// [TerminalSearchOverlay]'s [PopScope].
 ///
 /// ⚠️ **It must stay mounted only while searching.** The [TextField] inside
 /// autofocuses, so a copy left built behind the terminal would keep the keyboard
@@ -30,9 +36,14 @@ class TerminalSearchOverlay extends StatefulWidget {
     required this.notifier,
     required this.animation,
     required this.onClose,
+    required this.trailingExtent,
   });
 
   final AppNotifier notifier;
+
+  /// How much of the header's row its trailing slot is holding — the Cancel the
+  /// header swaps in as this opens. The field stops there; see [_Bar].
+  final double trailingExtent;
 
   /// The open/close animation the terminal page drives — 0 collapsed into the
   /// header bar, 1 filling the screen.
@@ -80,39 +91,45 @@ class _TerminalSearchOverlayState extends State<TerminalSearchOverlay> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _close();
       },
+      // ⚠️ No [ListenableBuilder] around this any more. [PhoneSearchResults]
+      // watches the notifier itself — and its recall store with it — so a
+      // second listener here would rebuild the field on every agent-list tick
+      // for nothing.
       child: Column(
         children: [
-          // ⚠️ **The bar is NOT faded in over the header's own.** The two
-          // are the same shape in the same place, so cross-fading them
-          // looked like nothing happening at all — which is exactly what
-          // this screen was reported as doing. It is opaque from frame one
-          // and animates its WIDTH instead: Cancel opens out of the right
-          // edge while `+` and `⋯` collapse behind it, and the field takes
-          // the space. That is the move the tap promises.
+          // ⚠️ **The bar neither fades in nor changes size.** It lands exactly
+          // on the header's own, which hides its picture of a field while this
+          // real one is up. Nothing about this row moves: the whole transition
+          // is the header trading `+` and `⋯` for Cancel beside it — see
+          // `_TrailingSwap` in `terminal_page.dart`.
+          //
+          // ⚠️ Transparent, and that is what lets the swap be seen. This row
+          // sits directly over the header, so a fill here would cover the very
+          // controls whose exchange IS the animation.
           _Bar(
             controller: _controller,
             focus: _focus,
-            animation: widget.animation,
             onChanged: (value) => setState(() => _query = value),
-            onCancel: _close,
+            trailingExtent: widget.trailingExtent,
           ),
-          // ⚠️ Fades AND rises, on the second half of the animation alone.
-          // Rows arriving while the bar is still opening read as two things
-          // at once; waiting until the bar is nearly home makes it one move
-          // — the bar opens, the list comes up into it.
+          // ⚠️ Fades on the back half of the animation alone. The header's
+          // controls are still trading places over the front half, and rows
+          // arriving under them is two things happening at once.
           Expanded(
-            child: _Rise(
+            child: _FadeIn(
               animation: widget.animation,
               child: ColoredBox(
                 color: AppPalette.windowBg,
+                // ⚠️ Handed the query and nothing else. Ranking lives inside
+                // it now, so this screen and [PhoneSearchPage] cannot drift
+                // into returning different rows for the same words.
                 child: PhoneSearchResults(
                   notifier: widget.notifier,
                   query: _query,
-                  // ⚠️ Nothing pops this search — opening an agent swaps
-                  // the terminal underneath it instead — so tapping a row
-                  // has to close it by hand. Without this the keyboard
-                  // would still be up over an agent nobody asked to type
-                  // into.
+                  // ⚠️ Nothing pops this search — opening an agent swaps the
+                  // terminal underneath it instead — so tapping a row has to
+                  // close it by hand. Without this the keyboard would still be
+                  // up over an agent nobody asked to type into.
                   onOpen: _close,
                 ),
               ),
@@ -124,150 +141,190 @@ class _TerminalSearchOverlayState extends State<TerminalSearchOverlay> {
   }
 }
 
-/// The field and the way out, on the row the collapsed bar came from.
+/// The real field, drawn over the header's picture of one.
 ///
-/// ⚠️ **Exactly [TerminalHeader]'s geometry, and that is what sells the
-/// expansion.** The two rows are drawn by different widgets but must land on the
-/// same pixels: same height, same corner radius, same outer padding. Anything
-/// off by a point makes the bar jump on the frame the overlay takes over.
+/// ⚠️ **Exactly [TerminalHeader]'s geometry, and that is the whole job.** The
+/// header draws a tappable box that only looks like a field; this draws the
+/// [TextField] that replaces it, and the header hides its own for as long as
+/// this is up (see `barHidden`). The two must land on the same pixels — same
+/// height, same corner radius, same outer padding, same right edge — or the bar
+/// jumps on the frame the overlay takes over.
+///
+/// ⚠️ It takes no animation. Nothing in this row moves: the field is laid out
+/// once at one width, and the only thing that changes across the open is which
+/// control the header paints at its trailing end. See `_TrailingSwap` in
+/// `terminal_page.dart`.
 class _Bar extends StatelessWidget {
   const _Bar({
     required this.controller,
     required this.focus,
-    required this.animation,
     required this.onChanged,
-    required this.onCancel,
+    required this.trailingExtent,
   });
 
   final TextEditingController controller;
   final FocusNode focus;
 
-  /// 0 collapsed into the header's bar, 1 open. Drives Cancel's width, which is
-  /// what makes the field grow: the two share the row.
-  final Animation<double> animation;
-
   final ValueChanged<String> onChanged;
-  final VoidCallback onCancel;
+
+  /// How much of the row the header's trailing slot is holding, so this field
+  /// stops exactly where the header's picture of it does.
+  ///
+  /// ⚠️ Measured by the header rather than guessed at here. The slot's width
+  /// depends on which controls the page is showing — `+` comes and goes with the
+  /// machine's readiness, reclaim with the stream — and a field that assumed a
+  /// fixed number of them would overhang Cancel by the difference.
+  final double trailingExtent;
 
   @override
   Widget build(BuildContext context) {
     AppTheme.watch(context);
-    return ColoredBox(
-      color: AppPalette.windowBg,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          TerminalHeader.sideInset,
-          TerminalHeader.topInset,
-          TerminalHeader.sideInset,
-          TerminalHeader.bottomInset,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: ListenableBuilder(
-                listenable: focus,
-                builder: (context, child) => AnimatedContainer(
-                  duration: AppMotion.hover,
-                  curve: AppMotion.curve,
-                  height: TerminalHeader.barHeight,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: TerminalHeader.barPadding,
+    // ⚠️ **No fill of its own.** The real header is directly underneath and is
+    // already opaque — [_TerminalPageState] reveals it before opening this — so
+    // this row only has to draw the field. Filling it would cover the `+` and
+    // `⋯` whose fade into Cancel is the transition.
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        TerminalHeader.sideInset,
+        TerminalHeader.topInset,
+        // ⚠️ The header's own inset PLUS whatever its trailing slot is holding.
+        // The field ends where the header's picture of it ends; the controls
+        // beyond are the header's to draw, and this must not reach over them.
+        TerminalHeader.sideInset + trailingExtent,
+        TerminalHeader.bottomInset,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: ListenableBuilder(
+              listenable: focus,
+              builder: (context, child) => AnimatedContainer(
+                duration: AppMotion.hover,
+                curve: AppMotion.curve,
+                height: TerminalHeader.barHeight,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: TerminalHeader.barPadding,
+                ),
+                decoration: BoxDecoration(
+                  color: AppGlass.rowFill,
+                  borderRadius: BorderRadius.circular(AppCard.radius),
+                  // Focus is said by the rim of the box the field fills, and by
+                  // the magnifier inside it — see the icon below.
+                  border: Border.all(
+                    color: focus.hasFocus
+                        ? AppPalette.accentOnSurface
+                        : AppGlass.hair,
                   ),
-                  decoration: BoxDecoration(
-                    color: AppGlass.rowFill,
-                    borderRadius: BorderRadius.circular(AppCard.radius),
-                    // Focus is said once, by the rim of the box the field fills.
-                    border: Border.all(
-                      color: focus.hasFocus
-                          ? AppPalette.accentOnSurface
-                          : AppGlass.hair,
-                    ),
-                  ),
-                  child: child,
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      LucideIcons.search300,
-                      size: TerminalHeader.glyphSize,
-                      color: AppPalette.textFaint,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _Input(
-                        controller: controller,
-                        focus: focus,
-                        onChanged: onChanged,
+                    // ⚠️ **Inside the builder, not the child passed through
+                    // it.** The glyph lifts with focus, so it has to be rebuilt
+                    // when focus changes; left in the `child` it would be built
+                    // once and keep its resting ink for good.
+                    //
+                    // It climbs to the same accent the rim and the caret
+                    // already use, over the same beat as the rim, so the three
+                    // read as one state arriving rather than as three
+                    // decorations each doing their own thing.
+                    TweenAnimationBuilder<Color?>(
+                      duration: AppMotion.hover,
+                      curve: AppMotion.curve,
+                      // ⚠️ [begin] is the RESTING ink, not left null. A null
+                      // begin lerps from null on the first build, which hands
+                      // the icon a null colour for that frame — it falls back
+                      // to the theme's default ink, and the glyph flashes a
+                      // colour it never otherwise wears. The field autofocuses,
+                      // so that first build is on screen every time search
+                      // opens; starting from rest also makes the very first
+                      // climb an animation rather than a jump.
+                      tween: ColorTween(
+                        begin: AppPalette.textFaint,
+                        end: focus.hasFocus
+                            ? AppPalette.accentOnSurface
+                            : AppPalette.textFaint,
+                      ),
+                      builder: (context, color, _) => Icon(
+                        LucideIcons.search300,
+                        size: TerminalHeader.glyphSize,
+                        color: color,
                       ),
                     ),
-                    _ClearButton(
-                      controller: controller,
-                      onTap: () {
-                        controller.clear();
-                        onChanged('');
-                        // Clearing is a step back into browsing, not out of the
-                        // search — the caret stays where the next query will go.
-                        focus.requestFocus();
-                      },
-                    ),
+                    const SizedBox(width: 8),
+                    // The field and its clear, built once and passed through:
+                    // neither depends on focus, and the field in particular must
+                    // not be rebuilt from a focus tick — see below.
+                    Expanded(child: child!),
                   ],
                 ),
               ),
+              // ⚠️ **Everything that does NOT change with focus stays here.**
+              // The [TextField] especially: it holds the input connection, and
+              // rebuilding it on every focus tick is work on the one widget
+              // that can least afford it.
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _Input(
+                      controller: controller,
+                      focus: focus,
+                      onChanged: onChanged,
+                    ),
+                  ),
+                  _ClearButton(
+                    controller: controller,
+                    onTap: () {
+                      controller.clear();
+                      onChanged('');
+                      // Clearing is a step back into browsing, not out of the
+                      // search — the caret stays where the next query will go.
+                      focus.requestFocus();
+                    },
+                  ),
+                ],
+              ),
             ),
-            // ⚠️ **Opens from zero width, and that IS the animation.** `+` and
-            // `⋯` are gone while searching — they act on the agent underneath,
-            // which is not what is on screen — so Cancel takes their column, and
-            // the field widens into whatever Cancel has not claimed yet. Fading
-            // one bar over another identical one showed nothing; a row whose
-            // proportions move shows the tap landing.
-            //
-            // ⚠️ Rebuilt on every tick by this builder. The button reads
-            // `animation.value` directly, and a stateless widget given an
-            // Animation does not listen to it — the row would have snapped to its
-            // open width on the first frame and shown nothing moving.
-            AnimatedBuilder(
-              animation: animation,
-              builder: (context, _) =>
-                  _CancelButton(animation: animation, onTap: onCancel),
-            ),
-          ],
-        ),
+          ),
+          // ⚠️ **Cancel is NOT here — it belongs to the header, and must.** It
+          // once opened out of this row from zero width, which widened the field
+          // as it grew and then narrowed it again as the word claimed its place:
+          // two layout changes in opposite directions inside one tap, felt as
+          // the row snapping about. The header now cross-fades its `+` and `⋯`
+          // for Cancel inside a slot of one fixed width — see `_TrailingSwap` in
+          // `terminal_page.dart` — so the field is laid out once and never
+          // moves. This row draws the field and nothing else.
+        ],
       ),
     );
   }
 }
 
-/// The results, rising into place as the bar finishes opening.
+/// The results, fading in under the bar.
 ///
-/// A translation rather than a slide transition: [SlideTransition] moves by a
-/// fraction of the child's own size, and this child is most of the screen — a
-/// tenth of it is half a phone. A fixed number of points is what reads as the
-/// list settling.
-class _Rise extends StatelessWidget {
-  const _Rise({required this.animation, required this.child});
+/// ⚠️ **A fade alone, and it was once a rise too.** It used to
+/// translate 18pt as it faded, which belonged to a screen whose bar was also
+/// growing: one move explaining another. Now that the bar holds still, a list
+/// sliding under it was the only thing on screen that moved, and it read as the
+/// results being nudged rather than as the terminal being replaced.
+///
+/// ⚠️ On the back half of the animation only. The header's controls are still
+/// trading places over the first half, and rows arriving under them makes two
+/// things happen at once; waiting lets the eye finish one before the next.
+class _FadeIn extends StatelessWidget {
+  const _FadeIn({required this.animation, required this.child});
 
   final Animation<double> animation;
   final Widget child;
-
-  /// How far below its place the list starts. Far enough to be a move, near
-  /// enough that nothing is ever seen sliding past the bar.
-  static const double _drop = 18;
 
   @override
   Widget build(BuildContext context) {
     final curve = CurvedAnimation(
       parent: animation,
-      curve: const Interval(0.35, 1, curve: Curves.easeOutCubic),
+      curve: const Interval(0.35, 1, curve: Curves.easeInOut),
     );
     return AnimatedBuilder(
       animation: curve,
-      builder: (context, child) => Opacity(
-        opacity: curve.value,
-        child: Transform.translate(
-          offset: Offset(0, _drop * (1 - curve.value)),
-          child: child,
-        ),
-      ),
+      builder: (context, child) => Opacity(opacity: curve.value, child: child),
       child: child,
     );
   }
@@ -375,10 +432,15 @@ class _ClearButton extends StatelessWidget {
 /// The word, not a glyph. This is the one control on the row that leaves, and a
 /// second `×` beside the field's own would be two ways out sitting together.
 ///
-/// ⚠️ **It opens by WIDTH, from nothing, and the field's growth is the other
-/// side of that.** The two share the row, so every point Cancel takes is a point
-/// the field gives up — which is what makes the bar look like it is expanding
-/// out of the header rather than being replaced by a copy of itself.
+/// ⚠️ **Superseded — Cancel is drawn by the header now.** It opened by WIDTH
+/// from nothing, taking its points off the field beside it, so the field widened
+/// while this grew and narrowed again as it settled. Two layout changes in
+/// opposite directions inside one tap read as the row snapping about, which is
+/// what replaced it: `_CancelSearchButton` in `terminal_page.dart` draws at a
+/// fixed size and arrives on a cross-fade, leaving the field still.
+///
+/// Kept for the geometry, should a width-opening control ever be wanted here.
+// ignore: unused_element
 class _CancelButton extends StatelessWidget {
   const _CancelButton({required this.animation, required this.onTap});
 
