@@ -107,9 +107,21 @@ bool _keyboardDismissing = false;
 /// Called when a pager opens. A pager popped with the keyboard up is disposed
 /// before the inset falls, so no page is left to see it fall — and the next
 /// pager would otherwise open believing the keyboard is up, and summon it.
+///
+/// ⚠️ **A keyboard still on its way DOWN stays held off.** Search opening an
+/// agent puts its own keyboard away and opens a pager in the same breath; the
+/// inset is still falling as the new pages mount, and clearing the hold-off here
+/// let those ticks write [_keyboardIsUp] back to true — the new agent's page
+/// then claimed a keyboard nobody had asked for. Kept only while an inset is
+/// actually showing, so a hold-off with no keyboard left to fall cannot swallow
+/// the next one raised (see [dismissKeyboardForSwipe]).
 void resetKeyboardSession() {
   _keyboardIsUp = false;
-  _keyboardDismissing = false;
+  _keyboardDismissing =
+      _keyboardDismissing &&
+      WidgetsBinding.instance.platformDispatcher.views.any(
+        (view) => view.viewInsets.bottom > 0,
+      );
 }
 
 /// Puts the keyboard away for a swipe between agents, and keeps it away.
@@ -208,6 +220,10 @@ class _TerminalPageState extends State<TerminalPage>
   /// keyboard and swallows what the terminal is owed.
   bool _searching = false;
 
+  /// Whether the terminal had the keyboard up when search opened — what closing
+  /// it goes back to. See [_closeSearch].
+  bool _keyboardBeforeSearch = false;
+
   /// The header getting out of the way as the terminal is scrolled. See
   /// [TerminalChromeScroll].
   late final TerminalChromeScroll _chrome = TerminalChromeScroll(vsync: this);
@@ -287,6 +303,7 @@ class _TerminalPageState extends State<TerminalPage>
   /// that was tapped to type in.
   void _openSearch() {
     if (_searching) return;
+    _keyboardBeforeSearch = _keyboardIsUp;
     setState(() {
       _searching = true;
       // ⚠️ Handed over, not left standing. The bar can be tapped with the
@@ -306,6 +323,12 @@ class _TerminalPageState extends State<TerminalPage>
   /// the bar visibly bounces.
   void _closeSearch() {
     if (!_searching || _searchOpen.status == AnimationStatus.reverse) return;
+    // ⚠️ **The keyboard up now is the SEARCH field's, not the terminal's.** Its
+    // inset set [_keyboardIsUp], and left standing, the terminal read that as
+    // its own the moment search came down — Cancel, Back or opening an agent
+    // brought up a keyboard nobody had asked the terminal for. Put away like a
+    // swipe's, unless the terminal had one up before search opened.
+    if (!_keyboardBeforeSearch) dismissKeyboardForSwipe();
     _searchOpen.reverse().whenCompleteOrCancel(() {
       // A completed reverse is the only thing that unmounts the overlay; a
       // CANCELLED one means the search was opened again mid-collapse, and taking
