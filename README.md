@@ -99,6 +99,9 @@ encryption.
 
 ## Domain-specific harnesses (DSH)
 
+<img width="1000" height="563" alt="harness" src="https://github.com/user-attachments/assets/25c63335-279a-4f9a-b702-2ffaec2b096f" />
+
+
 A **domain-specific harness** turns a coding agent into a specialist. It brings the domain's
 instructions and skills, a pinned toolchain, a project template, a verdict the app can read, and a
 **live viewer** for what the agent makes. You chat on one side; the board, the part, the robot or the
@@ -106,6 +109,27 @@ game takes shape on the other, and stays interactive after the agent is done.
 
 A DSH is a folder with a `harness.json`. The agent does the reasoning; the harness brings the tools
 and the view. Adding a domain never needs a change to the app or the daemon.
+
+### 18 harnesses today
+
+
+| Domain | Harnesses |
+|---|---|
+| CAD | [Autonomous Workshop](store/agents/autonomous-workshop/), [text-to-cad](store/agents/text-to-cad/) |
+| 3D | [Blender](store/agents/blender/) |
+| Electronics | [Autonomous Circuit](store/agents/autonomous-circuit/), [CircuitJS](store/agents/circuitjs/), [Yosys](store/agents/yosys/) |
+| Games | [Godogen](store/agents/godogen/), [Phaser](store/agents/phaser/) |
+| Documents and diagrams | [Marp](store/agents/marp/), [Typst](store/agents/typst/), [Excalidraw](store/agents/excalidraw/) |
+| Video and music | [OpenMontage](store/agents/openmontage/), [Remotion](store/agents/remotion/), [Manim](store/agents/manim/), [Strudel](store/agents/strudel/) |
+| Simulation and analysis | [MuJoCo](store/agents/mujoco/), [RDKit](store/agents/rdkit/), [marimo](store/agents/marimo/) |
+
+Each one wraps an open-source project under its own name, credits it, pins its toolchain, and installs
+on a fresh machine from the Harness Store. Eight [shared viewers](store/viewers/) (CAD, 3D models,
+documents, games, film, video, MuJoCo, web) mean a new harness rarely needs to write its own.
+
+**The harness we'd love to see next is the one for the tool you use.** KiCad, FreeCAD, OpenSCAD, Godot,
+Jupyter, QGIS, Home Assistant, LilyPond, Inkscape — or your own company's toolchain. A harness can live
+in this repository or in yours.
 
 <table>
   <tr>
@@ -139,26 +163,6 @@ and the view. Adding a domain never needs a change to the app or the daemon.
 </table>
 
 Every picture is real output from the harness's own toolchain, and the prompt is the one that made it.
-
-### 18 harnesses today
-
-| Domain | Harnesses |
-|---|---|
-| CAD | [Autonomous Workshop](store/agents/autonomous-workshop/), [text-to-cad](store/agents/text-to-cad/) |
-| 3D | [Blender](store/agents/blender/) |
-| Electronics | [Autonomous Circuit](store/agents/autonomous-circuit/), [CircuitJS](store/agents/circuitjs/), [Yosys](store/agents/yosys/) |
-| Games | [Godogen](store/agents/godogen/), [Phaser](store/agents/phaser/) |
-| Documents and diagrams | [Marp](store/agents/marp/), [Typst](store/agents/typst/), [Excalidraw](store/agents/excalidraw/) |
-| Video and music | [OpenMontage](store/agents/openmontage/), [Remotion](store/agents/remotion/), [Manim](store/agents/manim/), [Strudel](store/agents/strudel/) |
-| Simulation and analysis | [MuJoCo](store/agents/mujoco/), [RDKit](store/agents/rdkit/), [marimo](store/agents/marimo/) |
-
-Each one wraps an open-source project under its own name, credits it, pins its toolchain, and installs
-on a fresh machine from the Harness Store. Eight [shared viewers](store/viewers/) (CAD, 3D models,
-documents, games, film, video, MuJoCo, web) mean a new harness rarely needs to write its own.
-
-**The harness we'd love to see next is the one for the tool you use.** KiCad, FreeCAD, OpenSCAD, Godot,
-Jupyter, QGIS, Home Assistant, LilyPond, Inkscape — or your own company's toolchain. A harness can live
-in this repository or in yours.
 
 ### Your first DSH in ten minutes
 
