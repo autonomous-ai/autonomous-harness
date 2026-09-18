@@ -197,14 +197,14 @@ class _DevicesSectionState extends State<DevicesSection> {
     if (deviceId == null ||
         !_discovered.any((device) => device['id'] == deviceId)) {
       setState(
-        () => _actionError = 'Select your discovered Autonomous device first.',
+        () => _actionError = 'Select your discovered Autonomous robot first.',
       );
       return;
     }
     if (!RegExp(r'^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{6}$').hasMatch(code)) {
       setState(
         () => _actionError =
-            'Enter the six-character code shown on your Autonomous device.',
+            'Enter the six-character code shown on your Autonomous robot.',
       );
       return;
     }
@@ -231,10 +231,10 @@ class _DevicesSectionState extends State<DevicesSection> {
 
   Future<void> _revoke(Map<String, dynamic> device) async {
     if (!await _confirm(
-      'Revoke Autonomous device?',
-      'Disconnect ${device['label'] ?? 'this Autonomous device'} and remove its access to this computer. '
+      'Revoke Autonomous robot?',
+      'Disconnect ${device['label'] ?? 'this Autonomous robot'} and remove its access to this computer. '
           'It will need to pair again.',
-      'Revoke Autonomous device',
+      'Revoke Autonomous robot',
     )) {
       return;
     }
@@ -254,8 +254,8 @@ class _DevicesSectionState extends State<DevicesSection> {
       child: OutlinedButton(onPressed: onPressed, child: Text(label)),
     );
     return SectionScaffold(
-      title: 'Autonomous devices',
-      subtitle: 'Connect directly to your Autonomous device.',
+      title: 'Autonomous robots',
+      subtitle: 'Connect directly to your Autonomous robot.',
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -280,7 +280,7 @@ class _DevicesSectionState extends State<DevicesSection> {
               ),
             if (_unsupported)
               SettingRow(
-                title: 'Update Harness CLI to use Autonomous devices.',
+                title: 'Update Harness CLI to use Autonomous robots.',
                 detail: 'Run this command in Terminal, then refresh this page.',
                 control: SizedBox(
                   width: SettingRow.controlWidth,
@@ -289,7 +289,7 @@ class _DevicesSectionState extends State<DevicesSection> {
                       const Expanded(child: SelectableText('harness update')),
                       AppIconButton(
                         icon: Icons.refresh_rounded,
-                        tooltip: 'Refresh Autonomous device status',
+                        tooltip: 'Refresh Autonomous robot status',
                         onPressed: disabled
                             ? null
                             : () => unawaited(_refresh()),
@@ -313,7 +313,7 @@ class _DevicesSectionState extends State<DevicesSection> {
             if (!_unsupported && !_loading) ...[
               for (final device in _devices) ...[
                 SettingRow(
-                  title: device['label']?.toString() ?? 'Autonomous device',
+                  title: device['label']?.toString() ?? 'Autonomous robot',
                   // The fingerprint belongs to the device it identifies, not to
                   // a row of its own two lines below it.
                   detail: [
@@ -341,7 +341,7 @@ class _DevicesSectionState extends State<DevicesSection> {
                     : 'Pair another device',
                 alignTop: true,
                 detail: _discovered.isEmpty
-                    ? 'No Autonomous devices found. Keep your device on the same network, then refresh.'
+                    ? 'No Autonomous robots found. Keep your device on the same network, then refresh.'
                     : 'Select your device and enter its six-character code. Separators are allowed, for example ABC-123.',
                 control: SizedBox(
                   width: SettingRow.controlWidth,
@@ -367,7 +367,7 @@ class _DevicesSectionState extends State<DevicesSection> {
                                       value: device['id'] as String,
                                       label:
                                           device['name']?.toString() ??
-                                          'Autonomous device',
+                                          'Autonomous robot',
                                     ),
                                 ],
                                 onChanged: (value) => setState(() {
@@ -381,7 +381,7 @@ class _DevicesSectionState extends State<DevicesSection> {
                           const SizedBox(width: 8),
                           AppIconButton(
                             icon: Icons.refresh_rounded,
-                            tooltip: 'Refresh Autonomous device status',
+                            tooltip: 'Refresh Autonomous robot status',
                             onPressed: disabled
                                 ? null
                                 : () => unawaited(_refresh()),

@@ -1,5 +1,5 @@
 import type { HarnessShareOwner } from './sharing/owner.js'
-import { SHARE_REQUEST_TYPES, SHARE_RESULT_TYPES } from './sharing/protocol.js'
+import { SHARE_REQUEST_TYPES } from './sharing/protocol.js'
 import { AutonomousDeviceRelay } from './lib/autonomous-device/relay.js'
 import type { AutonomousDeviceService, AutonomousDeviceFrame } from './lib/autonomous-device/service.js'
 /**
@@ -26,10 +26,11 @@ import { env } from './config/env.js'
 import { AuthSessionManager, AuthSessionError } from './lib/authSession.js'
 import { VERSION } from './version.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
-import { ENGINES, type AgentEngine } from './engines/types.js'
+import { ENGINES, PROCESS_ENGINES, isTerminalEngine, type AgentEngine, type ProcessEngine } from './engines/types.js'
 import { listDir } from './lib/fsBrowse.js'
 import { linkCodexProfile, listCodexProfiles } from './lib/codexProfiles.js'
 import { gridCliPresence } from './lib/gridExec.js'
+import { GridFleetRpc, GRID_FLEET_PROTOCOL, GRID_FLEET_MAX_TIMEOUT_MS, parseGridFleetRequest } from './lib/gridFleetRpc.js'
 import { gridCapableEngines, parseGridLaunchOverride, type GridLaunchOverride } from './lib/gridLaunch.js'
 import { listGridModels, resolveGridTarget } from './lib/gridModels.js'
 import { deriveHarnessGridName } from './lib/gridDerive.js'
@@ -53,6 +54,7 @@ import { DSH_ID_RE } from './dsh/manifest.js'
 import { refreshDshRegistry } from './dsh/catalog.js'
 import type { DshInstallProgress } from './dsh/install.js'
 import { dshInstallReply, dshInstallRequest, dshInstallStatus, dshListRows, dshRemoveId, dshRemoveReply } from './dsh/wire.js'
+import { terminalHandoffRequest } from './lib/terminalHandoff.js'
 import { routeVoiceTask } from './lib/voiceRouter.js'
 import { tailFile } from './lib/sessions.js'
 import { messagesToEvents, windowRawLines, subagentStatsFromRawLines, type SessionEvent } from './lib/normalize.js'
@@ -90,7 +92,8 @@ import {
   TerminalHopDirection,
   type TerminalBinaryClear,
 } from './lib/terminalBinary.js'
-import { b64d, fingerprint, ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType, isWrapped } from './lib/e2ee/core.js'
+import { b64d, fingerprint, isWrapped } from './lib/e2ee/core.js'
+import { encryptDownFrame, encryptRpcResult } from './lib/e2ee/applicationFrames.js'
 import { DEVICE_RECENT_SAFE_FRAME_BYTES, fitRecentReplyPayloadForDevice } from './lib/deviceRecentTrim.js'
 import { shouldReplayCommander } from './lib/commanderReplay.js'
 import { RuntimeProfileControlError, type RuntimeProfileErrorCode } from './lib/runtimeProfileController.js'
@@ -255,14 +258,27 @@ export function copilotHistoryPage(lines: string[], paginated: boolean):
 
 export function deviceAgentListItem(
   raw: unknown,
-): { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy' | 'copilot'; selectedModel?: string | null } {
+): { id: unknown; name?: string; engine?: ProcessEngine; selectedModel?: string | null } {
   const o = (raw ?? {}) as Record<string, unknown>
-  const item: { id: unknown; name?: string; engine?: 'claude' | 'codex' | 'cursor' | 'opencode' | 'pi' | 'hermes' | 'commandcode' | 'devin' | 'muse' | 'amp' | 'kilo' | 'grok' | 'agy' | 'copilot'; selectedModel?: string | null } = { id: o.id }
+  const item: { id: unknown; name?: string; engine?: ProcessEngine; selectedModel?: string | null } = { id: o.id }
   if (typeof o.name === 'string') item.name = clipDeviceAgentName(o.name)
-  if (o.engine === 'claude' || o.engine === 'codex' || o.engine === 'cursor' || o.engine === 'opencode' || o.engine === 'pi' || o.engine === 'hermes' || o.engine === 'commandcode' || o.engine === 'devin' || o.engine === 'muse' || o.engine === 'amp' || o.engine === 'kilo' || o.engine === 'grok' || o.engine === 'agy' || o.engine === 'copilot') item.engine = o.engine
+  // The dial only ever meets process engines — a terminal never reaches it (see `deviceAgentRow`),
+  // and the union here says so rather than repeating fourteen string literals.
+  if (typeof o.engine === 'string' && (PROCESS_ENGINES as readonly string[]).includes(o.engine)) item.engine = o.engine as ProcessEngine
   // Runtime model/effort profile (opaque runtime-v1:...) — lets the device render + change model/effort.
   if (typeof o.selectedModel === 'string' || o.selectedModel === null) item.selectedModel = o.selectedModel
   return item
+}
+
+/**
+ * Whether an agent row belongs on a device at all. The dial drives agents — a terminal with nobody
+ * running in it has no turn to watch, no question to answer and no model to switch, so it is not
+ * listed there; the same row becomes listable the moment an engine is started inside it and its
+ * `engine` flips (registry `adoptEngine`).
+ */
+export function deviceAgentRow(raw: unknown): boolean {
+  const o = (raw ?? {}) as Record<string, unknown>
+  return !isTerminalEngine(typeof o.engine === 'string' ? o.engine : undefined)
 }
 
 /**
@@ -340,6 +356,7 @@ async function enrichSubagentStats(events: SessionEvent[], transcriptPath: strin
 }
 
 export class BackendSocket {
+  private readonly gridFleet = new GridFleetRpc()
   private ws: WebSocket | null = null
   private connecting = false
   /** A 401 on the upgrade is being answered with a token refresh; that refresh owns the next connect. */
@@ -419,6 +436,8 @@ export class BackendSocket {
     Promise<{ ok: true; id: string } | { ok: false; error: string; detail: string }>) | null = null
   /** Called on `dsh_remove` — cli.ts uninstalls the harness from this machine. */
   onDshRemove: ((id: string) => { ok: true } | { ok: false; error: string; detail: string }) | null = null
+  /** Called on `remote_terminal_handoff` — cli.ts names the agent whose tile is that tmux pane, or null. */
+  onTerminalHandoff: ((tmuxPane: string) => string | null) | null = null
   /** What the daemon knows about an agent's DSH companions (viewer URL, verdict); null when nothing. */
   harnessSharing: HarnessShareOwner | null = null
   dshFrameProvider: ((session: RegisteredSession) => AgentDshContext | null) | null = null
@@ -1250,12 +1269,12 @@ export class BackendSocket {
   private emitReply(connId: string, type: string, requestId: unknown, payload: Record<string, unknown>): void {
     const resultType = `${type}_result`
     // Before the E2EE wrap: an RPC reply is only readable here.
-    if (env.LOG_FRAMES && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
+    if (env.LOG_FRAMES && !type.startsWith('grid_fleet_') && type !== 'agent_read_file' && type !== 'project_preview' && !SHARE_REQUEST_TYPES.has(type)) logFrame('→', connId ? `conn:${sid(connId)}` : 'backend', { type: resultType, payload: { requestId, ...payload } })
     if (this.localClients.has(connId)) {
       this.sendTo(connId, { type: resultType, payload: { requestId, ...payload } })
       return
     }
-    if (connId && this.e2ee.hasSession(connId) && (ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
+    if (connId && this.e2ee.hasSession(connId) && encryptRpcResult(resultType)) {
       let replyPayload = payload
       // ⚠️ The DIAL's frame budget, so only a dial's reply is fitted to it. The phone app and a remote
       // desktop are `web` sessions and search this reply for the agent's latest answer: fitted, a reply
@@ -1282,7 +1301,7 @@ export class BackendSocket {
     // adapter plaintext. A real client gets a targeted error; the legacy backend nodeRequest awaiter
     // (`connId === ''`) gets a broadcast error with the same requestId so it fails closed without data.
     // 
-    if ((ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
+    if (encryptRpcResult(resultType)) {
       const errorFrame = { type: resultType, payload: { requestId, error: 'E2EE_REQUIRED' } }
       if (connId) this.sendTo(connId, errorFrame)
       else this.send(errorFrame)
@@ -1335,7 +1354,7 @@ export class BackendSocket {
     }
     // Client→adapter encrypted frames: chat messages plus trusted web control actions. Plaintext
     // passes through for legacy/device transition paths; undecryptable ciphertext is dropped.
-    if (!local && (isEncryptedDownType(type) || SHARE_REQUEST_TYPES.has(type) || VIEWER_DOWN_TYPES.has(type))) {
+    if (!local && encryptDownFrame(type)) {
       if (type !== 'message' && type !== 'question_response' && !isWrapped(frame.payload)) {
         const requestId = (frame.payload as { requestId?: unknown } | undefined)?.requestId
         if (requestId !== undefined) this.emitReply(connId, type, requestId, { error: 'E2EE_REQUIRED' })
@@ -1353,7 +1372,7 @@ export class BackendSocket {
     // than as an opaque __e2e envelope.
     // Terminal frames contain raw keystrokes, paste text and screen bytes after
     // unwrap. Never pass them to the frame logger, even in diagnostic mode.
-    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator' && !SHARE_REQUEST_TYPES.has(type)) {
+    if (env.LOG_FRAMES && !type.startsWith('terminal_') && !type.startsWith('viewer_') && !type.startsWith('grid_fleet_') && type !== 'agent_read_file' && type !== 'project_preview' && type !== 'orchestrator' && !SHARE_REQUEST_TYPES.has(type)) {
       logFrame('←', connId ? `conn:${sid(connId)}` : 'backend', frame)
     }
     const reply = (t: string, rid: unknown, p: Record<string, unknown>): void => this.emitReply(connId, t, rid, p)
@@ -1468,6 +1487,21 @@ export class BackendSocket {
 
     try {
       switch (type) {
+        case 'grid_fleet_capabilities':
+          reply(type, requestId, { protocol: GRID_FLEET_PROTOCOL, gridCli: gridCliPresence(), maxTimeoutMs: GRID_FLEET_MAX_TIMEOUT_MS, thinkingControl: true })
+          return
+        case 'grid_fleet_run': {
+          const request = parseGridFleetRequest(payload)
+          if (!request || typeof requestId !== 'string') { reply(type, requestId, { error: 'INVALID_GRID_COMMAND' }); return }
+          // Detached: pulls/builds can take minutes. Keep typing, cancellation, and telemetry responsive.
+          void this.gridFleet.run(connId, requestId, request)
+            .then(result => reply(type, requestId, { ...result }))
+            .catch(() => reply(type, requestId, { ok: false, code: 1, error: 'Grid command failed unexpectedly.' }))
+          return
+        }
+        case 'grid_fleet_cancel':
+          reply(type, requestId, { cancelled: typeof payload.commandId === 'string' && this.gridFleet.cancel(connId, payload.commandId) })
+          return
         case 'device_e2ee_pair':
           await this.e2ee.pairDeviceFromTrustedWeb(connId, payload)
           return
@@ -1500,7 +1534,7 @@ export class BackendSocket {
           // sorts by the same rule; the two must stay identical.
           projects.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id))
           if (this.e2ee.sessionRole(connId) === 'device') {
-            reply(type, requestId, { agents: projects.slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
+            reply(type, requestId, { agents: projects.filter(deviceAgentRow).slice(0, DEVICE_AGENT_LIST_LIMIT).map(deviceAgentListItem) })
             return
           }
           reply(type, requestId, { agents: projects })
@@ -1811,6 +1845,27 @@ export class BackendSocket {
           return
         }
 
+        case 'remote_terminal_handoff': {
+          // `harness remote`, typed INSIDE one of this machine's terminal tiles, opened a terminal on
+          // another machine and asks the window showing the tile to swap it over: the tile it was
+          // typed in (named by its tmux pane, the one fact the shell has about itself) becomes the new
+          // agent's, and the old shell is ended by the window. Asked over loopback only (the command
+          // runs on this machine), but PUSHED to every audience: the window showing a tile of this
+          // machine may be on another computer, reached through the relay — nothing in the payload
+          // but ids, so it travels plain like dsh_install_status.
+          if (!this.localClients.has(connId)) { reply(type, requestId, { error: 'UNSUPPORTED' }); return }
+          const handoff = terminalHandoffRequest(payload)
+          if (!handoff) { reply(type, requestId, { error: 'INVALID_HANDOFF', detail: 'remote_terminal_handoff needs tmuxPane (%N), machineId and agentId' }); return }
+          const fromAgentId = this.onTerminalHandoff?.(handoff.tmuxPane) ?? null
+          if (!fromAgentId) { reply(type, requestId, { error: 'NOT_A_HARNESS_PANE', detail: `${handoff.tmuxPane} is not a Harness terminal on this machine` }); return }
+          // Who could hear it: other loopback clients (a window on this computer) and the web audience
+          // (a window elsewhere, relayed). None means nobody is here to swap the tile.
+          const windows = [...this.localClients.keys()].filter((id) => id !== connId).length + this.commanderCount
+          this.send({ type: 'remote_terminal_handoff', payload: { fromAgentId, machineId: handoff.machineId, agentId: handoff.agentId } })
+          reply(type, requestId, { ok: true, fromAgentId, windows })
+          return
+        }
+
         case 'dsh_update': {
           if (!this.onDshUpdate) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const id = dshRemoveId(payload)
@@ -1856,7 +1911,7 @@ export class BackendSocket {
                 installed: entry.installed,
                 command: entry.command,
                 installable: entry.installable,
-                installCommand: entry.installable ? engineInstallRecipe(entry.engine).command : null,
+                installCommand: entry.installable ? engineInstallRecipe(entry.engine)?.command ?? null : null,
                 // Static per-CLI-version capability, not a probe result: its mere presence is what
                 // lets an older CLI (which never sends the field) keep reading as "unknown" rather
                 // than "no", per the desktop app's `EngineAvailability.fromJson`.
@@ -1974,7 +2029,11 @@ export class BackendSocket {
           catch (error) {
             reply(type, requestId, { error: error instanceof ProjectFolderError ? error.code : 'INVALID_PROJECT_SOURCE' }); return
           }
-          if (!projectFolder && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
+          // A terminal opens where a terminal app would — the home directory — when the client names
+          // no folder; every other engine works IN a folder and must be told which.
+          const terminal = isTerminalEngine(engine)
+          if (terminal && projectFolder) { reply(type, requestId, { error: 'INVALID_PROJECT_SOURCE', detail: 'a terminal opens in a folder, it does not prepare one' }); return }
+          if (!projectFolder && !(terminal && cwd === undefined) && (typeof cwd !== 'string' || !isAbsolute(cwd))) { reply(type, requestId, { error: 'INVALID_CWD' }); return }
           if (!this.onCreateAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
           const creationId = payload.creationId
           if (creationId !== undefined && !validCreationId(creationId)) {
@@ -1988,6 +2047,7 @@ export class BackendSocket {
           // that quietly ran on the engine's own login would look like it worked.
           const grid = parseGridLaunchOverride(payload.grid)
           if (grid.state === 'invalid') { reply(type, requestId, { error: 'INVALID_GRID', detail: grid.reason }); return }
+          if (terminal && grid.state === 'ok') { reply(type, requestId, { error: 'INVALID_GRID', detail: 'a terminal has no engine to point at a grid' }); return }
           // Same validation the desktop app already applies client-side (`Agent._safeCodexHome`) —
           // repeated here because a client's own check is not a guarantee about what actually
           // arrives on the wire.
@@ -2062,7 +2122,7 @@ export class BackendSocket {
           }
           const input = {
             engine,
-            cwd: typeof cwd === 'string' ? cwd : '',
+            cwd: typeof cwd === 'string' ? cwd : terminal ? homedir() : '',
             // On unless a client says otherwise: a harness works without stopping to ask for each command.
             bypassPermission: permissionMode ? permissionModeApproves(permissionMode) : payload.bypassPermission !== false,
             permissionMode,

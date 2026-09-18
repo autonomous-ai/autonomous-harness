@@ -1,0 +1,13 @@
+{
+  "spec": 1,
+  "mode": "local",
+  "grid": null,
+  "machines": [
+    { "id": "local", "name": "This machine", "transport": "local" }
+  ],
+  "preferences": {
+    "goal": "Run useful models on the machines I own",
+    "keepFreeMemoryGb": 4,
+    "allowAutomaticChanges": false
+  }
+}

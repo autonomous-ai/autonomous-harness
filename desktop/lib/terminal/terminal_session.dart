@@ -75,7 +75,13 @@ class TerminalSession extends ChangeNotifier {
   final String machineId;
   final String agentId;
   String agentName;
-  final String? engineId;
+
+  /// The engine the pane runs — what `terminal_ready` said, until the daemon
+  /// says otherwise. Not final: a terminal tile becomes a Claude tile the
+  /// moment `claude` is typed into it (and a terminal again when it exits),
+  /// and the stream underneath is the same tmux pane throughout, so the
+  /// session is told rather than reopened — see [setEngineId].
+  String? engineId;
   final TerminalFrameSender send;
   final TerminalBinarySender sendBinary;
   final Duration resyncTimeout;
@@ -192,6 +198,15 @@ class TerminalSession extends ChangeNotifier {
     final cleanName = name.trim();
     if (cleanName.isEmpty || cleanName == agentName) return;
     agentName = cleanName;
+    notifyListeners();
+  }
+
+  /// The daemon re-labelled this pane's engine (`agent_synced` with a new
+  /// `engine`): the header mark, the model picker and the scroll strategy
+  /// follow, over the stream already open.
+  void setEngineId(String? engine) {
+    if (engine == engineId) return;
+    engineId = engine;
     notifyListeners();
   }
 

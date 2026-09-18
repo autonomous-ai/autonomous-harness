@@ -299,7 +299,7 @@ class _RetryNotifier extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? permissionMode,
@@ -315,7 +315,7 @@ class _RetryNotifier extends AppNotifier {
     launches.add({
       'machine': machineId,
       'engine': engine,
-      'folder': folder,
+      'folder': folder!,
       'bypass': bypassPermission,
     });
     return 'Test launch refused.';

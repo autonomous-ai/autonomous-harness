@@ -13,6 +13,10 @@ const int e2eVersion = 1;
 /// to the CLI's own list, because a type missing here fails nowhere: the frame simply leaves in the
 /// clear, and for terminal_* the relay then drops it as TERMINAL_FRAME_REJECTED.
 const Set<String> encryptedDownTypes = {
+  // Harness's application RPC extensions (CLI e2ee/applicationFrames.ts).
+  'grid_fleet_capabilities',
+  'grid_fleet_run',
+  'grid_fleet_cancel',
   'message',
   'question_response',
   'agents_list',

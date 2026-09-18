@@ -403,3 +403,71 @@ describe('verified process adoption', () => {
     expect(onDiscovered).toHaveBeenCalledOnce()
   })
 })
+
+describe('a terminal pane (engine `terminal`)', () => {
+  const live = [{ instanceId: 'tmux:default', result: { state: 'available' as const, roots: [{ runtime: tmux, rootPid: 1, cwd: '/work' }] } }]
+  function terminal(overrides: Partial<RegisteredSession> = {}): RegisteredSession {
+    return { ...session([tmux]), engine: 'terminal', terminalHost: true, processIdentity: null, ...overrides }
+  }
+
+  it('is never marked dormant for having no engine process — a shell at its prompt is the normal state', async () => {
+    const current = terminal()
+    const onDormant = vi.fn()
+    const onRemoved = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant, onRemoved,
+      probe: async () => probe(live),
+    })
+    for (let i = 0; i < 4; i++) await reconciler.trigger()
+    expect(onDormant).not.toHaveBeenCalled()
+    expect(onRemoved).not.toHaveBeenCalled()
+  })
+
+  it('owns an engine process that appears in its pane: observed for THIS row, never discovered as a new agent', async () => {
+    const current = terminal()
+    const onDiscovered = vi.fn()
+    const onObserved = vi.fn()
+    const claude = observed([tmux])
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered, onObserved, onDormant: vi.fn(), onRemoved: vi.fn(),
+      probe: async () => probe(live, [claude]),
+    })
+    await reconciler.trigger()
+    expect(onDiscovered).not.toHaveBeenCalled()
+    expect(onObserved).toHaveBeenCalledTimes(1)
+    expect(onObserved.mock.calls[0][1]).toBe(current)
+    expect(onObserved.mock.calls[0][0]).toMatchObject({ engine: 'claude', processIdentity: identity })
+  })
+
+  it('reports the adopted engine dormant when it exits and the pane lives on (the handler turns it back into a terminal)', async () => {
+    const current = terminal({ engine: 'claude', processIdentity: identity })
+    const onDormant = vi.fn()
+    const onRemoved = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant, onRemoved,
+      probe: async () => probe(live),
+    })
+    await reconciler.trigger()
+    expect(onDormant).not.toHaveBeenCalled()
+    await reconciler.trigger()
+    expect(onDormant).toHaveBeenCalledWith(current, 'engine process absent after 2 confirmed scans')
+    expect(onRemoved).not.toHaveBeenCalled()
+  })
+
+  it('is removed like any agent once its pane is gone — the shell exited', async () => {
+    const current = terminal()
+    const onRemoved = vi.fn()
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [current], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved,
+      probe: async () => probe([{ instanceId: 'tmux:default', result: { state: 'available', roots: [] } }]),
+    })
+    await reconciler.trigger()
+    expect(onRemoved).not.toHaveBeenCalled()
+    await reconciler.trigger()
+    expect(onRemoved).toHaveBeenCalledWith(current, 'terminal runtime absent after 2 confirmed scans')
+  })
+})

@@ -7,7 +7,7 @@ const storeCategoryDomains = <String, Set<String>>{
   'Media': {'Documents', 'Slides', 'Video', 'Math animation', 'Music'},
   'Science': {'Chemistry', 'Notebooks', 'Simulation'},
   'Games': {'Games'},
-  'Code': {'Code'},
+  'Code': {'Code', 'Compute'},
 };
 
 String storeCategoryFor(DshEntry entry) {
@@ -57,6 +57,17 @@ const _pcb = StoreStory(
 );
 
 const storeStories = <String, StoreStory>{
+  'autonomous/autonomous-grid': StoreStory(
+    benefit: 'Your machines. Your models. One conversation.',
+    headline: 'Meet your\npersonal AI fleet.',
+    description: 'Deploy open-weight models by talking to Grid.\nWatch your machines, models, and performance live.',
+    asset: 'assets/store/grid-fleet.png',
+    caption: 'Grid Viewer · Illustrative telemetry',
+    prompts: [
+      'Discover my machines and deploy an open-weight model that fits.',
+      'Find the best placement for a coding model and a fast chat model across my fleet.',
+    ],
+  ),
   'autonomous/blender': StoreStory(
     benefit: 'Your imagination, in three dimensions.',
     headline: 'You can\ndesign in 3D.',

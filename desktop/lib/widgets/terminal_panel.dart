@@ -1541,7 +1541,12 @@ class _TerminalHeader extends StatelessWidget {
       if (profile != null) 'Codex profile: $profile',
       'Double-click to rename',
     ].join('\n');
-    final remoteComposer = machine != null && !machine.isLocalMachine
+    // A terminal has no prompt to compose a message for — a shell reads keys,
+    // and the composer's Enter-to-send would be a line nobody asked for.
+    final remoteComposer =
+        machine != null &&
+            !machine.isLocalMachine &&
+            !isTerminalEngine(session.engineId)
         ? onToggleComposer
         : null;
     // The icon cluster, plus the model picker that now sits at its left — without the extra the
@@ -1758,6 +1763,7 @@ class _TerminalHeader extends StatelessWidget {
                     onFork: onFork,
                     onDelete: onDelete,
                     onClose: onClose,
+                    terminal: isTerminalEngine(session.engineId),
                     onToggleComposer: remoteComposer,
                     composerVisible: composerVisible,
                     // A harness agent's viewer, shown or hidden from the

@@ -12,6 +12,7 @@ import { join } from 'node:path'
 
 import { AuthSessionManager, readAuthSession } from '../lib/authSession.js'
 import { registry, projectDisplayName, type RegisteredSession } from '../lib/registry.js'
+import { isTerminalEngine } from '../engines/types.js'
 import { fetchRelease, loadImage, shouldOffer } from './fwPush.js'
 import { routeVoiceTask, type RouterAgent, type RouterContinuity } from '../lib/voiceRouter.js'
 import { env } from '../config/env.js'
@@ -284,7 +285,10 @@ export class DaemonCableHost implements CableHost {
     // `advertised()`, not `list()` — the SAME set `agents_list` answers the web and the desktop app with. They
     // read one registry and must not disagree about what is on it: a dead agent holding a tile on the dial
     // and nowhere else is a tile that cannot be driven and cannot be explained.
-    const sessions = registry.advertised()
+    // Minus the terminals: the dial drives agents, and a shell with nobody in it has no turn to
+    // watch or model to switch (`deviceAgentRow` keeps `agents_list` to the same set for the
+    // device). A terminal that has adopted an engine is that engine here, as everywhere.
+    const sessions = registry.advertised().filter((s) => !isTerminalEngine(s.engine))
     // Oldest → newest, and TOTAL: the id breaks a tie so the order cannot fall through to array position,
     // which is Map insertion order and differs between daemon runs. Both producers sort identically, so
     // the dial and the app cannot drift apart while reading the same registry.

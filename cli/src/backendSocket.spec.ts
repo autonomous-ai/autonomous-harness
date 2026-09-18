@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'fs'
+import { homedir } from 'os'
 import { fileURLToPath } from 'url'
-import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, grokHistoryPage } from './backendSocket.js'
+import { BackendSocket, compactRuntimePickerModels, deviceAgentListItem, deviceAgentRow, grokHistoryPage } from './backendSocket.js'
 import { AuthSessionError, type AuthSessionManager } from './lib/authSession.js'
 import { WS_IDLE_DEADLINE_MS as IDLE_DEADLINE_MS } from './lib/wsLiveness.js'
 import type { TerminalStreamManager } from './lib/terminalStreamManager.js'
@@ -809,6 +810,43 @@ describe('BackendSocket outbound queue', () => {
     }
   })
 
+  it('creates a terminal with no folder at home, and refuses it a grid or a project to prepare', async () => {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:terminal', {
+      sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true,
+    })
+    const pending: RegisteredSession = {
+      schemaVersion: 2, active: true, launch: { state: 'ready' }, terminalHost: true,
+      agentId: 'term-1', sessionId: '', boundAt: null, engine: 'terminal',
+      transcriptPath: null, projectDir: 'nqhieu84', cwd: homedir(),
+      runtimes: [{ backend: 'tmux', paneId: '%9' }], primaryRuntimeKey: 'tmux/%9', tmuxPane: '%9',
+      source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+      registeredAt: 1, updatedAt: 1, lastHookAt: 1, lastTranscriptAt: 1,
+    }
+    const create = vi.fn(async (_input: { engine: string; cwd: string }) => ({ ok: true as const, session: pending }))
+    socket.onCreateAgent = create
+    const ask = (requestId: string, payload: Record<string, unknown>) => socket.handleLocalFrame('local:terminal', {
+      type: 'agent_create', payload: { requestId, engine: 'terminal', ...payload },
+    })
+    const errorOf = (requestId: string) => (frames.find((frame) => frame.type === 'agent_create_result'
+      && (frame.payload as { requestId?: string }).requestId === requestId)?.payload as { error?: string } | undefined)?.error
+    try {
+      ask('home', {})
+      ask('folder', { cwd: '/tmp/work' })
+      await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(2))
+      expect(create.mock.calls.map(([input]) => [input.engine, input.cwd])).toEqual([['terminal', homedir()], ['terminal', '/tmp/work']])
+      ask('relative', { cwd: 'work' })
+      ask('grid', { grid: { networkId: 'n', networkName: 'net', baseUrl: 'https://grid.example', apiKey: 'k' } })
+      ask('prompt', { prompt: 'hello' })
+      await vi.waitFor(() => expect(['relative', 'grid', 'prompt'].map(errorOf)).toEqual(['INVALID_CWD', 'INVALID_GRID', 'PROMPT_UNSUPPORTED']))
+      expect(create).toHaveBeenCalledTimes(2)
+    } finally {
+      await socket.unregisterLocalClient('local:terminal')
+      await socket.stop()
+    }
+  })
+
   it('recovers a delayed creation on the same connection without starting another agent', async () => {
     const socket = new BackendSocket('token')
     const frames: Array<Record<string, unknown>> = []
@@ -1451,6 +1489,12 @@ describe('device agent list contract', () => {
     expect(deviceAgentListItem({ id: 'g1', name: 'Grok agent', engine: 'grok' })).toEqual({
       id: 'g1', name: 'Grok agent', engine: 'grok',
     })
+  })
+
+  it('keeps a terminal off the device: not a row for it, and never an engine it would understand', () => {
+    expect(deviceAgentRow({ id: 't1', name: 'Terminal 1', engine: 'terminal' })).toBe(false)
+    expect(deviceAgentRow({ id: 'c1', name: 'Claude 1', engine: 'claude' })).toBe(true)
+    expect(deviceAgentListItem({ id: 't1', name: 'Terminal 1', engine: 'terminal' })).toEqual({ id: 't1', name: 'Terminal 1' })
   })
 })
 

@@ -38,7 +38,7 @@ import { join, basename, dirname, relative } from 'path'
 import { hostname, uptime } from 'os'
 import { env } from '../config/env.js'
 import { readCodexRolloutMeta, resolveCodexRollout } from '../engines/codex/rollout.js'
-import { ENGINES, type AgentEngine } from '../engines/types.js'
+import { ENGINES, isTerminalEngine, type AgentEngine } from '../engines/types.js'
 import type { GridAssignment } from './gridAssignment.js'
 import { parseGridLaunchOverride, type GridLaunchOverride, type GridLaunchRecord, type GridWebSearchStatus } from './gridLaunch.js'
 import { commandcodeTranscriptPath } from '../engines/commandcode/transcript.js'
@@ -169,6 +169,14 @@ export interface RegisteredSession {
    * existed and on agents Harness did not launch; those relaunch from `bypassPermission`.
    */
   permissionMode?: string
+  /**
+   * The pane was opened as a terminal (engine `terminal`, the desktop's New Terminal) rather than
+   * for an engine. Set once at creation and kept for the row's whole life, whichever engine is
+   * running in it now: this is what tells the reconciler that an engine exiting means "back to a
+   * shell" (`releaseEngine`) rather than "dormant", and what tells `restoreAgents` to bring back
+   * a shell rather than a `claude`. Not a type — `engine` still says what the pane IS right now.
+   */
+  terminalHost?: boolean
   /**
    * The agent this one was FORKED from (`agent_fork`): a new session opened with the source's whole
    * history, the source left as it was. Recorded once at creation so the pane can say "forked from X"
@@ -481,6 +489,7 @@ function strictPersistedRow(value: unknown): RegisteredSession | null {
     model: modelString(row.model),
     cliVersion: typeof row.cliVersion === 'string' ? row.cliVersion : null,
     processIdentity: row.processIdentity ?? null,
+    ...(row.terminalHost === true || row.engine === 'terminal' ? { terminalHost: true } : {}),
     registeredAt: typeof row.registeredAt === 'number' ? row.registeredAt : Date.now(),
     updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : Date.now(),
     lastHookAt: typeof row.lastHookAt === 'number' ? row.lastHookAt : Date.now(),
@@ -870,6 +879,7 @@ class Registry {
             : {}),
           ...(raw.bypassPermission === true ? { bypassPermission: true } : {}),
           ...(permissionModeName(raw.permissionMode) ? { permissionMode: raw.permissionMode } : {}),
+          ...(raw.terminalHost === true || engine === 'terminal' ? { terminalHost: true } : {}),
           transcriptPath,
           defaultName: normalizedDefaultName(raw.defaultName),
           title: titleDisplayName(typeof raw.title === 'string' ? raw.title : null),
@@ -1129,6 +1139,7 @@ class Registry {
       agent: normalizedAgentName(input.agent),
       ...(input.bypassPermission ? { bypassPermission: true } : {}),
       ...(permissionModeName(input.permissionMode) ? { permissionMode: input.permissionMode } : {}),
+      ...(isTerminalEngine(input.engine) ? { terminalHost: true } : {}),
       ...(input.forkedFrom ? { forkedFrom: { agentId: input.forkedFrom.agentId, name: input.forkedFrom.name } } : {}),
       transcriptPath: null,
       projectDir: basename(input.cwd ?? '') || agentId,
@@ -1213,6 +1224,14 @@ class Registry {
       ? this.byProcess(engine, input.processIdentity)
       : undefined)
       ?? inputRuntimes.map((runtime) => this.byRuntimeEngine(runtime, engine)).find(Boolean)
+      // An engine started by hand inside a terminal, whose SessionStart hook beat the reconciler to
+      // it: the terminal at that route is the agent, and it becomes this engine's here and now —
+      // the same flip the reconciler would make a scan later (cli.ts `onObserved`).
+      ?? (isTerminalEngine(engine) ? undefined : inputRuntimes
+        .map((runtime) => this.byRuntimeTerminal(runtime))
+        .filter((agent): agent is RegisteredSession => !!agent)
+        .map((agent) => this.adoptEngine(agent.agentId, engine, validProcessIdentity(input.processIdentity) ? input.processIdentity : null))
+        .find((agent): agent is RegisteredSession => !!agent))
     const agentId = processAgent?.agentId ?? ''
     if (
       !sessionId
@@ -1322,6 +1341,7 @@ class Registry {
       agent: existing?.agent ?? null,
       ...(existing?.bypassPermission ? { bypassPermission: true } : {}),
       ...(existing?.permissionMode ? { permissionMode: existing.permissionMode } : {}),
+      ...(existing?.terminalHost ? { terminalHost: true } : {}),
       processIdentity: validProcessIdentity(input.processIdentity) ? input.processIdentity : existing?.processIdentity ?? null,
       registeredAt: existing?.registeredAt ?? now,
       updatedAt: now,
@@ -1391,6 +1411,76 @@ class Registry {
   byProcess(engine: AgentEngine, identity: ProcessIdentity): RegisteredSession | undefined {
     const agentId = this.processIndex.get(processIdentityKey(engine, identity))
     return agentId ? this.agents.get(agentId) : undefined
+  }
+
+  /** The terminal (engine `terminal`, nobody running in it yet) that owns this route, if that is what owns it. */
+  byRuntimeTerminal(runtime: TerminalRuntimeRef): RegisteredSession | undefined {
+    return this.byRuntimeEngine(runtime, 'terminal')
+  }
+
+  /**
+   * An engine CLI was started inside a terminal: the row becomes that engine's agent, in place.
+   *
+   * Same agentId, same pane, same tile — the desktop only sees `engine` change on the next
+   * `agent_synced`. The process identity is indexed under the NEW engine (the key is engine-scoped),
+   * which is what lets the hook that follows (`register`, `byProcess(engine, …)`) land on this row
+   * rather than mint another. `terminalHost` stays set so the exit is recognised (`releaseEngine`).
+   * Refused for anything but a terminal: an agent already running one engine is never re-labelled.
+   */
+  adoptEngine(agentId: string, engine: AgentEngine, processIdentity?: ProcessIdentity | null): RegisteredSession | null {
+    const entry = this.agents.get(agentId)
+    if (!entry || !isTerminalEngine(entry.engine) || isTerminalEngine(engine)) return null
+    this.drop(entry)
+    entry.engine = engine
+    entry.terminalHost = true
+    entry.launch = { state: 'ready' }
+    entry.active = true
+    if (validProcessIdentity(processIdentity)) entry.processIdentity = processIdentity
+    entry.updatedAt = Date.now()
+    this.index(entry)
+    this.terminalAvailableAgents.add(entry.agentId)
+    this.save()
+    return entry
+  }
+
+  /**
+   * The engine in this pane has exited and the pane is a shell now: the row is a terminal.
+   *
+   * For every agent, not only one that began as a terminal — an engine the app launched runs
+   * inside its pane's shell too (engineLaunch.ts `harness_engine`), and `/exit` or Ctrl-C leaves
+   * that shell at its prompt with the engine's last screen above it.
+   *
+   * What goes is what described the PROCESS and its session — session id, transcript, pid,
+   * gateway, grid assignment, model, title — because the next thing typed into this shell may be a
+   * different engine, and `unboundRouteOwner` only claims a route for a row with no session. What
+   * stays is what describes the PANE's launch — `gridLaunch`, `codexHome`, `dsh`, `agent`, the
+   * permission choice: the tmux session's environment still carries the grid endpoint and the
+   * Codex profile, the workspace is still that harness's, and a restart or a relaunch after a
+   * reboot puts the same engine back with the same shape. Dropping `gridLaunch` in particular made
+   * a released grid agent unrestorable ("credential not persisted"). The row itself, its id, its
+   * pane and its name stay: this is the opposite of dormant, the terminal is live. `terminalHost`
+   * is set from here on, since that is what the pane now is.
+   */
+  releaseEngine(agentId: string): RegisteredSession | null {
+    const entry = this.agents.get(agentId)
+    if (!entry || isTerminalEngine(entry.engine)) return null
+    this.drop(entry)
+    this.releaseBinding(entry)
+    entry.engine = 'terminal'
+    entry.terminalHost = true
+    entry.processIdentity = null
+    entry.launch = { state: 'ready' }
+    entry.active = true
+    entry.gateway = null
+    entry.grid = null
+    entry.subscriptionModel = null
+    entry.model = null
+    entry.title = null
+    entry.updatedAt = Date.now()
+    this.index(entry)
+    this.terminalAvailableAgents.add(entry.agentId)
+    this.save()
+    return entry
   }
 
   updateRuntimes(agentId: string, runtimes: readonly TerminalRuntimeRef[], primaryRuntimeKey?: string): boolean {

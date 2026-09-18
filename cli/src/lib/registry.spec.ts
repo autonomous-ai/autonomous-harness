@@ -1567,3 +1567,98 @@ describe('registry across a reboot and pane loss', () => {
     expect(registry.list()).toHaveLength(1)
   })
 })
+
+describe('a terminal: a pane that becomes an engine and back', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    dataDir = mkdtempSync(join(tmpdir(), 'adapter-registry-terminal-'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    rmSync(dataDir, { recursive: true, force: true })
+    delete process.env.ADAPTER_DATA_DIR
+    delete process.env.CLAUDE_PROJECTS_DIR
+    delete process.env.CODEX_HOME
+    delete process.env.CURSOR_HOME
+  })
+
+  const pane = { backend: 'tmux' as const, paneId: '%9' }
+
+  it('opens as engine `terminal`, marked terminalHost, and survives a reload that way', async () => {
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+    expect(opened).toMatchObject({ engine: 'terminal', terminalHost: true, sessionId: '', processIdentity: null })
+    expect(opened.defaultName).toMatch(/^Terminal /)
+    expect(registry.byRuntimeTerminal(pane)?.agentId).toBe(opened.agentId)
+
+    const { registry: reloaded } = await loadRegistryModule()
+    reloaded.load()
+    expect(reloaded.byAgent(opened.agentId)).toMatchObject({ engine: 'terminal', terminalHost: true })
+  })
+
+  it('adopts the engine started inside it — same agentId, process indexed under the engine — then a hook binds to it', async () => {
+    const transcriptPath = join(dataDir, 'session-t.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+
+    const adopted = registry.adoptEngine(opened.agentId, 'claude', processIdentity(909))!
+    expect(adopted.agentId).toBe(opened.agentId)
+    expect(adopted).toMatchObject({ engine: 'claude', terminalHost: true, launch: { state: 'ready' }, active: true })
+    expect(registry.byProcess('claude', processIdentity(909))?.agentId).toBe(opened.agentId)
+    expect(registry.byRuntimeTerminal(pane)).toBeUndefined()
+    expect(registry.byRuntimeEngine(pane, 'claude')?.agentId).toBe(opened.agentId)
+    // An agent already running an engine is never re-labelled.
+    expect(registry.adoptEngine(opened.agentId, 'codex', processIdentity(910))).toBeNull()
+
+    const bound = registry.register({ engine: 'claude', sessionId: 'session-t', transcriptPath, tmuxPane: '%9', processIdentity: processIdentity(909) })
+    expect(bound?.entry.agentId).toBe(opened.agentId)
+    expect(bound?.entry.terminalHost).toBe(true)
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('a SessionStart hook that beats the reconciler adopts the terminal at its pane rather than minting nothing', async () => {
+    const transcriptPath = join(dataDir, 'session-h.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+    const bound = registry.register({ engine: 'claude', sessionId: 'session-h', transcriptPath, tmuxPane: '%9', processIdentity: processIdentity(911) })
+    expect(bound?.entry.agentId).toBe(opened.agentId)
+    expect(bound?.entry).toMatchObject({ engine: 'claude', terminalHost: true })
+    expect(registry.list()).toHaveLength(1)
+  })
+
+  it('releases the engine when it exits: a live terminal again, with nothing of the engine left on it', async () => {
+    const transcriptPath = join(dataDir, 'session-r.jsonl')
+    writeFileSync(transcriptPath, '{}\n')
+    const { registry } = await loadRegistryModule()
+    registry.load()
+    const opened = registry.openPendingAgent({ engine: 'terminal', runtimes: [pane], cwd: '/tmp/work' })!
+    registry.adoptEngine(opened.agentId, 'claude', processIdentity(912))
+    registry.register({ engine: 'claude', sessionId: 'session-r', transcriptPath, tmuxPane: '%9', processIdentity: processIdentity(912) })
+    registry.setBypassPermission(opened.agentId, true)
+
+    const released = registry.releaseEngine(opened.agentId)!
+    expect(released.agentId).toBe(opened.agentId)
+    expect(released).toMatchObject({ engine: 'terminal', terminalHost: true, active: true, launch: { state: 'ready' }, sessionId: '', processIdentity: null, transcriptPath: null, grid: null, model: null })
+    // The pane's launch shape survives the engine: the same flags come back with the next launch.
+    expect(released.bypassPermission).toBe(true)
+    expect(registry.bySession('session-r')).toBeUndefined()
+    expect(registry.byProcess('claude', processIdentity(912))).toBeUndefined()
+    expect(registry.byRuntimeTerminal(pane)?.agentId).toBe(opened.agentId)
+    expect(registry.terminalAvailable(opened.agentId)).toBe(true)
+    // Already a terminal? Nothing to release. A plain agent whose engine exited? A terminal from now on.
+    expect(registry.releaseEngine(opened.agentId)).toBeNull()
+    const plain = registry.openPendingAgent({ engine: 'codex', runtimes: [{ backend: 'tmux', paneId: '%10' }], cwd: '/tmp/x' })!
+    expect(plain.terminalHost).toBeUndefined()
+    expect(registry.releaseEngine(plain.agentId)).toMatchObject({ engine: 'terminal', terminalHost: true, active: true })
+    expect(registry.byRuntimeTerminal({ backend: 'tmux', paneId: '%10' })?.agentId).toBe(plain.agentId)
+
+    // And the next engine typed into the same shell is adopted just the same.
+    expect(registry.adoptEngine(opened.agentId, 'codex', processIdentity(913))).toMatchObject({ engine: 'codex' })
+  })
+})

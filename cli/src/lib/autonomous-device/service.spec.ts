@@ -60,6 +60,42 @@ describe('Autonomous device local-agent service', () => {
     } finally { vi.useRealTimers() }
   })
 
+  describe('scroll', () => {
+    function scrollFixture(hasApp = true) {
+      const scroll = vi.fn((_phase: 'down' | 'move' | 'up', _dy: number, _velocity: number) => hasApp)
+      const service = new AutonomousDeviceService({ machineId: 'machine', scroll,
+        agents: () => [], submit: vi.fn(), stop: async () => true, answer: async () => true, cancelDelivery: () => true, recent: () => [] })
+      const send = (over: Record<string, unknown>) => service.request('device', { type: 'scroll', requestId: randomUUID(), ...over })
+      return { service, scroll, send }
+    }
+
+    it('advertises the capability', () => {
+      expect(AUTONOMOUS_DEVICE_CAPABILITIES).toContain('scroll')
+    })
+
+    it('forwards each phase of a stroke to the window, dy and velocity defaulting to 0', async () => {
+      const f = scrollFixture()
+      expect(await f.send({ phase: 'down' })).toMatchObject({ type: 'scroll_result' })
+      expect(await f.send({ phase: 'move', dy: -24 })).not.toHaveProperty('error')
+      expect(await f.send({ phase: 'up', dy: -3, velocity: -900 })).not.toHaveProperty('error')
+      expect(f.scroll.mock.calls).toEqual([['down', 0, 0], ['move', -24, 0], ['up', -3, -900]])
+    })
+
+    it('rejects a bad phase, a non-integer or oversized travel, and unknown fields', async () => {
+      const f = scrollFixture()
+      for (const over of [{ phase: 'flick' }, { phase: 'move', dy: 1.5 }, { phase: 'move', dy: 5000 }, { phase: 'up', velocity: 1e6 }, { phase: 'move', dy: 1, agentId: 'a' }]) {
+        expect(await f.send(over)).toMatchObject({ error: { code: 'INVALID_REQUEST' } })
+      }
+      expect(f.scroll).not.toHaveBeenCalled()
+    })
+
+    it('is FOCUS_UNAVAILABLE without a Desktop window, and when the machine has no scroll wiring', async () => {
+      expect(await scrollFixture(false).send({ phase: 'down' })).toMatchObject({ error: { code: 'FOCUS_UNAVAILABLE' } })
+      const bare = new AutonomousDeviceService({ machineId: 'm', agents: () => [], submit: vi.fn(), stop: async () => true, answer: async () => true, cancelDelivery: () => true, recent: () => [] })
+      expect(await bare.request('device', { type: 'scroll', requestId: randomUUID(), phase: 'down' })).toMatchObject({ error: { code: 'FOCUS_UNAVAILABLE' } })
+    })
+  })
+
   describe('focus.step', () => {
     const DESK = ['a', 'b', 'c']
     function stepFixture(desk = DESK, acknowledge = true) {

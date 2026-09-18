@@ -221,6 +221,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final asked = widget.initialEngine;
     if (asked != null &&
         (isHarnessId(asked) ||
+            isTerminalEngine(asked) ||
             allEngines.any((identity) => identity.id == asked))) {
       // Chosen before the dialog opened: counts as the person's choice, so no
       // probe or remembered preference moves it.
@@ -265,7 +266,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   /// this build ships a face for, or one the machine has named.
   bool _knownChoice(String? id) =>
       id != null &&
-      (allEngines.any((identity) => identity.id == id) ||
+      (isTerminalEngine(id) ||
+          allEngines.any((identity) => identity.id == id) ||
           knownHarnesses.any((identity) => identity.id == id) ||
           _harness(id) != null);
 
@@ -286,6 +288,10 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   bool get _engineIsHarness => isHarnessId(_engine);
+
+  /// A shell rather than an agent: nothing to install, no task, no permission
+  /// mode, and a folder is a place to open in, not a project to prepare.
+  bool get _engineIsTerminal => isTerminalEngine(_engine);
 
   /// The engine a choice actually launches: a harness runs ON one of them, and
   /// that is what travels as `engine` beside the harness id.
@@ -381,8 +387,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
 
   String _preferredInstalledEngine() {
     // A harness is not in the engine probe at all; its own install state is
-    // the machine's catalog, and a remembered harness stays chosen.
-    if (_engineIsHarness) return _engine;
+    // the machine's catalog, and a remembered harness stays chosen. Nor is
+    // the terminal: every machine has a shell.
+    if (_engineIsHarness || _engineIsTerminal) return _engine;
     final engines = widget.notifier.stateOf(_machineId)?.engines;
     if (engines?.loaded != true || engines?[_engine]?.installed == true) {
       return _engine;
@@ -493,11 +500,17 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   }
 
   Future<void> _submit() async {
-    final project = _preparedFolder == null ? _projectFolder : null;
+    final terminal = _engineIsTerminal;
+    // A terminal never prepares a folder: "Home" is no cwd at all, which the
+    // daemon opens at the machine's home, and a Git repository is not on
+    // offer for it.
+    final project = _preparedFolder == null && !terminal
+        ? _projectFolder
+        : null;
     final folder =
         _preparedFolder ??
         (_folderSource == _FolderSource.local ? _folder : null);
-    if ((folder == null && project == null) ||
+    if ((folder == null && project == null && !terminal) ||
         _submitting ||
         (!_confirmationPending && _waitingForCodexProfile)) {
       return;
@@ -563,7 +576,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final error = await widget.notifier.createAgent(
       _machineId,
       engine: engine,
-      folder: folder ?? '',
+      folder: terminal ? folder : folder ?? '',
       projectFolder: project,
       swarmId: widget.swarmId,
       split: widget.split,
@@ -745,6 +758,9 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                               'First task',
                               _takesTask
                                   ? 'What should your agent work on? (Optional)'
+                                  : _engineIsTerminal
+                                  ? 'A terminal opens straight on your shell; '
+                                        'type there.'
                                   : '${_labelOf(_engine)} starts without one. '
                                         'Tell it once it opens.',
                               null,
@@ -895,6 +911,8 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                                           ? 'Cloning and starting…'
                                           : _installing
                                           ? 'Installing ${_labelOf(_engine)}…'
+                                          : _engineIsTerminal
+                                          ? 'Opening terminal…'
                                           : 'Creating harness…',
                                     ),
                                   ),
@@ -1086,6 +1104,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                     size: size,
                   ),
                 ),
+              // After every agent: a plain shell, for when none of them is
+              // wanted — the same tile ⌘⇧T opens, from here with a machine
+              // and a folder chosen. Every machine has one, so the search
+              // lists it with what the machine has (_installedIds).
+              AgentChoice(
+                id: kTerminalEngine,
+                label: terminalIdentity.label,
+                detail: terminalIdentity.tagline,
+                keywords: '${terminalIdentity.category} shell bash zsh',
+                description: terminalIdentity.blurb,
+                mark: (size) => EngineMark(engine: kTerminalEngine, size: size),
+              ),
             ],
             onChanged: (value) {
               if (_choicesLocked) return;
@@ -1096,6 +1126,15 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
                   _engine = value;
                   _codexProfile = null;
                   _codexProfilesBusy = true;
+                  // A terminal cannot clone: a Git project chosen for an
+                  // agent goes back to the default, as the project picker
+                  // is about to be remounted to.
+                  if (isTerminalEngine(value) &&
+                      _folderSource == _FolderSource.remote) {
+                    _repository = null;
+                    _folder = null;
+                    _folderSource = _FolderSource.newProject;
+                  }
                 }
                 // The choice is kept across agents; one with no flag simply shows none (and sends
                 // false, see _submit), so coming back to Claude Code finds it as it was left.
@@ -1137,20 +1176,30 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
           SizedBox(height: sectionGap),
           _sectionHeader(
             'Project',
-            'Start something new or choose an existing project.',
+            _engineIsTerminal
+                ? 'Where the shell opens: your home folder, or a project.'
+                : 'Start something new or choose an existing project.',
             HarnessHelpTopic.project,
             compactHeight: compactHeight,
           ),
           PageStorage(
             bucket: _projectChoices,
             child: NewAgentProjectPicker(
-              key: ValueKey('new-agent-projects-$_machineId'),
+              // Keyed on the kind too: a terminal's tiles differ (Home, no
+              // Git), and switching remounts the picker with them.
+              key: ValueKey(
+                'new-agent-projects-$_machineId-'
+                '${_engineIsTerminal ? 'terminal' : 'agent'}',
+              ),
               notifier: widget.notifier,
               machineId: _machineId,
               initialFolder: _folder,
               focusNode: _folderFocus,
               tileSize: tileSize,
               locked: _choicesLocked,
+              // A terminal opens IN a folder, the way a terminal app does: at
+              // home when none is named, never in one prepared or cloned.
+              terminal: _engineIsTerminal,
               onBrowse: _browse,
               onSelected: (folder, repository) {
                 if (_choicesLocked) return;
@@ -1476,6 +1525,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final machine = widget.notifier.stateOf(_machineId);
     if (machine == null) return null;
     final name = machine.machine.displayName;
+    if (isTerminalEngine(id)) return 'Your shell on $name';
     if (isHarnessId(id)) {
       final entry = _harness(id);
       if (entry == null) return null;
@@ -1497,6 +1547,7 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
     final machine = widget.notifier.stateOf(_machineId);
     if (machine == null) return const {};
     return {
+      kTerminalEngine,
       for (final entry in machine.dsh.entries)
         if (entry.installed && !entry.isViewerPackage) entry.id,
       for (final engine in machine.engines.byEngine.values)

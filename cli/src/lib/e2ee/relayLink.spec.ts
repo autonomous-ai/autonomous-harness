@@ -130,6 +130,15 @@ describe('remote-password link + relay session crypto (interop with the real E2e
       expect(decrypted).not.toBeNull()
       expect((decrypted!.payload as Record<string, unknown>).foo).toBe('bar')
 
+      const gridRequest = { requestId: 'grid-1', args: ['chat', 'private prompt'] }
+      const sealedGrid = crypto.wrapOutgoing({ type: 'grid_fleet_run', payload: gridRequest })
+      expect(sealedGrid.payload).not.toHaveProperty('args')
+      expect(manager.unwrapDown('session-conn', sealedGrid)?.payload).toEqual(gridRequest)
+      const gridResult = { requestId: 'grid-1', stdout: 'private answer', code: 0 }
+      const sealedResult = manager.wrapTarget('session-conn', 'grid_fleet_run_result', gridResult)!
+      expect(sealedResult.payload).not.toHaveProperty('stdout')
+      expect(crypto.unwrapIncoming(sealedResult)?.payload).toEqual(gridResult)
+
       // Creation recovery must take the same encrypted route as creation; its result contains
       // the agent's name and working folder. The relay sees neither the receipt nor those fields.
       const checking = { requestId: 'check-1', creationId: 'creation-fixture-001' }
@@ -338,6 +347,57 @@ describe('remote-password link + relay session crypto (interop with the real E2e
 describe('RemoteRelayPool drops a peer the responder no longer trusts', () => {
   // A fake AuthSessionManager — RemoteRelayPool only ever calls .accessToken({force}).
   const fakeAuth = { accessToken: async () => 'unused-in-this-fake' } as unknown as import('../authSession.js').AuthSessionManager
+
+  it('isolates concurrent fleet clients from each other and the desktop connection', async () => {
+    const wss = new WebSocketServer({ port: 0 })
+    const sockets = new Map<string, import('ws').WebSocket>()
+    const manager = new E2eeManagerCtor({
+      machineId: MACHINE_ID, isConnected: () => true,
+      sendTo: (id, frame) => sockets.get(id)?.send(JSON.stringify(frame)),
+    })
+    let next = 0
+    wss.on('connection', ws => {
+      const id = `client-${++next}`; sockets.set(id, ws)
+      ws.on('close', () => { sockets.delete(id); manager.dropSession(id) })
+      ws.on('message', raw => {
+        const frame = JSON.parse(raw.toString())
+        if (frame.type === 'machine_select') ws.send(JSON.stringify({ type: 'connected', payload: { machineId: MACHINE_ID } }))
+        else if (frame.type.startsWith('e2e_')) manager.handleFrame(id, frame)
+        else if (frame.type === 'grid_fleet_run') {
+          expect(frame.payload).not.toHaveProperty('args')
+          const clear = manager.unwrapDown(id, frame)
+          ws.send(JSON.stringify(manager.wrapTarget(id, 'grid_fleet_run_result', clear!.payload as Record<string, unknown>)))
+        }
+      })
+    })
+    const base = `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`
+    const identity = C.newIdentity()
+    await manager.setRemotePassword(REMOTE_PASSWORD)
+    const claim = await connectWithPassword({ targetMachineId: MACHINE_ID, password: REMOTE_PASSWORD, selfIdentity: identity, accessToken: 'unused', backendWsBase: base, autonomousEnv: 'prod', timeoutMs: 5000 })
+    expect(claim.ok).toBe(true)
+    if (!claim.ok) throw new Error('pairing failed')
+    const peers = new MachinePeerStore(); peers.pin(MACHINE_ID, C.b64e(claim.peerPub), 'test')
+    const pool = new RemoteRelayPool(fakeAuth, base, identity, peers)
+    const inboxes: Frame[][] = [[], [], []]
+    const select = { type: 'machine_select', payload: { machineId: MACHINE_ID } }
+    const sink = (i: number) => ({ sendFrame: (f: Frame) => { inboxes[i].push(f); return true }, sendBinary: () => true })
+    const desktop = await pool.acquire(MACHINE_ID, 'prod', select, sink(0), () => {})
+    const a = await pool.acquireIsolated(MACHINE_ID, 'prod', select, sink(1), () => {})
+    const b = await pool.acquireIsolated(MACHINE_ID, 'prod', select, sink(2), () => {})
+    try {
+      await Promise.all([desktop, a, b].map((s, i) => s.send({ type: 'grid_fleet_run', payload: { requestId: `r-${i}`, args: [`model-${i}`] } })))
+      await new Promise(resolve => setTimeout(resolve, 100))
+      inboxes.forEach((inbox, i) => expect(inbox.filter(f => f.type === 'grid_fleet_run_result').map(f => f.payload)).toEqual([{ requestId: `r-${i}`, args: [`model-${i}`] }]))
+      a.detach()
+      await desktop.send({ type: 'grid_fleet_run', payload: { requestId: 'still-connected', args: ['version'] } })
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(inboxes[0].at(-1)?.payload).toMatchObject({ requestId: 'still-connected' })
+    } finally {
+      a.detach(); b.detach(); pool.invalidate(MACHINE_ID)
+      for (const ws of wss.clients) ws.terminate()
+      await new Promise<void>(resolve => wss.close(() => resolve()))
+    }
+  }, PW_SCRYPT_TEST_TIMEOUT_MS)
 
   it('e2e_denied during the handshake unlinks the peer and surfaces NO_PEER_LINK', async () => {
     const wss = new WebSocketServer({ port: 0 })

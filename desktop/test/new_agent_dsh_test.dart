@@ -99,7 +99,7 @@ class _Notifier extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     bool bypassPermission = false,
     String? permissionMode,
     String? codexHome,
@@ -377,13 +377,14 @@ void main() {
       );
       await openAgentSearch(tester);
       // Nothing typed: the choice, then what the machine has — Circuit, the
-      // harness it installed, ahead of Codex, an engine it has — then the
-      // familiar engines, and the Store last. Robot Arm, which it lacks, is
-      // not listed.
+      // harness it installed, ahead of Codex, an engine it has, and the
+      // terminal, which every machine has — then the familiar engines, and
+      // the Store last. Robot Arm, which it lacks, is not listed.
       expect(agentRows(tester), [
         'claude',
         'autonomous/autonomous-circuit',
         'codex',
+        'terminal',
         'opencode',
       ]);
       await tester.enterText(agentSearch, 'robot');

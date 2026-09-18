@@ -71,7 +71,8 @@ export function syncSummaryPoolSessions(sessions: Array<{ engine: AgentEngine }>
     // Hermes, Devin, Muse and Amp take their recap prompt as argv (`muse exec <prompt>`, `amp -x <prompt>`),
     // so they cannot be pre-warmed the way a stdin-fed CLI can — no pooled worker for them.
     if (session.engine === 'hermes' || session.engine === 'devin' || session.engine === 'muse'
-      || session.engine === 'amp' || session.engine === 'grok' || session.engine === 'agy' || session.engine === 'copilot') continue
+      || session.engine === 'amp' || session.engine === 'grok' || session.engine === 'agy' || session.engine === 'copilot'
+      || session.engine === 'terminal') continue
     counts[session.engine]++
   }
   setOneShotPoolActiveCounts(counts)

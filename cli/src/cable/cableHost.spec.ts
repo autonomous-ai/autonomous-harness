@@ -246,6 +246,14 @@ describe('DaemonCableHost.listAgentsFlat across machines, and the tab the dial g
     expect(agents.map((a) => a.machineId)).toEqual(['mine', 'other', 'third'])
   })
 
+  it('never lists a terminal — a shell with nobody in it is not something the dial can drive', async () => {
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'term-1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'terminal' })
+    AGENTS.push({ agentId: 'local-1', registeredAt: 2, active: true, terminalAvailable: true, engine: 'claude' })
+    const host = new DaemonCableHost(wiring(), crossFleet({}, []))
+    expect((await settled(host)).map((a) => a.id)).toEqual(['local-1'])
+  })
+
   it('keeps a machine\'s agents when the backend cannot be asked', async () => {
     // The failure this exists for, measured on the real dial: `unknown` means the backend could not be
     // reached — MachineListCache.degrade() marks EVERY machine with it in one go — and reading it as

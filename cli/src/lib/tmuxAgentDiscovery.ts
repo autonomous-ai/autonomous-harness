@@ -10,7 +10,7 @@ import { execFile } from 'node:child_process'
 import {
   agentAliasOwner,
   agentCommandOwnershipSnapshot,
-  ENGINES,
+  PROCESS_ENGINES,
   type AgentCommandOwnershipSnapshot,
 } from './engineBin.js'
 import type { AgentEngine } from '../engines/types.js'
@@ -177,7 +177,7 @@ function paneOwner(
     const current = queue.shift()!
     const row = byPid.get(current.pid)
     if (row && !excluded.has(row.pid)) {
-      for (const engine of ENGINES) {
+      for (const engine of PROCESS_ENGINES) {
         const score = engineProcessMatchScore(row, engine, ownership)
         if (score > 0) matches.push({ row, engine, depth: current.depth, score })
       }

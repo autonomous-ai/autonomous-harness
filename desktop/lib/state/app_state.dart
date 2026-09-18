@@ -42,7 +42,8 @@ import '../terminal/terminal_theme_store.dart';
 import '../logging/app_log.dart';
 import '../shared/theme/app_theme.dart' as grid;
 import '../terminal/remote_media_download.dart';
-import '../widgets/engine_identity.dart' show allEngines, engineIdentity;
+import '../widgets/engine_identity.dart'
+    show allEngines, engineIdentity, isTerminalEngine;
 import '../widgets/run_local_model_dialog.dart' show showRunLocalModelDialog;
 import 'dial_status.dart';
 import 'pane_layout_store.dart';
@@ -1674,7 +1675,23 @@ class AppNotifier extends ChangeNotifier {
   void _announceOpenPanesToDial() {
     final pool = _pool;
     if (pool == null) return;
-    final agentIds = <String>[for (final pane in panes) ?pane.agentId];
+    // A terminal tile is not the dial's: the dial drives agents, and the daemon
+    // never lists a shell to it. Naming one here would make the daemon "hold"
+    // an id it has nothing for. The same tile IS named once an engine has been
+    // typed into it — `_upsertAgent` re-announces on the engine change.
+    bool onDial(TerminalPane pane) {
+      final agentId = pane.agentId;
+      if (agentId == null) return false;
+      final agent = machineStates[pane.machineId]?.agents
+          .where((agent) => agent.id == agentId)
+          .firstOrNull;
+      return !isTerminalEngine(agent?.engine);
+    }
+
+    final agentIds = <String>[
+      for (final pane in panes)
+        if (onDial(pane)) pane.agentId!,
+    ];
     // The swarms travel with the tiles: the dial names the one on screen above the agent and offers
     // the others, and a pick there comes back as `dial_swarm`. Names and member ids only — the layout
     // inside a swarm is this window's business.
@@ -1683,7 +1700,10 @@ class AppNotifier extends ChangeNotifier {
         {
           'id': swarm.id,
           'name': swarm.name,
-          'agentIds': [for (final pane in swarm.panes) ?pane.agentId],
+          'agentIds': [
+            for (final pane in swarm.panes)
+              if (onDial(pane)) pane.agentId!,
+          ],
         },
     ];
     for (final machineId in machineStates.keys) {
@@ -4367,6 +4387,15 @@ class AppNotifier extends ChangeNotifier {
     machine.agentLoadStatus = AgentLoadStatus.loaded;
     machine.agentsLoadError = null;
     _syncViewerPane(machine, agent);
+    // A terminal that adopted an engine, or let one go: the tiles already
+    // attached to it keep their stream and change their face. The dial's
+    // tile list changes with it — a terminal is not on it, its engine is.
+    if (previous != null && previous.engine != agent.engine) {
+      for (final pane in panesFor(machine.machine.machineId)) {
+        if (pane.agentId == agent.id) pane.session?.setEngineId(agent.engine);
+      }
+      _announceOpenPanesToDial();
+    }
     if (agent.launchState == 'failed' && previous?.launchState != 'failed') {
       _lastError = agent.launchDetail ?? 'Failed to start ${agent.name}';
       // The launch already ran and failed (e.g. the engine's automatic
@@ -4908,7 +4937,11 @@ class AppNotifier extends ChangeNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+
+    /// Where the agent works. Null only for a terminal (`kTerminalEngine`),
+    /// which the daemon then opens at the machine's home, as a terminal app
+    /// would — every other engine is refused without one (`INVALID_CWD`).
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = true,
     String? permissionMode,
@@ -4924,7 +4957,7 @@ class AppNotifier extends ChangeNotifier {
     final creation = attempt ?? AgentCreationAttempt();
     final choices = <String, dynamic>{
       'engine': engine,
-      if (projectFolder == null) 'cwd': folder,
+      if (projectFolder == null && folder != null) 'cwd': folder,
       ...?projectFolder?.payload,
       'bypassPermission': bypassPermission,
       // The mode picked in New Harness (`permission_modes.dart`). A daemon that
@@ -5026,6 +5059,10 @@ class AppNotifier extends ChangeNotifier {
           'This first task is too long for $machine. Shorten it and try again.',
         'AGENT_UNSUPPORTED' =>
           'This engine cannot be opened as a named agent on $machine.',
+        // A daemon that predates the terminal engine refuses it by name; the
+        // fix is the same one the other UNSUPPORTED codes ask for.
+        'INVALID_ENGINE' =>
+          'Update the harness CLI on $machine to open this kind of pane.',
         _ => 'Create harness failed: ${detail ?? code}',
       };
 
@@ -5050,6 +5087,12 @@ class AppNotifier extends ChangeNotifier {
           return 'Update the harness CLI on this machine to choose a Codex profile';
         }
       }
+    }
+    // Nothing to dial with before sign-in finishes (`_finishBootstrapSignedIn`
+    // makes the pool) — a shortcut that fires in that window, such as ⌘⇧T, is
+    // answered rather than crashed on.
+    if (_pool == null && connectionForTest == null) {
+      return 'Not connected to $machineName yet.';
     }
     final connection = _conn(machineId);
     var launchChoices = choices;
@@ -5583,6 +5626,95 @@ class AppNotifier extends ChangeNotifier {
   /// second open is a takeover — the window would fight itself and the first
   /// tile would go dark with `TERMINAL_TAKEN_OVER`. [revealAgentView] is what
   /// Open Harness uses for the same reason.
+  /// `harness remote`'s hand-over: the tile showing [fromAgentId] on
+  /// [fromMachineId] becomes [agentId]'s on [machineId] — the SAME tile, in
+  /// place: its slot, its pin, its cell key and so its widget all stay, only
+  /// the machine and agent it points at change and the terminal inside it is
+  /// replaced. The shell the command was typed in is then stopped, so the old
+  /// terminal is gone rather than left behind. Nothing happens when no tile
+  /// here shows that agent: the push reaches every window, and the tile is
+  /// in one.
+  ///
+  /// Not [assignAgentToPane]: that removes the tile and inserts a new one,
+  /// which remounts the cell and can slide the grid — a move should read as
+  /// the tile changing what it shows, not as one tile leaving and another
+  /// arriving.
+  ///
+  /// The new agent may not be in [machineId]'s list yet: its `agent_created`
+  /// push travels on that machine's connection, the hand-over on this one, and
+  /// the two are unordered. So the list is asked for again, and the agent is
+  /// waited for a little, before the tile is pointed at it.
+  Future<void> handoffTerminalPane(
+    String fromMachineId,
+    String fromAgentId,
+    String machineId,
+    String agentId,
+  ) async {
+    Swarm? tab;
+    TerminalPane? tile;
+    for (final swarm in swarms) {
+      for (final pane in swarm.panes) {
+        if (pane.machineId == fromMachineId && pane.agentId == fromAgentId) {
+          tab = swarm;
+          tile = pane;
+          break;
+        }
+      }
+      if (tile != null) break;
+    }
+    if (tab == null || tile == null) return;
+    final target = machineStates[machineId];
+    if (target == null) {
+      _lastError = 'The machine the terminal opened on is not in this window.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return;
+    }
+    if (!await _awaitAgent(target, agentId)) {
+      _lastError =
+          '${target.machine.displayName} opened a terminal, but it has not appeared yet.';
+      _lastErrorRetryable = false;
+      notifyListeners();
+      return;
+    }
+    if (_disposed || !allPanes.contains(tile)) return;
+    // The old stream goes first (the cell shows "Attaching…" for the moment
+    // between), then the tile is re-pointed and the new one attached.
+    await _detachSession(tile, sendClose: true);
+    if (_disposed) return;
+    tile
+      ..machineId = machineId
+      ..agentId = agentId
+      ..sharedHarness = null
+      ..sharedOwnerName = null;
+    target.activeAgentId = agentId;
+    _dismissedLinkPrompts.remove(machineId);
+    if (tab.id != activeSwarmId) selectSwarm(tab.id);
+    if (tab == activeSwarm) selectedMachineId = machineId;
+    focusPane(tile.id, reveal: true);
+    notifyListeners();
+    _persistLayout();
+    unawaited(_attachSession(tile));
+    // The old shell: `harness remote` has exited in it, and the tile is no
+    // longer its. Ending it is what makes the switch a move, not a copy.
+    await deleteAgent(fromMachineId, fromAgentId);
+  }
+
+  /// Whether [machine] lists [agentId], asking it again and watching for the
+  /// push for a few seconds when it does not yet. The reload is not awaited:
+  /// it waits on the connection being ready, and the agent's own
+  /// `agent_created` usually lands on it first.
+  Future<bool> _awaitAgent(MachineState machine, String agentId) async {
+    bool known() => machine.agents.any((agent) => agent.id == agentId);
+    if (known()) return true;
+    unawaited(_loadMachineData(machine, force: true).catchError((_) {}));
+    for (var attempt = 0; attempt < 32 && !_disposed; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (known()) return true;
+    }
+    return known();
+  }
+
   Future<void> openAgentFromDial(String machineId, String agentId) async {
     if (revealAgentView(machineId, agentId)) {
       selectedMachineId = machineId;
@@ -6783,6 +6915,30 @@ class AppNotifier extends ChangeNotifier {
           if (targetMachineId != null) {
             unawaited(openAgentFromDial(targetMachineId, openId));
           }
+        }
+        break;
+      case 'remote_terminal_handoff':
+        // `harness remote`, typed in one of this window's terminal tiles, opened a
+        // terminal on another machine: that tile becomes the new agent's, in
+        // place, and the shell it was typed in is ended. Pushed to every
+        // loopback client; only the window holding the tile acts.
+        final fromAgentId = payload['fromAgentId'];
+        final toMachineId = payload['machineId'];
+        final toAgentId = payload['agentId'];
+        if (fromAgentId is String &&
+            fromAgentId.isNotEmpty &&
+            toMachineId is String &&
+            toMachineId.isNotEmpty &&
+            toAgentId is String &&
+            toAgentId.isNotEmpty) {
+          unawaited(
+            handoffTerminalPane(
+              machine.machine.machineId,
+              fromAgentId,
+              toMachineId,
+              toAgentId,
+            ),
+          );
         }
         break;
       case 'node_status':

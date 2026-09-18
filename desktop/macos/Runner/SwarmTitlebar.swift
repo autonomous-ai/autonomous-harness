@@ -99,7 +99,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
   }
 
   private func sendTabAction(_ method: String, arguments: Any?) {
-    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination", "machineAgent", "manageMachines"].contains(method) else {
+    guard ["select", "close", "new", "rename", "commands", "notifications", "addAgent", "newAgent", "newTerminal", "splitRight", "splitDown", "zoomPane", "pinPane", "machineDestination", "machineAgent", "manageMachines"].contains(method) else {
       channel.invokeMethod(method, arguments: arguments)
       return
     }
@@ -221,7 +221,7 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
       item.representedObject = action
       item.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + action)
       let symbols = [
-        "new": "plus.square", "newAgent": "plus", "addAgent": "arrow.up.right",
+        "new": "plus.square", "newAgent": "plus", "addAgent": "arrow.up.right", "newTerminal": "terminal",
         "renameActive": "pencil", "closeActive": "xmark",
         "splitRight": "rectangle.split.2x1", "splitDown": "rectangle.split.1x2",
         "zoomPane": "viewfinder", "closePane": "xmark",
@@ -241,6 +241,10 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     let file = NSMenu(title: "File")
     add(file, "New Tab", "t", "new")
     add(file, "New Harness…", "n", "newAgent")
+    // ⌘⇧T, as in a terminal app. It used to be Reopen Last Closed (History menu), which keeps its
+    // row and loses its default chord — the Dart keymap (`swarm.reopen`) is where both are decided,
+    // and applyMenuKeys rewrites every equivalent here from it.
+    add(file, "New Terminal", "t", "newTerminal", [.command, .shift])
     add(file, "Open Harness…", "o", "addAgent")
     add(file, "Rename Tab…", "r", "renameActive", [.command, .shift])
     add(file, "Close Tab", "w", "closeActive")
@@ -557,11 +561,11 @@ final class SwarmTitlebar: NSObject, NSMenuItemValidation, NSMenuDelegate {
     }
     command("Back", "[", "historyBack")
     command("Forward", "]", "historyForward")
-    let reopen = NSMenuItem(title: "Reopen Last Closed", action: #selector(menuAction(_:)), keyEquivalent: "t")
+    // No default chord: ⌘⇧T is New Terminal now. A person can give this one in keybindings.jsonc.
+    let reopen = NSMenuItem(title: "Reopen Last Closed", action: #selector(menuAction(_:)), keyEquivalent: "")
     reopen.target = self
     reopen.representedObject = "reopen"
     reopen.identifier = NSUserInterfaceItemIdentifier(HarnessKeymapMenu.actionPrefix + "reopen")
-    reopen.keyEquivalentModifierMask = [.command, .shift]
     historyMenu.addItem(reopen)
     historyMenu.addItem(.separator())
     appendHistorySection("Recently Closed", entries: closed, closed: true, trailingEdge: trailingEdge)

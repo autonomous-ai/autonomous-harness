@@ -6,7 +6,7 @@
  * installs successfully but does not provide the expected executable is worse than no recipe.
  */
 
-import type { AgentEngine } from '../engines/types.js'
+import { isTerminalEngine, type AgentEngine, type ProcessEngine } from '../engines/types.js'
 
 /** How to find the executable after the installer returns. */
 export interface EngineInstallExecutable {
@@ -33,7 +33,7 @@ export interface EngineInstallRecipe {
  * Exhaustive on purpose. Adding an engine without deciding how it is installed must fail typecheck
  * rather than silently creating another unsupported row in Desktop.
  */
-export const ENGINE_INSTALL: Readonly<Record<AgentEngine, EngineInstallRecipe>> = {
+export const ENGINE_INSTALL: Readonly<Record<ProcessEngine, EngineInstallRecipe>> = {
   claude: {
     command: 'npm install -g @anthropic-ai/claude-code',
     source: 'https://docs.anthropic.com/en/docs/claude-code/getting-started',
@@ -118,8 +118,9 @@ export const ENGINE_INSTALL: Readonly<Record<AgentEngine, EngineInstallRecipe>> 
   },
 }
 
-export function engineInstallRecipe(engine: AgentEngine): EngineInstallRecipe {
-  return ENGINE_INSTALL[engine]
+/** A terminal has nothing to install — the login shell is already there — hence `undefined`. */
+export function engineInstallRecipe(engine: AgentEngine): EngineInstallRecipe | undefined {
+  return isTerminalEngine(engine) ? undefined : ENGINE_INSTALL[engine]
 }
 
 export const INSTALLABLE_ENGINES: ReadonlySet<AgentEngine> = new Set(

@@ -53,6 +53,10 @@ enum ShortcutAction {
 
   closePane,
   newAgent,
+
+  /// A plain shell in a pane, like a native terminal's new tab — the daemon
+  /// treats whatever engine is later typed into it as the pane's agent.
+  newTerminal,
   routeTask,
   orchestrate,
   reload,
@@ -364,15 +368,18 @@ const kSwarmShortcuts = [
     label: 'New Tab',
     group: ShortcutGroup.navigate,
   ),
+  // ⌘⇧T is New Terminal, as it is in a terminal app. "Reopen last closed
+  // harness" used to sit on it; it lives on in the History menu, the ⌘⇧P
+  // command palette and `keybindings.jsonc`, without a default chord.
   AppShortcut(
-    action: ShortcutAction.reopenClosedSwarm,
+    action: ShortcutAction.newTerminal,
     activator: SingleActivator(
       LogicalKeyboardKey.keyT,
       meta: true,
       shift: true,
     ),
-    label: 'Reopen last closed harness',
-    group: ShortcutGroup.navigate,
+    label: 'New Terminal',
+    group: ShortcutGroup.actions,
   ),
   AppShortcut(
     action: ShortcutAction.closeSwarm,

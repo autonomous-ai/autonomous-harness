@@ -11,7 +11,7 @@ import '../logging/debug_surface.dart';
 enum SettingsSection {
   account(LucideIcons.user300, 'Account'),
   usage(LucideIcons.chartNoAxesColumn300, 'Usage'),
-  devices(LucideIcons.zap300, 'Autonomous devices'),
+  devices(LucideIcons.zap300, 'Autonomous robots'),
   shortcuts(LucideIcons.keyboard300, 'Keyboard shortcuts'),
   debug(LucideIcons.bug300, 'Debug'),
   tracking(LucideIcons.activity300, 'Tracking'),

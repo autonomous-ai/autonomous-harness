@@ -1,4 +1,3 @@
-import { SHARE_REQUEST_TYPES } from '../../sharing/protocol.js'
 /**
  * The "client" (formerly-browser) role of the E2EE session protocol, run by THIS daemon on behalf of a
  * local app relaying through it to a REMOTE machine it has `harness link connect`-ed to via that
@@ -12,10 +11,10 @@ import { SHARE_REQUEST_TYPES } from '../../sharing/protocol.js'
  */
 import { WebSocket } from 'ws'
 import * as C from './core.js'
+import { encryptDownFrame } from './applicationFrames.js'
 import { deriveTerminalBinaryKey, openTerminalBinary, sealTerminalBinary, type TerminalBinaryClear } from '../terminalBinary.js'
 import { pwCpaceGenerator, pwContext, stretchPassword } from './passwordPake.js'
 import { ReplayWindow } from './replayWindow.js'
-import { VIEWER_DOWN_TYPES } from '../viewerWire.js'
 
 type Frame = Record<string, unknown>
 
@@ -108,8 +107,9 @@ export class RelaySessionCrypto {
   /** Encrypt an outgoing (local app → remote machine) frame if its type requires it. */
   wrapOutgoing(frame: Frame): Frame {
     const type = frame.type as string | undefined
-    // CLI-to-CLI viewer forwarding is a negotiated extension; the shared crypto core stays byte-identical.
-    if (!type || !this.c2s || !(C.isEncryptedDownType(type) || SHARE_REQUEST_TYPES.has(type) || VIEWER_DOWN_TYPES.has(type))) return frame
+    // Sharing, viewer forwarding and fleet RPCs are negotiated extensions; the shared crypto core stays
+    // byte-identical — see applicationFrames.ts for the one list.
+    if (!type || !this.c2s || !encryptDownFrame(type)) return frame
     const payload = C.wrapPayload(this.c2s, 'p', this.c2sCounter++, type, undefined, frame.payload)
     return { ...frame, payload }
   }

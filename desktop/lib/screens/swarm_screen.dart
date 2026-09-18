@@ -30,6 +30,7 @@ import '../state/swarm_attention.dart';
 import '../state/swarm_navigation.dart';
 import '../state/swarm_search.dart';
 import '../state/swarm.dart';
+import '../state/terminal_pane.dart';
 import '../widgets/transient_menus.dart';
 import '../widgets/layout_palette.dart';
 import '../widgets/engine_identity.dart';
@@ -507,7 +508,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
   DateTime? _localModelsAt;
 
   Future<void> _refreshLocalModels() async {
-    final machines = app.machines.where((machine) => !machine.isShared).toList();
+    final machines = app.machines
+        .where((machine) => !machine.isShared)
+        .toList();
     if (machines.isEmpty) return;
     // The daemon memoises its answer, so a repeat is nearly free — but this is called on every app
     // change, and an RPC per keystroke-sized notification is not free. One read per window is
@@ -564,6 +567,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
         args['command'] is String ? args['command'] as String : null,
       'commands' => 'navigation.commands',
       'newAgent' => 'agent.new',
+      'newTerminal' => 'terminal.new',
       _ => null,
     };
     if (nativeCommand != null) {
@@ -662,6 +666,8 @@ class _SwarmScreenState extends State<SwarmScreen> {
         await _addAgent();
       case 'newAgent':
         unawaited(_newAgent(swarmId: app.activeSwarmId));
+      case 'newTerminal':
+        unawaited(_newTerminal());
       case 'runLocalModel':
         // The native Models menu's one command. Wrapped like Link Machine…
         // because the notifier may open its dialog here, and the pane it then
@@ -773,6 +779,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
           'notifications',
           'addAgent',
           'newAgent',
+          'newTerminal',
           'manageMachines',
           'deleteMachine',
           'splitRight',
@@ -870,6 +877,50 @@ class _SwarmScreenState extends State<SwarmScreen> {
       );
     }, restoreEntry: false);
     await _ensureEmptyEntry();
+  }
+
+  /// ⌘⇧T: a shell in a new tile, no dialog — the way a terminal app opens a
+  /// tab. It lands on the machine the focused tile is on (this computer when
+  /// nothing is focused), in the folder that tile's harness works in, else
+  /// the first project any tile in this tab has, else the machine's home —
+  /// which is what the daemon opens when no folder is named.
+  Future<void> _newTerminal() async {
+    if (app.activeSwarm.isStore) app.newSwarm();
+    final target = app.activeSwarmId;
+    final focused = app.focusedPane;
+    final machine = focused == null
+        ? app.machineStates.values
+                  .where((machine) => machine.isLocalMachine)
+                  .firstOrNull ??
+              app.machineStates.values.firstOrNull
+        : app.stateOf(focused.machineId);
+    if (machine == null) {
+      await _dialog(() => showSwarmLinkDialog(context, app));
+      return;
+    }
+    final machineId = machine.machine.machineId;
+    String? folderOf(TerminalPane pane) {
+      if (pane.machineId != machineId) return null;
+      final agent = machine.agents
+          .where((agent) => agent.id == pane.agentId)
+          .firstOrNull;
+      return agent == null ? null : machine.projectOf(agent)?.cwd;
+    }
+
+    final folder =
+        (focused == null ? null : folderOf(focused)) ??
+        app.panes.map(folderOf).whereType<String>().firstOrNull;
+    final error = await app.createAgent(
+      machineId,
+      engine: kTerminalEngine,
+      folder: folder,
+      bypassPermission: false,
+      swarmId: target,
+    );
+    if (error != null && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
   Future<void> _splitAgent(
@@ -1294,6 +1345,7 @@ class _SwarmScreenState extends State<SwarmScreen> {
       }
     },
     ShortcutAction.newAgent: _newAgent,
+    ShortcutAction.newTerminal: _newTerminal,
     ShortcutAction.routeTask: () =>
         _dialog(() => showTaskPalette(context, app)),
     ShortcutAction.orchestrate: () =>
@@ -1357,6 +1409,9 @@ class _SwarmScreenState extends State<SwarmScreen> {
     }
     if (id == 'navigation.back') return _navigation.canGoBack(app);
     if (id == 'navigation.forward') return _navigation.canGoForward(app);
+    // Opening a terminal needs no terminal to already be there; the other
+    // `terminal.*` commands are find, which does.
+    if (id == 'terminal.new') return true;
     if (id.startsWith('terminal.')) return _canFindTerminal;
     if (id == 'pane.resize') {
       return app.panes.length > 1 && app.zoomedPaneId == null;

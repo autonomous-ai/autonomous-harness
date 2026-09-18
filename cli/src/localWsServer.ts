@@ -305,9 +305,12 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           // its pooled entry is suspect (most commonly the relayed machine's own Harness process
           // restarted, dropping its E2EE session without the transport itself ever closing). Drop it
           // so this select dials fresh instead of handing back the same dead session again.
-          if (payload?.forceReconnect === true) options.relayPool.invalidate(requestedMachineId)
+          if (payload?.forceReconnect === true && payload?.relayIsolation !== true) options.relayPool.invalidate(requestedMachineId)
           try {
-            relay = await options.relayPool.acquire(requestedMachineId, options.autonomousEnv, frame, sink, close)
+            relay = payload?.relayIsolation === true
+              ? await options.relayPool.acquireIsolated(requestedMachineId, options.autonomousEnv, frame, sink, close)
+              : await options.relayPool.acquire(requestedMachineId, options.autonomousEnv, frame, sink, close)
+            if (ws.readyState !== WebSocket.OPEN) { relay.detach(); return }
             selected = true
           } catch (err) {
             const noPeerLink = err instanceof RelayConnectError && err.message === 'NO_PEER_LINK'

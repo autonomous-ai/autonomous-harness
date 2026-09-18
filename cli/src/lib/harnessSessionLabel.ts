@@ -16,3 +16,8 @@ export function buildHarnessSessionLabel(engine: string, now: number = Date.now(
 export function isHarnessSession(sessionName: string): boolean {
   return sessionName.startsWith(HARNESS_SESSION_PREFIX)
 }
+
+/** Whether a harness session was created FOR this engine — `harness-<engine>-<ts>` — rather than another. */
+export function isHarnessSessionFor(sessionName: string, engine: string): boolean {
+  return sessionName.startsWith(`${HARNESS_SESSION_PREFIX}${engine}-`)
+}

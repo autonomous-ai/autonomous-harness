@@ -27,7 +27,7 @@
  * spend the wrong account while looking identical — and is marked so the app can say why.
  */
 
-import type { AgentEngine } from '../engines/types.js'
+import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
 import type { AgentLaunch, ProcessIdentity, RegisteredSession } from './registry.js'
 import type { TerminalRuntimeRef, TmuxRuntimeRef } from './terminalTypes.js'
 import { terminalRouteKey } from './terminalRuntime.js'
@@ -53,7 +53,16 @@ export interface RestoreAgentsDeps {
     updateProcessIdentity(agentId: string, processIdentity: ProcessIdentity): boolean
     unbindSession(sessionId: string): boolean
     inheritName(fromSessionId: string, toSessionId: string): void
+    /** A terminal's adopted engine is gone: back to a shell (registry.ts). */
+    releaseEngine(agentId: string): RegisteredSession | null
   }
+  /**
+   * Whether the row's PANE is still there — a live pane in a session this daemon created. Every
+   * pane is a shell with the engine inside it, so a pane can outlive its engine: that is a terminal
+   * (a bare one has no engine process to find at all), not a pane to rebuild. Optional so a caller
+   * without tmux inventory (tests) treats a pane with no engine process as gone.
+   */
+  livePane?: (runtime: TmuxRuntimeRef) => Promise<boolean>
   /** The engine process still running in this row's pane, or null when tmux does not know the pane
    *  at all — including when no tmux server is running — or the pane has become something else. */
   liveProcess: (entry: RegisteredSession, runtime: TmuxRuntimeRef) => Promise<ProcessIdentity | null>
@@ -68,8 +77,9 @@ export interface RestoreAgentsDeps {
   respawn: (runtime: TmuxRuntimeRef, launch: RestoreLaunch) => Promise<{ ok: boolean; reason?: string }>
   /** One probe of the pane for a recognizable engine process. */
   probeProcess: (runtime: TmuxRuntimeRef, engine: AgentEngine) => Promise<ProcessIdentity | null>
-  /** Null when tmux no longer knows the pane. */
-  paneState: (runtime: TmuxRuntimeRef) => Promise<{ dead: boolean } | null>
+  /** Null when tmux no longer knows the pane. `engineExit` set: the engine left and the pane is a
+   *  shell now (`ENGINE_EXIT_PANE_OPTION`), which for a restore is the same news as `dead`. */
+  paneState: (runtime: TmuxRuntimeRef) => Promise<{ dead: boolean; engineExit?: number | null } | null>
   clearRemainOnExit: (runtime: TmuxRuntimeRef) => Promise<void>
   holdRoute: (routeKey: string, autoReleaseMs: number) => void
   releaseRoute: (routeKey: string) => void
@@ -114,7 +124,7 @@ async function waitForSettle(deps: RestoreAgentsDeps, runtime: TmuxRuntimeRef, s
   while (Date.now() < until) {
     await sleep(Math.min(SETTLE_POLL_MS, until - Date.now()))
     const state = await deps.paneState(runtime)
-    if (!state || state.dead) return 'gone'
+    if (!state || state.dead || state.engineExit != null) return 'gone'
   }
   return 'settled'
 }
@@ -131,6 +141,32 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
     const runtime = tmuxRuntime(entry)
     if (!runtime) { summary.skipped.push({ agentId: entry.agentId, reason: 'no tmux pane' }); continue }
     if (entry.launch?.state === 'failed') { summary.skipped.push({ agentId: entry.agentId, reason: 'last launch failed' }); continue }
+    // A pane is alive as long as tmux has it, whatever runs in it: every pane is a shell with the
+    // engine inside, so an engine that exited while the daemon was down left a shell at its prompt
+    // — exactly the exit the reconciler would have caught — and the row is put back to a terminal
+    // here rather than a second pane being opened beside the first. A bare terminal has no engine
+    // process to look for at all.
+    const paneAlive = await deps.livePane?.(runtime) ?? false
+    if (paneAlive) {
+      const engineLive = isTerminalEngine(entry.engine) ? null : await deps.liveProcess(entry, runtime)
+      if (engineLive) {
+        // Still running. A row that lost its identity without losing its pane (a reboot the boot
+        // clock misread; a tmux server that outlived the daemon) is re-identified right here, so the
+        // reconciler adopts it by process instead of treating it as an unbound route.
+        if (!entry.processIdentity) deps.registry.updateProcessIdentity(entry.agentId, engineLive)
+      } else if (!isTerminalEngine(entry.engine)) {
+        deps.registry.releaseEngine(entry.agentId)
+        deps.log(`[restore] ${entry.engine} → terminal · agent ${entry.agentId} · its engine exited while the daemon was down`)
+      }
+      continue
+    }
+    // A terminal whose pane is gone comes back as a terminal — never as the engine that was once
+    // typed into it: that engine's session went with the pane.
+    if (entry.terminalHost) {
+      if (!isTerminalEngine(entry.engine)) deps.registry.releaseEngine(entry.agentId)
+      missing.push({ entry: deps.registry.byAgent(entry.agentId) ?? entry, runtime })
+      continue
+    }
     const live = await deps.liveProcess(entry, runtime)
     if (live) {
       // Still running. A row that lost its identity without losing its pane (a reboot the boot
@@ -181,6 +217,15 @@ export async function restoreAgents(deps: RestoreAgentsDeps): Promise<RestoreSum
         continue
       }
       const key = terminalRouteKey(created.runtime)
+      // A terminal is up the moment its pane is — no engine to wait for, no route to hold.
+      if (isTerminalEngine(entry.engine)) {
+        deps.registry.updateRuntimes(entry.agentId, [created.runtime], key)
+        deps.registry.setLaunch(entry.agentId, { state: 'ready' })
+        await deps.clearRemainOnExit(created.runtime)
+        summary.restored.push(entry.agentId)
+        deps.log(`[restore] terminal · agent ${entry.agentId} · pane ${dead.paneId} → ${created.runtime.paneId}`)
+        continue
+      }
       deps.holdRoute(key, budgetMs + HOLD_SLACK_MS)
       deps.registry.updateRuntimes(entry.agentId, [created.runtime], key)
       deps.registry.setLaunch(entry.agentId, { state: 'starting' })
@@ -269,7 +314,7 @@ async function watchRestoredPane(
         fail('ENGINE_DID_NOT_START', `${engine}'s restored pane disappeared before its engine process became ready.`)
         return
       }
-      if (state.dead) {
+      if (state.dead || state.engineExit != null) {
         if (!await relaunchFresh()) return
         delayMs = 50
         continue

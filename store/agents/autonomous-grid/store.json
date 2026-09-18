@@ -1,0 +1,9 @@
+{
+  "homepage": "https://github.com/autonomous-ai/autonomous-grid",
+  "upstream": "https://github.com/autonomous-ai/autonomous-grid",
+  "license": "MIT",
+  "tagline": "Deploy open-weight models across your machines and watch the fleet live",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/agents/autonomous-grid/screenshots/grid-topology.png"
+  ]
+}
