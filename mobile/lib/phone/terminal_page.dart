@@ -414,8 +414,8 @@ class _TerminalPageState extends State<TerminalPage>
 
   /// Collapses it back into the bar, and takes the overlay down once it is home.
   ///
-  /// ⚠️ **Guarded on the controller's own status, not on [_searching].** Cancel
-  /// and the system back gesture can both arrive while the reverse is already
+  /// ⚠️ **Guarded on the controller's own status, not on [_searching].** The
+  /// field's chevron and the system back gesture can both arrive while the reverse is already
   /// running — a second `reverse()` restarts it from wherever it had got to, and
   /// the bar visibly bounces.
   void _closeSearch() {
@@ -685,15 +685,15 @@ class _TerminalPageState extends State<TerminalPage>
         // Captured while the agent is still listed, for the sentence above.
         if (agent != null) _cachedAgentName = agent.name;
         final reclaim = phoneReclaimAction(session);
-        // The header's trailing controls, counted before they are built: the
-        // slot they share with Cancel is sized from this, and the search field
-        // is laid out against that same width. The conditions must match the
-        // ones guarding each control below — see [_TrailingSwap.extentFor].
+        // The header's trailing controls, counted before they are built: their
+        // slot is sized from this, and the search field is laid out against
+        // that same width. The conditions must match the ones guarding each
+        // control below — see [_TrailingFade.extentFor].
         //
         // ⚠️ [reclaim] is counted too, though it is a labelled button rather
         // than one of the fixed 24px icon boxes. It cannot be measured from a
         // constant — its width is its label's — so the slot treats it as a
-        // MINIMUM rather than a fixed size: see [_TrailingSwap], which floors
+        // MINIMUM rather than a fixed size: see [_TrailingFade], which floors
         // the width it is given instead of forcing it. Sizing it exactly is not
         // worth a second TextPainter for a button that shows only on a
         // read-only stream.
@@ -704,7 +704,7 @@ class _TerminalPageState extends State<TerminalPage>
                 : 0) +
             (agent != null ? 1 : 0) +
             (reclaim != null ? 1 : 0);
-        final trailingExtent = _TrailingSwap.extentFor(context, headerActions);
+        final trailingExtent = _TrailingFade.extentFor(context, headerActions);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
           // ⚠️ No fab. New agent is the `+` in the header — see the note there.
@@ -971,18 +971,15 @@ class _TerminalPageState extends State<TerminalPage>
                             // [TerminalFootBar] at the foot of the page, where it reads
                             // as identity rather than as chrome.
                             //
-                            // ⚠️ **Wrapped so the pair can hand over to Cancel.** They act
+                            // ⚠️ **Wrapped so they can step aside for search.** They act
                             // on the agent underneath, which is not what is on screen once
-                            // search is up — so they cross-fade for the way out, in a slot
-                            // that keeps one width throughout. See [_TrailingSwap]: the
-                            // field beside it must not move, which is what the earlier
-                            // collapse-and-reopen got wrong.
+                            // search is up — so they fade out while the search field
+                            // widens over their place. No Cancel takes it: the way out
+                            // is the chevron at the field's own leading edge. See
+                            // [_TrailingFade] and `terminal_search.dart`.
                             trailing: [
-                              _TrailingSwap(
+                              _TrailingFade(
                                 progress: _searchCurve,
-                                cancel: _CancelSearchButton(
-                                  onTap: _closeSearch,
-                                ),
                                 extent: trailingExtent,
                                 children: [
                                   // Read-only is a state to get OUT of, so its way out is a
@@ -1111,9 +1108,10 @@ class _TerminalPageState extends State<TerminalPage>
                       notifier: widget.notifier,
                       animation: _searchCurve,
                       onClose: _closeSearch,
-                      // What the header's trailing slot holds — the field stops
-                      // there rather than reaching under Cancel. The same number
-                      // the header lays that slot out from, so the two agree.
+                      // What the header's trailing slot holds — where the field
+                      // starts from before it widens over the fading controls.
+                      // The same number the header lays that slot out from, so
+                      // the two agree on the first frame.
                       trailingExtent: trailingExtent,
                     ),
                   ),
@@ -1918,130 +1916,39 @@ String _clipTitle(String name) {
   return '${String.fromCharCodes(runes.take(_titleMaxChars)).trimRight()}…';
 }
 
-/// The way out of search, in the header where the page's own controls were.
+/// The header's trailing end, fading its controls out as search opens — in a
+/// column whose width the search field can count on.
 ///
-/// ⚠️ **It draws at a fixed size and does not animate.** Its arrival is
-/// [_TrailingSwap]'s fade; a width or a scale of its own on top of that is what
-/// made the field beside it move, and the field holding still is the point.
+/// There is no Cancel to swap in: the way out of search is the chevron at the
+/// field's leading edge, as on the search page. The field widens over this slot
+/// as the controls fade, one move in one direction; see `_Bar` in
+/// `terminal_search.dart`.
 ///
-/// The word rather than a glyph: this is the one control on the row that leaves,
-/// and a second `×` beside the field's own clear would be two ways out sitting
-/// together.
-class _CancelSearchButton extends StatelessWidget {
-  const _CancelSearchButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  static const String _label = 'Cancel';
-
-  /// The gap between the field and the word.
-  static const double _lead = 12;
-
-  static const TextStyle _style = TextStyle(
-    fontSize: 14,
-    fontWeight: FontWeight.w500,
-  );
-
-  /// How wide this button comes out, laid against [context]'s text scaling.
-  ///
-  /// ⚠️ **Measured, not assumed.** The search overlay draws its field beside
-  /// this and has to stop exactly where the word starts; a hard-coded width
-  /// would be wrong the moment the system font scale moves, and the field would
-  /// either overhang "Cancel" or leave a gap before it. [TextPainter] is what
-  /// the row itself will lay out with, so the two agree by construction.
-  static double extentFor(BuildContext context) {
-    final painter = TextPainter(
-      text: TextSpan(text: _label, style: _style),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-      maxLines: 1,
-    )..layout();
-    final width = painter.width;
-    painter.dispose();
-    return _lead + width;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    AppTheme.watch(context);
-    return Semantics(
-      button: true,
-      label: 'Cancel search',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: SizedBox(
-          // The bar's own height, so the target covers the row rather than just
-          // the word's line box.
-          height: TerminalHeader.barHeight,
-          child: Padding(
-            // Leading gap from the field; nothing trailing, so the word stops on
-            // the header's own right inset the way the last action does.
-            padding: const EdgeInsets.only(left: _lead),
-            child: Center(
-              child: Text(
-                _label,
-                maxLines: 1,
-                softWrap: false,
-                style: _style.copyWith(color: AppPalette.accentOnSurface),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The header's trailing end, cross-fading its controls for Cancel as search
-/// opens — in a column that never changes width.
-///
-/// ⚠️ **A [Stack], not a collapse, and the search field's steadiness is the
-/// whole reason.** Handing these points back made the field widen into them and
-/// then narrow again as Cancel claimed its own — two layout changes in opposite
-/// directions inside one gesture, which reads as the row snapping about rather
-/// than as anything opening. Keeping both sets in the same slot means the field
-/// is laid out once and never moves: what changes is only which of the two is
-/// painted.
-///
-/// ⚠️ **The slot is given an explicit width, not sized by its children.** A
-/// [Stack] would take the wider of the two, which is a number nothing outside
-/// this widget can predict — and the search overlay MUST predict it, because it
-/// draws its field up to this slot's left edge. [extentFor] is that number, and
-/// both this and the overlay are laid out from it.
-///
-/// ⚠️ Both children stay laid out for the whole animation. That is what lets
-/// them cross-fade at all, and it is why each is wrapped in its own
-/// [IgnorePointer] — an invisible Cancel over a live `⋯` would otherwise take
-/// the tap meant for the menu.
-class _TrailingSwap extends StatelessWidget {
-  const _TrailingSwap({
+/// ⚠️ **The slot is given an explicit width, not sized by its children.** The
+/// search overlay draws its field up to this slot's left edge on the first frame
+/// of the open, so it must be able to predict that edge. [extentFor] is that
+/// number, and both this and the overlay are laid out from it.
+class _TrailingFade extends StatelessWidget {
+  const _TrailingFade({
     required this.progress,
     required this.children,
-    required this.cancel,
     required this.extent,
   });
 
-  /// 0 the page's own controls are showing, 1 Cancel is.
+  /// 0 the page's own controls are showing, 1 search is fully open.
   final Animation<double> progress;
 
   /// The header's controls: `+`, `⋯`, and reclaim when the stream is read-only.
   final List<Widget> children;
-
-  /// The way out of search, shown in their place.
-  final Widget cancel;
 
   /// The slot's width, from [extentFor].
   final double extent;
 
   /// How wide a slot holding [actions] controls must be.
   ///
-  /// The wider of the two states, so the field beside it lands in the same place
-  /// whichever is showing — which is the entire point of the swap.
-  ///
-  /// ⚠️ Counts [TerminalHeader.barGap] once, at the front. Both states carry
-  /// that gap (see the [Row] below and [_CancelSearchButton]'s own leading pad),
-  /// so it belongs to the slot rather than to either side of it.
+  /// ⚠️ Counts [TerminalHeader.barGap] once, at the front: the gap between the
+  /// field and the controls belongs to the slot, so the field's right edge is
+  /// the slot's left one.
   static double extentFor(BuildContext context, int actions) {
     // Each action is [AppIconButton]'s fixed 24px box with [_HeaderAction.gap]
     // either side, except the last, whose trailing pad is dropped so the row
@@ -2050,57 +1957,39 @@ class _TrailingSwap extends StatelessWidget {
     final controls = actions == 0
         ? 0.0
         : actions * (box + _HeaderAction.gap * 2) - _HeaderAction.gap;
-    final cancel = _CancelSearchButton.extentFor(context);
-    return TerminalHeader.barGap + (controls > cancel ? controls : cancel);
+    return TerminalHeader.barGap + controls;
   }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: progress,
-    builder: (context, _) {
-      final open = progress.value;
-      // ⚠️ Fading straight across leaves the middle of the move half-lit on
-      // both sides, which reads as a smear rather than as an exchange. Each
-      // takes its own half: the outgoing is gone by the midpoint, and the
-      // incoming starts from there.
-      final out = (1 - open * 2).clamp(0.0, 1.0);
-      final into = (open * 2 - 1).clamp(0.0, 1.0);
-      return ConstrainedBox(
-        // ⚠️ A MINIMUM, not a fixed width. The reclaim button is labelled, so
-        // its width is its text's and no constant describes it — forcing the
-        // measured width on the row would clip it. A floor gives the field a
-        // width it can count on while leaving a wider control room to be itself:
-        // the only cost is that the field is a little shorter than it could be
-        // on a read-only stream, which is a state search is rarely opened from.
-        constraints: BoxConstraints(minWidth: extent),
-        child: Stack(
-          // Against the right edge: whichever is showing, it ends on the
-          // header's own inset rather than floating inside the slot.
-          alignment: Alignment.centerRight,
-          children: [
-            Opacity(
-              opacity: out,
-              child: IgnorePointer(
-                // Untappable from the first frame of the open: they act on the
-                // agent underneath, and search is what is on screen now.
-                ignoring: open > 0,
-                // ⚠️ No gap of its own before these — the slot's width already
-                // carries [TerminalHeader.barGap], and a second one here would
-                // push the controls off the header's right inset.
-                child: Row(mainAxisSize: MainAxisSize.min, children: children),
-              ),
-            ),
-            Opacity(
-              opacity: into,
-              // Live only once it is the thing on screen. Taken on the tail of
-              // the fade rather than at the very end, so a finger arriving as
-              // the word settles is not ignored.
-              child: IgnorePointer(ignoring: open < 0.5, child: cancel),
-            ),
-          ],
+    builder: (context, child) => ConstrainedBox(
+      // ⚠️ A MINIMUM, not a fixed width. The reclaim button is labelled, so its
+      // width is its text's and no constant describes it — forcing the counted
+      // width on the row would clip it.
+      constraints: BoxConstraints(minWidth: extent),
+      child: Align(
+        // Against the right edge, so the controls end on the header's own inset
+        // rather than floating inside the slot.
+        alignment: Alignment.centerRight,
+        widthFactor: 1,
+        child: Opacity(
+          // Gone by the midpoint: the field is widening into this space, and
+          // controls still lit under it read as two things fighting for it.
+          opacity: (1 - progress.value * 2).clamp(0.0, 1.0),
+          child: IgnorePointer(
+            // Untappable from the first frame of the open: they act on the
+            // agent underneath, and search is what is on screen now.
+            ignoring: progress.value > 0,
+            child: child,
+          ),
         ),
-      );
-    },
+      ),
+    ),
+    // ⚠️ No gap of its own before these — the slot's width already carries
+    // [TerminalHeader.barGap], and a second one here would push the controls
+    // off the header's right inset.
+    child: Row(mainAxisSize: MainAxisSize.min, children: children),
   );
 }
 

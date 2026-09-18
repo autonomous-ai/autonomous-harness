@@ -2,6 +2,7 @@
   "homepage": "https://github.com/danielraffel/juce-agent-toolkit",
   "upstream": "https://github.com/danielraffel/juce-agent-toolkit",
   "license": "MIT; JUCE: AGPL-3.0 or commercial",
+  "tagline": "JUCE workflow skills for Codex, Cursor, Claude Code and other agent CLIs",
   "screenshots": [
     "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/juce-agent-toolkit/screenshots/studio.png",
     "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/juce-agent-toolkit/screenshots/narrow.png"

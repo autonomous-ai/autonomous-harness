@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-const m = vi.hoisted(() => ({ spawn: vi.fn(), exists: vi.fn(), directory: vi.fn(), rm: vi.fn(), sockets: [] as any[], reply: vi.fn() }))
+const m = vi.hoisted(() => ({ spawn: vi.fn(), exists: vi.fn(), directory: vi.fn(), rm: vi.fn(), sockets: [] as any[], reply: vi.fn(), noLoad: false }))
 vi.mock('node:child_process', () => ({ spawn: m.spawn }))
 vi.mock('node:fs', async actual => ({ ...await actual<typeof import('node:fs')>(), existsSync: m.exists }))
 vi.mock('node:fs/promises', () => ({ mkdtemp: m.directory, rm: m.rm }))
@@ -11,6 +11,11 @@ vi.mock('ws', async () => {
     send = vi.fn((raw: string) => {
       const request = JSON.parse(raw), response = m.reply(request)
       if (response !== undefined) queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ id: request.id, ...response }))))
+      // Chrome fires the page's load event on the session once a navigation lands; start() waits for it
+      // (bounded) before the first screenshot. `m.noLoad` keeps it silent, for the bound itself.
+      if (request.method === 'Page.navigate' && !m.noLoad) {
+        queueMicrotask(() => this.emit('message', Buffer.from(JSON.stringify({ method: 'Page.loadEventFired', sessionId: request.sessionId, params: {} }))))
+      }
     })
     terminate = vi.fn(() => this.emit('close'))
     constructor(..._args: unknown[]) { super(); m.sockets.push(this); queueMicrotask(() => this.emit('open')) }
@@ -27,7 +32,7 @@ const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve()
 describe('private viewer capture', () => {
   let capture: ViewerCapture, child: Child
   beforeEach(() => {
-    vi.useFakeTimers(); vi.clearAllMocks(); m.sockets = []
+    vi.useFakeTimers(); vi.clearAllMocks(); m.sockets = []; m.noLoad = false
     m.exists.mockReturnValue(true); m.directory.mockResolvedValue('/tmp/share-viewer-fixture'); m.rm.mockResolvedValue(undefined)
     child = new Child(); m.spawn.mockImplementation(() => {
       queueMicrotask(() => child.stderr.emit('data', Buffer.from('DevTools listening on ws://127.0.0.1:1234/devtools/browser/test\n')))
@@ -68,10 +73,33 @@ describe('private viewer capture', () => {
     for (const data of [undefined, 'x'.repeat(2 * 1024 * 1024 + 1)]) {
       m.reply.mockReturnValue({ result: { data } }); await expect(capture.capture()).rejects.toThrow('too large')
     }
+    // A refused screenshot is retried once, a beat later; refused twice, it is the error.
     m.reply.mockReturnValue({ error: { message: 'render error' } })
-    await expect(capture.capture()).rejects.toThrow('render this frame')
+    const before = m.reply.mock.calls.filter(([r]: any) => r.method === 'Page.captureScreenshot').length
+    const refused = capture.capture(); const rejection = expect(refused).rejects.toThrow('render this frame')
+    await vi.advanceTimersByTimeAsync(300); await rejection
+    expect(m.reply.mock.calls.filter(([r]: any) => r.method === 'Page.captureScreenshot')).toHaveLength(before + 2)
     m.reply.mockReturnValue({})
     await expect(capture.capture()).rejects.toThrow('too large')
+  })
+  it('waits for the page to paint before the first frame, and takes a second try on a refused one', async () => {
+    // Straight after `Page.navigate` Chrome refuses a screenshot ("no frame yet"); asking at once and
+    // treating the refusal as a broken renderer is what showed a watcher "could not render" forever.
+    m.noLoad = true
+    const startup = capture.start('http://localhost:1234')
+    await flush()
+    expect(m.reply.mock.calls.some(([r]: any) => r.method === 'Page.navigate')).toBe(true)
+    let started = false; void startup.then(() => { started = true })
+    await flush(); expect(started).toBe(false)          // navigated, but the load event has not fired
+    await vi.advanceTimersByTimeAsync(10_000); await startup; expect(started).toBe(true)   // bounded
+    let shots = 0
+    m.reply.mockImplementation(({ method }) => method === 'Page.captureScreenshot'
+      ? (++shots === 1 ? { error: { message: 'Unable to capture screenshot' } } : { result: { data: 'jpeg' } })
+      : { result: {} })
+    const frame = capture.capture()
+    await vi.advanceTimersByTimeAsync(300)
+    await expect(frame).resolves.toBe('jpeg')
+    expect(shots).toBe(2)
   })
   it('bounds startup and capture time and rejects pending work on disconnect', async () => {
     m.spawn.mockReturnValue(child)
@@ -81,9 +109,11 @@ describe('private viewer capture', () => {
     m.spawn.mockImplementation(() => { queueMicrotask(() => child.stderr.emit('data', Buffer.from('DevTools listening on ws://localhost:1234/test'))); return child })
     await capture.start('http://localhost:1234')
     m.reply.mockReturnValue(undefined)
+    // 8 s, a 300 ms beat, and the retry's own 8 s: a silent renderer is given two tries too.
     const frame = capture.capture(); const timeout = expect(frame).rejects.toThrow('too long to respond')
-    await vi.advanceTimersByTimeAsync(8000); await timeout
+    await vi.advanceTimersByTimeAsync(8000 + 300 + 8000); await timeout
     const pending = capture.capture(); const disconnected = expect(pending).rejects.toThrow('disconnected')
+    // The socket dies mid-first-try: no retry against a renderer that is gone.
     m.sockets.at(-1).emit('error', new Error('gone')); await disconnected
   })
   it('handles process startup errors and exits and cancellation before allocating a renderer', async () => {

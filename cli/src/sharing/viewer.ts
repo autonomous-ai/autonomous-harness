@@ -61,8 +61,9 @@ export class ViewerCapture {
     this.ws.on('error', () => this.failPending())
     this.ws.on('close', () => this.failPending())
     this.ws.on('message', raw => {
-      let message: { id?: number; result?: Payload; error?: unknown }
+      let message: { id?: number; method?: string; sessionId?: string; result?: Payload; error?: unknown }
       try { message = JSON.parse(raw.toString()) } catch { return }
+      if (message.method === 'Page.loadEventFired' && message.sessionId === this.session) this.loaded?.()
       const entry = this.pending.get(message.id ?? -1)
       if (!entry) return
       this.pending.delete(message.id!); clearTimeout(entry.timer)
@@ -78,9 +79,24 @@ export class ViewerCapture {
     this.session = String(attached.sessionId)
     await this.call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false })
     await this.call('Page.enable')
+    // Arm BEFORE navigating: the load event of a small page can fire before `Page.navigate` even
+    // answers, and a listener armed after it would wait out the whole timeout for nothing.
+    const loaded = new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, 10_000)
+      this.loaded = () => { clearTimeout(timer); resolve() }
+    })
     const navigation = await this.call('Page.navigate', { url: target })
     if (navigation.errorText) throw new Error('The owner’s viewer is not answering yet.')
+    // WAIT FOR THE PAGE TO PAINT. `Page.navigate` returns as the navigation starts, and a screenshot
+    // asked for before the first frame is refused ("Unable to capture screenshot") — which the pool
+    // read as the renderer being broken, tore it down, started it again three seconds later, asked
+    // at once, and was refused again: the person watching saw "could not render this frame" forever
+    // (owner, 2026-09-18). Measured: the first capture straight after navigate fails; 400 ms later
+    // it succeeds. Bounded, so a page that never fires `load` still gets its first attempt.
+    await loaded
+    this.loaded = null
   }
+  private loaded: (() => void) | null = null
   private call(method: string, params: Payload = {}): Promise<Payload> {
     return new Promise((resolve, reject) => {
       if (this.closed || this.ws?.readyState !== WebSocket.OPEN) { reject(new Error('The viewer renderer disconnected.')); return }
@@ -91,11 +107,23 @@ export class ViewerCapture {
     })
   }
   async capture(): Promise<string> {
-    const result = await this.call('Page.captureScreenshot', { format: 'jpeg', quality: 75, captureBeyondViewport: false })
+    // One retry, a beat later: a refused screenshot is almost always "no frame yet" (a viewer
+    // re-rendering after an artifact change), not a dead renderer — and the pool tears the renderer
+    // down on a thrown error, which costs the watcher three seconds of blank.
+    let result: Payload
+    try { result = await this.call('Page.captureScreenshot', { format: 'jpeg', quality: 75, captureBeyondViewport: false }) }
+    catch (first) {
+      if (this.closed || this.dead) throw first   // a renderer that went away is not "no frame yet"
+      await new Promise(r => setTimeout(r, 300))
+      result = await this.call('Page.captureScreenshot', { format: 'jpeg', quality: 75, captureBeyondViewport: false })
+    }
     if (typeof result.data !== 'string' || result.data.length > 2 * 1024 * 1024) throw new Error('This viewer frame is too large.')
     return result.data
   }
+  /** The renderer's socket or process went away: nothing pending can be answered, nor retried. */
+  private dead = false
   private failPending(): void {
+    this.dead = true
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('The viewer renderer disconnected.')) }
     this.pending.clear()
   }

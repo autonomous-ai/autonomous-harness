@@ -61,6 +61,25 @@ const OUTDATED_MESSAGE =
   `Your \`grid\` CLI is too old: it does not understand \`grid login ${GRID_HANDOFF_FLAG}\`. Update `
   + 'it, then run `harness grid login` again.'
 
+/**
+ * How long the child may take before it is killed and reported as a failure.
+ *
+ * ⚠️ Without this the spawn had no watchdog at all, unlike every other `grid` call
+ * (`gridExec`'s `DEFAULT_TIMEOUT_MS`): a control plane that accepts the connection and then answers
+ * nothing left this promise pending forever — a `harness login` that never returned, and, once the
+ * daemon began reconciling on its own (`lib/gridAttach.ts`), an attempt that never settled.
+ *
+ * Longer than `gridExec`'s 30s on purpose. This child makes TWO control-plane round trips (the
+ * token exchange, then the per-grid token fetch) where the others make one, and it is the call a
+ * person is most likely to be watching — cutting a slow but working sign-in off would be worse than
+ * waiting. It is a bound on a hang, not a performance budget.
+ */
+const HANDOFF_TIMEOUT_MS = 60_000
+
+function timedOutMessage(timeoutMs: number): string {
+  return `\`grid login ${GRID_HANDOFF_FLAG}\` did not answer within ${Math.round(timeoutMs / 1000)}s.`
+}
+
 function failedMessage(status: number | null, signal: NodeJS.Signals | null): string {
   const how = status === null ? `was killed by ${signal ?? 'a signal'}` : `exited ${status}`
   // No "see the output above": under --json there IS no above for whatever is reading the stream.
@@ -80,7 +99,7 @@ function failedMessage(status: number | null, signal: NodeJS.Signals | null): st
  */
 export async function handOffToGrid(
   token: string,
-  opts: { json?: boolean } = {},
+  opts: { json?: boolean; timeoutMs?: number } = {},
 ): Promise<GridHandoffResult> {
   // Asking by reading rather than by spawning to find out: a missing `grid` is a sentence about
   // installing one, not a spawn error the caller has to recognise — and a present-but-unrunnable
@@ -90,6 +109,7 @@ export async function handOffToGrid(
   if (!binaryOnPath(binary)) {
     return { code: 'GRID_CLI_MISSING', exitCode: 1, message: MISSING_MESSAGE, stdout: '', stderr: '' }
   }
+  const timeoutMs = opts.timeoutMs ?? HANDOFF_TIMEOUT_MS
   const args = ['login', GRID_HANDOFF_FLAG, ...(opts.json ? ['--json'] : [])]
   return await new Promise<GridHandoffResult>((resolve) => {
     const child = spawn(binary, args, {
@@ -107,7 +127,22 @@ export async function handOffToGrid(
     })
 
     let settled = false
-    const settle = (result: GridHandoffResult): void => { if (!settled) { settled = true; resolve(result) } }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const settle = (result: GridHandoffResult): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(result)
+    }
+
+    // The watchdog, armed before anything can block. `SIGKILL` with no `SIGTERM` first, exactly as
+    // `gridExec` does: what is being bounded is a child that has stopped responding, and a graceful
+    // signal it may never handle is one more thing to wait for. The `close` this provokes finds
+    // `settled` already true, so the kill reports the timeout rather than a signal death.
+    timer = setTimeout(() => {
+      try { child.kill('SIGKILL') } catch { /* already gone */ }
+      settle({ code: 'GRID_LOGIN_FAILED', exitCode: 1, message: timedOutMessage(timeoutMs), stdout, stderr })
+    }, timeoutMs)
 
     // stdio[0] is a pipe, so this is never null. Refusing loudly anyway rather than optional-chaining
     // past it: with no pipe the token is never delivered, and a `grid` left waiting for one on a

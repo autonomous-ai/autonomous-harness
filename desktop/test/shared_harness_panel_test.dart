@@ -208,11 +208,15 @@ void main() {
         await settleNetwork(
           () => requests.any((r) => r['type'] == 'observer_viewer'),
         );
+        // Narrow: the terminal is in front and the viewer waits behind its tab —
+        // until the first frame lands, which brings it forward by itself (below).
+        expect(
+          find.textContaining('The viewer will appear', skipOffstage: false),
+          findsOneWidget,
+        );
         if (width < 880) {
-          await tester.tap(find.text('Viewer'));
-          await tester.pump();
+          expect(find.textContaining('The viewer will appear'), findsNothing);
         }
-        expect(find.textContaining('The viewer will appear'), findsOneWidget);
         expect(
           requests.map((r) => r['type']),
           isNot(contains('terminal_resize')),
@@ -223,7 +227,10 @@ void main() {
         );
         viewer({'state': 'loading'});
         await settleNetwork(
-          () => find.text('Opening the viewer…').evaluate().isNotEmpty,
+          () => find
+              .text('Opening the viewer…', skipOffstage: false)
+              .evaluate()
+              .isNotEmpty,
         );
         viewer({'state': 'live', 'data': 'not-base64!'});
         await tester.runAsync(
@@ -231,6 +238,8 @@ void main() {
         );
         await tester.pump();
         expect(tester.takeException(), isNull);
+        // The first frame that decodes brings the viewer to the front on a
+        // narrow pane: nobody had to find the "Viewer" tab.
         viewer({'state': 'live', 'data': 'aW52YWxpZC1pbWFnZQ=='});
         await settleNetwork(
           () => find
@@ -244,8 +253,18 @@ void main() {
         });
         await settleNetwork(() => find.byType(Image).evaluate().isNotEmpty);
         if (width < 880) {
+          // …and a person's own pick stands over any later frame.
           await tester.tap(find.text('Terminal'));
           await tester.pump();
+          viewer({
+            'state': 'live',
+            'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lZkAAAAASUVORK5CYII=',
+          });
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 30)),
+          );
+          await tester.pump();
+          expect(find.byType(Image), findsNothing);
         }
         await tester.runAsync(() async {
           closingSockets.add(sockets.last);

@@ -2,6 +2,7 @@
   "homepage": "https://github.com/dimensionalOS/dimos",
   "upstream": "https://github.com/dimensionalOS/dimos",
   "license": "Apache-2.0; wrapper MIT",
+  "tagline": "The agentic operating system for physical space",
   "screenshots": [
     "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/dimos/screenshots/studio.png",
     "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/dimos/screenshots/narrow.png"

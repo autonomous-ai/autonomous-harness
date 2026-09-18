@@ -55,6 +55,18 @@ import {
 } from './p2pSignaling.js'
 import { recordRemoteUsage } from './dailyTracking.js'
 
+/**
+ * Down-frames the backend mints for an adapter, which a web client must never be able to forge.
+ *
+ * The `__` prefix already marks most of these; these two predate that convention and are not
+ * prefixed, so they fell through this handler's namespace checks into the verbatim forward at the
+ * bottom. See the block in `handleFrame` for what each one does when forged.
+ *
+ * Senders, all backend-side: `lib/adapterWs.ts` (on connect) and `services/MachineService.ts`
+ * (rename, revoke).
+ */
+export const BACKEND_ONLY_DOWN_TYPES = new Set(['machine_meta', 'machine_revoked'])
+
 const wss = createWss(WS_LIMITS.web, { echoFirstProtocol: true })
 
 // Device-status re-seed: covers the silent-offline case (worker crash → presence TTL 45s ages out
@@ -341,6 +353,19 @@ function attachUserClient(ws: WebSocket, user: AuthUser): void {
     // Double-underscore frames are backend-to-Harness control messages. A web
     // client must never be able to forge its own lifecycle notification.
     if (typeof type === 'string' && type.startsWith('__')) return
+    // ⚠️ Same rule, for the two control frames that are NOT `__`-prefixed and so escaped it. Anything
+    // reaching this handler holds a valid access token for the account and nothing more, while the
+    // frames below are instructions the adapter obeys as the backend's own — everything else here
+    // falls through to `client.sendDown(frame)`, which forwards verbatim:
+    //   - `machine_meta` names the account's private grid, i.e. the inference endpoint every agent on
+    //     that computer is then pointed at. Forged, it redirects the account's work.
+    //   - `machine_revoked` makes the adapter clear its stored session and exit.
+    // Both are minted here (`adapterWs.ts`, `services/MachineService.ts`); no client in this
+    // repository sends either, so refusing them costs nothing. The adapter refuses them from
+    // non-backend transports too (`cli/src/backendSocket.ts`, BACKEND_ONLY_DOWN_TYPES) — but it
+    // cannot tell a frame the backend decided on from one the backend relayed for a web client, so
+    // that check alone does not cover this path. This is where that distinction still exists.
+    if (typeof type === 'string' && BACKEND_ONLY_DOWN_TYPES.has(type)) return
     const isTerminal = typeof type === 'string' && TERMINAL_DOWN_TYPES.has(type)
     const terminalNamespace = typeof type === 'string' && type.startsWith('terminal_')
     if (terminalNamespace && !isTerminal) {

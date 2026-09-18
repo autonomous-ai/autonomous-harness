@@ -400,7 +400,8 @@ static void cancel_confirm_no(lv_event_t *e);  // "Cancel task?" No → dismiss,
 
 static void stop_event(lv_event_t *e);   // tap STOP → cancel the active turn (defined below)
 static void update_stop_btn(void);       // show/hide STOP per active tile's processing state (caller holds lock)
-static void agent_actions_apply(void);   // show/hide the per-agent Goal/Voice/Loop cluster (caller holds lock)
+static void agent_actions_apply(void);   // show/hide the per-agent Voice cluster (caller holds lock)
+static void machine_toast(const char *msg);   // a short centred line over the face (defined with the machine picker)
 static void build_agent_actions(void);   // build that cluster once on scr_projects (defined below)
 static void notif_badge_apply(void);     // show/hide the top unread pill (defined below)
 static void notif_bg_tap(lv_event_t *e); // tap the drawer's empty area → close (defined below)
@@ -6657,8 +6658,13 @@ static void project_apply_event(const char *project_id, const char *session_id, 
 {
     const char *pid = (project_id && project_id[0]) ? project_id : "(none)";
     display_lock();
+    // ONLY A LISTED AGENT. The dial holds the window's active tab; every other agent on the account still
+    // sends its turn.started / done / summary down the cable, and this used to add_proj() an id it did
+    // not know — a nameless "agent" tile in the working state, one swipe away, whose focus report then
+    // made the window OPEN that agent back onto the tab (owner, 2026-09-18: a Blender pane closed from
+    // the Local tab came back by itself). A tile is made by the list and by nothing else; the drawer
+    // and the question card carry their own name for exactly this case.
     int i = find_proj(pid);
-    if (i < 0) i = add_proj(pid);
     if (i < 0) { display_unlock(); return; }
     proj_t *p = &s_proj[i];
 
@@ -6846,7 +6852,6 @@ static EXT_RAM_BSS_ATTR struct {
 } s_q;
 
 static void q_render(void);
-static void machine_toast(const char *msg);   // defined with the machine picker, below
 static void q_advance(void);
 static void q_cancel(void);
 static void q_opt_tap(lv_event_t *e);

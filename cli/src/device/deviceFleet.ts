@@ -232,6 +232,14 @@ export class DeviceFleet implements MachineFleet {
       .catch((err) => this.opts.log(`device: agent_update failed (${(err as Error).message})`))
   }
 
+  async forkAgent(machineId: string, agentId: string): Promise<string> {
+    const res = await this.rpc(machineId, 'agent_fork', { agentId })
+    const agent = res.agent as { id?: unknown } | undefined
+    if (typeof res.error === 'string') throw new Error(typeof res.detail === 'string' ? res.detail : res.error)
+    if (typeof agent?.id !== 'string' || !agent.id) throw new Error('the machine answered without an agent')
+    return agent.id
+  }
+
   async listModels(machineId: string, agentId: string): Promise<string[]> {
 
     // `compact` is what keeps the catalog inside the dial's picker; the backend trims to ≤24 entries.

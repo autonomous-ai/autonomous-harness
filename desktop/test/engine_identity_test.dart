@@ -83,8 +83,17 @@ void main() {
     expect(agents, isNotEmpty);
     final faces = {for (final harness in knownHarnesses) harness.id};
     // Projects that publish no logo draw their initial rather than a mark made
-    // up for them. Godogen's repository has no image of its own.
-    const noLogo = {'autonomous/godogen'};
+    // up for them. Godogen's repository has no image of its own; the five
+    // below neither, and the logos they sit beside (Ableton, JUCE, OpenFOAM,
+    // SUMO) belong to other companies.
+    const noLogo = {
+      'autonomous/godogen',
+      'autonomous/ableton-ai',
+      'autonomous/autoresearch-mlx',
+      'autonomous/foam-agent',
+      'autonomous/juce-agent-toolkit',
+      'autonomous/simskill',
+    };
     for (final id in agents.where((id) => !noLogo.contains(id))) {
       expect(faces, contains(id), reason: '$id has no EngineIdentity');
       final asset = engineIdentity(id).asset!;

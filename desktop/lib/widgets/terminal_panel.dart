@@ -49,6 +49,9 @@ class TerminalPanel extends StatefulWidget {
   /// where there is nothing to close it back to.
   final VoidCallback? onClose;
   final VoidCallback? onRestart;
+
+  /// Forks this harness — a second agent with its history (fork_agent_dialog.dart).
+  final VoidCallback? onFork;
   final VoidCallback? onDelete;
 
   final VoidCallback? onToggleZoom;
@@ -111,6 +114,7 @@ class TerminalPanel extends StatefulWidget {
     this.onToggleComposer,
     this.onClose,
     this.onRestart,
+    this.onFork,
     this.onDelete,
     this.onToggleZoom,
     this.zoomed = false,
@@ -1387,6 +1391,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       compact: widget.compactHeader,
       close: widget.onClose != null,
       restart: widget.onRestart != null,
+      fork: widget.onFork != null,
       delete: widget.onDelete != null,
       composer: widget.composerVisible,
       toggleComposer: widget.onToggleComposer != null,
@@ -1411,6 +1416,7 @@ class _TerminalPanelState extends State<TerminalPanel>
         onRestart: widget.onRestart == null
             ? null
             : () => widget.onRestart?.call(),
+        onFork: widget.onFork == null ? null : () => widget.onFork?.call(),
         onDelete: widget.onDelete == null
             ? null
             : () => widget.onDelete?.call(),
@@ -1432,6 +1438,7 @@ class _TerminalHeader extends StatelessWidget {
   final bool readOnly;
   final VoidCallback? onClose;
   final VoidCallback? onRestart;
+  final VoidCallback? onFork;
 
   /// Ends the agent (with a confirmation), as the rail's row menu does. Null
   /// where the pane cannot name a live agent to end.
@@ -1459,6 +1466,7 @@ class _TerminalHeader extends StatelessWidget {
     this.readOnly = false,
     this.onClose,
     this.onRestart,
+    this.onFork,
     this.onDelete,
     this.compact = false,
     this.onToggleZoom,
@@ -1549,13 +1557,18 @@ class _TerminalHeader extends StatelessWidget {
             .where((part) => part.isNotEmpty)
             .lastOrNull ??
         project?.name;
+    // A fork says so first: "forked from X" is the one fact about this pane
+    // that the folder and the branch — shared with its source — cannot tell.
+    final forkedFrom = agent?.forkedFrom;
     final details = [
+      if (forkedFrom != null) 'forked from ${forkedFrom.name}',
       if (folder?.isNotEmpty == true) folder!,
       if (project?.branch?.trim().isNotEmpty == true) project!.branch!,
       machineName,
     ];
+    final forkIndex = forkedFrom != null ? 0 : null;
     final branchIndex = project?.branch?.trim().isNotEmpty == true
-        ? (folder?.isNotEmpty == true ? 1 : 0)
+        ? (forkedFrom != null ? 1 : 0) + (folder?.isNotEmpty == true ? 1 : 0)
         : null;
     final strip = PaneHeaderHover(
       child: SizedBox(
@@ -1742,6 +1755,7 @@ class _TerminalHeader extends StatelessWidget {
                     zoomed: zoomed,
                     onZoom: onToggleZoom,
                     onRestart: onRestart,
+                    onFork: onFork,
                     onDelete: onDelete,
                     onClose: onClose,
                     onToggleComposer: remoteComposer,
@@ -1763,6 +1777,8 @@ class _TerminalHeader extends StatelessWidget {
                         : agentIdentity(agent).color,
                     details: Tooltip(
                       message: [
+                        if (forkedFrom != null)
+                          'Forked from ${forkedFrom.name}',
                         if (project != null) project.cwd,
                         if (project?.branch?.isNotEmpty == true)
                           'Branch: ${project!.branch}',
@@ -1787,6 +1803,14 @@ class _TerminalHeader extends StatelessWidget {
                                   if (i == branchIndex) ...[
                                     Icon(
                                       LucideIcons.gitBranch300,
+                                      size: 12,
+                                      color: AppColors.mutedStrong,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
+                                  if (i == forkIndex) ...[
+                                    Icon(
+                                      LucideIcons.gitFork300,
                                       size: 12,
                                       color: AppColors.mutedStrong,
                                     ),

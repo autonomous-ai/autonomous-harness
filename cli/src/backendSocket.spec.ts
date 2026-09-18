@@ -1209,6 +1209,68 @@ describe('BackendSocket outbound queue', () => {
   })
 })
 
+describe('agent_fork RPC', () => {
+  afterEach(() => {
+    wsMock.instances.length = 0
+    vi.restoreAllMocks()
+  })
+
+  const FORK: RegisteredSession = {
+    schemaVersion: 2, active: true, agentId: 'agent-2', sessionId: '', boundAt: null, engine: 'claude',
+    forkedFrom: { agentId: 'agent-1', name: 'Agent one' },
+    transcriptPath: null, projectDir: 'workspace', cwd: '/tmp/workspace', runtimes: [], primaryRuntimeKey: '',
+    tmuxPane: '%2', source: null, title: null, model: null, cliVersion: null, processIdentity: null,
+    registeredAt: 2, updatedAt: 2, lastHookAt: 2, lastTranscriptAt: 2,
+  }
+
+  function localSocket(): { socket: BackendSocket; frames: Array<Record<string, unknown>> } {
+    const socket = new BackendSocket('token')
+    const frames: Array<Record<string, unknown>> = []
+    socket.registerLocalClient('local:fork', { sendFrame: (frame) => { frames.push(frame); return true }, sendBinary: () => true })
+    return { socket, frames }
+  }
+
+  it('validates the frame before touching the daemon', async () => {
+    const { socket, frames } = localSocket()
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'agent_fork_result', payload: { requestId: 'r1', error: 'MISSING_AGENT_ID' } }))
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r2', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'agent_fork_result', payload: { requestId: 'r2', error: 'UNSUPPORTED_ON_REMOTE' } }))
+    socket.onForkAgent = async () => ({ ok: true, session: FORK, level: 'native' })
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r3', agentId: 'agent-1', prompt: 'x'.repeat(2001) } })
+    await vi.waitFor(() => expect(frames).toContainEqual({ type: 'agent_fork_result', payload: { requestId: 'r3', error: 'PROMPT_TOO_LONG' } }))
+    await socket.unregisterLocalClient('local:fork')
+    await socket.stop()
+  })
+
+  it('hands name and prompt to the daemon and answers with the fork, its level, and who it came from', async () => {
+    const { socket, frames } = localSocket()
+    const seen: unknown[] = []
+    socket.onForkAgent = async (input) => { seen.push(input); return { ok: true, session: FORK, level: 'native' } }
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r1', agentId: 'agent-1', name: '  Agent one - fork ', prompt: 'ship it' } })
+    await vi.waitFor(() => {
+      const result = frames.find((f) => f.type === 'agent_fork_result')
+      expect(result).toMatchObject({
+        payload: { requestId: 'r1', level: 'native', agent: expect.objectContaining({ id: 'agent-2', forkedFrom: { agentId: 'agent-1', name: 'Agent one' } }) },
+      })
+    })
+    expect(seen).toEqual([{ agentId: 'agent-1', name: 'Agent one - fork', prompt: 'ship it' }])
+    await socket.unregisterLocalClient('local:fork')
+    await socket.stop()
+  })
+
+  it('relays the daemon\'s refusal with its reason', async () => {
+    const { socket, frames } = localSocket()
+    socket.onForkAgent = async () => ({ ok: false, error: 'AGENT_BUSY', detail: 'Wait for it to finish, then fork.' })
+    socket.handleLocalFrame('local:fork', { type: 'agent_fork', payload: { requestId: 'r1', agentId: 'agent-1' } })
+    await vi.waitFor(() => expect(frames).toContainEqual({
+      type: 'agent_fork_result', payload: { requestId: 'r1', error: 'AGENT_BUSY', detail: 'Wait for it to finish, then fork.' },
+    }))
+    await socket.unregisterLocalClient('local:fork')
+    await socket.stop()
+  })
+})
+
 describe('agent_restart RPC', () => {
   afterEach(() => {
     wsMock.instances.length = 0
@@ -1673,6 +1735,111 @@ describe('grid_models_list says whether this machine has a grid CLI', () => {
     fake = installFakeGrid(plan)
 
     expect(await listModels()).toMatchObject({ gridName: GRID_NAME, gridCli: 'path' })
+  })
+
+  it('waits for an in-flight grid reconcile before answering, so the first open after an update is not empty', async () => {
+    fake = installFakeGrid(plan)
+    const socket = new BackendSocket('token')
+    // No local fallback and no machine_meta: the name can only come from the reconcile below, so a
+    // non-empty answer proves the RPC waited for it rather than answering "no grid" straight away.
+    socket.deriveGridName = async () => null
+    let settle: () => void = () => {}
+    const reconcile = new Promise<void>((resolve) => {
+      settle = () => { socket.setHarnessGridName(GRID_NAME); resolve() }
+    })
+    socket.gridReadyProbe = () => reconcile
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'grid_models_list', payload: { requestId: 'r' } } })
+    // The reconcile lands a moment later, within the RPC's wait window.
+    setTimeout(() => settle(), 20)
+    await vi.waitFor(() => expect(parseSent(ws).some((item) => (item.frame as { type?: string } | undefined)?.type === 'grid_models_list_result')).toBe(true), { timeout: 10_000 })
+    const reply = parseSent(ws)
+      .map((item) => item.frame as { type?: string; payload?: Record<string, unknown> } | undefined)
+      .find((frame) => frame?.type === 'grid_models_list_result')
+    await socket.stop()
+    expect(reply?.payload).toMatchObject({ gridName: GRID_NAME })
+  })
+})
+
+describe('machine_meta carries the grid name without clobbering it on rename', () => {
+  afterEach(() => { wsMock.instances.length = 0 })
+
+  it('keeps the grid name when a later rename frame omits gridName, and clears it only on an explicit null', async () => {
+    const socket = new BackendSocket('token')
+    // Frames are processed through a queue, so `onMachineMeta` is how a test knows one has landed.
+    const namesSeen: Array<string | null> = []
+    socket.onMachineMeta = (n) => { namesSeen.push(n) }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    // Connect frame: name and grid together.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: 'someone-7f3a91c4' } } })
+    await vi.waitFor(() => expect(socket.gridName()).toBe('someone-7f3a91c4'))
+
+    // A rename pushes `{ name }` alone — it must NOT wipe the grid name (the bug that left the picker
+    // empty the moment a machine was renamed). Wait until the rename is observably processed, then
+    // confirm the grid name survived it.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'renamed' } } })
+    await vi.waitFor(() => expect(namesSeen).toContain('renamed'))
+    expect(socket.gridName()).toBe('someone-7f3a91c4')
+
+    // An explicit null is the account genuinely having no grid, and does clear it.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'renamed', gridName: null } } })
+    await vi.waitFor(() => expect(socket.gridName()).toBeNull())
+
+    await socket.stop()
+  })
+
+  it('refuses a machine_meta that arrived over the LOCAL socket — only the backend may name the grid', async () => {
+    const socket = new BackendSocket('token')
+    const namesSeen: Array<string | null> = []
+    socket.onMachineMeta = (n) => { namesSeen.push(n) }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    // The backend's own frame sets it, as always.
+    ws.message({ t: 'down', connId: 'web-1', frame: { type: 'machine_meta', payload: { name: 'mac', gridName: 'someone-7f3a91c4' } } })
+    await vi.waitFor(() => expect(socket.gridName()).toBe('someone-7f3a91c4'))
+
+    // Now the same frame from a process on this machine, through the local socket — the shape of the
+    // leftover script that once redirected this account's agents onto a grid of its choosing.
+    const local = 'local:1'
+    socket.registerLocalClient(local, { sendFrame: () => true, sendBinary: () => true })
+    socket.handleLocalFrame(local, { type: 'machine_meta', payload: { name: 'hijacked', gridName: 'attacker-deadbeef' } })
+
+    // Give the queue a turn: the frame must be dropped whole, so neither half of it lands.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(socket.gridName()).toBe('someone-7f3a91c4')
+    expect(namesSeen).not.toContain('hijacked')
+
+    await socket.stop()
+  })
+
+  it('refuses a machine_revoked over the LOCAL socket — one frame would otherwise sign this computer out', async () => {
+    const socket = new BackendSocket('token')
+    let revoked = 0
+    socket.onRevoked = () => { revoked += 1 }
+    socket.connect()
+    const ws = wsMock.instances[0]
+    ws.open()
+
+    // `onRevoked` clears the stored SSO session and exits the daemon, so accepting this from a local
+    // process is a one-frame forced sign-out and denial of service.
+    const local = 'local:1'
+    socket.registerLocalClient(local, { sendFrame: () => true, sendBinary: () => true })
+    socket.handleLocalFrame(local, { type: 'machine_revoked', payload: {} })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(revoked).toBe(0)
+
+    // The backend's own frame still works — the gate is about the sender, not the frame.
+    ws.message({ t: 'down', connId: '', frame: { type: 'machine_revoked', payload: {} } })
+    await vi.waitFor(() => expect(revoked).toBe(1))
+
+    await socket.stop()
   })
 })
 
