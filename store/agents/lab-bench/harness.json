@@ -1,0 +1,31 @@
+{
+  "spec": 1,
+  "id": "autonomous/lab-bench",
+  "name": "Lab Bench / Experiment Log",
+  "category": "Science",
+  "author": "Autonomous",
+  "description": "Describe an experiment — a variable, a hypothesis, a dataset — and get a deterministic, seedable bench page in the pane with seeded synthetic data, interactive charts and a re-seed.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "bench/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ]
+  },
+  "verdict": ".harness/verdict.json"
+}
