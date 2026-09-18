@@ -2,9 +2,9 @@
 #
 # Pass extra arguments to a target's script via ARGS, e.g.:
 #   make install-cli ARGS="--no-restart"
-#   make upload-cli  ARGS="0.1.0"
+#   make release-cli ARGS="--dry-run"
 
-.PHONY: cli-test install-cli upload-cli upload-cli-install-sh release-cli release-backend release-desktop remote-machine upload-circle device-test
+.PHONY: cli-test install-cli upload-cli-install-sh release-cli release-backend release-desktop remote-machine upload-circle device-test
 
 ## cli-test: typecheck + run the CLI test suite.
 cli-test:
@@ -38,16 +38,11 @@ release-desktop:
 install-cli:
 	bash cli/scripts/install-cli.sh $(ARGS)
 
-## upload-cli: bump version -> bundle -> publish the CLI. MAINTAINER ONLY — it writes to the release
-## bucket, so it needs an authenticated `gcloud storage` with write access on it, plus
-## node/npm for the bundle step.
-## Running daemons pick the new version up within ~1 min.
-upload-cli:
-	bash cli/scripts/upload-cli.sh $(ARGS)
-
 ## upload-cli-install-sh: publish cli/scripts/install.sh — the `curl ... | bash` installer — to
 ## harness/cli/install.sh in the release bucket (-> https://cdn.autonomous.ai/harness/cli/install.sh).
-## One static file, no version; MAINTAINER ONLY, same credential as upload-cli. Verify the CDN edge
+## One static file, no version; MAINTAINER ONLY (an authenticated `gcloud storage` with write access
+## on the bucket). The CLI bundle itself is never published from a laptop: `make release-cli` tags,
+## and CI runs cli/scripts/upload-cli.sh from the tag (.github/workflows/release.yml). Verify the CDN edge
 ## serves the new bytes afterwards (the script prints the command).
 upload-cli-install-sh:
 	bash cli/scripts/upload-install-sh.sh

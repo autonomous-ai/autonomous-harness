@@ -19,8 +19,7 @@
     "test:remote-viewers": "vitest run --config vitest.viewer.config.ts",
     "test:cursor-e2e": "RUN_CURSOR_E2E=1 vitest run src/engines/cursor/localE2e.spec.ts",
     "test:tmux-real": "RUN_REAL_TMUX_DISCOVERY=1 vitest run src/lib/tmuxAgentDiscovery.real.spec.ts --reporter=verbose",
-    "test:herdr-real": "RUN_REAL_HERDR=1 vitest run src/lib/herdrBackend.real.spec.ts --reporter=verbose",
-    "release": "bash scripts/upload-cli.sh"
+    "test:herdr-real": "RUN_REAL_HERDR=1 vitest run src/lib/herdrBackend.real.spec.ts --reporter=verbose"
   },
   "dependencies": {
     "@noble/ciphers": "^1.3.0",
