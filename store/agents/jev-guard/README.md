@@ -44,7 +44,7 @@ stand-in for *plumbing*, not judgement. Here the *test suite* is the ground trut
 an overlay on real, runnable test results. Treat its risk/trust read as a fast, cheap signal layered
 on top of what the tests actually say.
 
-## Credits and stewardship
+## Credit and stewardship
 
 - **Jev** is the work of **TypeSafe AI** (typesafe.ai). This harness is an OpenHarness wrapper that
   only calls the public API; it contains no TypeSafe code.

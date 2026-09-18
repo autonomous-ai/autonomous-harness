@@ -42,7 +42,7 @@ Jev writes is genuinely improvised in real time, but it is as good as its design
 narrower scale and chord pool produce more coherent (if predictable) phrasing. Treat Jev's decisions
 as a fast, cheap creative signal and design the constraints well.
 
-## Credits and stewardship
+## Credit and stewardship
 
 - **Jev** is the work of **TypeSafe AI** (typesafe.ai). This harness is an OpenHarness wrapper that
   only calls the public API; it contains no TypeSafe code.

@@ -1,5 +1,4 @@
 {
-  "$schema": "https://autonomous.null.land/store.schema.json",
   "homepage": "https://typesafe.ai",
   "upstream": "https://typesafe.ai",
   "license": "MIT",

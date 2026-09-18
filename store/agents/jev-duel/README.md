@@ -44,7 +44,7 @@ a coordinate — the game-engine keeps the rules honest, so Jev can only ever pl
 its *strategy* is exactly as good as the model (or mock). Treat its play as a fast, cheap signal,
 not a solved player.
 
-## Credits and stewardship
+## Credit and stewardship
 
 - **Jev** is the work of **TypeSafe AI** (typesafe.ai). This harness is an OpenHarness wrapper that
   only calls the public API; it contains no TypeSafe code.
