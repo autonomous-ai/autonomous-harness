@@ -212,3 +212,12 @@ it if one is dropped.
     returns before the hash, the cache lookup and the draw. An underlined
     space still draws, through the existing U+00A0 substitution. Regression:
     `mobile/test/terminal_painter_test.dart`.
+15. **Alt-buffer scrolling survives a new scroll position**
+    (`lib/src/ui/infinite_scroll_view.dart`). `_RenderInfiniteScrollView`
+    listened for `_onScroll` on the position it was attached with, and its
+    `position` setter moved only the layout listener. The Scrollable replaces
+    its position whenever its dependencies change — a route pushed over the
+    terminal and popped is enough — so from then on no drag reached the
+    full-screen program as wheel events or arrow keys, until the view was
+    rebuilt. The setter now moves `_onScroll` with it. Regression:
+    `mobile/test/terminal_alt_scroll_test.dart`.

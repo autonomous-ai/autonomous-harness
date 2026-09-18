@@ -117,6 +117,7 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   @override
   void initState() {
     super.initState();
+    _livePagers.add(this);
     // A fresh pager is a fresh session: whatever the person did to the keyboard
     // the last time they were in a terminal does not decide what this one does.
     // See [resetKeyboardSession].
@@ -149,6 +150,9 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
     _warmer?.dispose();
     _voice.dispose();
     _controller?.dispose();
+    // Out of the live set FIRST: [_detachAll] skips panes a live pager holds, and this one no
+    // longer counts.
+    _livePagers.remove(this);
     _detachAll();
     // ⚠️ **The record is deliberately NOT cleared here, and it used to be.** The old rule was
     // "leaving the terminal means the next launch starts on the list" — but there is no list to
@@ -169,19 +173,42 @@ class _AgentSwipeHostState extends State<AgentSwipeHost> {
   /// Not awaited, and deliberately: `dispose` cannot wait, and `closePane` only has to be STARTED —
   /// it detaches the session and tells the daemon on its own. The notifier outlives this widget, so
   /// nothing here is torn down underneath it.
+  ///
+  /// ⚠️ **After the frame, never from `dispose` itself.** `closePane` notifies synchronously, and
+  /// `dispose` runs while the tree is locked: every listener on the notifier failed to mark itself
+  /// dirty ("setState() called when widget tree was locked") and MISSED that update — the pager
+  /// built in this one's place among them, whose terminal was left stuck on a stale build (it would
+  /// not scroll until it was opened again). Deferred, the close lands on an unlocked tree.
+  ///
+  /// ⚠️ And a pane a live pager has attached since is left alone: the pager replacing this one can
+  /// be showing one of the very agents swiped past here, and closing its pane after it mounted would
+  /// pull the terminal out from under it.
   void _detachAll() {
     final notifier = widget.notifier;
     final keep = _current;
-    for (final agent in _attached) {
-      if (agent == keep) continue;
-      final pane = notifier.panes
-          .where(
-            (p) => p.machineId == agent.machineId && p.agentId == agent.agentId,
-          )
-          .firstOrNull;
-      if (pane != null) unawaited(notifier.closePane(pane.id));
-    }
+    final leaving = {
+      for (final agent in _attached)
+        if (agent != keep) agent,
+    };
+    if (leaving.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final agent in leaving) {
+        if (_livePagers.any((pager) => pager._attached.contains(agent))) {
+          continue;
+        }
+        final pane = notifier.panes
+            .where(
+              (p) =>
+                  p.machineId == agent.machineId && p.agentId == agent.agentId,
+            )
+            .firstOrNull;
+        if (pane != null) unawaited(notifier.closePane(pane.id));
+      }
+    });
   }
+
+  /// Every pager currently mounted — what [_detachAll] asks before closing a pane it attached.
+  static final Set<_AgentSwipeHostState> _livePagers = {};
 
   @override
   Widget build(BuildContext context) {
