@@ -1,0 +1,19 @@
+{
+  "title": "Jev Arena",
+  "description": "A tiny grid world where Jev decides each move.",
+  "size": 12,
+  "hero": { "x": 1, "y": 1 },
+  "goal": { "x": 10, "y": 10 },
+  "walls": [
+    { "x": 3, "y": 2 }, { "x": 3, "y": 3 }, { "x": 3, "y": 4 },
+    { "x": 6, "y": 1 }, { "x": 7, "y": 1 }, { "x": 8, "y": 1 }, { "x": 8, "y": 2 },
+    { "x": 4, "y": 6 }, { "x": 5, "y": 6 }, { "x": 6, "y": 6 },
+    { "x": 9, "y": 5 }, { "x": 9, "y": 6 }, { "x": 9, "y": 7 },
+    { "x": 2, "y": 9 }, { "x": 5, "y": 8 }, { "x": 5, "y": 9 }
+  ],
+  "coins": [
+    { "x": 5, "y": 3 }, { "x": 8, "y": 6 }, { "x": 2, "y": 6 }, { "x": 7, "y": 9 }, { "x": 3, "y": 1 }
+  ],
+  "rules": "Reach the star. Collect the coins on the way. Move one cell at a time (up/down/left/right); you cannot pass through walls.",
+  "speed": 320
+}
