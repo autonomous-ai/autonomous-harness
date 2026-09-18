@@ -13,7 +13,7 @@ import 'status_pill.dart';
 ///
 /// ```
 /// [mark●]  agent-3                                       ⋯
-///          ~/…/autonomous-harness  ⑂ main
+///          autonomous-harness  ⑂ main
 /// ```
 ///
 /// ⚠️ **The connection state is the dot on the engine mark, not a word.** It
@@ -205,38 +205,26 @@ class _Identity extends StatelessWidget {
   );
 }
 
-/// A folder as the header names it: its own name, with everything above it
-/// folded into `…` — `~/…/autonomous-harness`.
+/// A folder as the header names it: its own name and nothing above it —
+/// `autonomous-harness`.
 ///
-/// Home is written `~` the way a shell prompt writes it, so a folder directly in
-/// home keeps its whole path (`~/notes`) and home itself is `~`. A folder
-/// outside home keeps its root: `/…/srv`.
+/// Home itself is written `~` the way a shell prompt writes it, and the root
+/// `/`: those have no name of their own to show.
 ///
 /// ⚠️ The parents are the part every agent somebody owns has in common — the
-/// folder's own name is what tells two of them apart, so it is the one thing
-/// never cut here.
+/// folder's own name is what tells two of them apart, so it is all that is kept.
 String projectPathLabel(String cwd) {
   final path = cwd.replaceAll('\\', '/');
   final parts = path.split('/').where((part) => part.isNotEmpty).toList();
   if (parts.isEmpty) return path.isEmpty ? '~' : '/';
 
-  // `/Users/<name>/…` on a Mac, `/home/<name>/…` on Linux, `/root` for root.
-  var homeDepth = 0;
-  if (path.startsWith('/') && parts.length >= 2) {
-    if (parts[0] == 'Users' || parts[0] == 'home') homeDepth = 2;
-  }
-  if (path.startsWith('/') && parts[0] == 'root') homeDepth = 1;
-  if (path.startsWith('~')) homeDepth = 1;
-
-  if (homeDepth > 0) {
-    final below = parts.length - homeDepth;
-    if (below <= 0) return '~';
-    if (below == 1) return '~/${parts.last}';
-    return '~/…/${parts.last}';
-  }
-  // Outside home: a Windows drive keeps its letter, anything else its root.
-  final lead = RegExp(r'^[A-Za-z]:$').hasMatch(parts.first) ? parts.first : '';
-  if (parts.length == 1) return '$lead/${parts.last}';
-  if (lead.isNotEmpty && parts.length == 2) return '$lead/${parts.last}';
-  return '$lead/…/${parts.last}';
+  // Home: `/Users/<name>` on a Mac, `/home/<name>` on Linux, `/root`, `~`.
+  final isHome =
+      (path.startsWith('/') &&
+          parts.length == 2 &&
+          (parts[0] == 'Users' || parts[0] == 'home')) ||
+      (path.startsWith('/') && parts.length == 1 && parts[0] == 'root') ||
+      (path.startsWith('~') && parts.length == 1);
+  if (isHome) return '~';
+  return parts.last;
 }

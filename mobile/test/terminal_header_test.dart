@@ -8,19 +8,21 @@ import 'package:harness_mobile/phone/terminal_header.dart';
 /// The terminal's top bar: *agent* over *folder ⑂ branch*, with the
 /// connection state as a dot on the engine mark.
 void main() {
-  group('the folder is named by its own name, parents folded', () {
+  group('the folder is named by its own name alone', () {
     for (final (cwd, label) in [
       (
         '/Users/dudu/Bitcoin_builder/Grid/autonomous-harness',
-        '~/…/autonomous-harness',
+        'autonomous-harness',
       ),
-      ('/home/tony/work/harness', '~/…/harness'),
-      ('/Users/dudu/notes', '~/notes'),
+      ('/home/tony/work/harness', 'harness'),
+      ('/Users/dudu/notes', 'notes'),
       ('/Users/dudu', '~'),
-      ('/root/app', '~/app'),
-      ('/srv', '/srv'),
-      ('/opt/tools/grid', '/…/grid'),
-      (r'C:\Users\tony\code\harness', 'C:/…/harness'),
+      ('/root', '~'),
+      ('~', '~'),
+      ('/root/app', 'app'),
+      ('/srv', 'srv'),
+      ('/opt/tools/grid', 'grid'),
+      (r'C:\Users\tony\code\harness', 'harness'),
       ('/', '/'),
     ]) {
       test('$cwd → $label', () => expect(projectPathLabel(cwd), label));
@@ -50,7 +52,7 @@ void main() {
     );
 
     expect(find.text('agent-3'), findsOneWidget);
-    expect(find.text('~/…/autonomous-harness'), findsOneWidget);
+    expect(find.text('autonomous-harness'), findsOneWidget);
     expect(find.text('feat/mobile-ios-android'), findsOneWidget);
     // No word for the state — the dot says it, and its tooltip.
     expect(find.text('Live'), findsNothing);
