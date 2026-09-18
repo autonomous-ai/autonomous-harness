@@ -1,6 +1,6 @@
-import { spawn, spawnSync } from 'child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
-import { createServer } from 'node:http'
+import { spawn, spawnSync, type ChildProcess } from 'child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -11,8 +11,19 @@ const CLI_ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CLI_SOURCE = join(CLI_ROOT, 'src', 'cli.ts')
 const TSX = join(CLI_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 const dirs: string[] = []
+const children: ChildProcess[] = []
+const servers: Server[] = []
 
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+afterEach(async () => {
+  for (const child of children.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }
+  for (const server of servers.splice(0)) {
+    server.closeAllConnections?.()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
 
 /** A throwaway HOME for one CLI run; every path the CLI writes is under it. */
 function freshRoot(): string {
@@ -30,6 +41,11 @@ function envFor(root: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
     ADAPTER_CLI_DIR: join(root, 'cli'),
     ADAPTER_COMPUTER_ID_FILE: join(root, 'computer-id'),
     ADAPTER_UPDATE_DISABLE: 'true',
+    // Nothing listens on port 1. A `start` asks the daemon on PORT which account it serves and would
+    // otherwise ask this machine's REAL daemon — and the backend is where a start that decided to
+    // (re)start goes next, which must never be the production one.
+    PORT: '1',
+    BACKEND_WS_URL: 'http://127.0.0.1:1',
     ...extra,
   }
 }
@@ -60,10 +76,26 @@ function seedSession(root: string): void {
   }))
 }
 
-/** A daemon that is up, as `start` sees one: a pid file naming a live process — this one. */
-function seedRunningDaemon(root: string): void {
+/** A daemon that is up, as `start` sees one: a pid file naming a live process. A child that idles,
+ *  never this process — a `start` that finds the daemon on another account stops it. */
+function seedRunningDaemon(root: string): { pid: number; exited: Promise<void> } {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  children.push(child)
   mkdirSync(join(root, 'data'), { recursive: true })
-  writeFileSync(join(root, 'data', 'adapter.pid'), `${process.pid}\n`)
+  writeFileSync(join(root, 'data', 'adapter.pid'), `${child.pid}\n`)
+  return { pid: child.pid ?? -1, exited: new Promise((resolve) => child.once('exit', () => resolve())) }
+}
+
+/** The one thing `start` asks a live daemon: GET /api/status, for the machine it serves. Bound to a
+ *  port of its own, which the test hands the CLI as PORT. */
+async function daemonStatusServer(machineId: string): Promise<number> {
+  const server = createServer((_req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ machineId, version: '0.0.0-test', sessions: [] }))
+  })
+  servers.push(server)
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return (server.address() as AddressInfo).port
 }
 
 describe('CLI login/start command contract', () => {
@@ -150,5 +182,45 @@ describe('start --repair beside a running daemon', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('already running')
     expect(result.stdout).not.toContain('installing the Harness grid runtime')
+  }, 20_000)
+})
+
+describe('start beside a daemon that serves another account', () => {
+  // A forced login stops the daemon and waits for the browser, and a start that landed in that window
+  // used to bring a daemon up on the OLD session (closed under the spawn lock now — loginForceRace.spec.ts).
+  // "Already running" is what kept it there: `auth status` named the new machine, the socket served the
+  // old one. However a daemon ends up on the wrong account, this is where it is noticed — `start` asks
+  // the live daemon which machine it serves before leaving it alone.
+
+  it('stops it and starts over on the session that is on disk', async () => {
+    const root = freshRoot()
+    seedSession(root)                                  // machineId m_seeded
+    const daemon = seedRunningDaemon(root)
+    const port = await daemonStatusServer('m_other')
+
+    const result = await runAsync(root, ['start'], { PORT: String(port) })
+
+    expect(result.stdout).toContain(`machine running (pid ${daemon.pid}) as another account — restarting it`)
+    expect(result.stdout).not.toContain('already running')
+    await daemon.exited
+    expect(existsSync(join(root, 'data', 'adapter.pid'))).toBe(false)
+    // The restart itself goes on to resolve this session's machine with the backend, which is refused
+    // here (port 1) — past the point under test, and the one place a repo run could boot a daemon.
+    expect(result.status).toBe(1)
+  }, 20_000)
+
+  it('leaves one that serves this session alone', async () => {
+    const root = freshRoot()
+    seedSession(root)
+    const daemon = seedRunningDaemon(root)
+    const port = await daemonStatusServer('m_seeded')
+
+    const result = await runAsync(root, ['start'], { PORT: String(port) })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('already running')
+    expect(existsSync(join(root, 'data', 'adapter.pid'))).toBe(true)
+    await expect(Promise.race([daemon.exited.then(() => 'exited'), new Promise((r) => setTimeout(() => r('alive'), 300))]))
+      .resolves.toBe('alive')
   }, 20_000)
 })

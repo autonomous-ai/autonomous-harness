@@ -51,7 +51,7 @@ import { PID_FILE, daemonPort, isAlive, isDaemonRunning, readPid } from './lib/d
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
 } from './lib/daemonLaunch.js'
-import { SpawnLockBusyError, describeSpawnLockFailure, describeSpawnLockOwner, withSpawnLock } from './lib/daemonSpawnLock.js'
+import { SpawnLockBusyError, describeSpawnLockBusyPlainly, describeSpawnLockFailure, describeSpawnLockOwner, withSpawnLock } from './lib/daemonSpawnLock.js'
 import { stopDaemonProcess } from './lib/daemonStop.js'
 import { ensureTmuxOnPath, requireTmuxAvailable } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
@@ -59,7 +59,7 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
-import { ensureGridInstalled } from './lib/gridInstall.js'
+import { ensureGridInstalled, type GridInstallResult } from './lib/gridInstall.js'
 import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
@@ -557,13 +557,20 @@ type SignInOutcome =
  *
  * Returns what happened, so `--json` callers can carry it on their own result line.
  */
-async function attachGridToSignIn(token: string, json: boolean): Promise<Record<string, unknown>> {
+async function attachGridToSignIn(
+  token: string,
+  json: boolean,
+  installing: Promise<GridInstallResult> = ensureGridInstalled(),
+): Promise<Record<string, unknown>> {
   const note = (line: string): void => { if (!json) console.error(`  · ${line}`) }
   // A machine with no `grid` gets one first, from grid's own installer — the sign-in that follows
   // is what makes it useful, and "install the grid CLI yourself" was the sentence every fresh
   // machine used to stop at. Best-effort: a failed install is a note, and the hand-off below then
-  // reports the missing binary exactly as before.
-  const install = await ensureGridInstalled()
+  // reports the missing binary exactly as before. A forced sign-in starts the install before it
+  // takes the daemon spawn lock and hands the promise in (see loginCommand): the installer is
+  // account-agnostic and can run for minutes, and neither the browser wait nor a start queued on
+  // that lock should be spent on it.
+  const install = await installing
   if (install.status === 'installed') note(install.message)
   else if (install.status !== 'present') note(install.message)
   const handoff = await handOffToGrid(token, { json: true })
@@ -594,7 +601,9 @@ async function ensureAccountGrid(note: (line: string) => void): Promise<{ status
   let gridName: string | null = null
   try {
     const { headers } = await controlPlaneAuth()
-    gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers)).gridName ?? null
+    // Bounded like the daemon's own mint (reconcileGridAttach): a forced sign-in runs this under the
+    // daemon spawn lock, and a stalled control-plane connection must not hold that lock open.
+    gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers, AbortSignal.timeout(GRID_MINT_TIMEOUT_MS))).gridName ?? null
   } catch (err) {
     note(`Could not read this account's grid name (${(err as Error).message}); skipping grid setup.`)
     return { status: 'skipped', name: null }
@@ -614,13 +623,13 @@ async function loginCommand(
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
-  const succeed = async (alreadySignedIn: boolean): Promise<SignInOutcome> => {
+  const succeed = async (alreadySignedIn: boolean, installing?: Promise<GridInstallResult>): Promise<SignInOutcome> => {
     // `chained` is `harness grid login`, which runs the hand-off itself and reports it as its own
     // result — doing it here too would sign in to the grid twice and print two answers for one act.
     let grid: Record<string, unknown> = {}
     if (!opts.chained) {
       try {
-        grid = await attachGridToSignIn(await new AuthSessionManager(backendHttpBase()).accessToken(), json)
+        grid = await attachGridToSignIn(await new AuthSessionManager(backendHttpBase()).accessToken(), json, installing)
       } catch {
         // The harness session is already saved and valid; a grid step that throws is still only a
         // grid step. Never let it turn a completed sign-in into a failure.
@@ -653,9 +662,60 @@ async function loginCommand(
     }
     return await succeed(true)
   }
+  if (!force) return await browserSignIn(json, emit, () => succeed(false))
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
-  // under its existing socket while this process replaces the durable session.
-  if (force) await stopDaemonProcess()
+  // under its existing socket while this process replaces the durable session — and no NEW daemon
+  // may come up on the old session in the meantime. The desktop app re-runs `harness start` whenever
+  // the control port goes quiet, which it does the moment the old daemon is stopped, and that start
+  // reads whatever session is on disk: for as long as the browser is open, the old account's. The
+  // daemon it spawned came up on the old account and stayed — the `harness start` this command
+  // recommends afterwards found it "already running" — so the whole switch, from the stop until the
+  // new session (and its grid hand-off) is on disk, holds the daemon spawn lock: a start that lands
+  // meanwhile waits its turn and then reads the new session.
+  //
+  // The grid CLI install is the one long thing in there that needs no account, so it starts NOW —
+  // before the lock, before the old daemon is stopped — and runs under the browser wait; `succeed`
+  // awaits only what is left of it. The handler keeps a failed download from being an unhandled
+  // rejection while nobody is waiting on it: the sign-in reads the outcome later, as a note.
+  const installing = opts.chained ? undefined : ensureGridInstalled()
+  installing?.catch(() => { /* reported where it is awaited */ })
+  try {
+    return await withSpawnLock('login', async () => {
+      await stopDaemonProcess()
+      return await browserSignIn(json, emit, () => succeed(false, installing))
+    }, {
+      onWaiting: (owner) => console.error(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
+    })
+  } catch (err) {
+    if (!(err instanceof SpawnLockBusyError)) throw err
+    // A holder that outlived the wait is not something a sign-in can override the way `stop` does:
+    // signing in AROUND it is the race above. Say so and stop. The person gets what Harness is still
+    // doing and what to do — the desktop shows `message` as is — and the pid and the lock go to
+    // stderr, where a developer reads them (the desktop keeps that stream in its log).
+    const message = describeSpawnLockBusyPlainly(err)
+    const detail = `the daemon spawn lock is ${describeSpawnLockFailure(err)}`
+    if (json) {
+      emit({ type: 'result', status: 'error', code: 'DAEMON_BUSY', message })
+      console.error(`  ${detail}`)
+    } else {
+      console.error(`\n  ✗ ${message}\n    (${detail})\n`)
+    }
+    process.exitCode = 1
+    return { signedIn: false }
+  }
+}
+
+/**
+ * The browser half of a sign-in: a loopback callback server, the SSO page, the code exchange, and
+ * the new session — machine id included — on disk. Under --json every failure is a result line and
+ * an exit code (`emit`); on the human path it is thrown. `succeed` finishes the job once the
+ * session is on disk.
+ */
+async function browserSignIn(
+  json: boolean,
+  emit: (line: Record<string, unknown>) => void,
+  succeed: () => Promise<SignInOutcome>,
+): Promise<SignInOutcome> {
   const callback = createServer()
   await new Promise<void>((resolve, reject) => {
     callback.once('error', reject)
@@ -744,7 +804,7 @@ async function loginCommand(
       if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
-    return await succeed(false)
+    return await succeed()
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
@@ -925,7 +985,8 @@ function openInBrowser(url: string): void {
 
 /** Start the adapter from a saved SSO session. Missing credentials never open a browser implicitly. */
 async function startCommand(foreground: boolean, repair: boolean = false): Promise<void> {
-  if (!readAuthSession()) {
+  const session = readAuthSession()
+  if (!session) {
     console.error('\n  ✗ Not signed in. Run: harness login\n')
     process.exit(1)
   }
@@ -949,13 +1010,23 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
     // lock, for the daemon that comes up while we are waiting our turn.
     const running = readPid()
     if (running && isAlive(running)) {
-      // `--repair` still does its provisioning here: it touches the managed runtimes, never the
-      // bundle, and the live daemon picks a grid laid down now up on its next resolve (see
-      // repairManagedRuntimes). Without this, a new pin could only be followed by a restart.
-      if (repair) await repairManagedRuntimes(false)
-      console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
-      console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
-      process.exit(0)
+      // Left alone only when it serves THIS sign-in. A daemon on another account — what a forced
+      // login left behind whenever a start landed while its browser was open — is stopped here and
+      // started over on the session that is on disk: "already running" is exactly what kept it
+      // there, with `auth status` naming the new machine and the socket serving the old one. Asked
+      // of the daemon itself; one that cannot answer (still booting, mid-update) is trusted as before.
+      const serving = (await runningDaemonStatus())?.machineId
+      if (!serving || !session.machineId || serving === session.machineId) {
+        // `--repair` still does its provisioning here: it touches the managed runtimes, never the
+        // bundle, and the live daemon picks a grid laid down now up on its next resolve (see
+        // repairManagedRuntimes). Without this, a new pin could only be followed by a restart.
+        if (repair) await repairManagedRuntimes(false)
+        console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
+        console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
+        process.exit(0)
+      }
+      console.log(`machine running (pid ${running}) as another account — restarting it on this sign-in`)
+      await stopDaemonProcess()
     }
     await withSpawnLock('start', async () => {
       const [v] = await Promise.all([
@@ -5300,18 +5371,23 @@ async function runForeground(session: AuthSession): Promise<void> {
  * by `version v0.0.20`). Every other row here is a fact about the daemon (pid, sessions, dashboard); this
  * makes the version one too. Falls back to the local constant when the daemon cannot be reached, which is
  * exactly the case where the printing process IS the only build there is.
+ *
+ * `machineId` is the machine the daemon's backend socket is serving — fixed for its lifetime, so it is
+ * the one fact that tells a daemon on THIS sign-in from one left over from the previous account (see
+ * startCommand). Null when the daemon does not say.
  */
-async function runningDaemonStatus(): Promise<{ version: string; sessions: number } | null> {
+async function runningDaemonStatus(): Promise<{ version: string; sessions: number; machineId: string | null } | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/status`, {
       signal: AbortSignal.timeout(1_500),
     })
     if (!res.ok) return null
     const body: unknown = await res.json()
-    const status = body as { version?: unknown; sessions?: unknown } | null
+    const status = body as { version?: unknown; sessions?: unknown; machineId?: unknown } | null
     const version = typeof status?.version === 'string' && status.version ? status.version : VERSION
     const sessions = Array.isArray(status?.sessions) ? status.sessions.length : 0
-    return { version, sessions }
+    const machineId = typeof status?.machineId === 'string' && status.machineId ? status.machineId : null
+    return { version, sessions, machineId }
   } catch {
     return null
   }
