@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Slalom</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Slalom</h1></div>
+    <div class="stats">
+      <div class="stat"><label>Gate</label><span id="gate">—</span></div>
+      <div class="stat"><label>Steer</label><span id="move">—</span></div>
+      <div class="stat"><label>Speed</label><span id="speed">—</span></div>
+      <div class="stat"><label>Pos</label><span id="pos">—</span></div>
+      <div class="stat"><label>Ticks</label><span id="ticks">0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="tick">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <main>
+    <section id="stage">
+      <div class="panel panel-stage">
+        <div class="panel-title">The course</div>
+        <div id="course">
+          <canvas id="scene"></canvas>
+          <div id="banner" class="hidden"></div>
+        </div>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Jev, the racer</div>
+        <div class="how">
+          Jev is skiing the slalom. A line of gates sweeps down toward it, and every tick it reads
+          its position and the next gate and steers <code>LEFT</code> / <code>RIGHT</code> (or
+          commits fast) to thread each gap. Clip a gate or hit the wall and the run is over.<br><br>
+          Edit <code>slalom.json</code>: crank <code>speed</code> up and Jev's aim starts to wobble
+          and it falls; change <code>gates</code> for a longer or shorter course.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Run log</div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+</body>
+</html>
