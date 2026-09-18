@@ -24,11 +24,13 @@ import '../core/engine_availability.dart';
 import '../core/local_hostname.dart';
 import '../core/local_git_projects.dart';
 import '../core/last_opened_agent.dart';
+import '../core/machine_cache.dart';
 import '../core/test_run.dart';
 import '../core/models.dart';
 import '../core/project_folder.dart';
 import '../core/project_history.dart';
 import '../core/retry.dart';
+import '../logging/startup_trace.dart';
 import '../settings/config_store.dart';
 import '../stats/harness_stats.dart';
 import '../terminal/terminal_session.dart';
@@ -161,6 +163,20 @@ class MachineState {
   // crypto/pairing state the app has any data for.
   bool needsLink = false;
   List<Agent> agents = [];
+
+  /// True while [agents] came from the last run's cache rather than from this
+  /// machine ([MachineCache], `_warmStartMachines`).
+  ///
+  /// ⚠️ **What it marks is a list that may name an agent that no longer
+  /// exists** — one deleted from another device since this phone last looked.
+  /// The names are good enough to draw a terminal around immediately, which is
+  /// the whole point; what they cannot do is be trusted as the final word, so
+  /// the terminal an agent from here opens says so if the machine disowns it.
+  ///
+  /// Cleared by `_replaceAgents`, i.e. by the first real `agents_list` — from
+  /// that moment the list is the machine's own and nothing is provisional.
+  bool agentsFromCache = false;
+
   AgentLoadStatus agentLoadStatus = AgentLoadStatus.idle;
   bool agentsRefreshing = false;
   String? agentsLoadError;
@@ -1135,6 +1151,10 @@ class AppNotifier extends ChangeNotifier {
        agentPreference = AgentPreference(paneLayoutStore?.storage),
        projectHistory = ProjectHistory(paneLayoutStore?.storage),
        lastOpenedAgent = LastOpenedAgent(paneLayoutStore?.storage),
+       // On the same terms as the stores above: a layout store means this is a
+       // real app with a real Harness home to cache into, and its absence means
+       // a test, which must not read or write one.
+       _machineCache = paneLayoutStore == null ? null : MachineCache(),
        session = authSession,
        _store = configStore,
        cliLink = cliLink ?? CliLink(),
@@ -1202,6 +1222,11 @@ class AppNotifier extends ChangeNotifier {
 
   /// The agent the phone's terminal had open, kept across launches — see [LastOpenedAgent].
   final LastOpenedAgent lastOpenedAgent;
+
+  /// Last run's machine list, used to start dialling before this run's
+  /// `/api/machines` answers — see [MachineCache] and [_warmStartMachines].
+  /// Null in tests, which have no Harness home to cache into.
+  final MachineCache? _machineCache;
 
   TerminalPane? get focusedPane {
     final id = focusedPaneId;
@@ -1710,7 +1735,10 @@ class AppNotifier extends ChangeNotifier {
     try {
       if (_store != null) {
         try {
-          config = await _store.load().timeout(const Duration(seconds: 5));
+          config = await StartupTrace.time(
+            'boot.configLoad',
+            () => _store.load().timeout(const Duration(seconds: 5)),
+          );
         } catch (error) {
           // Connection settings are optional local preferences. An unavailable
           // state file must not invalidate an otherwise recoverable SSO flow;
@@ -1865,7 +1893,10 @@ class AppNotifier extends ChangeNotifier {
     // refreshes it itself. This app never reads, stores, or refreshes a token of its own; it just
     // asks the CLI whether this computer is currently signed in.
     try {
-      final authStatus = await cliLogin.checkStatus();
+      final authStatus = await StartupTrace.time(
+        'boot.checkSignIn',
+        cliLogin.checkStatus,
+      );
       if (!_authWorkCurrent(revision)) return;
       if (!authStatus.loggedIn) {
         currentUser = null;
@@ -2095,16 +2126,81 @@ class AppNotifier extends ChangeNotifier {
     // race `harness start`'s own backend handshake and surface a bogus 30s "Could not load
     // machines" timeout. A daemon that never comes up still gets a home screen below, with
     // the failure shown there as before, since that's where the retry affordance lives.
-    _bootStatusMessage = 'Starting local service…';
+    // A viewer has no local service to start — `ensureCliDaemonReady` returns
+    // immediately below — so saying so was a sentence about somebody else's
+    // computer shown while this one read its own disk.
+    _bootStatusMessage = viewer == null
+        ? 'Starting local service…'
+        : 'Getting your machines…';
     notifyListeners();
+    // Which agent to reopen is the first thing the phone's home screen asks for
+    // and the last thing it can draw without, so the read starts here rather
+    // than when that screen mounts — several state-file operations later, behind
+    // every one of their locks. See [LastOpenedAgent.prefetch].
+    lastOpenedAgent.prefetch();
     // Before the machines, deliberately: the tiles are intent, they render as
     // "waiting for that machine" on their own, and each attaches as its machine
     // answers. Waiting for the machine list first would leave the window empty
     // for as long as the slowest one takes, and would hand the first-run
     // auto-pick a window in which the grid still looks empty.
-    await _restorePaneLayout();
-    if (!_authWorkCurrent(revision)) return;
-    await dial.restore();
+    //
+    // ⚠️ Together, not one after the other. Both read the same state file, and
+    // the store serializes them anyway — but serialized on ITS queue they cost
+    // one lock each back to back, whereas awaited separately here they also cost
+    // a scheduler hop each, and neither has ever depended on the other.
+    //
+    // `dial` is not asked about at all in a viewer: it describes a USB device
+    // plugged into a desktop, which a phone has no port for, so the read could
+    // only ever return the default it already holds.
+    //
+    // ⚠️ **The machine list is asked for HERE, not after the disk work, and that
+    // ordering is the point.** A viewer reaches every machine over the network,
+    // so `/api/machines` depends on nothing below it — yet it used to be the
+    // last thing started, behind several exclusive locks on one state file. The
+    // request now overlaps that disk work instead of queueing behind it, which
+    // takes a whole HTTP round-trip off the stretch the phone spends saying
+    // "Connecting to your machine…".
+    //
+    // ⚠️ The pool is built BEFORE the fetch is started, not after the restore
+    // below. A returning list dials each machine through `_conn`, which reads
+    // `_pool` and would throw on a null one — reachable only because this fetch
+    // can now finish while the restore is still holding the file lock. It is
+    // cheap and idempotent, and nothing it needs comes off disk.
+    //
+    // The failure is held rather than thrown: nothing awaits this future until
+    // the end of the method, and an unhandled rejection in between would reach
+    // the zone's error handler and be reported as a crash. It is re-raised at
+    // that await, where the existing handler words it for the user and offers
+    // the retry.
+    Future<Object?>? machineRefresh;
+    if (viewer != null) {
+      _ensurePool();
+      machineRefresh = StartupTrace.time<Object?>(
+        'boot.refreshMachines',
+        () async {
+          try {
+            await refreshMachines();
+            return null;
+          } catch (error) {
+            return error;
+          }
+        },
+      );
+      // Dial last run's machines WHILE that fetch is in the air. The socket,
+      // the relay and the E2EE handshake are the slowest part of the launch by
+      // far, and none of them needed the fetch to have finished — only a
+      // machine id, which the last run already wrote down.
+      unawaited(_warmStartMachines());
+    }
+    // Not awaited before the fetch above starts: the screen still wants to
+    // appear as soon as the local state is restored, and these two now overlap.
+    await StartupTrace.time(
+      'boot.restoreLocalState',
+      () => Future.wait([
+        _restorePaneLayout(),
+        if (viewer == null) dial.restore(),
+      ]),
+    );
     if (!_authWorkCurrent(revision)) return;
     _ensurePool();
     try {
@@ -2129,7 +2225,16 @@ class AppNotifier extends ChangeNotifier {
     // metadata is independent of machine discovery and must not delay work.
     unawaited(_loadProfile());
     try {
-      await refreshMachines();
+      // The request a viewer already has in flight (above), or a fresh one where
+      // there is none — a desktop, whose machine list is served by a daemon that
+      // was not confirmed up until `ensureCliDaemonReady` returned, so asking any
+      // earlier there would race the very handshake that gate exists to wait out.
+      if (machineRefresh == null) {
+        await refreshMachines();
+      } else {
+        final failure = await machineRefresh;
+        if (failure != null) throw failure;
+      }
     } catch (error) {
       if (!_authWorkCurrent(revision)) return;
       _lastError = 'Could not load machines: ${describeApiError(error)}';
@@ -2570,6 +2675,13 @@ class AppNotifier extends ChangeNotifier {
     currentUser = null;
     machines = [];
     machineStates.clear();
+    // ⚠️ The warm-start cache is this account's machine ids, so it goes with the
+    // session. Left behind, the next launch would dial the previous account's
+    // machines before its own fetch could say they are not its own — reaching
+    // for computers the person signing in may have no relationship to at all.
+    // Not awaited: sign-out must not wait on a disk write, and the cache is only
+    // ever read after a sign-in that this clears the way for.
+    unawaited(_machineCache?.clear());
     sessionPreviews.clear();
     expandedMachines.clear();
     selectedMachineId = null;
@@ -2774,6 +2886,17 @@ class AppNotifier extends ChangeNotifier {
         _stopOfflineRetry(entry.key);
         _stopLinkRetry(entry.key);
         _stopAgentSyncTimer(entry.key);
+        // ⚠️ The SOCKET goes too, not just the bookkeeping above. Dropping the
+        // state alone left the pool holding a live connection to a machine
+        // nothing referred to any more — it kept dialling and reconnecting for
+        // the rest of the session, with `_onConnectionStatus` discarding every
+        // event because the state it looks up no longer exists.
+        //
+        // Reachable before [_warmStartMachines] only when a machine left the
+        // account between two refreshes; reachable on every launch now, because
+        // the warm start dials from a cache that can name a machine this fetch
+        // does not return. Same fix either way.
+        unawaited(_pool?.closeMachine(entry.key));
       }
     }
     machineStates.removeWhere((id, _) => !visible.contains(id));
@@ -2813,6 +2936,18 @@ class AppNotifier extends ChangeNotifier {
     }
     if (localEndpoint != null) _updateLocalProjectSnapshot(localEndpoint);
     _autoConnectAndLoadMachines();
+    // The list that just landed is what the NEXT launch starts from. Never
+    // awaited: it is a hint for a future run and must not add a disk write to
+    // the one a person is waiting on right now.
+    final cache = _machineCache;
+    if (cache != null) {
+      unawaited(
+        cache.save(
+          machines,
+          isOnline: (machine) => _nodeOnlineFromStatus(machine.status) == true,
+        ),
+      );
+    }
     notifyListeners();
   }
 
@@ -3142,8 +3277,59 @@ class AppNotifier extends ChangeNotifier {
           .machineId;
     }
     for (final machine in machines) {
-      _connectMachine(machineStates[machine.machineId]!);
-      unawaited(_loadMachineData(machineStates[machine.machineId]!));
+      final state = machineStates[machine.machineId]!;
+      // ⚠️ **A machine the account says is down is not dialled, and this is the
+      // single biggest thing standing between launch and a usable screen.**
+      //
+      // `/api/machines` has already reported each machine's status by this
+      // point, and a phone commonly has several linked machines with one
+      // actually running. Dialling the rest anyway bought nothing and cost the
+      // full inventory budget EACH: the socket opens (the relay is up — it is
+      // the machine behind it that is not), then `waitUntilReady` sits there
+      // until it times out, because the machine that would answer is off. A
+      // real launch measured four of those, `10002ms` apiece, while the one
+      // live machine had been ready since 3s.
+      //
+      // Nothing is lost by skipping them. `_applyNodeStatus` has already put
+      // each one on the 5-second offline poll (`_startOfflineRetry`), which
+      // dials the moment it comes back, and a pull-to-refresh still reaches
+      // every machine through `refreshMachines`. The tiles say "Offline", which
+      // is both true and immediate, instead of "Connecting…" for ten seconds
+      // before saying the same thing.
+      //
+      // A null answer means the account did not say — an older backend, or a
+      // status this app does not recognise. That still dials: silence is not
+      // evidence of being down, and the previous behaviour is the safe one.
+      //
+      // Read from `machine.status` rather than `state.nodeOnline`, which the
+      // caller sets through an unawaited `_applyNodeStatus`: that happens to
+      // assign synchronously today, so both agree, but this loop should not be
+      // the thing that breaks if it ever gains an await before the assignment.
+      if (!state.isLocalMachine &&
+          _nodeOnlineFromStatus(machine.status) == false) {
+        StartupTrace.mark('skipped offline machine ${machine.machineId}');
+        continue;
+      }
+      _connectMachine(state);
+      // ⚠️ **Only ask a machine that is already answering.** `_connectMachine`
+      // starts a dial; it does not finish one. Asking here regardless meant
+      // `waitUntilReady` sat on a handshake that had not happened yet, spending
+      // the inventory budget on the connection rather than on the request — and
+      // on a first launch it spent ALL of it, which then read as the machine
+      // having gone offline and triggered a `forceReconnect()` that threw the
+      // working socket away and started over.
+      //
+      // A machine that is not ready yet loses nothing: `_onConnectionStatus`
+      // calls this the moment its handshake completes, with `force: true`, which
+      // is the path every reconnect in the app already takes.
+      //
+      // Read off the POOL rather than through `_conn`, which would build a
+      // connection as a side effect of being asked about one — for a machine
+      // `_connectMachine` had just declined to dial, that would be this method
+      // quietly undoing its own decision.
+      if (_pool?[machine.machineId]?.isReady == true) {
+        unawaited(_loadMachineData(state));
+      }
     }
   }
 
@@ -3334,6 +3520,140 @@ class AppNotifier extends ChangeNotifier {
     return _conn(machineId).sendTerminalBinary(encoded);
   }
 
+  /// Start dialling last run's machines without waiting for `/api/machines`.
+  ///
+  /// ⚠️ **The whole point is the socket, not the list.** A relay dial plus the
+  /// E2EE handshake is around 1.5 seconds on a phone, and it used to begin only
+  /// after the machine list had been fetched — ~700ms during which the app knew
+  /// every machine id it needed from the last run and did nothing with them. The
+  /// two overlap now, so by the time the real list lands its machines are
+  /// already connected or most of the way there.
+  ///
+  /// **The fetch always wins.** `_refreshMachines` rebuilds `machineStates` from
+  /// what the account says, keeping the entries this made (`machineStates.update`
+  /// with `ifAbsent`) and dropping any machine that is no longer there — with
+  /// its socket, through the `removeWhere` that already handles a machine
+  /// disappearing between refreshes. Nothing here is shown to the user as fact:
+  /// the tiles it creates carry no agents until a real list arrives.
+  ///
+  /// Skipped entirely once a fetch has already populated the list — a
+  /// re-bootstrap after a sign-in has nothing to warm up, and warming from a
+  /// cache that the fetch has already superseded would be a step backwards.
+  ///
+  /// **The one visible cost.** A machine unlinked from the account since the
+  /// last run shows for the length of the fetch — under a second — and then goes
+  /// when the real list arrives. Accepted deliberately: the cache holds only
+  /// machines the account itself reported as up, unlinking is rare and is done
+  /// deliberately by the person who would see this, and the alternative is the
+  /// blank screen that every launch used to show instead.
+  Future<void> _warmStartMachines() async {
+    final cache = _machineCache;
+    if (cache == null || _disposed) return;
+    final revision = _authRevision;
+    final cached = await StartupTrace.time('boot.machineCache', cache.read);
+    if (cached.isEmpty || _disposed || !_authWorkCurrent(revision)) return;
+    // The fetch got there first — it is the truth, and this has nothing to add.
+    if (machines.isNotEmpty || machineStates.isNotEmpty) return;
+    var warmed = 0;
+    var warmedAgents = 0;
+    final warmMachines = <Machine>[];
+    for (final entry in cached) {
+      final machine = entry.machine;
+      // A viewer reaches every machine through the relay; a cached entry that
+      // claims to be this computer has no meaning on a phone and no local
+      // endpoint to dial, so it waits for the fetch like it always did.
+      if (machine.authMode != MachineAuthMode.remote) continue;
+      final state = machineStates.putIfAbsent(
+        machine.machineId,
+        () => MachineState(machine),
+      );
+      state.transportMode = MachineTransportMode.cloudE2ee;
+      // ⚠️ **The agents go in as PROVISIONAL, and the flag below is what keeps
+      // them honest.** With them the phone draws its terminal — the right
+      // agent's name on it, from the record it already had — while the real list
+      // is still crossing the network, instead of showing a spinner for two
+      // seconds and then the same screen.
+      //
+      // `agentLoadStatus` stays `loading`, not `loaded`: every screen reads that
+      // to mean the machine still owes a list, so the refresh indicators, the
+      // empty states and `_machineStillComing` all keep behaving as though
+      // nothing had arrived — which is the truth. What these give is a name to
+      // draw and an id to open, not a claim that the list is settled.
+      if (entry.agents.isNotEmpty) {
+        state.agents = entry.agents;
+        state.agentsFromCache = true;
+        warmedAgents += entry.agents.length;
+      }
+      // ⚠️ **The capability reply is replayed so a terminal can attach without
+      // waiting for the negotiation round-trip.** `_canAttachAgent` requires
+      // `terminalCapabilityAvailable`, which is otherwise only true once
+      // `terminal_capabilities` has crossed the network — the last gate on the
+      // launch, and worth about 700ms of it.
+      //
+      // Safe in the direction that matters. Only a reply that SAID the terminal
+      // works is ever cached, the live negotiation runs regardless and
+      // overwrites this within the second, and a machine that has genuinely lost
+      // its tmux answers `available: false` — at which point
+      // `_applyTerminalCapabilities` clears the flag and every screen reverts to
+      // what it would have shown anyway. The narrow cost of being wrong is one
+      // `terminal_open` that fails and is retried, against a second saved on
+      // every launch that is right.
+      final capabilities = entry.capabilities;
+      if (capabilities != null) {
+        _applyTerminalCapabilities(state, capabilities);
+        // ⚠️ NOT `terminalCapabilityLoaded`-as-settled: the live negotiation
+        // still has to run, and `_loadTerminalCapabilities` keys off its own
+        // in-flight future rather than this flag, so replaying here cannot
+        // suppress it.
+      }
+      // ⚠️ **The dial, and ONLY the dial. No `_loadMachineData` here.**
+      //
+      // Asking for the agent list at this point was a real bug, and an ugly one
+      // to watch: the socket is a few milliseconds old, so `waitUntilReady` was
+      // waiting on a handshake that had not begun. Any hiccup on that first dial
+      // — and a cold relay socket has them — reached `_onDone`, which rejects
+      // every waiter with "WS disconnected". That is NOT a `WsRequestTimeout`,
+      // so it fell to the generic branch and painted **Disconnected** over a
+      // machine that was merely still connecting. `_autoConnectAndLoadMachines`
+      // then asked again a second later, waited out the full ten-second
+      // inventory budget, and `forceReconnect()` tore the socket down and
+      // redialled from scratch. The screen showed Attaching → Disconnected →
+      // Attaching → Live across twelve seconds, for a machine that had answered
+      // in one.
+      //
+      // Nothing is lost by leaving it out. `_onConnectionStatus` calls
+      // `_loadMachineData` the moment the handshake actually completes — that is
+      // how every other connection in the app gets its list — and the agents
+      // from the cache are already on screen meanwhile. The warm start's job is
+      // to have the socket ALREADY OPEN when that happens, which is where its
+      // second and a half comes from; the request itself was never the part
+      // worth racing.
+      _connectMachine(state);
+      warmMachines.add(machine);
+      warmed++;
+    }
+    if (warmed == 0) return;
+    // ⚠️ Published to `machines` as well, because every screen indexes agents
+    // through THAT list (`agentIndex`, `filterableMachines`) rather than through
+    // `machineStates` — without this the warm start would have opened the
+    // sockets and drawn nothing, which is half the win and all of the risk.
+    //
+    // Replaced wholesale by `_refreshMachines` the moment the fetch lands: it
+    // assigns `machines` from the account's own answer and drops any state not
+    // in it, so nothing cached outlives the round-trip it was covering.
+    machines = warmMachines;
+    StartupTrace.mark('warm-started $warmed machine(s), $warmedAgents agent(s)');
+    notifyListeners();
+  }
+
+  /// The least time `agents_list` gets, however long the handshake before it
+  /// took. Short enough that a dead machine is still reported promptly, long
+  /// enough for one round-trip over a relay on a mobile connection.
+  static const _agentsListFloor = Duration(seconds: 4);
+
+  static Duration _atLeast(Duration value, Duration floor) =>
+      value < floor ? floor : value;
+
   Future<void> _loadMachineData(
     MachineState machine, {
     bool force = false,
@@ -3365,7 +3685,12 @@ class AppNotifier extends ChangeNotifier {
 
   Future<void> _performMachineDataLoad(MachineState machine) async {
     final revision = _authRevision;
-    final hadAgents = machine.agents.isNotEmpty;
+    // ⚠️ Agents restored from the cache do NOT count as "had agents". This is a
+    // first load wearing last run's names: `agentsRefreshing` would render it as
+    // a quiet background refresh over a list that had been confirmed, and this
+    // list has not been. Kept as `loading`, every screen treats the machine as
+    // still owing its list, which it does.
+    final hadAgents = machine.agents.isNotEmpty && !machine.agentsFromCache;
     machine.agentsRefreshing = hadAgents;
     if (!hadAgents) machine.agentLoadStatus = AgentLoadStatus.loading;
     machine.agentsLoadError = null;
@@ -3375,27 +3700,84 @@ class AppNotifier extends ChangeNotifier {
     debugPrint('agents_list start: ${machine.machine.machineId}');
     try {
       const inventoryTimeout = Duration(seconds: 10);
-      await connection.waitUntilReady(timeout: inventoryTimeout);
-      if (!_machineWorkCurrent(machine, revision)) return;
-      // Keep the inventory's existing total budget, including connection time.
-      // Capabilities get their own budget only once the handshake is complete.
-      final remaining = inventoryTimeout - deadline.elapsed;
-      if (remaining <= Duration.zero) {
-        throw const WsRequestTimeout('agents_list');
+      // ⚠️ **The handshake has its OWN budget, and running out of it is not a
+      // failure.** These were one ten-second budget shared between waiting for
+      // the socket and asking through it, which is the single worst mechanism in
+      // this launch path: a caller that asked before the socket was up spent the
+      // whole budget waiting, the timeout landed on `agents_list`, the handler
+      // below read that as the node having gone offline, and `forceReconnect()`
+      // tore down a socket that was seconds from ready — then the redial did it
+      // all again. Measured on a cold launch: twelve seconds of
+      // `Attaching → Disconnected → Attaching → Live` for a machine that had
+      // answered in two.
+      //
+      // Separated, "the socket is not up yet" resolves as what it is — nothing
+      // has been asked, so nothing has failed. The load simply returns, leaving
+      // `agentLoadStatus` on `loading`; `_onConnectionStatus` runs it again with
+      // `force: true` the moment the handshake completes, which is how every
+      // reconnect in the app already gets its list.
+      //
+      // Callers still avoid asking early where they can (see
+      // `_autoConnectAndLoadMachines`, `_applyNodeStatus`) — this is the floor
+      // under all of them, not a licence to ignore it.
+      try {
+        await StartupTrace.time(
+          'agents.waitUntilReady',
+          () => connection.waitUntilReady(timeout: inventoryTimeout),
+        );
+      } on WsRequestTimeout {
+        if (!_machineWorkCurrent(machine, revision)) return;
+        machine.agentsRefreshing = false;
+        StartupTrace.mark(
+          'agents_list deferred: handshake pending '
+          '${machine.machine.machineId}',
+        );
+        notifyListeners();
+        return;
       }
+      if (!_machineWorkCurrent(machine, revision)) return;
+      // What the connection spent is subtracted so a machine that is up but slow
+      // to answer still fails inside a sensible total, with a floor so the
+      // request always gets a fair hearing of its own.
+      final remaining = _atLeast(
+        inventoryTimeout - deadline.elapsed,
+        _agentsListFloor,
+      );
       final capabilities = _loadTerminalCapabilities(
         machine,
         connection,
         revision,
       );
-      final response = await connection.request(
-        'agents_list',
-        timeout: remaining,
+      final response = await StartupTrace.time(
+        'agents.list',
+        () => connection.request('agents_list', timeout: remaining),
       );
       if (!_machineWorkCurrent(machine, revision)) return;
-      final agents = (response['agents'] as List<dynamic>? ?? [])
+      final rawAgents = response['agents'] as List<dynamic>? ?? [];
+      final agents = rawAgents
           .map((item) => Agent.fromJson(item as Map<String, dynamic>))
           .toList();
+      // Kept for the next launch, as the daemon sent it — see [MachineCache].
+      //
+      // ⚠️ Written out HERE, not left to the next refresh. The machine list is
+      // saved when `/api/machines` lands, which is always before any machine has
+      // answered with its agents — so a cache that only went out with that save
+      // would be a launch behind forever, and a first run would never cache
+      // agents at all. Never awaited: this is for the next launch and must not
+      // add a disk write to the one in progress.
+      final cache = _machineCache;
+      if (cache != null) {
+        cache.rememberAgents(machine.machine.machineId, [
+          for (final item in rawAgents)
+            if (item is Map<String, dynamic>) item,
+        ]);
+        unawaited(
+          cache.save(
+            machines,
+            isOnline: (item) => _nodeOnlineFromStatus(item.status) == true,
+          ),
+        );
+      }
       _replaceAgents(machine, agents);
       machine.agentLoadStatus = AgentLoadStatus.loaded;
       machine.agentsRefreshing = false;
@@ -3435,12 +3817,31 @@ class AppNotifier extends ChangeNotifier {
           // keep timing out against the same dead session.
           unawaited(connection.forceReconnect());
         }
-      } else {
+      } else if (connection.isClosed || machine.nodeOnline == false) {
         machine.agentsLoadError = 'Could not load harnesses: $error';
+      } else {
+        // ⚠️ **The socket dropped mid-request and is already redialling — that
+        // is not a failure to report, it is a wait to keep waiting.**
+        //
+        // `_onDone` rejects every pending waiter with "WS disconnected" and then
+        // schedules a reconnect, so this branch is reached routinely on a first,
+        // cold dial. Treated as an error it painted **Disconnected** across a
+        // machine that was seconds from answering, and `_onConnectionStatus`
+        // re-requests the list the moment the retry lands anyway — so the error
+        // was not only wrong, it was about to be replaced by the right screen.
+        //
+        // Left null, every surface keeps showing the connecting state it was
+        // already showing, which is what is actually happening.
+        machine.agentsLoadError = null;
       }
       // A NO_PEER_LINK close already set needsLink (via onLocalFailure) perhaps a microtask before
       // this catch runs — don't downgrade that specific, actionable state back to a generic error.
-      if (!hadAgents && machine.agentLoadStatus != AgentLoadStatus.needsLink) {
+      //
+      // A drop that is retrying is left alone for the same reason: `error` there
+      // would strand the machine on a dead end, when the redial is in flight.
+      if (!hadAgents &&
+          machine.agentsLoadError != null &&
+          machine.agentLoadStatus != AgentLoadStatus.needsLink) {
         machine.agentLoadStatus = AgentLoadStatus.error;
       }
       debugPrint('agents_list failed: ${machine.machine.machineId}: $error');
@@ -3561,6 +3962,37 @@ class AppNotifier extends ChangeNotifier {
     return load;
   }
 
+  /// Read a `terminal_capabilities` reply into [machine].
+  ///
+  /// Shared by the live negotiation and by the warm start that replays last
+  /// run's reply from disk, so a cached machine and a freshly negotiated one are
+  /// described by exactly the same code — a second, parallel reader is how the
+  /// two would come to disagree about what `available` means.
+  void _applyTerminalCapabilities(
+    MachineState machine,
+    Map<String, dynamic> result,
+  ) {
+    machine.terminalCapabilityLoaded = true;
+    machine.terminalCapabilityAvailable =
+        result['protocolVersion'] == TerminalSession.protocolVersion &&
+        result['backend'] == 'tmux' &&
+        result['available'] == true;
+    machine.terminalCapabilityError = machine.terminalCapabilityAvailable
+        ? null
+        : 'tmux terminal streaming is unavailable';
+    final features = result['features'];
+    machine.terminalPasteRawAvailable =
+        features is Map && features['pasteRaw'] == true;
+    machine.terminalImagePasteAvailable =
+        features is Map && features['imagePaste'] == true;
+    machine.terminalPasteFileAvailable =
+        features is Map && features['pasteFile'] == true;
+    machine.mediaPreviewAvailable =
+        features is Map && features['mediaPreview'] == true;
+    machine.projectFolderAvailable =
+        features is Map && features['projectFolder'] == true;
+  }
+
   Future<void> _readTerminalCapabilities(
     MachineState machine,
     WsConn connection,
@@ -3573,25 +4005,13 @@ class AppNotifier extends ChangeNotifier {
         timeout: const Duration(seconds: 8),
       );
       if (!_machineWorkCurrent(machine, revision)) return;
-      machine.terminalCapabilityLoaded = true;
-      machine.terminalCapabilityAvailable =
-          result['protocolVersion'] == TerminalSession.protocolVersion &&
-          result['backend'] == 'tmux' &&
-          result['available'] == true;
-      machine.terminalCapabilityError = machine.terminalCapabilityAvailable
-          ? null
-          : 'tmux terminal streaming is unavailable';
-      final features = result['features'];
-      machine.terminalPasteRawAvailable =
-          features is Map && features['pasteRaw'] == true;
-      machine.terminalImagePasteAvailable =
-          features is Map && features['imagePaste'] == true;
-      machine.terminalPasteFileAvailable =
-          features is Map && features['pasteFile'] == true;
-      machine.mediaPreviewAvailable =
-          features is Map && features['mediaPreview'] == true;
-      machine.projectFolderAvailable =
-          features is Map && features['projectFolder'] == true;
+      _applyTerminalCapabilities(machine, result);
+      // Kept for the next launch, but only a reply that says the terminal works
+      // — see [MachineCache.rememberCapabilities]. Written out with the agent
+      // list, which lands moments later on this same connection.
+      if (machine.terminalCapabilityAvailable) {
+        _machineCache?.rememberCapabilities(machine.machine.machineId, result);
+      }
     } catch (_) {
       if (!_machineWorkCurrent(machine, revision)) return;
       machine.terminalCapabilityLoaded = true;
@@ -3613,6 +4033,10 @@ class AppNotifier extends ChangeNotifier {
   }
 
   void _replaceAgents(MachineState machine, List<Agent> agents) {
+    // Whatever was here before, this list came from the machine itself — see
+    // [MachineState.agentsFromCache]. Cleared before the loops below, which are
+    // exactly the code that retires an agent the cache was wrong about.
+    machine.agentsFromCache = false;
     final nextIds = agents.map((agent) => agent.id).toSet();
     final previous = {for (final agent in machine.agents) agent.id: agent};
     for (final old in machine.agents.where(
@@ -4501,12 +4925,28 @@ class AppNotifier extends ChangeNotifier {
       final pending = machine.pendingOfflineAgentId;
       if (pending != null) {
         unawaited(_recoverPendingAgent(machine, pending));
-      } else if (panesFor(machineId).any(_paneNeedsAttach)) {
+      } else if (panesFor(machineId).any(_paneNeedsAttach) &&
+          _pool?[machineId]?.isReady == true) {
         // A tile restored from the saved layout has no pendingOfflineAgentId —
         // nothing of its was interrupted, it simply arrived before its machine
         // did. Without this it would sit on "Attaching…" forever on a machine
         // that has since come back, because every other route to _attachSession
         // runs off a load that nothing here would trigger.
+        //
+        // ⚠️ **Only once the socket is actually up.** `/api/machines` reports a
+        // machine as running well before this app has finished dialling it, and
+        // this branch fires off that REST answer — so on a cold launch it asked
+        // for the agent list against a socket that was still handshaking. The
+        // request then spent the whole ten-second inventory budget WAITING for
+        // that handshake, timed out, and the timeout handler read it as the node
+        // having gone offline and called `forceReconnect()`, which threw away
+        // the socket that was seconds from being ready and dialled again. That
+        // is the twelve-second `Attaching → Disconnected → Attaching → Live` a
+        // launch showed.
+        //
+        // Nothing is lost by waiting: `_onConnectionStatus` runs this same load
+        // with `force: true` the moment the handshake completes, and it is what
+        // attaches the restored tile in every other case already.
         unawaited(_loadMachineData(machine, force: true));
       }
     }
@@ -4527,6 +4967,15 @@ class AppNotifier extends ChangeNotifier {
             machine.nodeOnline != true ||
             machine.pendingOfflineAgentId != agentId) {
           return;
+        }
+        // ⚠️ Poll past a socket that is not up yet rather than asking through
+        // it. `_loadMachineData` would spend its whole ten-second inventory
+        // budget waiting for the handshake and then report the machine offline —
+        // on the very path that exists to recover a machine coming back. The
+        // delay at the foot of this loop is the poll; this just skips the turn.
+        if (_pool?[machineId]?.isReady != true) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          continue;
         }
         await _loadMachineData(machine, force: true);
         final agent = machine.agents.cast<Agent?>().firstWhere(
@@ -4887,7 +5336,27 @@ class AppNotifier extends ChangeNotifier {
       send: (type, payload) =>
           _conn(pane.machineId).sendTerminalFrame(type, payload),
       sendBinary: (frame) => _sendTerminalBinary(pane.machineId, frame),
-      onOpenStalled: () => _conn(pane.machineId).forceReconnect(),
+      // ⚠️ **A socket that has not finished its handshake is not a stalled one,
+      // and forcing a reconnect on it destroys the dial that was about to
+      // succeed.** `terminal_open` can now be sent very early — the agent and
+      // the machine's capabilities both come from the cache, so a terminal is
+      // built while the relay handshake is still in flight. That open gets no
+      // `terminal_ready`, which looks exactly like a stalled stream, and the
+      // recovery for a stalled stream is `forceReconnect()`: it tore down the
+      // in-progress dial, the redial started over, and the launch spent an extra
+      // two seconds showing `Attaching → Disconnected → Attaching → Live`.
+      //
+      // Reconnecting is right for a session that stalled on a connection that IS
+      // up — the relay's cached upstream session going stale, which is what this
+      // hook was written for. It is wrong before readiness, where there is
+      // nothing to recover and the thing to do is wait: `_onConnectionStatus`
+      // reattaches every pane the moment the handshake lands.
+      onOpenStalled: () async {
+        final connection = _conn(pane.machineId);
+        if (!connection.isReady) return false;
+        await connection.forceReconnect();
+        return true;
+      },
     );
     pane.session = terminal;
     terminal.addListener(notifyListeners);

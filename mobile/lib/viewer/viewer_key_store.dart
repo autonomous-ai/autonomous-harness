@@ -60,6 +60,20 @@ class ViewerKeyStore {
   final LocalKeyValueStore _storage;
   Future<E2eeIdentity>? _identity;
 
+  /// The linked machines, held after the first read — the same treatment
+  /// [identity] has always had, and for a sharper reason.
+  ///
+  /// [peers] is on the dial path: every connection, and every RECONNECT, asks
+  /// for the peer before it opens a socket (`viewerRelayCodecs`). Uncached, a
+  /// phone waking to four machines that each redial takes four exclusive locks
+  /// on `state.json` and four full parses of it — in series, because the store
+  /// queues them — while the screen says "Connecting to your machine…".
+  ///
+  /// Every write goes through [_write], which replaces this, so the cache cannot
+  /// outlive a link or an unlink. It is per-instance and the app builds one
+  /// store (`ViewerServices`), so there is no second copy to go stale.
+  Future<List<MachinePeer>>? _peers;
+
   static const _seedKey = 'viewer_e2ee_identity_seed';
   static const _peersKey = 'viewer_e2ee_machine_peers';
 
@@ -74,8 +88,10 @@ class ViewerKeyStore {
     return minted;
   }
 
-  /// Newest link first.
-  Future<List<MachinePeer>> peers() async {
+  /// Newest link first. Read once and held — see [_peers].
+  Future<List<MachinePeer>> peers() => _peers ??= _readPeers();
+
+  Future<List<MachinePeer>> _readPeers() async {
     final raw = await _storage.read(_peersKey);
     if (raw == null) return const [];
     final Object? decoded;
@@ -118,8 +134,23 @@ class ViewerKeyStore {
     return true;
   }
 
-  Future<void> _write(List<MachinePeer> peers) => _storage.write(
-    _peersKey,
-    jsonEncode([for (final peer in peers) peer.toJson()]),
-  );
+  /// The one path that changes the peer list, so the one place the cache is
+  /// replaced.
+  ///
+  /// ⚠️ The cache is dropped BEFORE the write and reseeded only once it lands.
+  /// Seeding first would publish a list that a failed write never persisted, and
+  /// this app would then dial a machine it believes it linked until it was
+  /// relaunched. Dropping first costs at most one re-read on the next dial; both
+  /// orders keep [peers] sorted, because the reseeded list is sorted here the
+  /// same way [_readPeers] sorts the file.
+  Future<void> _write(List<MachinePeer> peers) async {
+    _peers = null;
+    await _storage.write(
+      _peersKey,
+      jsonEncode([for (final peer in peers) peer.toJson()]),
+    );
+    final sorted = [...peers]
+      ..sort((a, b) => b.linkedAt.compareTo(a.linkedAt));
+    _peers = Future.value(sorted);
+  }
 }

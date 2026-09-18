@@ -49,8 +49,29 @@ class AuthSession {
   Future<String?> accessToken() => _storage.read(_access);
   Future<String?> refreshToken() => _storage.read(_refresh);
   Future<String> autonomousEnv() async => (await _storage.read(_env)) ?? 'prod';
-  Future<DateTime?> accessTokenExpiresAt() async {
-    final raw = await _storage.read(_expiresAt);
+  Future<DateTime?> accessTokenExpiresAt() async =>
+      _expiryFrom(await _storage.read(_expiresAt));
+
+  /// The token and its expiry as ONE read.
+  ///
+  /// The launch asks both questions back to back — is there a session, and is it
+  /// still good — and asking them separately costs two exclusive locks on
+  /// `state.json` and two full parses of it (see [HarnessFileStore]), in series,
+  /// before the app can so much as decide which screen to show.
+  ///
+  /// Reading them together also makes the pair coherent: taken separately, a
+  /// refresh landing between the two reads returns the OLD token with the NEW
+  /// expiry — a token that then looks fresh and is not, which is a sign-in
+  /// failure several round-trips later rather than a refresh here.
+  Future<({String? token, DateTime? expiresAt})> accessTokenWithExpiry() async {
+    final saved = await _storage.readMany([_access, _expiresAt]);
+    return (
+      token: saved[_access],
+      expiresAt: _expiryFrom(saved[_expiresAt]),
+    );
+  }
+
+  static DateTime? _expiryFrom(String? raw) {
     final milliseconds = int.tryParse(raw ?? '');
     return milliseconds == null
         ? null

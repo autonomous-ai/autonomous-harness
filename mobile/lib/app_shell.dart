@@ -22,6 +22,7 @@ import 'widgets/flash_firmware_dialog.dart';
 import 'core/startup.dart';
 import 'logging/app_log.dart';
 import 'logging/install.dart';
+import 'logging/startup_trace.dart';
 import 'shortcuts/app_keymap.dart';
 import 'widgets/shortcuts_sheet.dart';
 import 'widgets/update_notice.dart';
@@ -53,10 +54,22 @@ Future<void> startHarness({
   installFileLogs();
   CrashLog.install();
   appLog.info('app', 'launched');
+  // Reads the clock, which starts it — from here every `startup` line in the log
+  // is an offset into THIS launch. Touched before any awaited work so the origin
+  // is the entrypoint rather than whatever step happens to mark itself first.
+  StartupTrace.mark('startHarness');
   final keymap = AppKeymap(store: AppKeymap.fileStore());
   // Keyboard configuration has its own file and watchers. It can load beside
   // the appearance, but both must be ready before the window becomes usable.
-  await Future.wait([loadPersistedSettings(), keymap.start()]);
+  //
+  // Timed apart rather than as one `Future.wait`: they finish together by
+  // construction, so a single number around the pair would only ever report the
+  // slower one and never say WHICH. On a phone that distinction is the whole
+  // question — the keymap reads a file nobody on a touchscreen can have edited.
+  await Future.wait([
+    StartupTrace.time('settings.load', loadPersistedSettings),
+    StartupTrace.time('keymap.start', keymap.start),
+  ]);
   runApp(
     ProviderScope(
       child: HarnessApp(
@@ -64,6 +77,14 @@ Future<void> startHarness({
         authenticatedScreen: authenticatedScreen,
       ),
     ),
+  );
+  StartupTrace.mark('runApp');
+  // The frame itself, not the call that scheduled it: `runApp` returns before
+  // anything is rasterised, so the gap between these two marks is the build and
+  // paint of the first screen — the part a person actually waits through while
+  // looking at a blank window.
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => StartupTrace.mark('firstFrame'),
   );
 }
 

@@ -89,8 +89,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    // Folded: the search bar is no longer where a tap would land on it.
-    expect(find.text(TerminalHeader.searchHint).hitTestable(), findsNothing);
+    // Folded: the header is no longer where a tap would land on it.
+    expect(find.byType(TerminalHeader).hitTestable(), findsNothing);
     expect(tester.getSize(find.byType(TerminalView)), before);
     // The slide is over; a resize owed to it would be on its way by now.
     await tester.pump(const Duration(seconds: 1));
@@ -113,7 +113,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     resizes.clear();
 
-    await tester.tap(find.text(TerminalHeader.searchHint));
+    await tester.tap(find.byKey(const ValueKey('terminal-search')));
     await tester.pump();
     // The search field's keyboard slides up, and the page shrinks above it.
     tester.view.viewInsets = const FakeViewPadding(bottom: 900);

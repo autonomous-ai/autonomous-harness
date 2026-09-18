@@ -11,37 +11,33 @@ import 'voice_mic_action.dart';
 import 'voice_mic_button.dart';
 import 'voice_mic_mode.dart';
 
-/// The mic, floating over the terminal's bottom right corner.
+/// The mic, floating over the terminal's bottom right corner at the top of
+/// [TerminalActionColumn].
 ///
-/// ⚠️ **Floating rather than in a row, and that is what the row below it pays
-/// for.** The foot bar used to hold this button, which set its height at 56 —
-/// and that row's top edge is the terminal's bottom edge, so every point of it
-/// was a point taken off the remote shell. Lifting the mic out of the layout let
-/// the row shrink to one line of text; the button now costs the terminal nothing
-/// but the corner it covers.
+/// ⚠️ **Floating rather than in a row.** A row under the terminal would take
+/// its height off the remote shell; floating, the button costs the terminal
+/// nothing but the corner it covers.
 ///
 /// ⚠️ **The corner, deliberately — not centred, and not over the middle.** A
 /// terminal's newest output is the line being read, and it runs left to right:
 /// the right end of the last few lines is the least of it.
 ///
-/// ⚠️ **The `×` is NOT here.** It lives at the end of the foot row's line, next
-/// to the words it dismisses — see `terminal_foot_bar.dart`. Stacked over this
-/// button it floated in the middle of the terminal with nothing beside it, a
-/// glyph on its own over streaming output that read as a rendering fault.
+/// ⚠️ **The `×` is NOT here.** It is in the pill beside the mic, next to the
+/// words it dismisses — see `voice_status_pill.dart`.
 class VoiceMicFab extends StatefulWidget {
   const VoiceMicFab({
     super.key,
     required this.voice,
     required this.session,
-    required this.onSlipChanged,
+    this.onSlipChanged,
   });
 
   final VoiceInputController voice;
   final TerminalSession session;
 
-  /// The thumb crossed in or out of the button mid-hold. The foot bar is what
-  /// says "Release to cancel" — this button is under a thumb and cannot.
-  final ValueChanged<bool> onSlipChanged;
+  /// The thumb crossed in or out of the button mid-hold, in
+  /// [VoiceMicMode.holdToTalk]. Unused in the tap mode, which has no hold.
+  final ValueChanged<bool>? onSlipChanged;
 
   /// What the whole floating cluster asks of the corner it sits in.
   ///
@@ -49,8 +45,7 @@ class VoiceMicFab extends StatefulWidget {
   /// its slot: this is what the page keeps clear of anything else tappable.
   static const double extent = VoiceMicButton.touchExtent;
 
-  /// How far the cluster sits from the screen's right edge and from the foot row
-  /// under it.
+  /// How far the cluster sits from the terminal's right and bottom edges.
   static const double inset = 8;
 
   @override

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 
+import '../core/host_platform.dart';
 import 'app_shortcuts.dart';
 import 'keymap.dart';
 import 'keymap_commands.dart';
@@ -31,6 +32,16 @@ class AppKeymap extends ChangeNotifier {
     defaults: harnessDefaultBindings,
     commands: harnessCommandById.keys.toSet(),
     validate: (map) => validateNativeKeys(map, macOS: Platform.isMacOS),
+    // ⚠️ **Not watched on a phone, and the file is not editable there either.**
+    // Watching costs a symlink walk up the whole path and a `Directory.watch`
+    // per parent — and iOS does not implement `Directory.watch` at all, so
+    // every one of those throws, each failure schedules another reload, and the
+    // walk runs again. That whole sequence is on the critical path before the
+    // first frame (see `startHarness`), to notice edits to a dotfile that a
+    // touchscreen has no way to produce: there is no shell, no editor, and no
+    // sync into the app's sandbox. The file is still READ, so a keyboard
+    // attached to an iPad keeps whatever bindings a build ships with.
+    watchFiles: !isMobileHost,
   );
 
   Iterable<KeyBinding> bindings(

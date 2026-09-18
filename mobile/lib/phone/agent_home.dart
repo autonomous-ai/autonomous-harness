@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import 'package:harness_mobile/logging/startup_trace.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/empty_state.dart';
 import 'package:harness_mobile/state/app_state.dart';
@@ -202,7 +203,10 @@ class _AgentHomeState extends State<AgentHome> {
   }
 
   Future<void> _readLast() async {
-    final last = await widget.notifier.lastOpenedAgent.read();
+    final last = await StartupTrace.time(
+      'home.readLastAgent',
+      widget.notifier.lastOpenedAgent.read,
+    );
     if (!mounted) return;
     // The deadline has done its job either way once this lands, and a timer left running would fire
     // into a screen that is no longer waiting.
@@ -352,6 +356,41 @@ class _AgentHomeState extends State<AgentHome> {
   /// The message names the step actually in progress rather than saying "Loading…" throughout. On a
   /// cold launch these run several seconds each, and a line that changes is how somebody can tell a
   /// slow connection from a stuck one.
+
+  /// The last line [_traceLoading] wrote, so a wait is logged as a step rather
+  /// than as one line per frame.
+  String? _tracedLoading;
+  bool _tracedReady = false;
+
+  /// Record each step of the wait as the screen enters it.
+  ///
+  /// This is the wait as the PERSON experiences it, which is the only timeline
+  /// that settles whether a launch is slow: everything else in the log measures
+  /// one operation, while this measures how long the phone showed a given
+  /// sentence. "Connecting to your machine…" covers a dial, an E2EE handshake
+  /// and an agent list (see `phone_status.dart`), so the gap between this line
+  /// and the next is the only place that stretch appears as a number at all.
+  ///
+  /// ⚠️ Called from `build`, so it must write only on a CHANGE. [appLog] is a
+  /// synchronous flushed file write (`logging/log_file.dart`); at 60fps an
+  /// unguarded call here would fsync a line per frame and slow down the very
+  /// wait it claims to be measuring.
+  void _traceLoading(String? message) {
+    if (message == null) {
+      // The first screen with real content on it ends the launch — and only the
+      // first: a later empty state is not a launch, and re-arming this would
+      // report the wait as starting over.
+      if (_tracedReady) return;
+      _tracedReady = true;
+      _tracedLoading = null;
+      StartupTrace.mark('home.ready');
+      return;
+    }
+    if (message == _tracedLoading) return;
+    _tracedLoading = message;
+    StartupTrace.mark('home.waiting: $message');
+  }
+
   String? _loadingMessage() {
     // Waited long enough — see [_loadingTimeout]. ⚠️ Checked before [_readingLast] and not after:
     // the local read is the one step that cannot be retried from the empty state, so if even that
@@ -366,6 +405,23 @@ class _AgentHomeState extends State<AgentHome> {
       return notifier.machinesLoading ? 'Looking for your machines…' : null;
     }
     final machines = filterableMachines(notifier);
+    // ⚠️ **The first machine to answer ends the wait; the others catch up behind
+    // a screen that is already usable.** Both tests below ask whether ANY
+    // machine is still coming, which made a launch as slow as the SLOWEST
+    // machine on the account: one box still dialling held a full-screen spinner
+    // over agents that another machine had already listed and was ready to open.
+    //
+    // Once a machine has delivered its agents there is nothing left to wait for.
+    // The caller opens one, and a machine that answers a second later simply
+    // adds its agents to a list that is already on screen — which is what
+    // `phoneMachineListsAgents` and the pager have always done for a machine
+    // that reconnects.
+    //
+    // The remembered agent keeps its head start regardless: this runs only when
+    // [_target] found nothing to show, and [_target]'s own `_waitingForRestore`
+    // (checked by the caller) still holds the screen while the machine holding
+    // that agent is genuinely on its way.
+    if (machines.any(phoneMachineListsAgents)) return null;
     // Then each machine's own socket. `connecting` covers both the dial and the handshake after it.
     if (machines.any(
       (machine) =>
@@ -430,6 +486,7 @@ class _AgentHomeState extends State<AgentHome> {
             // Every other machine may be up and loaded while the one holding the remembered agent
             // is still dialling — without this the wait would draw as "No agents yet".
             (_waitingForRestore ? 'Connecting to your machine…' : null);
+        _traceLoading(loading);
         if (loading != null) return _AgentHomeLoading(message: loading);
         // ⚠️ **No machine is open → this is a MACHINE problem, so the machine screen is what the
         // person gets.** An "Agents" header over "No machines are open yet" named the thing that is

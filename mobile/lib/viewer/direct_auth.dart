@@ -28,21 +28,28 @@ class DirectAuth implements AccessTokenSource {
 
   @override
   Future<String> accessToken({bool force = false, String? failedToken}) async {
-    final current = await session.accessToken();
+    // Token and expiry in one read: every WebSocket dial comes through here, and
+    // the two of them live in the same file behind the same exclusive lock, so
+    // asking separately doubled the disk work on the one call the launch and
+    // every reconnect wait on. See [AuthSession.accessTokenWithExpiry].
+    final saved = await session.accessTokenWithExpiry();
+    final current = saved.token;
     if (current == null || current.isEmpty) {
       throw const DirectAuthException('Not signed in.', signedOut: true);
     }
     // Someone else already refreshed past the token that failed — use theirs.
     if (failedToken != null && failedToken != current) return current;
-    if (!force && !await _isStale()) return current;
+    if (!force && !_isStale(saved.expiresAt)) return current;
     return _refreshing ??= _refresh().whenComplete(() => _refreshing = null);
   }
 
-  Future<bool> _isStale() async {
-    final expiresAt = await session.accessTokenExpiresAt();
-    return expiresAt != null &&
-        expiresAt.isBefore(DateTime.now().toUtc().add(_refreshSkew));
-  }
+  /// A token with no recorded expiry is taken at face value: it is what a
+  /// session saved by a build that did not store one looks like, and refusing it
+  /// would sign that user out for no reason. A server rejection still routes
+  /// through `failedToken` above.
+  bool _isStale(DateTime? expiresAt) =>
+      expiresAt != null &&
+      expiresAt.isBefore(DateTime.now().toUtc().add(_refreshSkew));
 
   Future<String> _refresh() async {
     final refreshToken = await session.refreshToken();

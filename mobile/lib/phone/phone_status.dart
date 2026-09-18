@@ -47,11 +47,24 @@ PhoneMachineStatus phoneMachineStatusOf(MachineState machine) {
 /// agents out of the list for the length of the redial — the pager, whose pages ARE that list, was
 /// thrown away and the screen fell back to "Connecting to your machine…" on every return to the app.
 /// A first connect has no list yet, so it still waits like one.
+/// ⚠️ **Agents restored from the last run count too, and that is the whole
+/// point of restoring them.** A warm-started machine is `connecting` (its socket
+/// is genuinely still coming up) and `loading` (it genuinely still owes a list),
+/// so the `loaded` test below hid exactly the agents the cache exists to show —
+/// the phone read nine of them off disk at 520ms and still sat on "Connecting to
+/// your machine…" until the handshake finished two seconds later.
+///
+/// Showing them is safe for the same reason showing a RECONNECTING machine's
+/// agents is safe, which is what the paragraph above describes: the names are
+/// last known good, the real list replaces them the moment it lands, and
+/// `_replaceAgents` retires anything that has gone. The difference is only how
+/// long ago "last known" was.
 bool phoneMachineListsAgents(MachineState machine) =>
     switch (phoneMachineStatusOf(machine)) {
       PhoneMachineStatus.ready => true,
       PhoneMachineStatus.connecting =>
-        machine.agentLoadStatus == AgentLoadStatus.loaded,
+        machine.agentLoadStatus == AgentLoadStatus.loaded ||
+            machine.agentsFromCache,
       PhoneMachineStatus.needsPassword || PhoneMachineStatus.offline => false,
     };
 

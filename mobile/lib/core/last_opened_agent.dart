@@ -23,10 +23,38 @@ class LastOpenedAgent {
 
   AgentRef? _value;
   Future<void> _writes = Future.value();
+  Future<AgentRef?>? _read;
+
+  /// Start reading now, so the home screen does not have to start it later.
+  ///
+  /// ⚠️ **This read is on the phone's critical path, and it used to begin at the
+  /// worst possible moment.** `AgentHome` starts it from `initState` and holds
+  /// the whole screen on "Getting things ready…" until it lands — but `initState`
+  /// only runs once the app is already `authenticated`, so the read joined the
+  /// back of a queue of state-file operations the launch had just made, behind
+  /// an exclusive lock it now had to wait its turn for.
+  ///
+  /// Called from `bootstrap`, the same read instead overlaps the sign-in check
+  /// and the machine fetch, and [read] finds the answer waiting. Idempotent, so
+  /// the prefetch and the screen share one read rather than racing for the lock.
+  void prefetch() => _read ??= _load();
 
   /// What the previous run left, or null. Anything malformed reads as nothing — a missing
   /// preference must never hold the app on its launch screen.
-  Future<AgentRef?> read() async {
+  ///
+  /// Served from the in-flight or completed [prefetch] when there is one. Not
+  /// cached beyond that: [remember] writes through `_value`, and a stale read is
+  /// how a relaunch reopens the agent before last.
+  Future<AgentRef?> read() {
+    final pending = _read;
+    if (pending == null) return _load();
+    // One-shot: the next caller wants what is on disk now, not what was there
+    // when the launch began.
+    _read = null;
+    return pending;
+  }
+
+  Future<AgentRef?> _load() async {
     try {
       final raw = await _storage?.read(_key);
       if (raw == null) return null;
