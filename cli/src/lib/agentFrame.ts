@@ -23,6 +23,7 @@ import { agentProject, type AgentProject } from './agentProject.js'
 import type { GridAssignment } from './gridAssignment.js'
 import type { GridWebSearchStatus } from './gridLaunch.js'
 import { projectDisplayName, sessionDisplayTitle, type RegisteredSession } from './registry.js'
+import { engineCanFork } from './forkAgent.js'
 import type { DshVerdict } from '../dsh/verdict.js'
 
 /**
@@ -72,6 +73,11 @@ export type AgentFrame = {
   viewerName: string | null
   /** The DSH's last verdict for this workspace, reduced for the pane header; null when none yet. */
   verdict: DshVerdict | null
+  /** The agent this one was forked from (`agent_fork`), or null — a real answer, like `dsh: null`. */
+  forkedFrom: { agentId: string; name: string } | null
+  /** Whether `agent_fork` can do anything for this engine (lib/forkAgent.ts) — natively, or by a
+   *  handoff. A client hides the Fork action on a false rather than offering a button that refuses. */
+  forkable: boolean
 }
 
 /** What the daemon knows about an agent's DSH — looked up by the caller, never here. */
@@ -153,5 +159,7 @@ export async function agentFrame(
     viewerUrl: dsh?.viewerUrl ?? null,
     viewerName: dsh?.viewerName ?? null,
     verdict: dsh?.verdict ?? null,
+    forkedFrom: s.forkedFrom ? { agentId: s.forkedFrom.agentId, name: s.forkedFrom.name } : null,
+    forkable: engineCanFork(s.engine),
   }
 }

@@ -230,6 +230,18 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffd98a4a),
     asset: 'assets/engine-icons/autonomous-circuit.png',
   ),
+  // Solder is Autonomous Circuit's second wrapper (its KiCad-native pipeline,
+  // #91) and wears the same mark: one project, one face — Autonomous's own,
+  // so nothing is borrowed. Told apart by name and by the warmer copper below.
+  'autonomous/solder': EngineIdentity(
+    id: 'autonomous/solder',
+    label: 'Solder',
+    category: 'PCB',
+    tagline: 'A real KiCad board: wired schematic, DRC-checked copper, a prototype packet',
+    creator: 'Autonomous',
+    color: Color(0xffb8733a),
+    asset: 'assets/engine-icons/autonomous-circuit.png',
+  ),
   'autonomous/autonomous-workshop': EngineIdentity(
     id: 'autonomous/autonomous-workshop',
     label: 'Autonomous Workshop',
@@ -378,6 +390,40 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffe8894a),
     asset: 'assets/engine-icons/openmontage.png',
   ),
+  // Of the eight studios of 2026-09-18, three wear their project's own mark —
+  // Comfy's `assets/logo.svg`, Dimensional's favicon, Bonsai's desktop icon
+  // from IfcOpenShell. The other five (Ableton AI, autoresearch-mlx,
+  // Foam-Agent, JUCE Agent Toolkit, SimSkill) publish no logo of their own,
+  // and the marks they sit beside (Ableton, JUCE, OpenFOAM, SUMO) are other
+  // companies' trademarks — so, like Godogen, they are not here and draw their
+  // initial; their words come from the Store's catalog.
+  'autonomous/comfy-mcp': EngineIdentity(
+    id: 'autonomous/comfy-mcp',
+    label: 'Comfy MCP',
+    category: 'Generative media',
+    tagline: 'Local MCP server for ComfyUI — run ComfyUI from AI agents',
+    creator: 'Comfy Org',
+    color: Color(0xffe5ff3d),
+    asset: 'assets/engine-icons/comfy-mcp.png',
+  ),
+  'autonomous/dimos': EngineIdentity(
+    id: 'autonomous/dimos',
+    label: 'DimOS',
+    category: 'Robotics',
+    tagline: 'The agentic operating system for physical space',
+    creator: 'Dimensional',
+    color: Color(0xffb0e1f0),
+    asset: 'assets/engine-icons/dimos.png',
+  ),
+  'autonomous/bonsai-mcp': EngineIdentity(
+    id: 'autonomous/bonsai-mcp',
+    label: 'Bonsai MCP',
+    category: 'Architecture',
+    tagline: 'MCP server for a live Blender + Bonsai (BlenderBIM) session',
+    creator: 'Show2Instruct',
+    color: Color(0xff8c6f5e),
+    asset: 'assets/engine-icons/bonsai-mcp.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -385,6 +431,7 @@ const _harnesses = <String, EngineIdentity>{
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
   'autonomous/autonomous-circuit': 'claude',
+  'autonomous/solder': 'claude',
   'autonomous/autonomous-workshop': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
@@ -401,6 +448,9 @@ const knownHarnessBase = <String, String>{
   'autonomous/yosys': 'claude',
   'autonomous/circuitjs': 'codex',
   'autonomous/openmontage': 'claude',
+  'autonomous/comfy-mcp': 'codex',
+  'autonomous/dimos': 'codex',
+  'autonomous/bonsai-mcp': 'codex',
 };
 
 /// All known engines, in declaration order — for the New Agent engine picker.

@@ -18,6 +18,7 @@ import '../state/app_state.dart';
 import 'agent_drag.dart';
 import 'machine_actions.dart';
 import 'delete_agent_dialog.dart';
+import 'fork_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'rename_agent_dialog.dart';
 import 'account_footer.dart';
@@ -1036,6 +1037,15 @@ class _AgentRowState extends State<_AgentRow> {
   Future<void> _restartAgent() =>
       restartHarness(context, notifier, state.machine.machineId, agent.id);
 
+  Future<void> _forkAgent() => forkHarness(
+    context,
+    notifier,
+    state.machine.machineId,
+    agent.id,
+    agent.name,
+    engine: agent.engine,
+  );
+
   @override
   Widget build(BuildContext context) {
     grid.AppTheme.watch(context);
@@ -1222,6 +1232,15 @@ class _AgentRowState extends State<_AgentRow> {
                           _restartAgent();
                         },
                       ),
+                      if (agent.canFork)
+                        AppMenuItem(
+                          icon: LucideIcons.gitFork300,
+                          label: 'Fork Harness',
+                          onPressed: () {
+                            _agentMenu.close();
+                            _forkAgent();
+                          },
+                        ),
                       const AppMenuDivider(),
                       AppMenuItem(
                         icon: Icons.stop_rounded,

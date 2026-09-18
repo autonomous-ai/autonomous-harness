@@ -183,6 +183,25 @@ enum GridWebSearch {
 }
 
 /// Data-plane agent (RPC agents_list).
+/// Where a forked agent came from — see [Agent.forkedFrom].
+class ForkedFrom {
+  final String agentId;
+  final String name;
+
+  const ForkedFrom({required this.agentId, required this.name});
+
+  static ForkedFrom? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final agentId = raw['agentId'];
+    if (agentId is! String || agentId.isEmpty) return null;
+    final name = raw['name'];
+    return ForkedFrom(
+      agentId: agentId,
+      name: name is String && name.isNotEmpty ? name : 'an agent',
+    );
+  }
+}
+
 class Agent {
   final String id;
   final String? sessionId;
@@ -242,6 +261,16 @@ class Agent {
   /// The harness's last verdict on this workspace, or null when it has not written one.
   final AgentVerdict? verdict;
 
+  /// The agent this one was forked from (`agent_fork`), or null for every
+  /// other agent. Carries the source's name as it was at the fork, because the
+  /// source may be renamed or gone by the time the badge is read.
+  final ForkedFrom? forkedFrom;
+
+  /// Whether the daemon can fork this agent (`agent_fork`), as it said on the
+  /// frame; null from a daemon that predates the field — then the engine
+  /// decides (see [canFork]).
+  final bool? forkable;
+
   const Agent({
     required this.id,
     this.sessionId,
@@ -267,7 +296,20 @@ class Agent {
     this.viewerError,
     this.viewerName,
     this.verdict,
+    this.forkedFrom,
+    this.forkable,
   });
+
+  /// The engines whose sessions can be forked — natively (Claude Code's
+  /// `--fork-session`, `codex fork`) or by a handoff message (OpenCode takes a
+  /// first prompt). The daemon is the authority when it says (`forkable`);
+  /// this is the answer for one that does not.
+  static const forkableEngines = {'claude', 'codex', 'opencode'};
+
+  /// Whether to offer Fork for this agent at all. Devin, Cursor and the rest
+  /// can neither fork nor open with a message, so the button is not drawn
+  /// rather than drawn and refused.
+  bool get canFork => forkable ?? forkableEngines.contains(engine);
 
   /// What to draw this agent AS: its harness when it has one, else its engine.
   String? get identityEngine => dsh ?? engine;
@@ -330,6 +372,8 @@ class Agent {
       viewerError: _safeDetail(j['viewerError']),
       viewerName: _safeLabel(j['viewerName']),
       verdict: AgentVerdict.fromJson(j['verdict']),
+      forkedFrom: ForkedFrom.fromJson(j['forkedFrom']),
+      forkable: j['forkable'] is bool ? j['forkable'] as bool : null,
     );
   }
 
@@ -358,6 +402,8 @@ class Agent {
     viewerError: viewerError,
     viewerName: viewerName,
     verdict: verdict,
+    forkedFrom: forkedFrom,
+    forkable: forkable,
   );
 
   /// `owner/name`, exactly the shape the DSH manifest schema allows and nothing else — the

@@ -128,6 +128,10 @@ const APP_PRESENCE_UP_MS = 60_000
 // `this.ws` set, every later connect() returning early, and the daemon reporting "cloud
 // reconnecting…" until someone restarted it.
 const HANDSHAKE_TIMEOUT_MS = 15_000
+/** How long `resolveGridName` waits for a grid reconcile still in flight before answering with
+ *  whatever is resolved. Well under the app's 12s `grid_models_list` timeout, leaving that RPC room
+ *  for its own `grid` spawns; a reconcile slower than this lands by the next open. */
+const GRID_ATTACH_WAIT_MS = 6_000
 const BASE_DELAY_MS = 1_000
 const MAX_DELAY_MS = 30_000
 const QUEUE_MAX = 2_000
@@ -148,6 +152,33 @@ export interface LocalClientSink {
 export function isLocalClientId(connId: string): boolean {
   return connId.startsWith('local:')
 }
+
+/**
+ * Where a down-frame came from, carried with it to `dispatchDown`.
+ *
+ * `relay` is the backend link and ONLY the backend link; `local` is a process on this machine
+ * talking to the daemon's local socket; `p2p` is a paired device over its own channel. The
+ * distinction is a trust boundary, not bookkeeping: a handful of frames are the backend's alone to
+ * send, and before `local` existed they were accepted from anything that could open the local port.
+ */
+export type DownTransport = 'relay' | 'local' | 'p2p'
+
+/**
+ * Down-frames only the BACKEND may send, refused from every other transport.
+ *
+ * Each one hands the daemon an instruction no client is entitled to give:
+ *   - `machine_meta` names the account's private grid — the inference endpoint every agent on this
+ *     computer is then pointed at. Forged, it redirects the account's work to a grid of the
+ *     sender's choosing. A leftover test script did exactly this by accident once.
+ *   - `machine_revoked` clears the stored SSO session and exits the daemon. Forged, it is a
+ *     one-frame forced sign-out and denial of service.
+ *
+ * Neither is sent by any client in this repository — only by `backend/src/lib/adapterWs.ts` and
+ * `backend/src/services/MachineService.ts` — so there is nothing to stay compatible with. The
+ * backend blocks its OWN `__`-prefixed control frames from web clients for the same reason; these
+ * two escaped that rule because they are not `__`-prefixed.
+ */
+const BACKEND_ONLY_DOWN_TYPES = new Set(['machine_meta', 'machine_revoked'])
 
 interface QueueItem {
   id: number
@@ -467,6 +498,14 @@ export class BackendSocket {
       { ok: true; session: RegisteredSession; resumed: boolean }
       | { ok: false; error: string; detail?: string }
     >) | null = null
+  /** Called on `agent_fork` — cli.ts opens a NEW agent that starts with `agentId`'s whole history
+   *  (lib/forkAgent.ts) and returns its process-agent, exactly as `agent_create` does. `level` says
+   *  what the new agent actually got: the engine's own fork, or a handoff message. */
+  onForkAgent: ((input: { agentId: string; name: string | null; prompt: string | null }) =>
+    Promise<
+      { ok: true; session: RegisteredSession; level: 'native' | 'handoff' }
+      | { ok: false; error: string; detail?: string }
+    >) | null = null
   /** Called when the web/device sends chat input to an agent terminal. */
   onMessage: ((sessionId: string, content: string, deliveryId?: string) => void) | null = null
   /** Best-effort terminal-native title sync after a user renames an agent. */
@@ -667,6 +706,14 @@ export class BackendSocket {
   private harnessGridName: string | null = null
   /** Injected so the derivation (a `grid` spawn) is a seam in tests; see `lib/gridDerive.ts`. */
   deriveGridName: () => Promise<string | null> = deriveHarnessGridName
+  /** The daemon-start grid reconcile (`lib/gridAttach.ts`), while it is running — so the first
+   *  `grid_models_list` / retarget after an update waits for the sign-in it may still be arranging
+   *  rather than answering "no grid". Set by `cli.ts`; returns null when nothing is in flight. */
+  gridReadyProbe: (() => Promise<unknown> | null) | null = null
+
+  /** Set the account's private grid name from the reconcile that just confirmed it, so the RPCs
+   *  answer with it at once rather than waiting for the next `machine_meta` (`lib/gridAttach.ts`). */
+  setHarnessGridName(name: string | null): void { this.harnessGridName = name }
 
   /** Which grid this machine's agents can be pointed at — for `harness status` and the models RPC. */
   gridName(): string | null { return this.harnessGridName }
@@ -676,8 +723,23 @@ export class BackendSocket {
    * work out for itself (`lib/gridDerive.ts`). A backend that predates `machine_meta.gridName`
    * left every picker empty while `grid models` listed the model fine; the derivation is the
    * skill's own rule, so the daemon and the agent it opens agree on which grid is "yours".
+   *
+   * Waits, once and briefly, for a grid reconcile still in flight — the machine that just updated is
+   * signing in to grid in the background, and a picker opened in that window would otherwise read
+   * "no grid" for the one moment the answer is about to arrive. Bounded so a slow reconcile (a fresh
+   * sign-in and a grid create) never holds the RPC past the app's own timeout; whatever is resolved
+   * by then is answered, and the next open — after the reconcile has landed — is correct regardless.
    */
   private async resolveGridName(): Promise<string | null> {
+    const inFlight = this.gridReadyProbe?.()
+    if (inFlight) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        inFlight.catch(() => {}),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, GRID_ATTACH_WAIT_MS) }),
+      ])
+      if (timer) clearTimeout(timer)
+    }
     return this.harnessGridName ?? await this.deriveGridName()
   }
 
@@ -991,10 +1053,15 @@ export class BackendSocket {
     await this.terminalStreams?.closeConnection(connId, 'local client disconnected', false)
   }
 
-  /** Route an authenticated local JSON frame through the existing per-client FIFO. */
+  /** Route an authenticated local JSON frame through the existing per-client FIFO.
+   *
+   *  ⚠️ Tagged `'local'`, not left to default to `'relay'`. These frames come from a process on THIS
+   *  machine over the local socket, and until they were tagged they arrived at `dispatchDown`
+   *  indistinguishable from the backend's own — which let any local process send a frame only the
+   *  backend is entitled to send. See the `machine_meta` branch there. */
   handleLocalFrame(connId: string, frame: Frame): void {
     if (!this.localClients.has(connId)) return
-    this.enqueueDown(frame, connId)
+    this.enqueueDown(frame, connId, 'local')
   }
 
   /** Route an authenticated local terminal frame without applying cloud E2EE. */
@@ -1045,7 +1112,7 @@ export class BackendSocket {
     connId: string,
     type: string,
     payload: Record<string, unknown>,
-    transport: 'relay' | 'p2p',
+    transport: DownTransport,
   ): void {
     if (type === 'terminal_open' && typeof payload.requestId === 'string') {
       let pending = this.p2pPendingOpens.get(connId)
@@ -1067,7 +1134,7 @@ export class BackendSocket {
       streams.add(streamId)
       return
     }
-    if (transport === 'relay' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
+    if (transport !== 'p2p' && streamId) this.p2pStreams.get(connId)?.delete(streamId)
   }
 
   private routeTerminalOutputToP2p(connId: string, type: string, payload: Record<string, unknown>): boolean {
@@ -1099,7 +1166,7 @@ export class BackendSocket {
     console.warn(`[terminal-p2p] conn=${sid(connId)} fallback=relay reason=${reason}`)
   }
 
-  private enqueueDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): void {
+  private enqueueDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): void {
     const key = connId || '__backend__'
     const previous = this.downChains.get(key) ?? Promise.resolve()
     const next = previous
@@ -1220,15 +1287,35 @@ export class BackendSocket {
     this.send({ type: resultType, payload: { requestId, ...payload } })
   }
 
-  private async dispatchDown(frame: Frame, connId: string, transport: 'relay' | 'p2p' = 'relay'): Promise<void> {
+  private async dispatchDown(frame: Frame, connId: string, transport: DownTransport = 'relay'): Promise<void> {
     const type = frame.type as string | undefined
     if (!type) return
+    // Whether this frame came from a process on THIS machine — the trust boundary the gates below
+    // turn on. The membership half is a dispatch-time question about a connection that may already
+    // be gone: frames run through a per-connId queue, so a local client that disconnects between
+    // sending and being dispatched used to leave `localClients.has()` false, and its already-queued
+    // frames were then read as the BACKEND's. The transport half closes that, because it is stamped
+    // at enqueue by the caller that had just verified membership. Either one being true is local.
+    const local = transport === 'local' || this.localClients.has(connId)
+    // ⚠️ The backend's own instructions, refused from anywhere else. See BACKEND_ONLY_DOWN_TYPES.
+    // `transport === 'relay'` rather than `!local`, so this keeps holding if the p2p allowlist
+    // (`TERMINAL_P2P_DOWN_TYPES`) ever widens; "not local" would quietly start admitting p2p.
+    //
+    // Deliberately ABOVE the observer hand-off below. A genuine observer frame is `relay`, so this
+    // never intercepts one; but placed after it, a forged `observer:` connId on a local or p2p frame
+    // would be swallowed by `harnessSharing.receive` and returned without ever reaching this line —
+    // silently, with no warning — and the invariant would then rest on three facts in other files
+    // (the `local:` prefix rule, `registerLocalClient`'s check, the p2p-signal ordering) instead of
+    // on this one. The grid-name incident was exactly a bypass nobody could see.
+    if (transport !== 'relay' && BACKEND_ONLY_DOWN_TYPES.has(type)) {
+      console.warn(`[backend] ignoring ${type} from ${transport} (${connId}) — only the backend may send it`)
+      return
+    }
     if (connId.startsWith('observer:')) {
       await this.harnessSharing?.receive(connId, type, (frame.payload ?? {}) as Record<string, unknown>)
       return
     }
     if (type.startsWith('observer_')) return
-    const local = this.localClients.has(connId)
     // E2EE control frames (pairing/handshake) are handled by the manager, never as node RPCs.
     if (type.startsWith('e2e_')) {
       if (local) {
@@ -1322,12 +1409,28 @@ export class BackendSocket {
 
     // Machine display name (seed on connect + web renames) — mirrored locally for `harness status`.
     if (type === 'machine_meta') {
-      const meta = frame.payload as { name?: unknown; gridName?: unknown } | undefined
-      const name = meta?.name
-      // The account's private grid, pushed on every connect. Held in memory only: it is the
-      // backend's value, and a daemon that cached it on disk would keep answering with a stale one
-      // after the account's grid changed.
-      this.harnessGridName = typeof meta?.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
+      // ⚠️ The BACKEND's frame and nobody else's. It carries this machine's display name and, more
+      // to the point, the account's private grid — the grid every agent on this computer is then
+      // pointed at. Accepted from any transport, it let a process that could open the daemon's local
+      // port redirect the account's inference somewhere of its choosing, and a leftover test script
+      // doing exactly that by accident cost hours to find. No client sends this frame; there is
+      // nothing to be compatible with.
+      // The source check is above, with the other frames only the backend may send.
+      //
+      // A malformed/hostile frame's payload need not be an object; `'gridName' in meta` would throw
+      // on a primitive (and drop the whole frame via enqueueDown's catch). Guard the type first, the
+      // way the plain property reads elsewhere in this dispatcher tolerate one.
+      const meta = (typeof frame.payload === 'object' && frame.payload !== null ? frame.payload : {}) as { name?: unknown; gridName?: unknown }
+      const name = meta.name
+      // The account's private grid, pushed on connect. Held in memory only: it is the backend's
+      // value, and a daemon that cached it on disk would keep answering with a stale one after the
+      // account's grid changed. Only ACT on the key when it is present: the connect frame always
+      // carries it (a string or null), but a rename pushes `{name}` alone — and treating that
+      // absence as null used to WIPE a grid name a moment after it was set, leaving the picker
+      // empty. Absent ⇒ unchanged; null ⇒ this account has none; a string ⇒ that grid.
+      if ('gridName' in meta) {
+        this.harnessGridName = typeof meta.gridName === 'string' && meta.gridName.trim() ? meta.gridName.trim() : null
+      }
       this.onMachineMeta?.(typeof name === 'string' && name.trim() ? name.trim() : null)
       return
     }
@@ -2080,6 +2183,26 @@ export class BackendSocket {
             return
           }
           reply(type, requestId, { agent: await this.toProject(result.session), resumed: result.resumed })
+          return
+        }
+
+        // Fork an agent: a second one with the first one's history — see lib/forkAgent.ts. The reply
+        // is agent_create's shape plus `level`, so a client opens the pane the same way.
+        case 'agent_fork': {
+          const target = payload.agentId as string | undefined
+          if (!target) { reply(type, requestId, { error: 'MISSING_AGENT_ID' }); return }
+          if (!this.onForkAgent) { reply(type, requestId, { error: 'UNSUPPORTED_ON_REMOTE' }); return }
+          const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim().slice(0, 120) : null
+          const rawPrompt = payload.prompt
+          if (rawPrompt !== undefined && rawPrompt !== null && typeof rawPrompt !== 'string') { reply(type, requestId, { error: 'INVALID_PROMPT' }); return }
+          const prompt = typeof rawPrompt === 'string' && rawPrompt.trim() ? rawPrompt : null
+          if (prompt && prompt.length > MAX_FIRST_PROMPT_CHARS) { reply(type, requestId, { error: 'PROMPT_TOO_LONG' }); return }
+          const result = await this.onForkAgent({ agentId: target, name, prompt })
+          if (!result.ok) {
+            reply(type, requestId, result.detail ? { error: result.error, detail: result.detail } : { error: result.error })
+            return
+          }
+          reply(type, requestId, { agent: await this.toProject(result.session), level: result.level })
           return
         }
 

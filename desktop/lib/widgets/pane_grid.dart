@@ -28,6 +28,7 @@ import 'agent_drag.dart';
 import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
 import 'delete_agent_dialog.dart';
+import 'fork_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'terminal_panel.dart';
 import 'web_pane_panel.dart';
@@ -1397,6 +1398,16 @@ class _PaneContent extends StatelessWidget {
               ? null
               : () =>
                     restartHarness(context, notifier, pane.machineId, agent.id),
+          onFork: agent == null || offline || needsLink || !agent.canFork
+              ? null
+              : () => forkHarness(
+                  context,
+                  notifier,
+                  pane.machineId,
+                  agent.id,
+                  agent.name,
+                  engine: agent.engine,
+                ),
           // The same confirmation the rail's row menu opens. Only for an
           // agent the machine still lists — a pane whose agent is already
           // gone has nothing to end.

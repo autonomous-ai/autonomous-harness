@@ -86,6 +86,18 @@ class RestartAgentResult {
   const RestartAgentResult({this.error, this.resumed = true});
 }
 
+/// Result of [AppNotifier.forkAgent]. [error] null means the fork is open;
+/// [level] then says what it got — `native` (the engine's own fork, the whole
+/// context) or `handoff` (a first message composed from what the daemon
+/// remembers of the source, for an engine that cannot fork).
+class ForkAgentResult {
+  final String? error;
+  final String level;
+  final String? agentId;
+
+  const ForkAgentResult({this.error, this.level = 'native', this.agentId});
+}
+
 /// One deliberate creation, retained by the form if its reply is lost. Reusing
 /// it checks the original request; opening New agent starts a fresh intent.
 class AgentCreationAttempt {
@@ -5371,6 +5383,88 @@ class AppNotifier extends ChangeNotifier {
     return RestartAgentResult(resumed: resumed is bool ? resumed : true);
   }
 
+  /// Forks an agent via `agent_fork`: a second agent that starts with the
+  /// first one's whole history, in the same folder, then goes its own way.
+  ///
+  /// The fork lands beside its source — in the source's tab when that is the
+  /// tab on screen, else in the current tab — and takes focus, because the
+  /// person asked for it a moment ago and is about to give it its job. Same
+  /// upsert-from-reply rule as [restartAgent].
+  Future<ForkAgentResult> forkAgent(
+    String machineId,
+    String agentId, {
+    String? name,
+    String? prompt,
+  }) async {
+    final machine = machineStates[machineId];
+    if (machine == null) {
+      return const ForkAgentResult(error: 'Machine not found');
+    }
+    Map<String, dynamic> result;
+    try {
+      result = await _conn(machineId).request(
+        'agent_fork',
+        payload: {
+          'agentId': agentId,
+          if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+          if (prompt != null && prompt.trim().isNotEmpty) 'prompt': prompt,
+        },
+      );
+    } catch (error) {
+      return ForkAgentResult(error: 'Fork failed: $error');
+    }
+    final error = result['error'];
+    if (error is String) {
+      final detail = result['detail'];
+      return ForkAgentResult(
+        error: detail is String
+            ? detail
+            : switch (error) {
+                'UNSUPPORTED_ON_REMOTE' || 'UNSUPPORTED' =>
+                  'Update the harness CLI on this machine to fork a harness.',
+                'AGENT_BUSY' => 'This harness is in the middle of a turn. Wait for it to finish, then fork.',
+                _ => 'Fork failed: $error',
+              },
+      );
+    }
+    final raw = result['agent'];
+    if (raw is! Map) return const ForkAgentResult(error: 'Fork failed');
+    final Agent fork;
+    try {
+      fork = Agent.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      return const ForkAgentResult(error: 'Fork failed');
+    }
+    _upsertAgent(machine, fork);
+    notifyListeners();
+    await placeFork(machineId, fork.id, sourceAgentId: agentId);
+    final level = result['level'];
+    return ForkAgentResult(
+      level: level is String ? level : 'native',
+      agentId: fork.id,
+    );
+  }
+
+  /// Put a fork on screen beside its source and focus it — the window's half
+  /// of a fork asked for here or on the dial (`dial_forked`).
+  Future<void> placeFork(
+    String machineId,
+    String agentId, {
+    required String sourceAgentId,
+  }) async {
+    if (revealAgentView(machineId, agentId)) return;
+    // The current tab: it is where the source was forked from, whether by the
+    // pane's own menu or by the dial, which shows this tab too. `sourceAgentId`
+    // is kept on the wire for a placement that wants the source's tab later.
+    assert(sourceAgentId.isEmpty || sourceAgentId != agentId);
+    if (activeSwarm.panes.length >= maxPanes) {
+      // Beside the source is the wish; a tab of its own is the honest fallback.
+      newSwarm();
+    }
+    await addAgentToSwarm(machineId, agentId, swarmId: activeSwarmId);
+    revealAgentView(machineId, agentId);
+  }
+
   /// Every tile on the machine, not just the focused one: the machine is what
   /// went away, so a tile of the same machine sitting in another corner of the
   /// grid is just as dead and must say so rather than keep showing a terminal
@@ -6660,6 +6754,25 @@ class AppNotifier extends ChangeNotifier {
         // line follow from that — nothing is answered to the dial directly.
         final swarmId = payload['swarmId'];
         if (swarmId is String && swarmId.isNotEmpty) selectSwarm(swarmId);
+        break;
+      case 'dial_forked':
+        // The dial forked an agent; the daemon already opened the pane on its
+        // machine. Land it beside its source and focus it, as the window's own
+        // Fork does.
+        final forkId = payload['agentId'];
+        final forkSource = payload['sourceAgentId'];
+        if (forkId is String && forkId.isNotEmpty) {
+          final targetMachineId = _dialFocusMachine(payload, forkId);
+          if (targetMachineId != null) {
+            unawaited(
+              placeFork(
+                targetMachineId,
+                forkId,
+                sourceAgentId: forkSource is String ? forkSource : '',
+              ),
+            );
+          }
+        }
         break;
       case 'dial_open':
         // A notification was tapped on the dial. Unlike `dial_focus` this asks for a tile of its own —

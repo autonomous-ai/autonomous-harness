@@ -191,6 +191,9 @@ export interface LaunchCommandOptions {
   permissionMode?: string
   /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
   resumeSessionId?: string
+  /** FORK this engine session id on launch — a new session that starts with its history, the source
+   *  untouched ([LAUNCH_FORK_FLAG]). Takes precedence over `resumeSessionId`. */
+  forkSessionId?: string
   /**
    * The message the session opens with, already submitted — see [FIRST_PROMPT_ARGS]. Appended LAST,
    * after every flag, because two of the three engines take it positionally and a positional is only
@@ -290,15 +293,38 @@ export const LAUNCH_RESUME_FLAG: Readonly<Partial<Record<AgentEngine, string[]>>
   copilot: ['--resume'],
 }
 
+/**
+ * "Open a NEW session that starts with everything session <id> has" — a fork, per engine. Confirmed
+ * against each CLI's own `--help` (2026-09-18): `claude --resume <id> --fork-session` ("When resuming,
+ * create a new session ID") and `codex fork <id>` ("Fork a previous interactive session"). The source
+ * session is left exactly as it was; the two then diverge.
+ *
+ * Same shape rule as [LAUNCH_RESUME_FLAG]: a leading token that does not start with `-` is a
+ * subcommand and goes first. `after` is appended once the id is in place. An engine absent here has no
+ * native fork; `forkAgent.ts` falls back to a handoff (a composed first prompt) where the engine takes
+ * one, and refuses otherwise — never a plain `--resume`, which would put two processes on ONE session.
+ */
+export const LAUNCH_FORK_FLAG: Readonly<Partial<Record<AgentEngine, { lead: string[]; after?: string[] }>>> = {
+  claude: { lead: ['--resume'], after: ['--fork-session'] },
+  codex: { lead: ['fork'] },
+}
+
+export function supportsNativeFork(engine: AgentEngine): boolean {
+  return LAUNCH_FORK_FLAG[engine] !== undefined
+}
+
 /** The executable argv, before the interactive-shell wrapper is applied. */
 export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandOptions = {}): string[] {
   const argv = [engineBin(engine)]
-  const resumeFlag = opts.resumeSessionId ? LAUNCH_RESUME_FLAG[engine] : undefined
+  // A fork is a resume that leaves the source alone; the two are exclusive, and the fork wins.
+  const fork = opts.forkSessionId ? LAUNCH_FORK_FLAG[engine] : undefined
+  const resumeFlag = fork ? fork.lead : opts.resumeSessionId ? LAUNCH_RESUME_FLAG[engine] : undefined
+  const sessionArg = fork ? opts.forkSessionId : opts.resumeSessionId
   const resumeIsSubcommand = !!resumeFlag?.length && !resumeFlag[0].startsWith('-')
   // Subcommand-style resume (`codex resume <id>`, `amp threads continue <id>`, `muse resume <id>`) is
   // parsed positionally and must be the first argv after the binary, ahead of any other flag.
-  if (resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
-    argv.push(...resumeFlag, opts.resumeSessionId)
+  if (resumeIsSubcommand && resumeFlag && sessionArg) {
+    argv.push(...resumeFlag, sessionArg, ...(fork?.after ?? []))
   }
   const modeFlags = opts.permissionMode ? permissionModeFlags(engine, opts.permissionMode) : null
   if (modeFlags) {
@@ -307,8 +333,8 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
     const flags = BYPASS_PERMISSION_FLAGS[engine]
     if (flags) argv.push(...flags)
   }
-  if (!resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
-    argv.push(...resumeFlag, opts.resumeSessionId)
+  if (!resumeIsSubcommand && resumeFlag && sessionArg) {
+    argv.push(...resumeFlag, sessionArg, ...(fork?.after ?? []))
   }
   if (opts.extraArgs?.length) argv.push(...opts.extraArgs)
   if (opts.firstPrompt) argv.push(...firstPromptArgs(engine, opts.firstPrompt))

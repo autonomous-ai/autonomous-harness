@@ -41,6 +41,13 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
   String _viewerMessage = 'Waiting for the live viewer…';
   Uint8List? _image;
   bool _viewerSelected = false, _ended = false;
+
+  /// The person picked Terminal or Viewer themselves. Until they do, the first
+  /// live frame brings the viewer forward on a narrow pane — a shared Blender
+  /// or Marp harness was shared for what it shows, and a "Viewer" tab nobody
+  /// noticed left the person looking at a terminal they cannot type into
+  /// (owner, 2026-09-18: "chỉ thấy màn hình terminal").
+  bool _viewerChosen = false;
   int _generation = 0;
   @override
   void initState() {
@@ -92,7 +99,10 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
             return;
           }
           setState(() {
-            if (next != null) _image = next;
+            if (next != null) {
+              if (_image == null && !_viewerChosen) _viewerSelected = true;
+              _image = next;
+            }
             _viewerMessage =
                 payload['message'] as String? ??
                 (payload['state'] == 'live'
@@ -289,8 +299,10 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
                   Row(
                     children: [
                       TextButton(
-                        onPressed: () =>
-                            setState(() => _viewerSelected = false),
+                        onPressed: () => setState(() {
+                          _viewerChosen = true;
+                          _viewerSelected = false;
+                        }),
                         child: Text(
                           'Terminal',
                           style: TextStyle(
@@ -301,7 +313,10 @@ class _SharedHarnessPanelState extends State<SharedHarnessPanel> {
                         ),
                       ),
                       TextButton(
-                        onPressed: () => setState(() => _viewerSelected = true),
+                        onPressed: () => setState(() {
+                          _viewerChosen = true;
+                          _viewerSelected = true;
+                        }),
                         child: Text(
                           'Viewer',
                           style: TextStyle(

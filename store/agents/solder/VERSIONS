@@ -1,0 +1,10 @@
+# Solder — Autonomous Circuit's KiCad-native pipeline, wrapped here as it is on its v2 branch.
+# The v2 pipeline lives on `feat/v2-kicad-native` (its main carries the v1 pipeline that
+# autonomous/autonomous-circuit wraps); a newer Solder is a bump of UPSTREAM_COMMIT to a later
+# commit on that branch. The fetch is by commit, so an unmerged branch is fine.
+UPSTREAM_NAME="autonomous-circuit"
+UPSTREAM_REPO="https://github.com/autonomous-ai/autonomous-circuit.git"
+UPSTREAM_COMMIT="7f16398fc792f60f6c81d1bfe134fa14e33bf557"
+# Everything but its product library and examples (118 MB a board build never reads).
+UPSTREAM_SPARSE_MODE="no-cone"
+UPSTREAM_SPARSE="/* !/products/ !/examples/"

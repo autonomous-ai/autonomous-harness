@@ -1,0 +1,6 @@
+{
+  "upstream": "https://github.com/autonomous-ai/autonomous-circuit",
+  "license": "MIT",
+  "tagline": "A real KiCad board: wired schematic, DRC-checked copper, a prototype packet",
+  "screenshots": []
+}

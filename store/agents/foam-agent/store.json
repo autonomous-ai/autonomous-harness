@@ -2,6 +2,7 @@
   "homepage": "https://github.com/csml-rpi/Foam-Agent",
   "upstream": "https://github.com/csml-rpi/Foam-Agent",
   "license": "MIT; OpenFOAM: GPL-3.0",
+  "tagline": "Composable multi-agent framework for CFD simulations in OpenFOAM",
   "screenshots": [
     "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/foam-agent/screenshots/studio.png",
     "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/foam-agent/screenshots/narrow.png"

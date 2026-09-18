@@ -71,6 +71,9 @@ export interface MachineFleet {
   stopTurn(machineId: string, agentId: string): void
   answer(machineId: string, agentId: string, requestId: string, answers: Record<string, string>): void
   updateAgent(machineId: string, agentId: string, model?: string, effort?: string): void
+  /** Fork an agent on that machine (`agent_fork`); resolves to the new agent's id, rejects with the
+   *  far end's refusal. Optional: a fleet built before forks existed simply cannot. */
+  forkAgent?(machineId: string, agentId: string): Promise<string>
   listModels(machineId: string, agentId: string): Promise<string[]>
   recentSummaries(machineId: string, agentId: string): Promise<RecentTurn[]>
   /** The person's own last questions to that agent, newest first — the router's input. */

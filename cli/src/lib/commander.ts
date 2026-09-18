@@ -703,6 +703,12 @@ export class CommanderMirror {
    *  window (Summarizing…) — the device clears a busy tile only via a live terminal, and has a busy-timeout
    *  watchdog that fires if these stop arriving. Returns true while the session is busy (turnOpen ||
    *  summarizing) so the caller knows when to self-cancel the timer; false (emitting nothing) when idle. */
+  /** A turn is open on this session right now. Summarising after one does not count: the transcript is
+   *  complete, which is what a fork needs. */
+  isBusy(sessionId: string): boolean {
+    return this.states.get(sessionId)?.turnOpen === true
+  }
+
   heartbeat(sessionId: string): boolean {
     const st = this.states.get(sessionId)
     if (!st) return false

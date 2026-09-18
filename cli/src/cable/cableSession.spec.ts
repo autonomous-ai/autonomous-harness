@@ -96,6 +96,7 @@ function makeHost(over: Partial<CableHost> = {}) {
     answer: vi.fn(),
     focus: vi.fn(),
     openAgent: vi.fn(),
+    forkAgent: async (id) => ({ ok: true as const, agentId: `${id}-fork` }),
     updateAgent: vi.fn(),
     listModels: async () => ['runtime-v1:s1:claude:opus@high', 'runtime-v1:s1:claude:sonnet@low'],
     recentSummaries: async () => [],
@@ -906,6 +907,26 @@ describe('cable session', () => {
     tab = ''
     await session.syncAgents()
     expect(port.sent.filter((m) => m.t === 'agents.end').at(-1)).toMatchObject({ tab: '' })
+    await session.stop()
+  })
+
+  it('forks on the dial\'s agent.fork and toasts only a refusal', async () => {
+    const forkAgent = vi.fn(async (id: string) => id === 'a1'
+      ? { ok: true as const, agentId: 'a1-fork' }
+      : { ok: false as const, error: 'AGENT_BUSY', detail: 'Wait for it to finish, then fork.' })
+    const { session, port } = await connect(makeHost({ forkAgent }))
+    port.say({ t: 'hello', product: 'harness', mac: 'aa:bb' })
+    await vi.waitFor(() => expect(port.types()).toContain('agents.end'))
+    port.sent.length = 0
+
+    port.say({ t: 'agent.fork', agentId: 'a1' })
+    await vi.waitFor(() => expect(forkAgent).toHaveBeenCalledWith('a1'))
+    await new Promise((r) => setTimeout(r, 20))
+    // The window is told through the host (`opened`); the dial hears nothing on success.
+    expect(port.types().filter((t) => t === 'toast')).toEqual([])
+
+    port.say({ t: 'agent.fork', agentId: 'a2' })
+    await vi.waitFor(() => expect(port.sent.find((m) => m.t === 'toast')).toMatchObject({ text: 'Wait for it to finish, then fork.' }))
     await session.stop()
   })
 

@@ -235,6 +235,8 @@ export interface CableHost {
    * not a replacement for whatever the person was already watching.
    */
   openAgent(agentId: string): void
+  /** The dial asked for a fork of this agent — a second one with its history, opened in the window. */
+  forkAgent(agentId: string): Promise<{ ok: true; agentId: string } | { ok: false; error: string; detail?: string }>
   /**
    * Does this daemon's own agent list hold that id?
    *
@@ -805,6 +807,16 @@ export class CableSession {
       case 'agent.open':
         if (str('agentId')) this.host.openAgent(str('agentId')!)
         return
+      case 'agent.fork': {
+        // The dial's Fork action. The host opens the new agent in the window itself; the dial only needs
+        // to hear a refusal, as a toast, so a press that did nothing is not a press that was lost.
+        const id = str('agentId')
+        if (!id) return
+        void this.host.forkAgent(id).then((result) => {
+          if (!result.ok) return this.toast(result.detail ?? result.error)
+        }).catch((err) => this.toast((err as Error).message))
+        return
+      }
       case 'scroll': {
         // Forwarded verbatim, including the reports carrying no travel: the two ends of a stroke are the
         // whole point of the message. A `down` with nothing in it stops a fling still running, and an `up`

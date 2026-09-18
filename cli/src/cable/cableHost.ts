@@ -52,6 +52,10 @@ export interface CableHostWiring {
   focused?: (machineId: string, agentId: string) => void
   /** A notification was tapped: the window gives that agent a tile of its own. */
   opened?: (machineId: string, agentId: string) => void
+  /** A fork the dial asked for is open: the window puts it beside its source and focuses it. */
+  forked?: (machineId: string, agentId: string, sourceAgentId: string) => void
+  /** The dial asked for a fork of a LOCAL agent — see lib/forkAgent.ts. Resolves to the new agent's id. */
+  forkAgent?: (agentId: string) => Promise<{ ok: true; agentId: string } | { ok: false; error: string; detail?: string }>
   /** The dial picked a swarm: the window switches to it. */
   swarmSelected?: (swarmId: string) => void
   /** A finger on the dial's glass, in pieces, while it is down. */
@@ -524,6 +528,37 @@ export class DaemonCableHost implements CableHost {
     }
     this.wiring.log(`cable: open ${machineId}/${agentId} (notification)`)
     this.wiring.opened?.(machineId, agentId)
+  }
+
+  /**
+   * Fork an agent from the dial: the same `agent_fork` the window sends, on the agent's own machine, and
+   * then an `open` for the new agent so the window gives it a tile — the fork's whole point on the dial
+   * is "this one, again, beside it", and the person's hand is on the dial, not the mouse.
+   */
+  async forkAgent(agentId: string): Promise<{ ok: true; agentId: string } | { ok: false; error: string; detail?: string }> {
+    const machineId = this.machineOf(agentId)
+    if (!machineId) return { ok: false, error: 'AGENT_NOT_FOUND', detail: 'The dial named an agent this daemon has never listed.' }
+    let result: { ok: true; agentId: string } | { ok: false; error: string; detail?: string }
+    if (this.isLocalAgent(agentId)) {
+      if (!this.wiring.forkAgent) return { ok: false, error: 'UNSUPPORTED', detail: 'This daemon cannot fork agents.' }
+      result = await this.wiring.forkAgent(agentId)
+    } else {
+      if (!this.fleet?.forkAgent) return { ok: false, error: 'UNSUPPORTED_ON_REMOTE' }
+      try {
+        result = { ok: true, agentId: await this.fleet.forkAgent(machineId, agentId) }
+      } catch (err) {
+        result = { ok: false, error: 'FORK_FAILED', detail: (err as Error).message }
+      }
+    }
+    if (result.ok) {
+      this.wiring.log(`cable: fork ${machineId}/${agentId} → ${result.agentId}`)
+      this.seenOn.set(result.agentId, machineId)
+      if (this.wiring.forked) this.wiring.forked(machineId, result.agentId, agentId)
+      else this.wiring.opened?.(machineId, result.agentId)
+    } else {
+      this.wiring.log(`cable: fork ${machineId}/${agentId} refused (${result.error}${result.detail ? `: ${result.detail}` : ''})`)
+    }
+    return result
   }
 
   /** Whether this daemon's last list held that agent — see CableHost.knows. */

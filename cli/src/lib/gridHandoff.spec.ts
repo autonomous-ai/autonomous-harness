@@ -105,3 +105,50 @@ describe('handOffToGrid — which grid it runs', () => {
     expect(result.message).toContain('grid')
   })
 })
+
+/**
+ * The watchdog. `grid login --harness` makes two control-plane round trips, and a connection that is
+ * accepted and then answered by nobody used to leave this promise pending for good — a `harness
+ * login` that never returned, and a daemon reconcile that never settled.
+ */
+describe('handOffToGrid — a child that never answers', () => {
+  /** A `grid` that reads the token and then hangs, the shape of a black-holed control plane.
+   *
+   *  It IGNORES SIGTERM on purpose: that is the case the watchdog's `SIGKILL` exists for, and a fake
+   *  that died politely would let a child which cannot be asked to stop pass as one that can. (The
+   *  signal itself is not observable through this module's result — the kill and the settle happen
+   *  together — so what this pins is that a TERM-immune child still ends the call.) */
+  function hangingGrid(dir: string): string {
+    mkdirSync(dir, { recursive: true })
+    const bin = join(dir, 'grid')
+    writeFileSync(bin, ['#!/bin/sh', "trap '' TERM", '/bin/cat > /dev/null', 'sleep 60', ''].join('\n'), { mode: 0o755 })
+    return bin
+  }
+
+  it('kills it and reports a timeout rather than awaiting forever', async () => {
+    process.env.HARNESS_GRID_BIN = hangingGrid(join(root, 'hangs'))
+    const { handOffToGrid } = await load()
+
+    const started = Date.now()
+    const result = await handOffToGrid('tok_hang', { json: true, timeoutMs: 300 })
+
+    // It returned at all — the property the whole watchdog exists for.
+    expect(Date.now() - started).toBeLessThan(10_000)
+    // Classified as the ordinary failure rather than a new code, so every caller's existing
+    // handling applies unchanged (the same choice `gridExec` makes for its own timeout).
+    expect(result).toMatchObject({ code: 'GRID_LOGIN_FAILED', exitCode: 1 })
+    expect(result.message).toContain('did not answer')
+  }, 20_000)
+
+  it('does not arm the timeout against a child that answers promptly', async () => {
+    fakeGrid(join(root, 'prompt-bin'), 'prompt')
+    process.env.HARNESS_GRID_BIN = join(root, 'prompt-bin', 'grid')
+    const { handOffToGrid } = await load()
+
+    // A timeout far shorter than the case would take if the timer were not cleared on success.
+    const result = await handOffToGrid('tok_fast', { json: true, timeoutMs: 5_000 })
+
+    expect(result.code).toBe('OK')
+    expect(argsOf('prompt')).toEqual(['login', '--harness', '--json'])
+  })
+})

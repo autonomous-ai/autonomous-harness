@@ -350,6 +350,8 @@ export const ENCRYPTED_RPC_RESULT_TYPES = new Set<string>([
   // Device RPC replies that carry adapter content (recap headline/body, new agent name). Must be
   // ciphertext so the backend relay can't read them — device↔adapter E2EE parity with web.
   'agent_recent_result', 'agent_create_result', 'agent_create_status_result', 'agent_restart_result',
+  // A fork's reply names the new agent, exactly like agent_create's.
+  'agent_fork_result',
   // A remote-machine directory listing (New Agent folder browser) — leaks filesystem layout if plaintext.
   'fs_list_dir_result', 'project_preview_result',
   // Same reasoning as fs_list_dir_result: reveals Codex profile folder names/paths on this machine.
@@ -372,6 +374,8 @@ export const ENCRYPTED_DOWN_TYPES = new Set<string>([
   'question_response',
   'agents_list', 'sessions_list', 'session_get', 'models_list',
   'agent_create', 'agent_create_status', 'agent_delete', 'agent_restart', 'agent_recent', 'agent_update', 'agent_files', 'agent_read_file',
+  // Carries the fork's name and first task — what the person typed — like agent_create's prompt.
+  'agent_fork',
   'fs_list_dir', 'project_preview', 'codex_profiles_list', 'codex_profile_link',
   // Asks this machine to read its own agent accounts' usage (lib/accountUsage.ts). ⚠️ Missing here it
   // would not fail loudly — the same trap `question_response` once fell into: the payload would stay

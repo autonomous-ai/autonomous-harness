@@ -37,6 +37,7 @@ export interface CreateAgentPaneDeps {
     permissionMode?: string | null
     defaultName?: string | null
     label?: string | null
+    forkedFrom?: { agentId: string; name: string } | null
   }) => RegisteredSession | null }
   engine: AgentEngine
   cwd?: string | null
@@ -62,6 +63,8 @@ export interface CreateAgentPaneDeps {
   /** The engine's named agent the pane opens as (`agent_create`'s `agent`); kept on the row so a
    *  relaunch opens as it again. Already in `argv` — this is the record, not the launch. */
   agent?: string | null
+  /** The agent this pane is a fork of (`agent_fork`), recorded on the row; null otherwise. */
+  forkedFrom?: { agentId: string; name: string } | null
   maxAttempts?: number
 }
 
@@ -101,6 +104,7 @@ export async function createAndRegisterPane(deps: CreateAgentPaneDeps): Promise<
       permissionMode: deps.permissionMode,
       defaultName: deps.defaultName,
       label: deps.label,
+      forkedFrom: deps.forkedFrom,
     })
     if (pending) return { ok: true, spawned, pending }
     console.warn(`[agent] create ${deps.engine} registration failed · pane ${spawned.runtime.paneId} · `
