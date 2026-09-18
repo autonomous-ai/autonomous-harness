@@ -381,6 +381,18 @@ class AppNotifier extends ChangeNotifier {
     machine.agents.map((agent) => previewKey(machine.machine.machineId, agent)),
   );
 
+  /// Has the next warm re-read [agent]'s content when its machine says the
+  /// conversation moved since [before] — a turn this phone may have slept
+  /// through. Compared on the machine's own clock, so a phone whose clock
+  /// disagrees cannot make every refresh look like news.
+  void _staleIfMoved(MachineState machine, Agent? before, Agent agent) {
+    final moved = agent.updatedAt;
+    if (before == null || moved == null) return;
+    final was = before.updatedAt;
+    if (was != null && !moved.isAfter(was)) return;
+    sessionPreviews.markStale(previewKey(machine.machine.machineId, agent));
+  }
+
   /// When this launch became signed in, and by which route — until the first
   /// message of that session has been reported, after which it is null.
   ///
@@ -2935,6 +2947,14 @@ class AppNotifier extends ChangeNotifier {
       final prev = byId[agent.id];
       if (prev == null ||
           prev.name != agent.name ||
+          // What search and the Recent list read: a turn that ends moves
+          // `updatedAt` and often `title`, and a sync that ignored them left
+          // the phone sorting and searching by the list it had an hour ago.
+          prev.title != agent.title ||
+          prev.updatedAt != agent.updatedAt ||
+          prev.gridModel != agent.gridModel ||
+          prev.selectedModel != agent.selectedModel ||
+          prev.dshName != agent.dshName ||
           prev.sessionId != agent.sessionId ||
           prev.engine != agent.engine ||
           prev.engineDisplayName != agent.engineDisplayName ||
@@ -3594,6 +3614,7 @@ class AppNotifier extends ChangeNotifier {
 
   void _replaceAgents(MachineState machine, List<Agent> agents) {
     final nextIds = agents.map((agent) => agent.id).toSet();
+    final previous = {for (final agent in machine.agents) agent.id: agent};
     for (final old in machine.agents.where(
       (agent) => !nextIds.contains(agent.id),
     )) {
@@ -3605,6 +3626,7 @@ class AppNotifier extends ChangeNotifier {
         agent.id,
         agent.sessionId,
       );
+      _staleIfMoved(machine, previous[agent.id], agent);
     }
     for (final agentId in machine.processingAgentIds.difference(nextIds)) {
       _cancelTurnActivity(machine.machine.machineId, agentId);
@@ -3648,6 +3670,7 @@ class AppNotifier extends ChangeNotifier {
       agent.id,
       agent.sessionId,
     );
+    _staleIfMoved(machine, previous, agent);
     sessionPreviews.warm([previewKey(machine.machine.machineId, agent)]);
     machine.sessionAgentIds.removeWhere((_, id) => id == agent.id);
     final sessionId = agent.sessionId;

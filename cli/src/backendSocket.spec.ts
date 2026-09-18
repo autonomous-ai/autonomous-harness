@@ -1875,3 +1875,42 @@ describe('Autonomous direct isolation from existing relay/browser behavior', () 
     backend.detachDirectDevice('autonomous-direct:test')
   })
 })
+
+describe('agent_recent replies', () => {
+  // Three long answers — well past the dial's ~15KB frame — as a working agent's recaps are.
+  const answer = (turn: number) => `Turn ${turn}: ${'the llama.cpp build is b4521 and '.repeat(250)}`
+  const events = [1, 2, 3].map((turn) => ({ kind: 'summary', text: `body ${turn}`, recap: `recap ${turn}`, fullText: answer(turn) }))
+
+  async function recentReplyFor(role: 'web' | 'device') {
+    const socket = new BackendSocket('token')
+    socket.recentProvider = () => events
+    socket.recentAsksProvider = () => ['which llama.cpp build is this?']
+    socket.connect()
+    const ws = wsMock.instances.at(-1)!
+    ws.open()
+    vi.spyOn(socket.e2ee, 'unwrapDown').mockReturnValue({ type: 'agent_recent', payload: { requestId: 'recent-1', agentId: 'a1', n: 3 } })
+    vi.spyOn(socket.e2ee, 'hasSession').mockReturnValue(true)
+    vi.spyOn(socket.e2ee, 'sessionRole').mockReturnValue(role)
+    vi.spyOn(socket.e2ee, 'rpcReplyFrameBytes').mockImplementation((_c, _t, _r, payload) => Buffer.byteLength(JSON.stringify(payload)))
+    const wrapReply = vi.spyOn(socket.e2ee, 'wrapRpcReply').mockReturnValue({
+      type: 'agent_recent_result', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } },
+    })
+    ws.message({ t: 'down', connId: 'conn-1', frame: { type: 'agent_recent', payload: { __e2e: { v: 1, k: 's', n: 1, ct: 'ciphertext' } } } })
+    await vi.waitFor(() => expect(wrapReply).toHaveBeenCalled())
+    await socket.stop()
+    return wrapReply.mock.calls[0][3] as { events: Array<Record<string, unknown>>; asks: string[] }
+  }
+
+  it('reaches the phone and a remote desktop whole, full answers included', async () => {
+    const reply = await recentReplyFor('web')
+    expect(reply.events).toHaveLength(3)
+    expect(reply.events[0].fullText).toBe(answer(1))
+    expect(reply.asks).toEqual(['which llama.cpp build is this?'])
+  })
+
+  it('is still fitted to the dial’s frame for a device', async () => {
+    const reply = await recentReplyFor('device')
+    expect(reply.events).toHaveLength(1)
+    expect(reply.events[0]).not.toHaveProperty('fullText')
+  })
+})

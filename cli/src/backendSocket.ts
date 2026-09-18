@@ -1257,7 +1257,11 @@ export class BackendSocket {
     }
     if (connId && this.e2ee.hasSession(connId) && (ENCRYPTED_RPC_RESULT_TYPES.has(resultType) || SHARE_RESULT_TYPES.has(resultType))) {
       let replyPayload = payload
-      if (resultType === 'agent_recent_result') {
+      // ⚠️ The DIAL's frame budget, so only a dial's reply is fitted to it. The phone app and a remote
+      // desktop are `web` sessions and search this reply for the agent's latest answer: fitted, a reply
+      // over ~15KB dropped to one event without its `fullText`, so any agent doing real work — long
+      // answers — could not be found by what it had just said.
+      if (resultType === 'agent_recent_result' && this.e2ee.sessionRole(connId) === 'device') {
         const trim = fitRecentReplyPayloadForDevice(
           payload,
           (candidate) => this.e2ee.rpcReplyFrameBytes(connId, resultType, requestId, candidate),

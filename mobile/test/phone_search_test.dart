@@ -259,6 +259,45 @@ void main() {
     });
   });
 
+  test(
+    'a turn the phone slept through is re-read once its machine says so',
+    () async {
+      final conn = _RecentConn({
+        'live': ['first question'],
+      });
+      final app = _app([
+        _machine('box', [_agent('live', minutesAgo: 30)]),
+      ], conn: conn);
+      addTearDown(app.dispose);
+      app.sessionPreviews.warm([
+        app.previewKey('box', app.machineStates['box']!.agents.single),
+      ]);
+      await _settle();
+      expect(rankPhoneSearch(phoneSearchIndex(app), 'deploy'), isEmpty);
+
+      // The reply lands while the phone is away; on return the machine re-sends
+      // the agent with a later `updatedAt`, well inside the store's freshFor.
+      conn.asks['live'] = ['please deploy the llama build'];
+      await app.handleEventForTest('box', {
+        'type': 'agent_synced',
+        'payload': {
+          'agent': {
+            'id': 'live',
+            'name': 'work · live',
+            'engine': 'codex',
+            'updatedAt': DateTime.now().toUtc().toIso8601String(),
+            'terminal': {'available': true},
+          },
+        },
+      });
+      await _settle();
+      expect(conn.asked, ['live', 'live']);
+      expect(_agentIds(rankPhoneSearch(phoneSearchIndex(app), 'deploy')), [
+        'live',
+      ]);
+    },
+  );
+
   group('session content', () {
     test(
       'a word only in what an agent was asked finds it, after fields',

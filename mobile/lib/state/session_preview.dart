@@ -1,7 +1,8 @@
 /// Ported from the desktop's `lib/state/session_preview.dart`, so a phone
 /// search reaches the same session content the desktop's Open Agent picker
-/// does. Keep the two in step; the one addition here is
-/// [SessionPreview.searchParts], which the phone's result rows quote from.
+/// does. Keep the two in step; the additions here are
+/// [SessionPreview.searchParts], which the phone's result rows quote from, and
+/// [SessionPreviewStore.markStale], for turns a sleeping phone never heard.
 library;
 
 import 'dart:async';
@@ -117,6 +118,15 @@ class SessionPreviewStore extends ChangeNotifier {
   bool _disposed = false;
 
   SessionPreview? read(SessionPreviewKey key) => _records[key];
+
+  /// Lets the next [warm] read [key] again, inside [freshFor] or not — for a
+  /// session its machine says has moved since this copy was taken.
+  ///
+  /// ⚠️ A phone needs this where the desktop does not. iOS suspends the socket
+  /// in the background, so a reply that lands meanwhile never arrives as live
+  /// events; without this the copy taken before it stays the one searched
+  /// until [freshFor] runs out and something happens to warm it again.
+  void markStale(SessionPreviewKey key) => _records[key]?._attemptedAt = null;
 
   SessionPreview _entry(SessionPreviewKey key) {
     final entry = _records.remove(key) ?? SessionPreview();

@@ -223,4 +223,27 @@ void main() {
     store.warm([a]);
     expect(calls, 2);
   });
+
+  test(
+    'markStale lets a moved session be read again inside freshFor',
+    () async {
+      var calls = 0;
+      final store = SessionPreviewStore(
+        canFetch: (_) => true,
+        fetchRecent: (_) async => {
+          'asks': ['question ${++calls}'],
+        },
+      );
+      addTearDown(store.dispose);
+      store.warm([a]);
+      await Future<void>.delayed(Duration.zero);
+      store.warm([a]);
+      expect(calls, 1, reason: 'fresh, so not read again');
+      store.markStale(a);
+      store.warm([a]);
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 2);
+      expect(store.read(a)!.latestRequest, 'question 2');
+    },
+  );
 }
