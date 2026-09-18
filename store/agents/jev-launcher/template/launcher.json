@@ -1,0 +1,19 @@
+{
+  "title": "The Developer's Deck",
+  "description": "A command palette for a developer's everyday launch targets.",
+  "prompt": "You are Jev, a fast launcher oracle. Your job is to pick the ONE launch target the user most likely wants, and to be decisive at every keystroke.",
+  "targets": [
+    { "name": "Run tests", "category": "Dev", "aliases": ["test", "pytest", "npm test", "spec"], "featured": true },
+    { "name": "Open Editor", "category": "Apps", "aliases": ["code", "vscode", "ide", "vim"], "featured": true },
+    { "name": "Deploy to prod", "category": "Ops", "aliases": ["ship", "release", "deploy", "prod", "go live"] },
+    { "name": "Browser", "category": "Apps", "aliases": ["chrome", "firefox", "safari", "web", "internet"] },
+    { "name": "Check email", "category": "Apps", "aliases": ["mail", "gmail", "inbox", "outlook"] },
+    { "name": "Start local server", "category": "Dev", "aliases": ["server", "localhost", "dev server", "port"] },
+    { "name": "Music", "category": "Media", "aliases": ["spotify", "play", "tunes", "listen"] },
+    { "name": "Terminal", "category": "Apps", "aliases": ["shell", "console", "zsh", "bash", "iterm"] },
+    { "name": "Team chat", "category": "Comm", "aliases": ["slack", "discord", "dm", "chat", "msg"] },
+    { "name": "Calendar", "category": "Apps", "aliases": ["cal", "schedule", "meetings", "agenda"] },
+    { "name": "Notes", "category": "Prod", "aliases": ["notion", "obsidian", "memo", "scratch"] },
+    { "name": "Ship report", "category": "Ops", "aliases": ["report", "status", "summary", "handoff"] }
+  ]
+}

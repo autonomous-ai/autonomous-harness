@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-launcher",
+  "name": "Jev Launcher",
+  "category": "Productivity",
+  "author": "Autonomous",
+  "description": "A live predictive command palette. As you type, Jev — TypeSafe's System One model — re-ranks your launch targets on every keystroke, showing which one it would fire and how confident it is. Curate the palette; Jev does the ranking.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "launcher.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

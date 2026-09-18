@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev ranks a command palette live as you type",
+  "examples": [
+    {
+      "prompt": "Set Jev Launcher up as a developer's command palette — targets for run-tests, open-editor, deploy, chat, music — each with good aliases. Type partial queries and watch Jev re-rank the field on every keystroke, then fire the winner on paper.",
+      "caption": "Jev's Palette — a fast decision model ranking launch targets live, per keystroke"
+    }
+  ]
+}
