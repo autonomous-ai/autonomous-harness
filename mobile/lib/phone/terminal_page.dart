@@ -191,18 +191,27 @@ class _TerminalPageState extends State<TerminalPage>
   /// value — two controllers, or an implicit animation on either side, would let
   /// the two drift apart on a dropped frame and show the terminal through the
   /// gap.
+  /// ⚠️ Unhurried on purpose. Nothing here moves any more — the header swaps
+  /// one control for another and the results fade up — and a cross-fade run
+  /// fast enough for a slide reads as a flicker rather than as an exchange. The
+  /// way back is a little quicker than the way in, the way dismissals usually
+  /// are.
   late final AnimationController _searchOpen = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 260),
-    reverseDuration: const Duration(milliseconds: 220),
+    duration: const Duration(milliseconds: 420),
+    reverseDuration: const Duration(milliseconds: 340),
   );
 
-  /// The curve everything on the open/close reads. Eased out on the way in so
-  /// the bar arrives rather than snaps, and symmetric on the way back.
+  /// The curve everything on the open/close reads.
+  ///
+  /// ⚠️ Eased at BOTH ends, where this was once eased out alone. An ease-out
+  /// starts at its quickest, which suits something travelling into place —
+  /// nothing here travels. What is left is opacity, and opacity leaving its
+  /// resting value at full speed is seen as a blink at the start of the fade.
   late final Animation<double> _searchCurve = CurvedAnimation(
     parent: _searchOpen,
-    curve: Curves.easeOutCubic,
-    reverseCurve: Curves.easeInCubic,
+    curve: Curves.easeInOutCubic,
+    reverseCurve: Curves.easeInOutCubic,
   );
 
   /// Whether the search overlay is BUILT — true from the first frame of the
@@ -640,6 +649,26 @@ class _TerminalPageState extends State<TerminalPage>
             .where((a) => a.id == widget.agentId)
             .firstOrNull;
         final reclaim = phoneReclaimAction(session);
+        // The header's trailing controls, counted before they are built: the
+        // slot they share with Cancel is sized from this, and the search field
+        // is laid out against that same width. The conditions must match the
+        // ones guarding each control below — see [_TrailingSwap.extentFor].
+        //
+        // ⚠️ [reclaim] is counted too, though it is a labelled button rather
+        // than one of the fixed 24px icon boxes. It cannot be measured from a
+        // constant — its width is its label's — so the slot treats it as a
+        // MINIMUM rather than a fixed size: see [_TrailingSwap], which floors
+        // the width it is given instead of forcing it. Sizing it exactly is not
+        // worth a second TextPainter for a button that shows only on a
+        // read-only stream.
+        final headerActions =
+            (machine != null &&
+                    phoneMachineStatusOf(machine) == PhoneMachineStatus.ready
+                ? 1
+                : 0) +
+            (agent != null ? 1 : 0) +
+            (reclaim != null ? 1 : 0);
+        final trailingExtent = _TrailingSwap.extentFor(context, headerActions);
         return Scaffold(
           backgroundColor: AppPalette.windowBg,
           // ⚠️ No fab. New agent is the `+` in the header — see the note there.
@@ -865,85 +894,109 @@ class _TerminalPageState extends State<TerminalPage>
                             // the frame while an identical one came in from off-screen.
                             // See `terminal_search.dart`.
                             onSearch: _openSearch,
+                            // ⚠️ Tracks [_searching], NOT the animation's value:
+                            // the overlay's own bar exists for exactly as long as
+                            // the overlay is mounted, including the closing frames
+                            // where the animation is already near zero. Reading the
+                            // value here would paint this row's field back under
+                            // the overlay's for the tail of every collapse.
+                            barHidden: _searching,
                             // ⚠️ No title and no engine mark up here any more: the search
                             // bar takes the row, and the agent's name moved to
                             // [TerminalFootBar] at the foot of the page, where it reads
                             // as identity rather than as chrome.
+                            //
+                            // ⚠️ **Wrapped so the pair can hand over to Cancel.** They act
+                            // on the agent underneath, which is not what is on screen once
+                            // search is up — so they cross-fade for the way out, in a slot
+                            // that keeps one width throughout. See [_TrailingSwap]: the
+                            // field beside it must not move, which is what the earlier
+                            // collapse-and-reopen got wrong.
                             trailing: [
-                              // Read-only is a state to get OUT of, so its way out is a
-                              // labelled button in the header rather than a line in the
-                              // actions sheet: the sheet is where you go having decided
-                              // to do something, and this is the thing telling you that
-                              // typing will go nowhere until you do.
-                              if (reclaim != null)
-                                _ReclaimButton(
-                                  action: reclaim,
-                                  onPressed: () => widget.notifier.selectAgent(
-                                    widget.machineId,
-                                    widget.agentId,
-                                  ),
+                              _TrailingSwap(
+                                progress: _searchCurve,
+                                cancel: _CancelSearchButton(
+                                  onTap: _closeSearch,
                                 ),
-                              // New agent, search and the actions menu: the three the
-                              // page offers, in the order they are reached for — create,
-                              // find, then everything else.
-                              //
-                              // ⚠️ They are spaced by [_HeaderAction], not drawn bare.
-                              // [AppIconButton] is a fixed 24px box whatever glyph size
-                              // it is given, so a 22px search glyph fills its box edge to
-                              // edge while a 20px ellipsis sits inside one — three
-                              // buttons butted together then read as unevenly spaced
-                              // when the gaps are in fact identical. One glyph size and
-                              // one padding across the three is what evens the rhythm.
-                              //
-                              // ⚠️ `+` here rather than floating over the terminal. A fab
-                              // covers the last line of output — the line being read —
-                              // and this page has no list to scroll it clear of.
-                              //
-                              // Gated on the machine ANSWERING, the same gate the Agents
-                              // tab puts on its fab: creating needs the machine to list
-                              // its folders and name its engines, so one that is offline
-                              // or still wants its password cannot host a new agent.
-                              if (machine != null &&
-                                  phoneMachineStatusOf(machine) ==
-                                      PhoneMachineStatus.ready)
-                                _HeaderAction(
-                                  icon: LucideIcons.plus300,
-                                  size: 21,
-                                  tooltip: 'New agent',
-                                  // Awaited for the same reason search is: the form may
-                                  // be backed out of rather than completed, and this page
-                                  // gets no rebuild when it lands back on top.
-                                  onPressed: () async {
-                                    await openNewAgent(
-                                      context,
-                                      widget.notifier,
-                                      widget.machineId,
-                                    );
-                                    if (mounted) setState(() {});
-                                  },
-                                ),
-                              // ⚠️ Both stay put while the keyboard is up. They were once
-                              // hidden while typing to spare the row — but the row was
-                              // never what was short, and the controls jumping position
-                              // on every keyboard raise cost more than the two columns
-                              // bought back. A header that holds still is worth more.
-                              //
-                              // Null while the agent is not loaded: there is nothing to act on yet, and a
-                              // menu of actions that all fail is worse than no menu.
-                              if (agent != null)
-                                _HeaderAction(
-                                  icon: LucideIcons.ellipsis300,
-                                  size: 21,
-                                  tooltip: 'Agent actions',
-                                  // Last in the row, so its padding stops at the header's
-                                  // own right inset rather than adding to it.
-                                  last: true,
-                                  onPressed: () => _showActions(
-                                    machineName:
-                                        machine?.machine.displayName ?? '',
-                                    agentName: agent.name,
-                                  ),
-                                ),
+                                extent: trailingExtent,
+                                children: [
+                                  // Read-only is a state to get OUT of, so its way out is a
+                                  // labelled button in the header rather than a line in the
+                                  // actions sheet: the sheet is where you go having decided
+                                  // to do something, and this is the thing telling you that
+                                  // typing will go nowhere until you do.
+                                  if (reclaim != null)
+                                    _ReclaimButton(
+                                      action: reclaim,
+                                      onPressed: () =>
+                                          widget.notifier.selectAgent(
+                                            widget.machineId,
+                                            widget.agentId,
+                                          ),
+                                    ),
+                                  // New agent, search and the actions menu: the three the
+                                  // page offers, in the order they are reached for — create,
+                                  // find, then everything else.
+                                  //
+                                  // ⚠️ They are spaced by [_HeaderAction], not drawn bare.
+                                  // [AppIconButton] is a fixed 24px box whatever glyph size
+                                  // it is given, so a 22px search glyph fills its box edge to
+                                  // edge while a 20px ellipsis sits inside one — three
+                                  // buttons butted together then read as unevenly spaced
+                                  // when the gaps are in fact identical. One glyph size and
+                                  // one padding across the three is what evens the rhythm.
+                                  //
+                                  // ⚠️ `+` here rather than floating over the terminal. A fab
+                                  // covers the last line of output — the line being read —
+                                  // and this page has no list to scroll it clear of.
+                                  //
+                                  // Gated on the machine ANSWERING, the same gate the Agents
+                                  // tab puts on its fab: creating needs the machine to list
+                                  // its folders and name its engines, so one that is offline
+                                  // or still wants its password cannot host a new agent.
+                                  if (machine != null &&
+                                      phoneMachineStatusOf(machine) ==
+                                          PhoneMachineStatus.ready)
+                                    _HeaderAction(
+                                      icon: LucideIcons.plus300,
+                                      size: 21,
+                                      tooltip: 'New agent',
+                                      // Awaited for the same reason search is: the form may
+                                      // be backed out of rather than completed, and this page
+                                      // gets no rebuild when it lands back on top.
+                                      onPressed: () async {
+                                        await openNewAgent(
+                                          context,
+                                          widget.notifier,
+                                          widget.machineId,
+                                        );
+                                        if (mounted) setState(() {});
+                                      },
+                                    ),
+                                  // ⚠️ Both stay put while the keyboard is up. They were once
+                                  // hidden while typing to spare the row — but the row was
+                                  // never what was short, and the controls jumping position
+                                  // on every keyboard raise cost more than the two columns
+                                  // bought back. A header that holds still is worth more.
+                                  //
+                                  // Null while the agent is not loaded: there is nothing to act on yet, and a
+                                  // menu of actions that all fail is worse than no menu.
+                                  if (agent != null)
+                                    _HeaderAction(
+                                      icon: LucideIcons.ellipsis300,
+                                      size: 21,
+                                      tooltip: 'Agent actions',
+                                      // Last in the row, so its padding stops at the header's
+                                      // own right inset rather than adding to it.
+                                      last: true,
+                                      onPressed: () => _showActions(
+                                        machineName:
+                                            machine?.machine.displayName ?? '',
+                                        agentName: agent.name,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ],
                           ),
                           Divider(height: 1, color: AppGlass.hair),
@@ -993,6 +1046,10 @@ class _TerminalPageState extends State<TerminalPage>
                       notifier: widget.notifier,
                       animation: _searchCurve,
                       onClose: _closeSearch,
+                      // What the header's trailing slot holds — the field stops
+                      // there rather than reaching under Cancel. The same number
+                      // the header lays that slot out from, so the two agree.
+                      trailingExtent: trailingExtent,
                     ),
                   ),
               ],
@@ -1267,6 +1324,192 @@ String _clipTitle(String name) {
   if (runes.length <= _titleMaxChars) return name;
   // Trailing space before the ellipsis reads as a typo, so it goes.
   return '${String.fromCharCodes(runes.take(_titleMaxChars)).trimRight()}…';
+}
+
+/// The way out of search, in the header where the page's own controls were.
+///
+/// ⚠️ **It draws at a fixed size and does not animate.** Its arrival is
+/// [_TrailingSwap]'s fade; a width or a scale of its own on top of that is what
+/// made the field beside it move, and the field holding still is the point.
+///
+/// The word rather than a glyph: this is the one control on the row that leaves,
+/// and a second `×` beside the field's own clear would be two ways out sitting
+/// together.
+class _CancelSearchButton extends StatelessWidget {
+  const _CancelSearchButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  static const String _label = 'Cancel';
+
+  /// The gap between the field and the word.
+  static const double _lead = 12;
+
+  static const TextStyle _style = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w500,
+  );
+
+  /// How wide this button comes out, laid against [context]'s text scaling.
+  ///
+  /// ⚠️ **Measured, not assumed.** The search overlay draws its field beside
+  /// this and has to stop exactly where the word starts; a hard-coded width
+  /// would be wrong the moment the system font scale moves, and the field would
+  /// either overhang "Cancel" or leave a gap before it. [TextPainter] is what
+  /// the row itself will lay out with, so the two agree by construction.
+  static double extentFor(BuildContext context) {
+    final painter = TextPainter(
+      text: TextSpan(text: _label, style: _style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return _lead + width;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    AppTheme.watch(context);
+    return Semantics(
+      button: true,
+      label: 'Cancel search',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          // The bar's own height, so the target covers the row rather than just
+          // the word's line box.
+          height: TerminalHeader.barHeight,
+          child: Padding(
+            // Leading gap from the field; nothing trailing, so the word stops on
+            // the header's own right inset the way the last action does.
+            padding: const EdgeInsets.only(left: _lead),
+            child: Center(
+              child: Text(
+                _label,
+                maxLines: 1,
+                softWrap: false,
+                style: _style.copyWith(color: AppPalette.accentOnSurface),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The header's trailing end, cross-fading its controls for Cancel as search
+/// opens — in a column that never changes width.
+///
+/// ⚠️ **A [Stack], not a collapse, and the search field's steadiness is the
+/// whole reason.** Handing these points back made the field widen into them and
+/// then narrow again as Cancel claimed its own — two layout changes in opposite
+/// directions inside one gesture, which reads as the row snapping about rather
+/// than as anything opening. Keeping both sets in the same slot means the field
+/// is laid out once and never moves: what changes is only which of the two is
+/// painted.
+///
+/// ⚠️ **The slot is given an explicit width, not sized by its children.** A
+/// [Stack] would take the wider of the two, which is a number nothing outside
+/// this widget can predict — and the search overlay MUST predict it, because it
+/// draws its field up to this slot's left edge. [extentFor] is that number, and
+/// both this and the overlay are laid out from it.
+///
+/// ⚠️ Both children stay laid out for the whole animation. That is what lets
+/// them cross-fade at all, and it is why each is wrapped in its own
+/// [IgnorePointer] — an invisible Cancel over a live `⋯` would otherwise take
+/// the tap meant for the menu.
+class _TrailingSwap extends StatelessWidget {
+  const _TrailingSwap({
+    required this.progress,
+    required this.children,
+    required this.cancel,
+    required this.extent,
+  });
+
+  /// 0 the page's own controls are showing, 1 Cancel is.
+  final Animation<double> progress;
+
+  /// The header's controls: `+`, `⋯`, and reclaim when the stream is read-only.
+  final List<Widget> children;
+
+  /// The way out of search, shown in their place.
+  final Widget cancel;
+
+  /// The slot's width, from [extentFor].
+  final double extent;
+
+  /// How wide a slot holding [actions] controls must be.
+  ///
+  /// The wider of the two states, so the field beside it lands in the same place
+  /// whichever is showing — which is the entire point of the swap.
+  ///
+  /// ⚠️ Counts [TerminalHeader.barGap] once, at the front. Both states carry
+  /// that gap (see the [Row] below and [_CancelSearchButton]'s own leading pad),
+  /// so it belongs to the slot rather than to either side of it.
+  static double extentFor(BuildContext context, int actions) {
+    // Each action is [AppIconButton]'s fixed 24px box with [_HeaderAction.gap]
+    // either side, except the last, whose trailing pad is dropped so the row
+    // stops on the header's own inset.
+    const box = 24.0;
+    final controls = actions == 0
+        ? 0.0
+        : actions * (box + _HeaderAction.gap * 2) - _HeaderAction.gap;
+    final cancel = _CancelSearchButton.extentFor(context);
+    return TerminalHeader.barGap + (controls > cancel ? controls : cancel);
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: progress,
+    builder: (context, _) {
+      final open = progress.value;
+      // ⚠️ Fading straight across leaves the middle of the move half-lit on
+      // both sides, which reads as a smear rather than as an exchange. Each
+      // takes its own half: the outgoing is gone by the midpoint, and the
+      // incoming starts from there.
+      final out = (1 - open * 2).clamp(0.0, 1.0);
+      final into = (open * 2 - 1).clamp(0.0, 1.0);
+      return ConstrainedBox(
+        // ⚠️ A MINIMUM, not a fixed width. The reclaim button is labelled, so
+        // its width is its text's and no constant describes it — forcing the
+        // measured width on the row would clip it. A floor gives the field a
+        // width it can count on while leaving a wider control room to be itself:
+        // the only cost is that the field is a little shorter than it could be
+        // on a read-only stream, which is a state search is rarely opened from.
+        constraints: BoxConstraints(minWidth: extent),
+        child: Stack(
+          // Against the right edge: whichever is showing, it ends on the
+          // header's own inset rather than floating inside the slot.
+          alignment: Alignment.centerRight,
+          children: [
+            Opacity(
+              opacity: out,
+              child: IgnorePointer(
+                // Untappable from the first frame of the open: they act on the
+                // agent underneath, and search is what is on screen now.
+                ignoring: open > 0,
+                // ⚠️ No gap of its own before these — the slot's width already
+                // carries [TerminalHeader.barGap], and a second one here would
+                // push the controls off the header's right inset.
+                child: Row(mainAxisSize: MainAxisSize.min, children: children),
+              ),
+            ),
+            Opacity(
+              opacity: into,
+              // Live only once it is the thing on screen. Taken on the tail of
+              // the fade rather than at the very end, so a finger arriving as
+              // the word settles is not ignored.
+              child: IgnorePointer(ignoring: open < 0.5, child: cancel),
+            ),
+          ],
+        ),
+      );
+    },
+  );
 }
 
 /// One of the header's trailing controls, padded so the three sit evenly.

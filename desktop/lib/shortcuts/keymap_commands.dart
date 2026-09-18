@@ -316,6 +316,12 @@ final harnessCommands = <HarnessCommand>[
     action: ShortcutAction.routeTask,
   ),
   const HarnessCommand(
+    'project.orchestrate',
+    'Create with the orchestrator',
+    ShortcutGroup.actions,
+    action: ShortcutAction.orchestrate,
+  ),
+  const HarnessCommand(
     'app.settings',
     'Open Settings',
     ShortcutGroup.actions,

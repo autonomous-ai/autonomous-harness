@@ -28,9 +28,21 @@ class TerminalHeader extends StatelessWidget {
     super.key,
     required this.onSearch,
     this.trailing = const [],
+    this.barHidden = false,
   });
 
   final VoidCallback onSearch;
+
+  /// Whether the search overlay is drawing the bar instead of this row.
+  ///
+  /// ⚠️ **The bar still takes its space — it is only not PAINTED.** The overlay
+  /// draws an identical field at these very pixels, and two of them stacked put
+  /// one translucent rim over another: the border comes out darker than either
+  /// alone, and the fill deepens, for the whole of the open. Keeping the layout
+  /// and dropping the paint leaves this row doing what it still has to do —
+  /// holding the trailing controls in place while they fade — without a second
+  /// field showing through the first.
+  final bool barHidden;
 
   /// The page's controls, right of the bar: `+`, `⋯`, and the reclaim button
   /// when the stream is read-only.
@@ -50,6 +62,14 @@ class TerminalHeader extends StatelessWidget {
 
   /// The hint's type.
   static const double hintSize = 14;
+
+  /// The gap between the bar and whatever sits right of it.
+  ///
+  /// ⚠️ Carried by the trailing controls themselves, not laid in this row. The
+  /// page swaps those controls for a Cancel as search opens, and a gap sitting
+  /// outside that swap would be points neither side accounts for — see
+  /// `_TrailingSwap` in `terminal_page.dart`.
+  static const double barGap = 6;
 
   /// What the bar says it will search.
   ///
@@ -71,8 +91,22 @@ class TerminalHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(child: _SearchBar(onTap: onSearch)),
-          const SizedBox(width: 6),
+          Expanded(
+            child: Visibility(
+              visible: !barHidden,
+              // Keeps the box, drops the paint and the hit test. See [barHidden].
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: _SearchBar(onTap: onSearch),
+            ),
+          ),
+          // ⚠️ **No gap of its own before these — see [barGap].** The page
+          // swaps these controls for a Cancel of a different width, and sizes
+          // the slot they share from one measurement. A spacer sitting outside
+          // that slot is points the measurement does not know about, so the
+          // search overlay's field — which is laid out from the same number —
+          // would stop short of where this row's own does, by exactly six.
           ...trailing,
         ],
       ),

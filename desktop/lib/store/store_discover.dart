@@ -595,6 +595,8 @@ class _ProductRow extends StatelessWidget {
               child: Text(
                 entry.isViewerPackage
                     ? 'View'
+                    : entry.hasUpdate
+                    ? 'Update'
                     : installed
                     ? 'Open'
                     : 'Get',

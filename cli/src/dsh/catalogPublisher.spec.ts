@@ -20,6 +20,13 @@ function fixture() {
 }
 
 describe('Store publication', () => {
+  it('publishes package tree revisions, keeping the source commit separately', () => {
+    const revisionFor = vi.fn(() => 'b'.repeat(40))
+    const catalog = createStoreCatalog(fixture(), ref, { revisionFor })
+    expect(revisionFor).toHaveBeenCalledWith('store/agents/game')
+    expect(parseStoreCatalog(catalog).entries[0]).toMatchObject({ ref, revision: 'b'.repeat(40) })
+    expect(() => createStoreCatalog(fixture(), ref, { revisionFor: () => 'not a revision' })).toThrow(/invalid package revision/)
+  })
   it('generates a runtime-valid catalog from all real packages, pinning built-ins to the source commit', () => {
     const catalog = createStoreCatalog(fileURLToPath(new URL('../../../store', import.meta.url)), ref)
     const parsed = parseStoreCatalog(catalog)

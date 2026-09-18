@@ -34,8 +34,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # `make cli-test`, exactly: typecheck then the vitest suite. Nothing else — the repo has no lint
-  # or format gate, and inventing one here would fail on code no reviewer ever agreed to.
+  # Typecheck, the full suite, and the package updater's complete-coverage gate.
   typecheck-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -101,3 +100,6 @@ jobs:
       # need a live tmux, Herdr or Cursor are gated behind RUN_* env vars and stay skipped here —
       # `npm run test:tmux-real` and friends are how those are run, on a machine that has them.
       - run: npx vitest run
+
+      - name: Require complete harness updater coverage
+        run: npm run test:dsh-updates

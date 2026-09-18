@@ -385,8 +385,9 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     expected: TerminalProcessExpectation,
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
+    readOnly?: boolean,
   ): Promise<TerminalReadResult<TerminalStreamHandle<TmuxRuntimeRef>>> {
     void expected
-    return TmuxControlStream.open(runtime.paneId, size, sink)
+    return TmuxControlStream.open(runtime.paneId, size, sink, readOnly)
   }
 }

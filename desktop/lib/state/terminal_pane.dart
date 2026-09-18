@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../terminal/terminal_session.dart';
+import '../core/models.dart' show SharedHarness;
 
 /// What a tile shows.
 ///
@@ -66,6 +67,8 @@ class TerminalPane {
   String? agentId;
 
   TerminalSession? session;
+  SharedHarness? sharedHarness;
+  String? sharedOwnerName;
 
   /// Last visible geometry, retained while this controller is parked off screen.
   Size? lastViewSize;

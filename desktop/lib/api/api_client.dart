@@ -98,15 +98,37 @@ class ApiClient {
   /// The daemon answers 200 with the last known-good list when the backend leg is unreachable, so a
   /// caller that only checked the status code would mistake an outage for a healthy, current read.
   bool lastMachinesStale = false;
+  List<Machine> _sharedMachines = [];
 
   Future<List<Machine>> machines() async {
     final res = await _dio.get('/api/machines');
     final data = unwrapApiResponse(res) as Map<String, dynamic>;
     lastMachinesStale = data['stale'] == true;
     final list = data['machines'] as List<dynamic>? ?? [];
-    return list
+    final owned = list
         .map((e) => Machine.fromJson(e as Map<String, dynamic>))
         .toList();
+    try {
+      final shared = await _dio.get('/api/harness-shares');
+      if (shared.statusCode == 404) {
+        _sharedMachines = [];
+      } else {
+        final body = unwrapApiResponse(shared) as Map<String, dynamic>;
+        _sharedMachines = [
+          for (final row in body['machines'] as List? ?? const [])
+            Machine.fromJson(Map<String, dynamic>.from(row as Map)),
+        ];
+      }
+    } catch (error) {
+      if (isUnauthorizedError(error)) rethrow;
+      lastMachinesStale = true;
+    }
+    return [
+      ...owned,
+      ..._sharedMachines.where(
+        (shared) => !owned.any((own) => own.machineId == shared.machineId),
+      ),
+    ];
   }
 
   Future<String?> renameMachine({

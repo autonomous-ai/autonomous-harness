@@ -210,6 +210,14 @@ export function subscribeDown(machineId: string, cb: (msg: DownBusMsg) => void):
   return addSub(downChannel(machineId), cb as Cb)
 }
 
+/** A grant change invalidates observer sockets across backend instances. No content on this channel. */
+export function subscribeShareChanged(id: string, cb: () => void): Promise<() => void> {
+  return addSub(`harness-share:${id}`, cb)
+}
+export function publishShareChanged(id: string): Promise<number> {
+  return safePublish(`harness-share:${id}`, '{}')
+}
+
 export function publishUp(machineId: string, msg: UpBusMsg): Promise<number> {
   const type = (msg.frame as { type?: unknown } | undefined)?.type
   if (typeof type === 'string' && STATUS_TYPES.has(type)) void safePublish(statusChannel(machineId), JSON.stringify(msg.frame))

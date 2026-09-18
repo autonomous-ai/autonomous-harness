@@ -95,15 +95,17 @@ class _MachinesManagerState extends State<_MachinesManager> {
                             if (machines[i].needsLink) 'Link required',
                           ].join(' · '),
                         ),
-                        trailing: TextButton(
-                          onPressed: () => showMachineRenameDialog(
-                            context,
-                            widget.notifier,
-                            machines[i].machine.machineId,
-                            machines[i].machine.displayName,
-                          ),
-                          child: const Text('Rename'),
-                        ),
+                        trailing: machines[i].machine.isShared
+                            ? const Text('View only')
+                            : TextButton(
+                                onPressed: () => showMachineRenameDialog(
+                                  context,
+                                  widget.notifier,
+                                  machines[i].machine.machineId,
+                                  machines[i].machine.displayName,
+                                ),
+                                child: const Text('Rename'),
+                              ),
                       ),
                     ],
                   ],

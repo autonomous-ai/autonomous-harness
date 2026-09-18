@@ -16,6 +16,7 @@ works the same on a headless Linux server; the app is not required on a machine,
 | `harness start [-f] [--repair]` | Start the daemon from the saved session. `-f` runs in the foreground for a supervisor. `--repair` re-verifies the managed Node runtime. |
 | `harness stop` · `harness logout` · `harness reset` | Stop the daemon · stop and clear the SSO session · stop and clear all local state. |
 | `harness status` · `harness version` · `harness update [--force]` | Running, pid, machine id, session count · version · update now. |
+| `harness dsh list` · `harness dsh update <owner/name>` | Installed harness package versions and available updates · update one package while preserving its workspaces. |
 | `harness machines [list] [--json]` · `harness machines delete <id>` | This account's machines · remove another machine (never this one). |
 | `harness pair <code>` · `harness pairings` · `harness unpair <#\|fp\|--all>` | Pair a browser with the code the web client shows; list; unpair. |
 | `harness browser-link` | Print a reusable seven-day setup link for browsers. |

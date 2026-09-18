@@ -7,6 +7,8 @@ import { DSH_ID_RE, dshTier } from './manifest.js'
 import { registrySourceUrl } from './registry.js'
 import { catalogEntry, currentDshRegistry, refreshDshRegistry } from './catalog.js'
 import { installDsh, removeDsh, resolveInstallSource, runDshDoctor } from './install.js'
+import { updateDsh } from './update.js'
+import { dshUpdateInfo } from './updates.js'
 import { checkDsh, formatCheck } from './check.js'
 
 export function dshUsage(): string {
@@ -17,6 +19,7 @@ export function dshUsage(): string {
                                    --path installs one folder of that repo (store/agents/typst);
                                    --link symlinks a local checkout instead of cloning it
   harness dsh doctor <id>          re-run the harness's own readiness check
+  harness dsh update <id>          update a package, preserving its workspaces
   harness dsh remove <id>          uninstall (a --link install removes only the link)
   harness dsh check <path>         conformance check for a harness checkout (what the registry runs)`
 }
@@ -39,7 +42,8 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       const rows: string[] = []
       for (const dsh of installed) {
         seen.add(dsh.id)
-        rows.push(`  ${dsh.id.padEnd(28)} ${dsh.manifest.name.padEnd(12)} ${(dsh.manifest.kind === 'viewer' ? 'viewer' : `on ${dsh.manifest.engine}`).padEnd(11)} tier ${dshTier(dsh.manifest)}  installed${dsh.linked ? ' (linked)' : ''} · ${dsh.dir}`)
+        const update = dshUpdateInfo(dsh, registry.find(entry => entry.id === dsh.id))
+        rows.push(`  ${dsh.id.padEnd(28)} ${dsh.manifest.name.padEnd(12)} ${(dsh.manifest.kind === 'viewer' ? 'viewer' : `on ${dsh.manifest.engine}`).padEnd(11)} tier ${dshTier(dsh.manifest)}  installed${dsh.linked ? ' (linked)' : ''}${dsh.commit ? ` @ ${dsh.commit.slice(0, 8)}` : ''}${update.updateAvailable ? ` · update available (${update.availableCommit!.slice(0, 8)})` : ''} · ${dsh.dir}`)
       }
       for (const row of broken) {
         seen.add(row.id)
@@ -74,6 +78,17 @@ export async function dshCommand(verb: string | undefined, rest: readonly string
       })
       if (!result.ok) { console.error(`harness dsh install failed · ${result.error} · ${result.detail}`); return 1 }
       console.log(`Installed ${result.installed.id} (${result.installed.manifest.name}, ${result.installed.manifest.kind === 'viewer' ? 'a viewer package' : `runs on ${result.installed.manifest.engine}`}) at ${result.installed.dir}`)
+      return 0
+    }
+    case 'update': {
+      const id = args[0]
+      if (!id || !DSH_ID_RE.test(id) || args.length !== 1) { console.error(dshUsage()); return 1 }
+      const result = await updateDsh({ id,
+        onProgress: p => console.log(`[dsh] ${id} · ${p.phase}${p.detail ? ` · ${p.detail}` : ''}`),
+        onLine: line => console.log(`    ${line}`),
+      })
+      if (!result.ok) { console.error(`harness dsh update failed · ${result.error} · ${result.detail}`); return 1 }
+      console.log(`${id} is up to date${result.installed.commit ? ` @ ${result.installed.commit.slice(0, 8)}` : ''}. Workspaces preserved.`)
       return 0
     }
     case 'doctor': {

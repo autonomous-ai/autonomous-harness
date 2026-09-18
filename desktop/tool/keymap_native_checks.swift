@@ -17,6 +17,7 @@ for (key, command) in [
   ("cmd+s", "pane.layout"), ("cmd+r", "pane.split_right"),
   ("cmd+d", "pane.split_down"),
   ("cmd+b", "task.route"), ("cmd+t", "swarm.new"),
+  ("cmd+p", "project.orchestrate"),
   ("cmd+o", "agent.add"), ("cmd+n", "agent.new"),
   ("cmd+h", "pane.focus_left"), ("cmd+j", "pane.focus_below"),
   ("cmd+k", "pane.focus_above"), ("cmd+l", "pane.focus_right"),
@@ -24,6 +25,12 @@ for (key, command) in [
   try checkKeymap(defaults.match([stroke(key)], context: "workspace").binding?.command == command,
     "Preserve the current default for \(key)")
 }
+try checkKeymap(defaults.viewerOrchestratorCommand(stroke("cmd+p")) == "project.orchestrate",
+  "A focused native viewer can open the orchestrator")
+try checkKeymap(defaults.viewerOrchestratorCommand(stroke("cmd+b")) == nil,
+  "The viewer bridge does not change single-agent routing")
+try checkKeymap(defaults.viewerOrchestratorCommand(stroke("cmd+shift+p")) == nil,
+  "The viewer bridge does not take the command palette chord")
 for context in ["workspace", "terminal", "picker"] {
   try checkKeymap(defaults.match([stroke("cmd+shift+n")], context: context).binding == nil,
     "Shift-Command-N is unbound by default in \(context)")
@@ -117,6 +124,12 @@ func payload(_ rows: [[String: Any]]) -> [String: Any] {
   ["version": 1, "contexts": ["workspace": rows, "terminal": rows, "picker": rows]]
 }
 let prefix: [String: Any] = ["keys": ["cmd+k"], "command": "example", "hint": "⌘K", "repeatable": false]
+let remappedOrchestrator = HarnessNativeKeymap(payload([
+  ["keys": ["cmd+y"], "command": "project.orchestrate", "hint": "⌘Y", "repeatable": false],
+]))!
+try checkKeymap(remappedOrchestrator.viewerOrchestratorCommand(stroke("cmd+p")) == nil &&
+  remappedOrchestrator.viewerOrchestratorCommand(stroke("cmd+y")) == "project.orchestrate",
+  "Native viewers respect an orchestrator shortcut remap")
 let sequence: [String: Any] = ["keys": ["cmd+k", "cmd+n"], "command": "example", "hint": "⌘K ⌘N", "repeatable": false]
 try checkKeymap(HarnessNativeKeymap(payload([prefix, sequence])) == nil, "Reject ambiguous prefixes atomically")
 try checkKeymap(HarnessNativeKeymap(payload([prefix, prefix])) == nil, "Reject duplicate strokes atomically")

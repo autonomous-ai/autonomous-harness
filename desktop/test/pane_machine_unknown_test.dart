@@ -123,6 +123,7 @@ void main() {
     await _pump(tester, app);
     expect(find.text(_waiting), findsOneWidget);
     expect(find.text('RETRY'), findsNothing);
+    end();
   });
 
   testWidgets('says the machine is unknown, and offers a retry, once the list fails', (
@@ -164,5 +165,6 @@ void main() {
     // The list is readable again; this machine is merely absent from it.
     expect(find.text(_waiting), findsOneWidget);
     expect(find.text('RETRY'), findsNothing);
+    end();
   });
 }

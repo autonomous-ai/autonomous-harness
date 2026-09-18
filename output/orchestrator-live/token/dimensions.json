@@ -1,0 +1,91 @@
+{
+  "units": "mm",
+  "cad_tool": "build123d 0.11.1 / Open CASCADE (OCP)",
+  "volume_mm3": 2199.114857512874,
+  "expected_volume_mm3": 2199.114857512855,
+  "bounds_mm": {
+    "min": [
+      -12.0,
+      -12.0,
+      0.0
+    ],
+    "max": [
+      12.0,
+      12.0,
+      5.0
+    ],
+    "size": [
+      24.0,
+      24.0,
+      5.0
+    ]
+  },
+  "dimensions": {
+    "diameter_mm": 24,
+    "thickness_mm": 5,
+    "hole_diameter_mm": 4,
+    "hole_axis_xy_mm": [
+      6,
+      0
+    ]
+  },
+  "solid_count": 1,
+  "tolerance_mm": 1e-06,
+  "volume_tolerance_mm3": 1e-06,
+  "cylindrical_surfaces": [
+    {
+      "radius_mm": 12.0,
+      "axis_point_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "axis_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "z_range_mm": [
+        0.0,
+        5.0
+      ]
+    },
+    {
+      "radius_mm": 2.0,
+      "axis_point_mm": [
+        6.0,
+        0.0,
+        -1.0
+      ],
+      "axis_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "z_range_mm": [
+        0.0,
+        5.0
+      ]
+    }
+  ],
+  "checks": {
+    "one_solid": true,
+    "valid_brep": true,
+    "bounds_24x24x5": true,
+    "datum_bounds": true,
+    "positive_volume": true,
+    "volume_700_pi": true,
+    "through_hole_cylindrical_surface": true,
+    "hole_axis_empty_full_height": true,
+    "material_surrounds_hole": true,
+    "stl_watertight_edges": true,
+    "stl_consistent_winding": true,
+    "stl_volume_within_0_1_percent": true
+  },
+  "all_checks_passed": true,
+  "stl_volume_mm3": 2198.887010324058,
+  "sha256": {
+    "model.step": "30401ab1c8cda7baf9bcf1e6b176461ff9d323cb7f2769693a4c1094bdff3ca6",
+    "model.stl": "7b8bb1dc252367597fb0c08cce20cd12d7688bd05a4ded690a3459f6658bc3cc"
+  }
+}

@@ -67,6 +67,7 @@ describe('TerminalBackendCoordinator', () => {
       { engine: 'claude', processIdentity: current.processIdentity },
       { cols: 80, rows: 24 },
       sink,
+      false,
     )
   })
 

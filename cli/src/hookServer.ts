@@ -119,6 +119,7 @@ export interface HookServerHandlers {
   onMachineDelete?: (machineId: string) => Promise<PairOutcome>
   /** GET /api/auth/me — proxy the signed-in user's profile from backend. */
   onAuthMe?: () => Promise<PairOutcome>
+  onSharedHarnesses?: () => Promise<PairOutcome>
   /** /api/store/* — proxy the Harness Store's ratings and reviews to backend the same way: reads
    *  ungated like the machine list, writes (PUT/DELETE) CSRF-guarded like a rename. See storeProxy.ts. */
   onStore?: StoreHandler
@@ -605,6 +606,10 @@ export function startHookServer(
         const list = handlers.onMachinesList
         if (!list) { json(503, { error: 'UNAVAILABLE' }); return }
         await proxied(list); return
+      }
+      if (req.method === 'GET' && url === '/api/harness-shares') {
+        if (!handlers.onSharedHarnesses) { json(503, { error: 'UNAVAILABLE' }); return }
+        await proxied(handlers.onSharedHarnesses); return
       }
       if (req.method === 'GET' && url === '/api/auth/me') {
         const me = handlers.onAuthMe

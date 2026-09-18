@@ -8,6 +8,7 @@ import { listInstalledDsh, type InstalledDsh } from './installed.js'
 import { DSH_ID_RE, dshTier, viewerUse } from './manifest.js'
 import { registrySourceUrl, type DshRegistryEntry } from './registry.js'
 import { currentDshRegistry } from './catalog.js'
+import { dshUpdateInfo } from './updates.js'
 
 /**
  * `dsh_list`: the harnesses installed on this machine, then what the registry offers that is not.
@@ -51,6 +52,7 @@ export function dshListRows(
       viewerUse: viewerUse(entry.manifest),
       tier: dshTier(entry.manifest),
       ...facts(entry.id),
+      ...dshUpdateInfo(entry, byId.get(entry.id)),
     })
   }
   for (const entry of registry) {

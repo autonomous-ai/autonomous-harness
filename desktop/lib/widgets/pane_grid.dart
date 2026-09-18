@@ -1,3 +1,5 @@
+import '../sharing/shared_harness_panel.dart';
+
 import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -1266,6 +1268,20 @@ class _PaneContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final machine = notifier.stateOf(pane.machineId);
     void close() => notifier.closePane(pane.id);
+    if (pane.sharedHarness case final grant?) {
+      return SharedHarnessPanel(
+        key: ValueKey('shared-pane-${pane.id}'),
+        notifier: notifier,
+        pane: pane,
+        grant: grant,
+        visible: visible,
+        onClose: close,
+        hasAccess:
+            machine?.machine.sharedHarnesses.any((s) => s.id == grant.id) ==
+            true,
+      );
+    }
+
     // A harness's viewer: the one tile that is not a terminal and not about a
     // machine. Decided first, before anything below reads `agentId` — which a
     // viewer keeps null on purpose (see TerminalPane.ownerAgentId).
@@ -2176,8 +2192,11 @@ String viewerPaneName(Agent? owner, Iterable<DshEntry> catalog) {
   final used = entry?.viewerUse;
   if (used != null) {
     final viewer = catalog.where((e) => e.id == used).firstOrNull;
-    if (viewer != null && viewer.name.trim().isNotEmpty) return viewer.name.trim();
+    if (viewer != null && viewer.name.trim().isNotEmpty)
+      return viewer.name.trim();
   }
   final harness = owner.dshName ?? entry?.name;
-  return harness == null || harness.trim().isEmpty ? 'Viewer' : '${harness.trim()} Viewer';
+  return harness == null || harness.trim().isEmpty
+      ? 'Viewer'
+      : '${harness.trim()} Viewer';
 }

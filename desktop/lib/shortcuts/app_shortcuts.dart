@@ -54,6 +54,7 @@ enum ShortcutAction {
   closePane,
   newAgent,
   routeTask,
+  orchestrate,
   reload,
   showLayout,
   pinPane,
@@ -287,6 +288,12 @@ const List<AppShortcut> kAppShortcuts = [
     action: ShortcutAction.routeTask,
     activator: SingleActivator(LogicalKeyboardKey.keyB, meta: true),
     label: 'Describe a task, and let it pick the agent',
+    group: ShortcutGroup.actions,
+  ),
+  AppShortcut(
+    action: ShortcutAction.orchestrate,
+    activator: SingleActivator(LogicalKeyboardKey.keyP, meta: true),
+    label: 'Create with the orchestrator',
     group: ShortcutGroup.actions,
   ),
   AppShortcut(

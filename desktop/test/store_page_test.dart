@@ -66,6 +66,8 @@ class _Notifier extends AppNotifier {
 
   final installs = <(String, String)>[];
   final removals = <(String, String)>[];
+  final updates = <(String, String)>[];
+  Completer<String?>? updateGate;
   Completer<String?>? installGate;
   Completer<String?>? removeGate;
   int probes = 0;
@@ -90,6 +92,12 @@ class _Notifier extends AppNotifier {
   Future<String?> removeDsh(String machineId, String id) async {
     removals.add((machineId, id));
     return removeGate?.future;
+  }
+
+  @override
+  Future<String?> updateDsh(String machineId, String id) async {
+    updates.add((machineId, id));
+    return updateGate?.future;
   }
 
   void changed() => notifyListeners();
@@ -239,6 +247,127 @@ StoreReview _review(
 );
 
 void main() {
+  for (final viewer in [false, true]) {
+    testWidgets(
+      'updates ${viewer ? 'viewers' : 'harnesses'} locally, blocks double clicks and allows retry',
+      (tester) async {
+        const id = 'acme/updateable';
+        final (app, _) = await _open(
+          tester,
+          initialHarness: id,
+          seed: (app) {
+            app.machine(
+              'machine-1',
+              local: true,
+              dsh: [
+                DshEntry(
+                  id: id,
+                  name: 'Updateable',
+                  engine: viewer ? '' : 'claude',
+                  kind: viewer ? 'viewer' : 'agent',
+                  installed: true,
+                  updateAvailable: true,
+                  installedCommit: 'a' * 40,
+                  availableCommit: 'b' * 40,
+                ),
+              ],
+            );
+          },
+        );
+        expect(
+          _in('store-primary-action', find.text('Update')),
+          findsOneWidget,
+        );
+        expect(find.text('Your projects and files are kept.'), findsOneWidget);
+        expect(find.text('aaaaaaaa'), findsOneWidget);
+        expect(
+          _key('store-open-current'),
+          viewer ? findsNothing : findsOneWidget,
+        );
+        app.updateGate = Completer<String?>();
+        await tester.tap(_key('store-primary-action'));
+        await tester.pump();
+        await tester.tap(_key('store-primary-action'));
+        expect(app.updates, [('machine-1', id)]);
+        expect(app.installs, isEmpty);
+        expect(_key('store-remove:machine-1'), findsNothing);
+        app.updateGate!.complete('Update failed; previous version kept');
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Update failed; previous version kept'),
+          findsOneWidget,
+        );
+        expect(
+          _in('store-primary-action', find.text('Update')),
+          findsOneWidget,
+        );
+        app.updateGate = null;
+        await tester.tap(_key('store-primary-action'));
+        await tester.pumpAndSettle();
+        expect(app.updates, [('machine-1', id), ('machine-1', id)]);
+        app.machineStates['machine-1']!.dsh.replace([
+          DshEntry(
+            id: id,
+            name: 'Updateable',
+            engine: viewer ? '' : 'claude',
+            kind: viewer ? 'viewer' : 'agent',
+            installed: true,
+            installedCommit: 'b' * 40,
+          ),
+        ]);
+        app.changed();
+        await tester.pumpAndSettle();
+        expect(find.text('Update available'), findsNothing);
+        expect(find.text('bbbbbbbb'), findsOneWidget);
+        expect(
+          _key('store-primary-action'),
+          viewer ? findsNothing : findsOneWidget,
+        );
+      },
+    );
+  }
+
+  testWidgets(
+    'an Update on a shelf opens its page and a linked checkout offers Open',
+    (tester) async {
+      const entry = DshEntry(
+        id: 'acme/updateable',
+        name: 'Updateable',
+        engine: 'claude',
+        installed: true,
+        updateAvailable: true,
+      );
+      final (app, _) = await _open(
+        tester,
+        seed: (app) {
+          app.machine('machine-1', local: true, dsh: const [entry]);
+        },
+      );
+      await tester.enterText(_key('store-search'), 'Updateable');
+      await tester.pumpAndSettle();
+      expect(
+        _in('store-action:${entry.id}', find.text('Update')),
+        findsOneWidget,
+      );
+      await tester.tap(_key('store-action:${entry.id}'));
+      await tester.pumpAndSettle();
+      expect(_key('store-page:${entry.id}'), findsOneWidget);
+      expect(app.updates, isEmpty);
+      app.machineStates['machine-1']!.dsh.replace(const [
+        DshEntry(
+          id: 'acme/updateable',
+          name: 'Updateable',
+          engine: 'claude',
+          installed: true,
+          linked: true,
+          updateAvailable: true,
+        ),
+      ]);
+      app.changed();
+      await tester.pumpAndSettle();
+      expect(_in('store-primary-action', find.text('Open')), findsOneWidget);
+    },
+  );
   // Real glyph widths: the review dialog's buttons are laid out against Arial,
   // not against Ahem's squares, which overflow a row no person would see.
   setUpAll(loadRealFonts);

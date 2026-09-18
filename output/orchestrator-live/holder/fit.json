@@ -1,0 +1,227 @@
+{
+  "units": "mm",
+  "solid_count": 2,
+  "input_solid_count": 1,
+  "reimported_step_solid_count": 2,
+  "dimensions": {
+    "holder_od_mm": 32,
+    "recess_diameter_mm": 24.6,
+    "base_mm": 2,
+    "recess_depth_mm": 5,
+    "overall_height_mm": 7,
+    "token_diameter_mm": 24,
+    "token_thickness_mm": 5
+  },
+  "radial_clearance_mm": 0.3000000000000007,
+  "solids": [
+    {
+      "role": "holder",
+      "volume_mm3": 3253.2762724249546,
+      "bounds_mm": {
+        "min": [
+          -16.0,
+          -16.0,
+          0.0
+        ],
+        "max": [
+          16.0,
+          16.0,
+          7.0
+        ],
+        "size": [
+          32.0,
+          32.0,
+          7.0
+        ]
+      },
+      "kernel_valid": true,
+      "kernel_check": "BRepCheck_Analyzer(shape, GeomControls=True).IsValid()",
+      "cylindrical_surfaces": [
+        {
+          "radius_mm": 16.0,
+          "axis_point_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "axis_direction": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "z_range_mm": [
+            0.0,
+            7.0
+          ]
+        },
+        {
+          "radius_mm": 12.3,
+          "axis_point_mm": [
+            0.0,
+            0.0,
+            2.0
+          ],
+          "axis_direction": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "z_range_mm": [
+            2.0,
+            7.0
+          ]
+        }
+      ]
+    },
+    {
+      "role": "token",
+      "volume_mm3": 2199.114857512874,
+      "bounds_mm": {
+        "min": [
+          -12.0,
+          -12.0,
+          2.0
+        ],
+        "max": [
+          12.0,
+          12.0,
+          7.0
+        ],
+        "size": [
+          24.0,
+          24.0,
+          5.0
+        ]
+      },
+      "kernel_valid": true,
+      "kernel_check": "BRepCheck_Analyzer(shape, GeomControls=True).IsValid()",
+      "cylindrical_surfaces": [
+        {
+          "radius_mm": 12.0,
+          "axis_point_mm": [
+            0.0,
+            0.0,
+            2.0
+          ],
+          "axis_direction": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "z_range_mm": [
+            2.0,
+            7.0
+          ]
+        },
+        {
+          "radius_mm": 2.0,
+          "axis_point_mm": [
+            6.0,
+            0.0,
+            1.0
+          ],
+          "axis_direction": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "z_range_mm": [
+            2.0,
+            7.0
+          ]
+        }
+      ]
+    }
+  ],
+  "bounds_mm": {
+    "min": [
+      -16.0,
+      -16.0,
+      0.0
+    ],
+    "max": [
+      16.0,
+      16.0,
+      7.0
+    ],
+    "size": [
+      32.0,
+      32.0,
+      7.0
+    ]
+  },
+  "intersection_volume_mm3": 0.0,
+  "intersection_tolerance_mm3": 1e-07,
+  "dimension_tolerance_mm": 1e-06,
+  "token_placement": {
+    "translation_mm": [
+      0,
+      0,
+      2
+    ],
+    "rotation_degrees": [
+      0,
+      0,
+      0
+    ]
+  },
+  "token_identity": {
+    "removed_volume_mm3": 0.0,
+    "added_volume_mm3": 0.0,
+    "comparison": "Inverse-translate reimported assembly token; bidirectional kernel Boolean differences against exact pinned input"
+  },
+  "input_provenance": {
+    "inputs/token/model.step": {
+      "expected_sha256": "30401ab1c8cda7baf9bcf1e6b176461ff9d323cb7f2769693a4c1094bdff3ca6",
+      "actual_sha256": "30401ab1c8cda7baf9bcf1e6b176461ff9d323cb7f2769693a4c1094bdff3ca6",
+      "matches": true
+    },
+    "inputs/token/dimensions.json": {
+      "expected_sha256": "c95078b0e155eee26de5b6a99573532d6d6f7ab4d79fd04b1410ac4b9c48753b",
+      "actual_sha256": "c95078b0e155eee26de5b6a99573532d6d6f7ab4d79fd04b1410ac4b9c48753b",
+      "matches": true
+    }
+  },
+  "checks": {
+    "pinned_input_hashes": true,
+    "exported_step_reimport_two_solids": true,
+    "input_one_valid_solid": true,
+    "assembly_kernel_valid": true,
+    "holder_kernel_geometric_valid": true,
+    "holder_positive_volume": true,
+    "token_kernel_geometric_valid": true,
+    "token_positive_volume": true,
+    "holder_bounds": true,
+    "token_placed_bounds": true,
+    "assembly_bounds": true,
+    "recess_diameter_depth_base": true,
+    "holder_volume": true,
+    "token_volume_matches_pinned_dimensions": true,
+    "radial_clearance_0_3_mm": true,
+    "zero_overlap_within_tolerance": true,
+    "token_unchanged_except_translation": true,
+    "token_hole_preserved": true,
+    "stl_binary_complete": true,
+    "stl_closed_edges": true,
+    "stl_consistent_winding": true,
+    "stl_volume_within_0_1_percent": true
+  },
+  "all_checks_passed": true,
+  "stl": {
+    "contains": "Both solids in assembled positions",
+    "triangle_count": 4028,
+    "volume_mm3": 5451.826175502112
+  },
+  "limitations": [
+    "No render or blind review under live assignment",
+    "Print readiness, insertion motion and physical fit unverified"
+  ],
+  "artifact_sha256": {
+    "model.step": "81beac506f8ec3434ef0979bb4836d2378e04f9eeacf76f535fc09b71940d633",
+    "model.stl": "6c44152370cf10bdd5550d92cf9a0976fc916f11a4c009e5e7e8ad83dfa91bfc",
+    "model.step.py": "c7c80890d71a4a594ef44bb862e0f4b8c1368af6f807a277ec4e6fb17b475ff9",
+    "model_lib.py": "392c8440f880d88a61db487755e06b6f80c4828c2d475c3c2123fe71f0975c69",
+    "part_holder.step": "1cd312596e73a8b67650d4eebf172fcb90389075daed0653a293154cc95f064e",
+    "part_token.step": "832999a6454b94f1fc5eaa59b92311fb24f3db1828a24045070d5509b43bf8ea"
+  }
+}
