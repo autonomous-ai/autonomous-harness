@@ -63,6 +63,9 @@ class TerminalPanel extends StatefulWidget {
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
   final bool visible;
+
+  /// Coalesces streaming output for an unfocused tile without delaying input.
+  final Duration? outputRepaintInterval;
   final Size? viewportSize;
 
   /// A shared terminal can move to another tab without being remounted.
@@ -102,6 +105,7 @@ class TerminalPanel extends StatefulWidget {
     required this.session,
     required this.focused,
     this.visible = true,
+    this.outputRepaintInterval,
     this.viewportSize,
     this.paneLocation,
     this.layoutRequest,
@@ -1263,6 +1267,7 @@ class _TerminalPanelState extends State<TerminalPanel>
                           autoResize: widget.visible && !session.readOnly,
                           resizeBuffer: false,
                           renderingEnabled: widget.visible,
+                          outputRepaintInterval: widget.outputRepaintInterval,
                           scrollController: _scrollController,
                           focusNode: _focusNode,
                           autofocus: widget.focused && !showComposer,

@@ -63,6 +63,42 @@ Future<Color> _firstCellColor(
 }
 
 void main() {
+  testWidgets('background terminal output is coalesced before repainting', (
+    tester,
+  ) async {
+    final buffer = Terminal()..write('\x1b[41m \x1b[0m');
+    final interval = ValueNotifier<Duration?>(const Duration(milliseconds: 80));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RepaintBoundary(
+          key: const ValueKey('terminal pixels'),
+          child: ValueListenableBuilder<Duration?>(
+            valueListenable: interval,
+            builder: (_, value, _) =>
+                TerminalView(buffer, outputRepaintInterval: value),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final view = tester.state<TerminalViewState>(find.byType(TerminalView));
+    expect(await _firstCellColor(tester, view), view.widget.theme.red);
+
+    buffer.write('\x1b[H\x1b[42m \x1b[0m');
+    expect(view.renderTerminal.debugNeedsLayout, isFalse);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(await _firstCellColor(tester, view), view.widget.theme.red);
+
+    // Focusing this tile removes the coalescing delay and paints output that
+    // arrived while it was in the background without waiting for another
+    // terminal chunk.
+    interval.value = null;
+    await tester.pump();
+    expect(await _firstCellColor(tester, view), view.widget.theme.green);
+    await tester.pumpWidget(const SizedBox());
+    interval.dispose();
+  });
+
   testWidgets(
     'hidden output does no rendering and reveals the latest on return',
     (tester) async {
