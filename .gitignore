@@ -103,3 +103,6 @@ notes/
 *.local
 *.local.*
 TODO.local.md
+
+# pi agent task logs
+.pi/
