@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The pipeline's host Python: the venv setup.sh made, with Harness's Node on PATH for the tools
-# that shell out to it. Solder's own `toolchain/python` (in upstream/) honours CIRCUIT_PYTHON, which
-# the manifest points here — so `"$SOLDER_PYTHON" -m kicadpy…` runs on this interpreter.
+# that shell out to it. the KiCad package's own `toolchain/python` (in upstream/) honours CIRCUIT_PYTHON, which
+# the manifest points here — so `"$KICAD_HARNESS_PYTHON" -m kicadpy…` runs on this interpreter.
 here="$(cd "$(dirname "$0")/.." && pwd)"
 . "$here/toolchain/runtimes.sh"
 harness_node 22.12 >&2 || true

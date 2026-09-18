@@ -231,17 +231,18 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xffd98a4a),
     asset: 'assets/engine-icons/autonomous-circuit.png',
   ),
-  // Solder is Autonomous Circuit's second wrapper (its KiCad-native pipeline,
-  // #91) and wears the same mark: one project, one face — Autonomous's own,
-  // so nothing is borrowed. Told apart by name and by the warmer copper below.
-  'autonomous/solder': EngineIdentity(
-    id: 'autonomous/solder',
-    label: 'Solder',
+  // KiCad is Autonomous Circuit's second wrapper (its KiCad-native pipeline,
+  // #91, renamed): it changes nothing of KiCad, so — as Blender, Typst and Marp
+  // do — it carries the wrapped project's name and mark. The icon is KiCad's
+  // own application icon (icon_kicad.svg in its source tree) rendered at 256 px.
+  'autonomous/kicad': EngineIdentity(
+    id: 'autonomous/kicad',
+    label: 'KiCad',
     category: 'PCB',
-    tagline: 'A real KiCad board: wired schematic, DRC-checked copper, a prototype packet',
-    creator: 'Autonomous',
-    color: Color(0xffb8733a),
-    asset: 'assets/engine-icons/autonomous-circuit.png',
+    tagline: 'A real KiCad project: wired schematic, DRC-checked copper, a prototype packet',
+    creator: 'KiCad',
+    color: Color(0xffff6d00),
+    asset: 'assets/engine-icons/kicad.png',
   ),
   // Grid's own mark — the bolt from the Grid app's icon (autonomous-grid-app,
   // branding/app_icon.svg); ours, like Circuit's and Workshop's.
@@ -443,7 +444,7 @@ const _harnesses = <String, EngineIdentity>{
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
   'autonomous/autonomous-circuit': 'claude',
-  'autonomous/solder': 'claude',
+  'autonomous/kicad': 'claude',
   'autonomous/autonomous-grid': 'codex',
   'autonomous/autonomous-workshop': 'codex',
   'autonomous/marp': 'claude',

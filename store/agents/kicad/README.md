@@ -1,4 +1,4 @@
-# Solder, as a Harness agent
+# KiCad, as a Harness agent
 
 [Harness](https://github.com/autonomous-ai/openharness) agent package for the **KiCad-native**
 pipeline of [Autonomous Circuit](https://github.com/autonomous-ai/autonomous-circuit): describe a board
@@ -6,13 +6,13 @@ in the chat pane and get a real KiCad project — a wired schematic, copper KiCa
 checked, a prototype packet a fab can quote — with the project's own live board view in the pane beside
 the agent. Runs on Claude Code.
 
-Solder is the sibling of [Autonomous Circuit](../autonomous-circuit/) (the v1 pipeline, tscircuit
+The KiCad tile is the sibling of [Autonomous Circuit](../autonomous-circuit/) (the v1 pipeline, tscircuit
 sources, the same repository's `main`), not its replacement: the two wrap different branches of one
-repository, and a user who wants a KiCad project picks Solder.
+repository, and a user who wants a KiCad project picks KiCad.
 
 This folder is a **wrapper**. It holds no Circuit code: `toolchain/setup.sh` fetches the project from
 its own public repository at the commit `VERSIONS` pins (everything but its product library and
-examples) into `upstream/`, then runs the Solder package's own setup there
+examples) into `upstream/`, then runs the KiCad package's own setup there
 (`upstream/harness/kicad/`). The manifest points the agent at that package's `AGENTS.md`, skill and
 template; the doctor, workspace init and viewer are that package's own scripts, run against the copy.
 
@@ -30,7 +30,7 @@ Freerouting and the viewer are vendored by setup.
 
 Autonomous Circuit is its own project, [autonomous-ai/autonomous-circuit](https://github.com/autonomous-ai/autonomous-circuit),
 under its repository's licence (MIT). Nothing of it is changed or copied here. Bugs in board generation
-belong in that repository, bugs in the wrapper belong here, and a newer Solder is a bump of
+belong in that repository, bugs in the wrapper belong here, and a newer KiCad tile is a bump of
 `UPSTREAM_COMMIT` in `VERSIONS`.
 
 ```sh
