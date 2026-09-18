@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { atomicJson, DEFAULT_CONFIG, execute, gridSelect, invocation, operations, runTracked, validateConfig } from '../lib/fleet.mjs';
+import { atomicJson, cliDetail, DEFAULT_CONFIG, execute, gridJson, gridSelect, invocation, operations, runTracked, validateConfig } from '../lib/fleet.mjs';
 
 const temporary = async t => { const dir=await mkdtemp(join(tmpdir(),'grid-harness-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));return dir; };
 test('inventory accepts explicit targets and refuses duplicates, SSH options and malformed paths',()=>{
@@ -50,6 +50,28 @@ test('invalid and abandoned operation files cannot crash the viewer',async t=>{
   const rows=await operations(dir);assert.equal(rows.length,1);assert.equal(rows[0].phase,'interrupted');
 });
 
+test('failed Grid reads repeat the CLI reason instead of a bare exit code', async t => {
+  const dir = await temporary(t), file = join(dir, 'grid');
+  // A dead relay: JSON envelope plus a human line on stderr, exit 1 — the shape the
+  // real CLI prints when a grid_url no longer resolves.
+  await writeFile(file, '#!/bin/sh\necho \'{"error": {"code": null, "message": "Could not reach grid forge: [Errno 8] nodename nor servname provided, or not known"}}\' >&2\necho "Could not reach grid forge: [Errno 8] nodename nor servname provided, or not known" >&2\nexit 1\n', { mode: 0o755 });
+  const result = await gridJson({ transport: 'local', gridBinary: file }, 'remote', ['engines', 'forge']);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /grid engines failed \(1\): Could not reach grid forge/);
+});
+
+test('error envelopes on success and plain stderr lines are surfaced, tokens are not', async t => {
+  const dir = await temporary(t), file = join(dir, 'grid');
+  await writeFile(file, '#!/bin/sh\necho \'{"error": "relay refused https://host.test/relay?token=secret-value"}\'\nexit 0\n', { mode: 0o755 });
+  const reported = await gridJson({ transport: 'local', gridBinary: file }, 'remote', ['models', 'forge']);
+  assert.equal(reported.ok, false);
+  assert.match(reported.error, /grid models reported: relay refused/);
+  assert.doesNotMatch(reported.error, /secret-value/);
+  assert.match(reported.error, /token=…/);
+  assert.equal(cliDetail('', ''), null);
+  assert.equal(cliDetail('{"error": {"message": "boom"}}', ''), 'boom');
+  assert.equal(cliDetail('noise', 'last human line'), 'last human line');
+});
 test('gridSelect runs the write form of use as a plain command and confirms it by reading the selection back',async()=>{
   // `grid use <name> --json` prints a sentence, not JSON — parsed as JSON, every successful switch
   // from the viewer read as "did not return valid JSON". The write is plain; the read confirms.
