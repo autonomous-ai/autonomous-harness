@@ -5,7 +5,7 @@ import 'package:harness_mobile/phone/phone_status.dart';
 import 'package:harness_mobile/phone/status_pill.dart';
 import 'package:harness_mobile/phone/terminal_header.dart';
 
-/// The terminal's top bar: *agent · machine* over *folder ⑂ branch*, with the
+/// The terminal's top bar: *agent* over *folder ⑂ branch*, with the
 /// connection state as a dot on the engine mark.
 void main() {
   group('the folder is named by its own name, parents folded', () {
@@ -43,7 +43,6 @@ void main() {
         home: Scaffold(
           body: TerminalHeader(
             agent: agent,
-            machineName: 'MacBooks-MacBook-Pro-6.local',
             status: (label: 'Live', tone: PhoneTone.good),
           ),
         ),
@@ -51,7 +50,6 @@ void main() {
     );
 
     expect(find.text('agent-3'), findsOneWidget);
-    expect(find.text('MacBooks-MacBook-Pro-6.local'), findsOneWidget);
     expect(find.text('~/…/autonomous-harness'), findsOneWidget);
     expect(find.text('feat/mobile-ios-android'), findsOneWidget);
     // No word for the state — the dot says it, and its tooltip.

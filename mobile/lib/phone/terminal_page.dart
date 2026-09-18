@@ -738,7 +738,6 @@ class _TerminalPageState extends State<TerminalPage>
                         children: [
                           TerminalHeader(
                             agent: agent,
-                            machineName: machine?.machine.displayName ?? '',
                             status: phoneSessionSummary(session),
                             trailing: [
                               // Read-only is a state to get OUT of, so its way

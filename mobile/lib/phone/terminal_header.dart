@@ -12,7 +12,7 @@ import 'status_pill.dart';
 /// the page's controls at the right end.
 ///
 /// ```
-/// [mark●]  agent-3 · MacBooks-MacBook-Pro-6            ⋯
+/// [mark●]  agent-3                                       ⋯
 ///          ~/…/autonomous-harness  ⑂ main
 /// ```
 ///
@@ -33,16 +33,12 @@ class TerminalHeader extends StatelessWidget {
   const TerminalHeader({
     super.key,
     required this.agent,
-    required this.machineName,
     required this.status,
     this.trailing = const [],
   });
 
   /// The agent this terminal belongs to. Null while it is still loading.
   final Agent? agent;
-
-  /// The machine's name. Empty leaves it out.
-  final String machineName;
 
   /// The session's state, drawn as the dot on the engine mark.
   final PhoneSummary status;
@@ -53,7 +49,7 @@ class TerminalHeader extends StatelessWidget {
 
   /// The row's height, not counting its insets.
   ///
-  /// Two lines of type: 15pt names over 12.5pt folder, with the engine mark
+  /// Two lines of type: 15pt name over 12.5pt folder, with the engine mark
   /// centred against the pair.
   static const double rowHeight = 40;
 
@@ -87,7 +83,7 @@ class TerminalHeader extends StatelessWidget {
             _BadgedMark(agent: agent, status: status),
             const SizedBox(width: 11),
             Expanded(
-              child: _Identity(agent: agent, machineName: machineName),
+              child: _Identity(agent: agent),
             ),
             ...trailing,
           ],
@@ -131,17 +127,14 @@ class _BadgedMark extends StatelessWidget {
   }
 }
 
-/// The two lines: *agent · machine*, then *folder ⑂ branch*.
+/// The two lines: *agent*, then *folder ⑂ branch*.
 ///
-/// ⚠️ **The agent's name is what yields last.** It is the thing that says WHICH
-/// terminal this is, so it takes the larger share of the first line and the
-/// machine is cut first. On the second line the folder is kept whole where it
-/// can be and the branch gives way — see [projectPathLabel].
+/// On the second line the folder is kept whole where it can be and the branch
+/// gives way — see [projectPathLabel].
 class _Identity extends StatelessWidget {
-  const _Identity({required this.agent, required this.machineName});
+  const _Identity({required this.agent});
 
   final Agent? agent;
-  final String machineName;
 
   @override
   Widget build(BuildContext context) {
@@ -154,46 +147,16 @@ class _Identity extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Flexible(
-              flex: 3,
-              child: Text(
-                agent?.name ?? 'Agent',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: AppPalette.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  height: 1.2,
-                ),
-              ),
-            ),
-            if (machineName.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 5),
-                child: Text(
-                  '·',
-                  style: TextStyle(color: AppPalette.textFaint, fontSize: 13),
-                ),
-              ),
-              Flexible(
-                flex: 2,
-                child: Text(
-                  machineName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: AppPalette.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    height: 1.2,
-                  ),
-                ),
-              ),
-            ],
-          ],
+        Text(
+          agent?.name ?? 'Agent',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: AppPalette.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            height: 1.2,
+          ),
         ),
         if (hasPlace) ...[
           const SizedBox(height: 2),
