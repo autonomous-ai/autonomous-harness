@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jev Guard</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/studio.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="dot"></span><h1>Jev Guard</h1></div>
+  <div id="title"></div>
+  <div id="meta"></div>
+  <div class="controls">
+    <button id="judge" class="primary">Judge now</button>
+    <button id="pause">Pause</button>
+    <button id="start">Auto</button>
+    <button id="reset">Reset</button>
+  </div>
+</header>
+
+<main>
+  <section id="stage">
+    <div class="goal panel">
+      <div class="panel-title">Goal</div>
+      <p id="goal"></p>
+    </div>
+
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-title">Latest test run</div>
+        <div id="run"><div class="pulse"></div><span>waiting for the agent's first edit…</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Jev's current judgment</div>
+        <div id="verdict" class="verdict">— no run judged yet —</div>
+        <div class="meters">
+          <div class="meter"><label>toward goal</label><div class="bar"><i data-k="toward"></i></div><span class="v" data-v="toward"></span></div>
+          <div class="meter"><label>trust</label><div class="bar"><i data-k="trust"></i></div><span class="v" data-v="trust"></span></div>
+          <div class="meter warn"><label>risk</label><div class="bar"><i data-k="risk"></i></div><span class="v" data-v="risk"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Judgment history</div>
+      <canvas id="chart"></canvas>
+    </div>
+  </section>
+
+  <aside id="rail">
+    <div class="panel">
+      <div class="panel-title">Run log</div>
+      <ol id="log"></ol>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Test output</div>
+      <pre id="output"></pre>
+    </div>
+  </aside>
+</main>
+
+<script src="/studio.js"></script>
+</body>
+</html>
