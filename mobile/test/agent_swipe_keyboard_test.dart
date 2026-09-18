@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harness_mobile/phone/agent_neighbour_warmer.dart';
 import 'package:harness_mobile/phone/agent_swipe.dart';
+import 'package:harness_mobile/state/app_state.dart';
 import 'package:xterm/xterm.dart';
 
 import 'agent_pager_fixture.dart';
@@ -12,11 +14,10 @@ void main() {
           ?.findAncestorWidgetOfExactType<TerminalView>() !=
       null;
 
-  Future<void> pumpPager(WidgetTester tester) async {
-    final conn = PagerConn();
-    final app = pagerApp(conn);
+  Future<AppNotifier> pumpPager(WidgetTester tester) async {
+    final app = pagerApp(PagerConn());
     addTearDown(app.dispose);
-    final session = liveAgent(app, 'b');
+    final session = await liveAgent(app, 'b');
     for (var line = 0; line < 400; line++) {
       session.terminal.write('output line $line\r\n');
     }
@@ -31,6 +32,7 @@ void main() {
       ),
     );
     await tester.pump();
+    return app;
   }
 
   /// The software keyboard sliding up, as the platform reports it.
@@ -61,7 +63,11 @@ void main() {
   testWidgets('a swipe with no keyboard up does not swallow the next one', (
     tester,
   ) async {
-    await pumpPager(tester);
+    final app = await pumpPager(tester);
+    // The neighbour opens and answers before the swipe reaches it, as in use.
+    await tester.pump(AgentNeighbourWarmer.delay);
+    await tester.pump();
+    await goLive(app.paneOfAgent('m', 'c')!.session!);
 
     await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
     await tester.pumpAndSettle();

@@ -12,7 +12,7 @@ void main() {
       final conn = PagerConn();
       final app = pagerApp(conn);
       addTearDown(app.dispose);
-      liveAgent(app, 'a');
+      await liveAgent(app, 'a');
       final focused = app.focusedPaneId;
 
       await app.preattachAgent('m', 'b', cols: 46, rows: 38);
@@ -58,7 +58,7 @@ void main() {
       final app = pagerApp(conn);
       addTearDown(app.dispose);
       final list = pagerList(app);
-      liveAgent(app, 'b');
+      await liveAgent(app, 'b');
       await tester.pumpWidget(
         MaterialApp(
           home: AgentSwipeHost(
@@ -97,12 +97,12 @@ void main() {
       await tester.pump(AgentNeighbourWarmer.delay);
       await tester.pump();
       expect(app.paneOfAgent('m', 'a'), isNotNull);
+      // c was warmed; its keyframe lands before the swipe reaches it, as in use.
+      await goLive(app.paneOfAgent('m', 'c')!.session!);
 
       // One swipe right: from b to c, whose neighbours are b and d.
       await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
       await tester.pumpAndSettle();
-      // c was warmed; its keyframe lands.
-      goLive(app.paneOfAgent('m', 'c')!.session!);
       await tester.pump(AgentNeighbourWarmer.delay);
       await tester.pump();
 

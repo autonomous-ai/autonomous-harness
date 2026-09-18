@@ -45,7 +45,7 @@ void main() {
         announced.add(agentId);
         return true;
       };
-      liveAgent(app, 'b');
+      await liveAgent(app, 'b');
 
       app.focusPane(app.paneOfAgent('m', 'b')!.id);
 

@@ -10,10 +10,10 @@ import 'agent_pager_fixture.dart';
 /// The phone's socket to the relay drops every time the app is backgrounded. That is the phone's
 /// line going, not the machine — and the screen must read it that way.
 void main() {
-  test('a viewer keeps the machine online and its agents on screen', () {
+  test('a viewer keeps the machine online and its agents on screen', () async {
     final app = pagerApp(PagerConn(), viewer: true);
     addTearDown(app.dispose);
-    final session = liveAgent(app, 'b');
+    final session = await liveAgent(app, 'b');
 
     app.connectionStatusForTest('m', ConnectionStatus.reconnecting);
 
@@ -30,10 +30,10 @@ void main() {
     expect(machine.pendingOfflineAgentId, 'b');
   });
 
-  test('a desktop still reads its CLI socket dropping as offline', () {
+  test('a desktop still reads its CLI socket dropping as offline', () async {
     final app = pagerApp(PagerConn());
     addTearDown(app.dispose);
-    liveAgent(app, 'b');
+    await liveAgent(app, 'b');
 
     app.connectionStatusForTest('m', ConnectionStatus.reconnecting);
 

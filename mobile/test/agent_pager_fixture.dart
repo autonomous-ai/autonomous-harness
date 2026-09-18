@@ -1,9 +1,13 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:harness_mobile/auth/auth_session.dart';
 import 'package:harness_mobile/core/config.dart';
 import 'package:harness_mobile/core/models.dart';
 import 'package:harness_mobile/phone/agent_index.dart';
 import 'package:harness_mobile/phone/agent_swipe_list.dart';
 import 'package:harness_mobile/state/app_state.dart';
+import 'package:harness_mobile/terminal/terminal_binary.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 import 'package:harness_mobile/viewer/viewer_key_store.dart';
 import 'package:harness_mobile/viewer/viewer_services.dart';
@@ -103,7 +107,7 @@ AgentSwipeList pagerList(AppNotifier app) => AgentSwipeList([
 ]);
 
 /// The agent on screen, live at a phone's size.
-TerminalSession liveAgent(AppNotifier app, String agentId) {
+Future<TerminalSession> liveAgent(AppNotifier app, String agentId) async {
   final session = TerminalSession(
     machineId: 'm',
     agentId: agentId,
@@ -113,17 +117,31 @@ TerminalSession liveAgent(AppNotifier app, String agentId) {
     sendBinary: (_) async => true,
   );
   app.adoptSessionForTest(session);
-  goLive(session);
+  await goLive(session);
   return session;
 }
 
-/// What a keyframe arriving does to a session, without a machine to send one: controlling, at the
-/// phone's size, and the notifier told — which is the signal the pager waits on.
-void goLive(TerminalSession session) {
-  session
-    ..status = TerminalSessionStatus.controlling
-    ..streamId = 'stream-${session.agentId}'
-    ..cols = 46
-    ..rows = 38
-    ..renameAgent('${session.agentName} (live)');
+/// The machine's first keyframe landing on [session]: a screen, at a phone's size.
+///
+/// ⚠️ **A keyframe, not fields set by hand.** Only a keyframe gives a session a screen
+/// (`hasRenderedFrame`); until then the page lays its skeleton over the terminal, and that skeleton
+/// breathes for ever — no `pumpAndSettle` would return. It also disarms the open's watchdog and
+/// notifies, which is the signal the pager waits on.
+///
+/// ⚠️ **`terminal_ready` is skipped on purpose.** It starts the session's heartbeat, a periodic
+/// timer `testWidgets` fails on before `addTearDown` has disposed the app.
+Future<void> goLive(TerminalSession session) async {
+  final streamId = 'stream-${session.agentId}';
+  session.streamId = streamId;
+  await session.handleBinary(
+    TerminalBinaryFrame(
+      kind: TerminalBinaryKind.keyframe,
+      streamId: streamId,
+      seq: 0,
+      bytes: Uint8List.fromList(utf8.encode('prompt> ')),
+      compressed: false,
+      cols: 46,
+      rows: 38,
+    ),
+  );
 }
