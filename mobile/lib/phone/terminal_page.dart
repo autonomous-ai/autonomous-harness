@@ -281,6 +281,79 @@ class _TerminalPageState extends State<TerminalPage>
   void _cancelSettle() {
     _settleTimer?.cancel();
     _settleTimer = null;
+    _slideTimer?.cancel();
+    _slideTimer = null;
+  }
+
+  /// Runs for as long as [TerminalKeyBar] is sliding. See [_endSettle].
+  Timer? _slideTimer;
+
+  /// Opens (or re-opens) the window in which this pane's height is a moving
+  /// target, so [TerminalPanel.settling] holds the remote resize across it.
+  ///
+  /// ⚠️ **The window has to open BEFORE the first height change, not on it.**
+  /// Armed only from a moving inset — which is what [didChangeMetrics] alone
+  /// could do — it opened a frame too late: asking for the keyboard opens
+  /// [TerminalKeyBar] in the very next frame, which takes height out of the
+  /// pane while the inset is still zero. xterm then re-derived rows for a height
+  /// that is neither the old one nor the one the move ends at, and spent a
+  /// `terminal_resize` and a real SIGWINCH on it — a full-screen TUI redrawing,
+  /// and its keyframe landing on this thread, in the frames the keyboard is
+  /// animating through.
+  ///
+  /// So every path that moves this pane's bottom arms it first: the request
+  /// ([_raiseKeyboard]), the dismissal ([_dismissInput]), the key bar's slide
+  /// ([_watchKeyBar]) and the inset ticks themselves.
+  ///
+  /// [waitForKeyBar] adds [_slideTimer], for a move that includes
+  /// [TerminalKeyBar]'s own slide — which outlasts the keyboard's inset, so the
+  /// inset's [_settleWindow] cannot be what ends the hold.
+  ///
+  /// [fromBuild] marks the one caller that runs INSIDE a build, [_watchKeyBar]:
+  /// the flag is assigned rather than `setState`, because the build about to
+  /// read it has not read it yet, and `setState` from a build is the
+  /// "markNeedsBuild() called during build" crash.
+  void _armSettle({bool waitForKeyBar = false, bool fromBuild = false}) {
+    _settleTimer?.cancel();
+    _settleTimer = Timer(_settleWindow, () {
+      _settleTimer = null;
+      _endSettle();
+    });
+    if (waitForKeyBar) {
+      _slideTimer?.cancel();
+      // A beat past the slide itself, so the frame the row lands on is inside
+      // the hold rather than on its edge.
+      _slideTimer = Timer(TerminalInputDock.slide + _settleWindow, () {
+        _slideTimer = null;
+        _endSettle();
+      });
+    }
+    // ⚠️ Guarded. This runs on EVERY frame of the keyboard's slide; an
+    // unconditional `setState` would rebuild the whole page — terminal included
+    // — once per frame of the one animation this gate exists to keep smooth.
+    if (_keyboardSettling) return;
+    if (fromBuild) {
+      _keyboardSettling = true;
+    } else {
+      setState(() => _keyboardSettling = true);
+    }
+  }
+
+  /// Closes the window: the pane's height is final, so [TerminalPanel] may size
+  /// the far shell to it — the one SIGWINCH the hold reduces the move to.
+  ///
+  /// ⚠️ **Two clocks have to have run out, not one.** The keyboard's inset stops
+  /// moving first and [_settleWindow] closes on it; [TerminalKeyBar] is still
+  /// sliding for another beat after that, and the pane is losing pixels to it
+  /// the whole time. Measured on a simulator, the inset settled at +180ms and
+  /// the row at +260ms, and a hold that ended on the first of those let xterm
+  /// re-derive rows twice more and spend a real SIGWINCH on each — which is the
+  /// judder this gate exists to remove. Whichever timer fires first finds the
+  /// other still outstanding and leaves the gate shut.
+  void _endSettle() {
+    if (_settleTimer != null || _slideTimer != null) return;
+    if (!mounted || !_keyboardSettling) return;
+    setState(() => _keyboardSettling = false);
   }
 
   @override
@@ -444,25 +517,25 @@ class _TerminalPageState extends State<TerminalPage>
     // Search's keyboard has finished leaving: the terminal may read the
     // keyboard as its own again. See [_heldForSearch].
     if (!up && _heldForSearch && !_searching) _releaseSearchHold();
-    if (inset != previous) {
-      _settleTimer?.cancel();
-      _settleTimer = Timer(_settleWindow, () {
-        _settleTimer = null;
-        if (!mounted || !_keyboardSettling) return;
-        setState(() => _keyboardSettling = false);
-      });
-    }
+    if (inset != previous) _armSettle();
 
-    final settling = _settleTimer != null;
-    if (up == _keyboardUp &&
-        requested == _keyboardRequested &&
-        settling == _keyboardSettling) {
-      return;
-    }
+    // ⚠️ **[_keyboardSettling] is NOT written here, and that is the bug this
+    // line used to be.** It read `_settleTimer != null` and assigned it, which
+    // made the inset's own 80ms window the only thing that could hold the gate
+    // — so the moment that window expired, the next metrics tick reopened the
+    // gate even though [_slideTimer] was still running and [TerminalKeyBar] was
+    // still taking pixels out of the pane. Measured: the gate closed at +9ms,
+    // reopened at +94ms, and the key bar did not stop moving until +255ms, with
+    // four `session.resize` calls and three real SIGWINCHes in between — every
+    // one of them a full-screen TUI redraw and a keyframe landing on this
+    // thread, mid-animation. That is what the judder was.
+    //
+    // The flag belongs to [_armSettle] and [_endSettle] alone now; they know
+    // about both clocks, and this method arms them like any other caller.
+    if (up == _keyboardUp && requested == _keyboardRequested) return;
     setState(() {
       _keyboardUp = up;
       _keyboardRequested = requested;
-      _keyboardSettling = settling;
     });
   }
 
@@ -500,6 +573,10 @@ class _TerminalPageState extends State<TerminalPage>
       session.terminal.textInput(heard);
     }
     setState(() => _keyboardRequested = true);
+    // The keyboard is on its way and the key bar opens with it. Held from here
+    // rather than from the first metrics tick, which is a frame too late: see
+    // [_armSettle]. The row's own slide is covered by [_watchKeyBar].
+    _armSettle();
   }
 
   /// Puts the keyboard away without leaving the page — the `⌄` key on
@@ -507,6 +584,8 @@ class _TerminalPageState extends State<TerminalPage>
   void _dismissInput() {
     FocusManager.instance.primaryFocus?.unfocus();
     if (_keyboardRequested) setState(() => _keyboardRequested = false);
+    // The same move as [_raiseKeyboard], run backwards. See [_armSettle].
+    _armSettle();
   }
 
   /// Whether the keyboard on screen is THIS page's — the question the floating
@@ -542,6 +621,34 @@ class _TerminalPageState extends State<TerminalPage>
   /// [HeldHeight] for its height.
   bool get _terminalKeyboardUp =>
       _heldForSearch ? _keyboardUpAtSearch : _keyboardUp;
+
+  /// Whether [TerminalKeyBar] should be open — what [TerminalInputDock] is
+  /// handed, and the one fact that says whether that row is about to move.
+  bool get _keyBarUp => _terminalKeyboardUp || _keyboardRequested;
+
+  /// [_keyBarUp] as of the last build, so a change to it can be spotted.
+  bool _keyBarWasUp = false;
+
+  /// Starts the hold that covers [TerminalKeyBar]'s slide, if this build is the
+  /// one that sets it going.
+  ///
+  /// ⚠️ **Read from the value the dock is actually given, not from the gesture
+  /// that usually causes it.** [_raiseKeyboard] and [_dismissInput] are the two
+  /// deliberate ways in and out, and arming from those alone missed every other
+  /// one: a keyboard dismissed by the system, by a tap outside, by the route
+  /// changing. Measured on one of those, the row slid shut over ~200ms with the
+  /// gate already open, and the pane spent three SIGWINCHes climbing back to
+  /// full height — the judder, in the other direction. This catches all of them,
+  /// because the row cannot move without this value changing first.
+  void _watchKeyBar() {
+    final up = _keyBarUp;
+    if (up == _keyBarWasUp) return;
+    _keyBarWasUp = up;
+    // Called from build: the flag it sets is read by this same build (the dock
+    // is built below it), and the timers it starts are plain timers, so there is
+    // no setState here and none is needed.
+    _armSettle(waitForKeyBar: true, fromBuild: true);
+  }
 
   /// Guards against a second picker while one is already up.
   ///
@@ -616,6 +723,9 @@ class _TerminalPageState extends State<TerminalPage>
       listenable: widget.notifier,
       builder: (context, _) {
         AppTheme.watch(context);
+        // Before anything is laid out: if the key bar is about to open or shut,
+        // the hold has to already be on. See [_watchKeyBar].
+        _watchKeyBar();
         final pane = widget.notifier.panes
             .where(
               (p) =>
@@ -839,7 +949,7 @@ class _TerminalPageState extends State<TerminalPage>
                       if (session != null)
                         TerminalInputDock(
                           session: session,
-                          keyboardUp: _terminalKeyboardUp || _keyboardRequested,
+                          keyboardUp: _keyBarUp,
                           onDismiss: _dismissInput,
                           // Only where the far side can actually take one: an
                           // older CLI never advertises the binary kind, so the
