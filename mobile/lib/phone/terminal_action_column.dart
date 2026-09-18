@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/terminal/terminal_session.dart';
 
+import 'floating_glass.dart';
 import 'voice_input_controller.dart';
 import 'voice_mic_button.dart';
 import 'voice_mic_face.dart';
@@ -83,6 +84,11 @@ class TerminalActionColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     AppTheme.watch(context);
     final session = this.session;
+    // One backdrop read for the three buttons' blurs — see [FloatingGlass].
+    return BackdropGroup(child: _column(context, session));
+  }
+
+  Widget _column(BuildContext context, TerminalSession? session) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -194,22 +200,22 @@ class TerminalRoundAction extends StatelessWidget {
                   duration: const Duration(milliseconds: 160),
                   opacity: live ? 1 : 0.4,
                   child: Center(
-                    child: Container(
-                      width: diameter,
-                      height: diameter,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        // The mic's resting look: see-through, so the output
-                        // under the button stays readable, with a light shadow
-                        // to keep the edge — see [floatingButtonFill].
-                        color: floatingButtonFill,
-                        border: Border.all(color: AppGlass.lift),
-                        boxShadow: floatingButtonShadow,
-                      ),
-                      child: Icon(
-                        icon,
-                        size: 20,
-                        color: AppPalette.textPrimary,
+                    // The mic's resting look — see [FloatingGlass].
+                    child: FloatingGlass(
+                      child: Container(
+                        width: diameter,
+                        height: diameter,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: floatingButtonFill,
+                          border: Border.all(color: floatingButtonRim),
+                          boxShadow: floatingButtonShadow,
+                        ),
+                        child: Icon(
+                          icon,
+                          size: 20,
+                          color: AppPalette.textPrimary,
+                        ),
                       ),
                     ),
                   ),

@@ -4,6 +4,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:harness_mobile/shared/theme/app_theme.dart';
 import 'package:harness_mobile/shared/widgets/pulse.dart';
 
+import 'floating_glass.dart';
 import 'voice_mic_mode.dart';
 
 /// What the mic says it will do when tapped.
@@ -49,20 +50,6 @@ Color voiceMicTint(VoiceMicFace face) => switch (face) {
   _ => AppPalette.accent,
 };
 
-/// The resting fill of the terminal's floating buttons — the mic, Search and
-/// `+` — see-through enough that the output under them stays readable.
-Color get floatingButtonFill => AppGlass.surfaceFill.withValues(alpha: 0.5);
-
-/// The resting shadow under those buttons: enough to lift the edge off the
-/// text, light enough not to black out the characters beneath.
-List<BoxShadow> get floatingButtonShadow => [
-  BoxShadow(
-    color: Colors.black.withValues(alpha: 0.2),
-    blurRadius: 8,
-    offset: const Offset(0, 2),
-  ),
-];
-
 /// The round, filled part of the mic: its colour, its glow, and the glyph for
 /// what a press will do.
 class VoiceMicCore extends StatelessWidget {
@@ -77,7 +64,9 @@ class VoiceMicCore extends StatelessWidget {
   Color get _tint => voiceMicTint(face);
 
   @override
-  Widget build(BuildContext context) => AnimatedContainer(
+  Widget build(BuildContext context) => FloatingGlass(child: _circle());
+
+  Widget _circle() => AnimatedContainer(
     duration: const Duration(milliseconds: 220),
     curve: Curves.easeOutCubic,
     width: VoiceMicCore.diameter,
@@ -93,7 +82,7 @@ class VoiceMicCore extends StatelessWidget {
           : null,
       color: lit ? null : floatingButtonFill,
       border: Border.all(
-        color: lit ? Colors.white.withValues(alpha: 0.28) : AppGlass.lift,
+        color: lit ? Colors.white.withValues(alpha: 0.28) : floatingButtonRim,
       ),
       // ⚠️ **Two different shadows for two different jobs, and the resting one
       // is not optional.** Lit, the button glows in its own colour — that is
@@ -113,9 +102,8 @@ class VoiceMicCore extends StatelessWidget {
                 offset: const Offset(0, 3),
               ),
             ]
-          // ⚠️ Light, and that is deliberate: the fill is see-through, and a
-          // box shadow paints under the WHOLE circle — a heavy one showed
-          // through as a dark disc over the very text the fill lets through.
+          // ⚠️ Kept light: a box shadow paints under the WHOLE circle, and
+          // the fill is not opaque — a heavy one showed through as a dark disc.
           : floatingButtonShadow,
     ),
     child: Center(
@@ -187,9 +175,8 @@ class VoiceMicRing extends StatelessWidget {
         height: VoiceMicCore.diameter,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: voiceMicTint(
-            VoiceMicFace.listening,
-          ).withValues(alpha: 0.35 * (1 - t)),
+          color: voiceMicTint(VoiceMicFace.listening)
+              .withValues(alpha: 0.35 * (1 - t)),
         ),
       ),
     ),
