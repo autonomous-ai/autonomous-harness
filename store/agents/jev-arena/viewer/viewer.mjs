@@ -135,6 +135,7 @@ export async function startArenaViewer({ workspace, port = 0 } = {}) {
   let hero = { ...world.hero }
   let state = { moves: 0, reachedGoal: false, coinsCollected: 0, error: null, running: false }
   let clients = new Set()
+  let lastLine = null // the last frame sent, replayed to a pane that connects later
   let stopped = false
   const decisionLog = []
   let salt = 1
@@ -150,6 +151,7 @@ export async function startArenaViewer({ workspace, port = 0 } = {}) {
 
   function broadcast(obj) {
     const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
+    lastLine = line
     for (const c of clients) c.write(line)
   }
 
@@ -201,6 +203,8 @@ export async function startArenaViewer({ workspace, port = 0 } = {}) {
     if (stopped) return
     await step()
     if (!state.reachedGoal) schedule()
+    // Never sit on the finished screen: show the result for a few seconds, then play again.
+    else { clearTimeout(timer); timer = setTimeout(() => { if (!stopped && state.reachedGoal) { const was = state.running; reset(); state.running = was; tail(); schedule() } }, 4000) }
   }
 
   function start() {
@@ -267,6 +271,7 @@ export async function startArenaViewer({ workspace, port = 0 } = {}) {
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
       clients.add(res)
+      if (lastLine) res.write(lastLine)
       res.write(`event: state\ndata: ${JSON.stringify({ type: 'frame', moves: state.moves, reachedGoal: state.reachedGoal, running: state.running, hero, coins: world.coins, goal: world.goal, walls: world.walls, size: world.size, decisionLog: decisionLog.slice(-20), speed: world.speed, model: state.model, client: state.client })}\n\n`)
       req.on('close', () => clients.delete(res))
       return

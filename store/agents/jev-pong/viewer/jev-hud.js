@@ -13,6 +13,13 @@
     font:12px/1.4 ui-monospace,'SF Mono','Cascadia Code',Menlo,monospace;color:var(--jh-ink);background:var(--jh-bg);
     border:1px solid var(--jh-line);border-radius:12px;padding:12px 14px;box-sizing:border-box}
   .jh.float{position:fixed;right:14px;bottom:14px;width:320px;max-height:70vh;overflow:auto;z-index:50;box-shadow:0 12px 40px rgba(0,0,0,.5);backdrop-filter:blur(8px);background:rgba(18,20,28,.92)}
+  .jh.float .jh-head{cursor:pointer;user-select:none}
+  .jh.float.mini{width:auto;max-width:320px;padding:8px 12px}
+  .jh.float.mini .jh-head{margin-bottom:0}
+  .jh.float.mini>*:not(.jh-head){display:none}
+  .jh-mini{display:none;font-size:11px;color:var(--jh-ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .jh.float.mini .jh-mini{display:inline}
+  .jh.float.mini .jh-title{flex:none}
   .jh *{box-sizing:border-box}
   .jh-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
   .jh-title{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--jh-dim);flex:1}
@@ -59,7 +66,7 @@
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n }
   const root = el('section', 'jh')
   root.innerHTML = `
-    <div class="jh-head"><span class="jh-pulse"></span><span class="jh-title">Jev · live mind</span><span class="jh-badge mock">MOCK</span></div>
+    <div class="jh-head"><span class="jh-pulse"></span><span class="jh-title">Jev · live mind</span><span class="jh-mini"></span><span class="jh-badge mock">MOCK</span></div>
     <div class="jh-stats">
       <div class="jh-stat"><b data-k="rate">—</b><span>dec / s</span></div>
       <div class="jh-stat"><b data-k="lat">—</b><span>latency</span></div>
@@ -76,7 +83,11 @@
     const rail = document.getElementById('rail')
     if (slot) slot.appendChild(root)
     else if (rail) rail.insertBefore(root, rail.firstChild)
-    else { root.classList.add('float'); document.body.appendChild(root) }
+    else {
+      root.classList.add('float', 'mini'); document.body.appendChild(root)
+      root.querySelector('.jh-head').title = 'Click to open or close Jev\'s live mind'
+      root.querySelector('.jh-head').addEventListener('click', () => root.classList.toggle('mini'))
+    }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount()
 
@@ -169,6 +180,7 @@
     $k('lat').textContent = s.calls ? fmtLat(live ? s.avgLatencyMs : s.lastLatencyMs) : '—'
     $k('tok').textContent = s.calls ? fmtInt(s.inputTokens / s.calls) : '—'
     $k('cost').textContent = fmtMoney(s.costUsd)
+    root.querySelector('.jh-mini').textContent = `${s.questionsPerSec >= 10 ? Math.round(s.questionsPerSec) : s.questionsPerSec.toFixed(1)}/s · ${fmtMoney(s.costUsd)} ▾`
     const lat = s.latencies || []
     if (lat.length > 1) {
       const max = Math.max(...lat, 1)

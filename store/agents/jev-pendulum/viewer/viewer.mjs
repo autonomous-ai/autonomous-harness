@@ -54,6 +54,7 @@ export async function startPendulumViewer({ workspace, port = 0 } = {}) {
   // physical state
   let angle = 0, vel = 0
   let clients = new Set()
+  let lastLine = null // the last frame sent, replayed to a pane that connects later
   let stopped = false
   let salt = 1
   let error = null
@@ -90,6 +91,7 @@ export async function startPendulumViewer({ workspace, port = 0 } = {}) {
 
   function broadcast(obj) {
     const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
+    lastLine = line
     for (const c of clients) c.write(line)
   }
 
@@ -218,6 +220,7 @@ export async function startPendulumViewer({ workspace, port = 0 } = {}) {
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
       clients.add(res)
+      if (lastLine) res.write(lastLine)
       req.on('close', () => clients.delete(res))
       return
     }

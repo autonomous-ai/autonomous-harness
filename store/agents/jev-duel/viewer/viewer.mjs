@@ -133,10 +133,12 @@ export async function startDuelViewer({ workspace, port = 0 } = {}) {
   let board = newBoard(battle.size)
   let toMove = 'O'
   let clients = new Set()
+  let lastLine = null // the last frame sent, replayed to a pane that connects later
   let stopped = false
   let salt = 1
   let running = false
   let gameOver = false
+  let gameOverAt = 0 // when the last game ended; a new one starts by itself a few seconds later
   let winner = null
   let error = null
   let history = []   // [{n, side, disk, x, y, flips, ref:[...], at}]
@@ -152,6 +154,7 @@ export async function startDuelViewer({ workspace, port = 0 } = {}) {
 
   function broadcast(obj) {
     const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
+    lastLine = line
     for (const c of clients) c.write(line)
   }
 
@@ -253,6 +256,7 @@ export async function startDuelViewer({ workspace, port = 0 } = {}) {
           const c = count(board)
           if (c.O !== c.X) winner = c.O > c.X ? battle.rivals.O?.name || 'O' : battle.rivals.X?.name || 'X'
           gameOver = true
+          gameOverAt = Date.now()
         }
         // else: stick (both effectively stalled but next side has no move -> keep current side) — handled by loop guard
       } else {
@@ -271,7 +275,9 @@ export async function startDuelViewer({ workspace, port = 0 } = {}) {
     timer = setTimeout(run, battle.speed ?? 700)
   }
   async function run() {
-    if (stopped || gameOver) return
+    if (stopped) return
+    // Never sit on a finished board: show the result for a few seconds, then play again.
+    if (gameOver) { if (Date.now() - gameOverAt > 5000) reset(); else schedule(); return }
     await step()
     schedule()
   }
@@ -307,6 +313,7 @@ export async function startDuelViewer({ workspace, port = 0 } = {}) {
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
       clients.add(res)
+      if (lastLine) res.write(lastLine)
       req.on('close', () => clients.delete(res))
       return
     }
