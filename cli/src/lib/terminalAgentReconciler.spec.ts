@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { AgentEngine } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import type { DiscoveredTerminalAgent, TerminalAgentProbe } from './terminalAgentDiscovery.js'
 import type { TerminalBackend } from './terminalBackend.js'
@@ -34,6 +35,32 @@ function probe(targets: TerminalAgentProbe['targets'], agents: DiscoveredTermina
 }
 
 describe('composite terminal reconciliation', () => {
+  it('keeps a newer hint that arrives while the current probe is in flight', async () => {
+    const seen: Array<Map<string, AgentEngine>> = []
+    let releaseFirst!: () => void
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const probeSnapshot = vi.fn(async (hints: ReadonlyMap<string, AgentEngine>) => {
+      seen.push(new Map(hints))
+      if (seen.length === 1) await firstBlocked
+      return probe([])
+    })
+    const reconciler = new TerminalAgentReconciler({
+      current: () => [], backends: [], backendOrder: ['tmux'], herdrSessionOrder: [],
+      onDiscovered: vi.fn(), onObserved: vi.fn(), onDormant: vi.fn(), onRemoved: vi.fn(),
+      probe: probeSnapshot,
+    })
+
+    const first = reconciler.triggerHint(tmux, 'claude')
+    await vi.waitFor(() => expect(probeSnapshot).toHaveBeenCalledTimes(1))
+    const second = reconciler.triggerHint(tmux, 'codex')
+    releaseFirst()
+    await Promise.all([first, second])
+
+    expect(seen).toHaveLength(2)
+    expect(seen[0].get(terminalRouteKey(tmux))).toBe('claude')
+    expect(seen[1].get(terminalRouteKey(tmux))).toBe('codex')
+  })
+
   it('advertises a retained pane even when no engine process is observed', async () => {
     const current = { ...session([tmux]), active: false }
     const onTerminalAvailability = vi.fn()

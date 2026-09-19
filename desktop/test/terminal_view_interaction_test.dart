@@ -7,6 +7,25 @@ import 'package:xterm/xterm.dart';
 import 'package:xterm/src/ui/custom_text_edit.dart';
 
 void main() {
+  testWidgets('terminal input client identifies its Flutter view on Windows', (
+    tester,
+  ) async {
+    final terminal = Terminal();
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: TerminalView(terminal, autofocus: true))),
+    );
+    await tester.pump();
+
+    // The Windows embedder rejects TextInput.setClient with a null viewId.
+    // Merely injecting editing values bypasses that native attachment failure.
+    final attach = tester.testTextInput.log.lastWhere(
+      (call) => call.method == 'TextInput.setClient',
+    );
+    final arguments = attach.arguments as List<dynamic>;
+    final config = arguments[1] as Map<String, dynamic>;
+    expect(config['viewId'], tester.view.viewId);
+  });
+
   test('does not turn an xterm keyboard command into text styling', () {
     final terminal = Terminal(maxLines: 20, reflowEnabled: false)
       ..resize(80, 4);

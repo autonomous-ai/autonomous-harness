@@ -189,21 +189,24 @@ void main() {
   );
 
   test('configuration path follows XDG and rejects a relative XDG root', () {
+    // p.join spells the host separator; compare through the same path
+    // builder instead of hardcoding POSIX slashes.
+    final sep = Platform.pathSeparator;
     expect(
       KeymapStore.defaultPath(environment: {'HOME': '/users/dev'}),
-      '/users/dev/.config/harness/keybindings.jsonc',
+      '/users/dev${sep}.config${sep}harness${sep}keybindings.jsonc',
     );
     expect(
       KeymapStore.defaultPath(
         environment: {'HOME': '/users/dev', 'XDG_CONFIG_HOME': '/dotfiles'},
       ),
-      '/dotfiles/harness/keybindings.jsonc',
+      '/dotfiles${sep}harness${sep}keybindings.jsonc',
     );
     expect(
       KeymapStore.defaultPath(
         environment: {'HOME': '/users/dev', 'XDG_CONFIG_HOME': 'relative'},
       ),
-      '/users/dev/.config/harness/keybindings.jsonc',
+      '/users/dev${sep}.config${sep}harness${sep}keybindings.jsonc',
     );
   });
 }

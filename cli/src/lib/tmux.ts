@@ -4,7 +4,6 @@ import { execFile, spawn } from 'child_process'
 import { readFileSync } from 'node:fs'
 import { readlink } from 'node:fs/promises'
 import { platform } from 'node:os'
-import { basename } from 'path'
 import { registry, type ProcessIdentity, type RegisteredSession } from './registry.js'
 import {
   agentAliasOwner,
@@ -24,6 +23,32 @@ function cleanPaneTitle(title: string): string | null {
     .trim()
     .slice(0, 80)
   return cleaned || null
+}
+
+/**
+ * Path base name, splitting on the separators the path's own DIALECT uses.
+ *
+ * `path.basename` is host-dependent: on Windows it also splits `/`, but on Linux/macOS it does not
+ * split `\\`. This file parses process rows whose argv can carry WINDOWS paths while the daemon
+ * itself runs INSIDE WSL/Linux — the WSL-interop relay (`comm=node.exe`, argv
+ * `/init \0 C:\...\node.exe \0 …codex.js`) is the exact case, and host basename silently defeated
+ * the interpreter/entrypoint walk there (review finding P1, 2026-09-17). A blind both-separator
+ * split over-corrects the other way: `\` is a legal filename character in POSIX paths, so
+ * `/tmp/not\codex` came out as basename `codex` and scored as a Codex match — discovery could
+ * claim an unrelated process (review cycle-9, P2). The dialect is therefore read from the path
+ * itself: drive-letter (`C:/…`) and UNC (`\\…`) paths split on BOTH separators, everything else
+ * splits on `/` only. Every base-name read in this module must go through this helper so a row
+ * parses identically on any host.
+ */
+/** A drive-letter prefix in either slash dialect marks a Windows-authored path. */
+const isWindowsDialectPath = (path: string): boolean => /^[A-Za-z]:[\\/]/.test(path)
+
+function basename(path: string): string {
+  const windowsDialect = isWindowsDialectPath(path) || path.startsWith('\\\\')
+  const start = windowsDialect
+    ? Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+    : path.lastIndexOf('/')
+  return start === -1 ? path : path.slice(start + 1)
 }
 
 /** Current tmux pane titles keyed by pane id. AI CLIs update this with their live session title. */
@@ -55,10 +80,50 @@ export interface ProcessRow extends ProcessIdentity {
 }
 
 export function argvTokens(args: string): string[] {
-  return (args.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((token) => {
-    const quoted = (token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))
-    return quoted ? token.slice(1, -1) : token
-  })
+  // Escape-aware split, symmetric with the repair's quote() (review cycle-2/3, P1 security).
+  // Inside DOUBLE quotes: `\\` is one literal backslash, `\"` is a literal quote (never a
+  // boundary), and a bare `"` closes the token. quote() emits exactly this dialect — every
+  // backslash doubled, every embedded quote escaped — so repair -> re-split round-trips
+  // token-for-token for ANY argv element. The naive split let one escaped `\"` inside a relayed
+  // PROMPT argument close the token early: the flag tail after it re-tokenized as standalone CLI
+  // flags and bypassPermissionActive() flipped to true from prompt text alone. Single-quoted
+  // shells treat backslashes literally, so the single-quote branch does not.
+  const tokens: string[] = []
+  let index = 0
+  while (index < args.length) {
+    while (index < args.length && /\s/.test(args[index])) index++
+    if (index >= args.length) break
+    if (args[index] === '"' || args[index] === "'") {
+      const close = args[index]
+      index++
+      let token = ''
+      while (index < args.length && args[index] !== close) {
+        if (close === '"' && args[index] === '\\') {
+          const next = args[index + 1]
+          if (next === '\\' || next === '"') {
+            token += next
+            index += 2
+          } else {
+            token += args[index]
+            index++
+          }
+          continue
+        }
+        token += args[index]
+        index++
+      }
+      if (index < args.length) index++ // consume the closing quote
+      tokens.push(token)
+    } else {
+      let token = ''
+      while (index < args.length && !/\s/.test(args[index])) {
+        token += args[index]
+        index++
+      }
+      tokens.push(token)
+    }
+  }
+  return tokens
 }
 
 /**
@@ -91,7 +156,7 @@ function processEntrypoint(args: string): string {
     }
     command = basename(tokens[index] ?? '').toLowerCase()
   }
-  if (!/^(?:node|nodejs|bun|deno|python(?:\d+(?:\.\d+)*)?|bash|zsh|sh)$/.test(command)) return tokens[index] ?? ''
+  if (!/^(?:node|nodejs|bun|deno|python(?:\d+(?:\.\d+)*)?|bash|zsh|sh)(?:\.exe)?$/.test(command)) return tokens[index] ?? ''
 
   index++
   const optionsWithValue = new Set(['-r', '--require', '--loader', '--import', '--conditions', '--inspect-port'])
@@ -163,16 +228,191 @@ export function parseProcessRow(line: string): ProcessRow | null {
  * `/proc/<pid>/cmdline` on a 63-process container: 0.48ms, so even the degenerate case is free.
  *
  * No-op off Linux: macOS has no /proc and does not substitute in the first place.
+ *
+ * WSL interop rows (`/init` relaying a Windows binary): an engine resolved through
+ * interop — a Windows npm shim found by `command -v` in the pane shell — shows `comm=node.exe`,
+ * `/proc/pid/exe → /init`, and the true interpreter/script in `/proc/pid/cmdline`
+ * (`/init \0 C:\...\node.exe \0 C:\...\codex.js`). The engine matcher cannot score that row:
+ * `node.exe` is not in the interpreter set and the entrypoint reduces to `/init`, so a perfectly
+ * healthy TUI never "exposes an engine process" — the launch is marked failed and the terminal
+ * refuses input while the engine visibly runs (observed live on a Windows host + Ubuntu distro).
+ * When `/init` is argv[0], `/proc` IS the mangled view: rewrite the row from `cmdline` so the
+ * interpreter (`node.exe`) and the real entrypoint (`.../codex.js`) are visible to matching.
+ *
+ * EVERY producer of a process table must run its rows through this repair so WSL relays and
+ * locale-mangled rows have the same executable/argv shape everywhere discovery runs.
  */
-function repairMangledRows(rows: ProcessRow[]): ProcessRow[] {
+export function repairMangledRows(rows: ProcessRow[]): ProcessRow[] {
   if (process.platform !== 'linux') return rows
   return rows.map((row) => {
-    if (!row.executable.includes('?') && !row.args.includes('?')) return row
-    // cmdline is NUL-separated; node's process.title rewrite space-pads the tail of the argv region.
-    const args = readProcField(row.pid, 'cmdline')?.replace(/\0/g, ' ').trimEnd()
-    const executable = readProcField(row.pid, 'comm')?.trimEnd()
-    return { ...row, ...(executable && { executable }), ...(args && { args }) }
+    const cmdline = readProcField(row.pid, 'cmdline')
+    const comm = readProcField(row.pid, 'comm')
+    if (row.executable.includes('?') || row.args.includes('?')) {
+      // cmdline is NUL-separated; node's process.title rewrite space-pads the tail of the argv region.
+      // Re-split the raw NUL argv and re-join through the SAME CRT-dialect quoting the interop repair
+      // uses — a bare NUL->space join let one prompt ending in `?` (nearly every prompt: the `?` lands
+      // in `ps args`) re-tokenize with its flag text standing alone, and bypassPermissionActive()
+      // flipped to true from prompt text alone (review cycle-4, P1 security). The repair's
+      // qualification gate does not apply here — the `?` mangle is itself the /proc-recovery case —
+      // but the serialization must be boundary-faithful, so quote() is shared.
+      const argv = cmdline?.split('\0') ?? []
+      // Same one-artifact rule as the interop repair (review cycle-5, P2): every argv element
+      // is stored NUL-terminated, so split() carries exactly ONE artifact empty after the
+      // final NUL — strip-all deleted legitimate empty final arguments.
+      if (argv.length && argv[argv.length - 1] === '') argv.pop() // process.title space-pad tail
+      const args = argv.map(quoteArgvElement).join(' ').trimEnd()
+      const executable = comm?.trimEnd()
+      const mangled = { ...row, ...(executable && { executable }), ...(args && { args }) }
+      // The reconstructed row can still be a WSL interop relay (`/init` head over a Windows
+      // interpreter path under comm=`node.exe`); returning it here used to skip relay discovery
+      // and entrypoint resolution entirely (review cycle-5, P2). When it does NOT qualify, the
+      // repair returns {} and the mangled row stands as reconstructed.
+      return { ...mangled, ...repairInteropRowFromCmdline(cmdline ?? '', comm) }
+    }
+    // Ordinary row (nothing `?`-mangled): flattened `ps` text still loses argv boundaries
+    // whenever ANY element carries a space — a quoted prompt argument flattens into
+    // free-standing words whose flag-shaped fragments re-tokenize. When /proc is readable, the true
+    // NUL argv is strictly better evidence, so re-serialize it through the shared quoting. With no
+    // /proc evidence the original flattened row remains unchanged.
+    const relayed = repairInteropRowFromCmdline(cmdline ?? '', comm)
+    if (relayed.args !== undefined) return { ...row, ...relayed }
+    const faithful = faithfulArgsFromCmdline(cmdline ?? '')
+    return faithful ? { ...row, args: faithful } : row
   })
+}
+
+/**
+ * The interop repair itself, with the /proc reads lifted out so it can be
+ * pinned by tests on any host: [cmdline] is the raw NUL-joined /proc cmdline
+ * (empty when unreadable), [comm] the /proc comm (null when unreadable).
+ *
+ * Returns {} when the row is NOT an interop relay; otherwise { args,
+ * executable } fields to spread over the original row.
+ */
+export function repairInteropRowFromCmdline(
+  cmdline: string,
+  comm: string | null,
+): Partial<Pick<ProcessRow, 'args' | 'executable'>> {
+  const argv = cmdline.split('\0')
+  // A cmdline READ is the execve argv region: EVERY element stored NUL-terminated, so split()
+  // yields all elements plus exactly ONE artifact empty after the final NUL — regardless of how
+  // long the trailing NUL run is. Pop only that one: the strip-ALL loop deleted legitimate empty
+  // final arguments (`/init\0prog\0x\0\0\0` is `prog x '' ''`, whose three trailing NULs are the
+  // terminators of x and of the two empty elements, not three artifacts — review cycle-5, P2).
+  // Interior empties were lost to filter(Boolean) earlier (review cycle-4, P2); the serializer
+  // emits `""` for empty tokens so every surviving element round-trips.
+  if (cmdline.endsWith('\0') && argv.length && argv[argv.length - 1] === '') {
+    argv.pop() // one artifact: the terminating NUL of the final argv element
+  }
+  if (argv[0] !== '/init') return {}
+  // `/init <program> <args…>` — without the relayed program there is nothing to expose.
+  if (argv.length < 2) return {}
+  // WSL-interop qualification, not just an `/init` head. On a native Linux host `/init` is a real
+  // program (docker-init, systemd's shim) whose cmdline can name ANY child —
+  // `/init\0/usr/local/bin/codex\0--version` under comm=`docker-init` scored as Codex here and let a
+  // genuine Linux relay be selected as the engine instead of its child (review cycle-2, P2).
+  // A real interop relay ties the cmdline to the process, and only two things do that:
+  //   1. `comm` naming the relayed program itself — Linux sets comm from the executable the relay
+  //      runs (e.g. `node.exe`). Linux caps comm at 15 bytes, so the name can only ever arrive as
+  //      an EXACT match or a TRUNCATION: comm may be a strict prefix of the basename, never an
+  //      arbitrary-prefix hit like comm=`co` over basename=`codex` (review cycle-3, P2).
+  //   2. An unambiguously WINDOWS argv (drive-letter path / `.exe`).
+  // `comm` naming the relay (`init`/`/init`) ties the cmdline to NOTHING — a docker-init row can
+  // carry it too — so it never qualifies on its own. A windows-shaped argv qualifies ONLY when
+  // `comm` does not contradict it (review cycle-4, P2): `comm` is what Linux says the relay's
+  // executable IS, and a contradictory comm (`docker-init` over `/usr/local/bin/opencode.exe`)
+  // is positive evidence of a NATIVE wrapper naming a `.exe`-LIKE child — the suffix alone is
+  // a name, not identity. An absent comm says nothing and cannot contradict.
+  const relayedBase = basename(argv[1]).toLowerCase()
+  const trimmedComm = comm?.trimEnd().toLowerCase() ?? ''
+  const commMatchesRelayed = trimmedComm !== ''
+    && (relayedBase === trimmedComm
+      || (Buffer.byteLength(trimmedComm) === 15
+        && relayedBase.length > trimmedComm.length
+        && relayedBase.startsWith(trimmedComm)))
+  // A comm that names a plausible NATIVE parent — not the relay, not the relayed basename —
+  // contradicts the windows-argv evidence. `init`/`/init` name the relay shape itself and are
+  // neutral (handled above: they qualify nothing); anything else that is neither the relayed
+  // basename nor its 15-byte truncation is a concrete native process name.
+  const commContradictsWindowsArgv = trimmedComm !== ''
+    && trimmedComm !== 'init'
+    && trimmedComm !== '/init'
+    && !commMatchesRelayed
+  const looksWindowsArgv = isWindowsDialectPath(argv[1]) || /\.exe$/i.test(argv[1])
+  if (looksWindowsArgv) {
+    if (commContradictsWindowsArgv) return {}
+  } else if (!commMatchesRelayed) {
+    return {}
+  }
+  // Node rewrites its argv when it sets process.title: [interpPath, interpName, script, …].
+  // The bare duplicate would otherwise become the "entrypoint" the walk stops on, so drop it
+  // when token 2 is the same file name as the resolved interpreter path in token 1.
+  // `basename` splits on BOTH separators: token 1 is a WINDOWS path (`C:\…\node.exe`) while the
+  // daemon runs inside Linux, where `path.basename` would not split `\` (review finding P1).
+  if (argv.length >= 3 && basename(argv[1]).toLowerCase() === argv[2].toLowerCase()) {
+    argv.splice(2, 1)
+  }
+  // Re-join for the `args` field. Elements may contain spaces (Windows install paths do), and
+  // argvTokens() re-splits this string on whitespace, honouring double quotes — so quote every
+  // element that could change shape on re-split. The quoting follows the Windows CRT rules
+  // argvTokens() parses by, so the round trip is byte-faithful for ANY element:
+  //   - a token carrying a SINGLE quote is quoted bare-with-single-quotes today; argvTokens strips
+  //     those quotes and the inner flag text stands alone — `'--dangerously-bypass…'` flipped
+  //     bypassPermissionActive() to true from prompt text (review cycle-3, P1).
+  //   - a token ending in a backslash emitted `…\"`: the parser swallows the closing quote and the
+  //     NEXT argument's flag text is exposed as standalone tokens (review cycle-3, P1).
+  //   - an embedded double quote escapes as `\"`, doubling the backslash run before it (CRT strips
+  //     pairs before a quote).
+  // Plain tokens (bare flags, unspaced paths) stay unquoted — the `args` shape every caller and
+  // test already relies on. Empty elements serialize as `""` (cycle-4, P2): unquoted they
+  // re-split to ZERO tokens and the element is lost.
+  const args = argv.slice(1).map(quoteArgvElement).join(' ')
+  const relayed = trimmedComm && trimmedComm !== '/init' && trimmedComm !== 'init'
+    ? comm!.trimEnd()
+    : basename(argv[1])
+  return { args, executable: relayed }
+}
+
+/**
+ * The boundary-faithful `args` string for an ORDINARY (non-relay) row reconstructed from its
+ * raw /proc cmdline: the true NUL argv re-joined through `quoteArgvElement`. Flattened `ps`
+ * text cannot preserve argv boundaries once any element carries a space, so a readable /proc
+ * is strictly better evidence. Pure and host-independent so tests pin it on every platform.
+ * Returns null when the cmdline carries no usable argv (unreadable or empty): the caller
+ * keeps the flattened row.
+ */
+export function faithfulArgsFromCmdline(cmdline: string): string | null {
+  if (cmdline === '') return null
+  const argv = cmdline.split('\0')
+  // Same one-artifact rule as the interop repair: split() carries exactly
+  // ONE empty artifact after the final NUL.
+  if (cmdline.endsWith('\0') && argv.length && argv[argv.length - 1] === '') argv.pop()
+  const args = argv.map(quoteArgvElement).join(' ').trimEnd()
+  return args === '' ? null : args
+}
+
+/**
+ * Serialize one argv element into the `args` string form argvTokens() parses back
+ * token-faithfully (shared by the interop repair and the `?`-mangled-row /proc recovery —
+ * both must never let argument text re-tokenize into standalone CLI flags).
+ *
+ * The dialect is the one argvTokens() implements: inside double quotes `\\` is one literal
+ * backslash and `\"` is a literal quote. EVERY backslash is doubled when quoting (review
+ * cycle-4, P2): argvTokens collapses `\\` unconditionally, so any single backslash a quoted
+ * token survives with HALVES on the round trip (a spaced UNC path `C:\\\\share…` came back
+ * with its runs halved). Doubling the whole token keeps quote -> argvTokens an identity for
+ * any element, at the cost of emitting doubled backslashes in quoted paths — invisible to
+ * argvTokens() and to the engine, whose own CRT parser applies the same rule. Backslash
+ * doubling happens BEFORE quote escaping so the quote's own preceding run doubles exactly
+ * once. Plain unspaced tokens stay unquoted and byte-identical.
+ */
+export function quoteArgvElement(token: string): string {
+  if (token === '') return '""'
+  if (!/[\s"']/.test(token) && !token.endsWith('\\')) return token
+  const escaped = token
+    .replace(/\\+/g, ($) => '\\'.repeat(2 * $.length))
+    .replace(/(\\*)"/g, (_, run) => run + '\\"')
+  return `"${escaped}"`
 }
 
 function readProcField(pid: number, field: 'cmdline' | 'comm'): string | null {
@@ -336,11 +576,14 @@ interface EngineProcessSignature {
 /** Vendor-supported native names and launcher/package entrypoints, independent of install prefix. */
 export const ENGINE_PROCESS_SIGNATURES: Readonly<Record<RegisteredSession['engine'], EngineProcessSignature>> = {
   claude: {
-    basenames: [/^claude$/],
+    // Windows interop repair exposes native names (comm / relayed basename can be `claude.exe`,
+    // `codex.exe`) — the optional `.exe` covers direct native Windows launches too
+    // (review cycle-6, P2).
+    basenames: [/^claude(?:\.exe)?$/],
     entrypoints: [/@anthropic-ai[\/\\]claude-code[\/\\]cli\.js$/],
   },
   codex: {
-    basenames: [/^codex$/, /^codex-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-(?:gnu|musl))$/],
+    basenames: [/^codex(?:\.exe)?$/, /^codex-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-(?:gnu|musl))$/],
     entrypoints: [/@openai[\/\\]codex[\/\\]bin[\/\\]codex(?:\.js)?$/],
   },
   cursor: {
@@ -582,15 +825,24 @@ const RESUME_ARGS: Partial<Record<RegisteredSession['engine'], { flags: string[]
  * dead). Token-exact via `argvTokens`, not a substring `.includes()` check on the raw string, so a
  * prompt or argument that merely CONTAINS the flag text cannot false-positive. Engines with no
  * confirmed bypass flag (`BYPASS_PERMISSION_FLAGS[engine] === null`) always read false — never guess.
+ *
+ * A bare `--` option terminator ends the option section in every engine's CLI grammar here:
+ * everything after it is a POSITIONAL (prompt text, file names), however flag-shaped. Scanning
+ * the whole token list let a relayed prompt argument `-- --dangerously-bypass-approvals-and-
+ * sandbox` — the flag text as the positional after the terminator — read as an active bypass
+ * flag (review cycle-5, P1 security); the flag must appear BEFORE the terminator to count.
+ *
  */
 export function bypassPermissionActive(engine: RegisteredSession['engine'], args: string): boolean {
   const flags = BYPASS_PERMISSION_FLAGS[engine]
   if (!flags) return false
   const tokens = argvTokens(args)
+  const terminator = tokens.indexOf('--')
+  const optionTokens = terminator === -1 ? tokens : tokens.slice(0, terminator)
   // The flags in order, as launch writes them (`--permission-mode auto` is two tokens, and "auto"
   // alone elsewhere in argv is not the mode) — or `--flag=value` as one.
-  const inOrder = (want: readonly string[]): boolean => tokens.some((_, i) => want.every((flag, j) => tokens[i + j] === flag))
-    || (want.length === 2 && tokens.includes(`${want[0]}=${want[1]}`))
+  const inOrder = (want: readonly string[]): boolean => optionTokens.some((_, i) => want.every((flag, j) => optionTokens[i + j] === flag))
+    || (want.length === 2 && optionTokens.includes(`${want[0]}=${want[1]}`))
   // An agent launched before the auto modes carried the old skip-everything flag; it still counts as
   // approving on its own, and a relaunch brings it back in the auto mode.
   return inOrder(flags) || (LEGACY_BYPASS_FLAGS[engine] ?? []).some((legacy) => inOrder(legacy))
@@ -601,14 +853,34 @@ const LEGACY_BYPASS_FLAGS: Partial<Record<RegisteredSession['engine'], string[][
   codex: [['--dangerously-bypass-approvals-and-sandbox']],
 }
 
-/** The session id an engine was told to resume, or null when argv does not name one. */
+/**
+ * The session id an engine was told to resume, or null when argv does not name one.
+ *
+ * Read from TOKENS, not the raw string: the regex form searched inside quoted prompt arguments
+ * and after `--`, so one prompt argument 'Explain --session ses_OTHER now' supplied a false
+ * resume session that discovery bound a relaunch to (review cycle-6, P1 security). A flag must
+ * be a STANDALONE token, its value the next token — and like bypass detection, the scan stops
+ * at a bare `--` option terminator, whose tail is positional prompt text however flag-shaped.
+ */
 export function resumeSessionId(engine: RegisteredSession['engine'], args: string): string | null {
   const spec = RESUME_ARGS[engine]
   if (!spec) return null
-  for (const flag of spec.flags) {
-    const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const value = new RegExp(`(?:^|\\s)${escaped}(?:=|\\s+)(\\S+)`, 'i').exec(args)?.[1]
-    if (value && spec.id.test(value)) return value
+  const tokens = argvTokens(args)
+  const terminator = tokens.indexOf('--')
+  const optionTokens = terminator === -1 ? tokens : tokens.slice(0, terminator)
+  for (let index = 0; index < optionTokens.length; index++) {
+    const token = optionTokens[index]
+    for (const flag of spec.flags) {
+      // `--resume=<id>` spellings carry the value inside the flag token itself.
+      if (token.toLowerCase() === flag.toLowerCase() && index + 1 < optionTokens.length) {
+        const value = optionTokens[index + 1]
+        if (spec.id.test(value)) return value
+      }
+      const equals = token.toLowerCase().startsWith(`${flag.toLowerCase()}=`)
+        ? token.slice(flag.length + 1)
+        : null
+      if (equals !== null && spec.id.test(equals)) return equals
+    }
   }
   return null
 }

@@ -171,11 +171,13 @@ void main() {
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
       // Browse on a remote machine uses the in-app folder picker.
-      await tester.ensureVisible(
-        find.byKey(const Key('new-agent-project-browse')),
-      );
-      await tester.tap(find.byKey(const Key('new-agent-project-browse')));
+      final browse = find.byKey(const Key('new-agent-project-browse'));
+      await tester.ensureVisible(browse);
+      await tester.tap(browse);
       await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Select this folder'),
+      );
       await tester.tap(find.widgetWithText(FilledButton, 'Select this folder'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('create-agent-submit')));

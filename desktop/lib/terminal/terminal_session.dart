@@ -804,7 +804,11 @@ class TerminalSession extends ChangeNotifier {
   Terminal _newTerminal({bool bindCallbacks = true}) {
     final result = Terminal(
       maxLines: 10000,
-      platform: TerminalTargetPlatform.macos,
+      platform: Platform.isWindows
+          ? TerminalTargetPlatform.windows
+          : Platform.isLinux
+          ? TerminalTargetPlatform.linux
+          : TerminalTargetPlatform.macos,
       // ⌥⏎ has to become a Meta-prefixed Return before it reaches the pty, or the engine's prompt
       // reads it as the submit it is byte-identical to. See [MetaEnterInputHandler].
       inputHandler: harnessInputHandler,

@@ -627,14 +627,33 @@ function installedPathCandidates(recipe: EngineInstallRecipe): string[] {
   ]
 }
 
+const ENGINE_PROBE_TIMEOUT_MS = 4_000
+// Copilot has at most two distinct probe targets: the shell-resolved name and ~/.local/bin/copilot.
+// Leave enough room for both inner probes to finish so the outer kill cannot strand a probe child.
+const ENGINE_AVAILABILITY_TIMEOUT_MS = ENGINE_PROBE_TIMEOUT_MS * 2 + 1_000
+
+function engineProbeScript(runtimeNode: string, probeArgs: readonly string[] | undefined): string {
+  if (!probeArgs?.length) return 'probe_engine() { return 0; }'
+  const args = probeArgs.map(shellSingleQuote).join(' ')
+  const nodeScript = [
+    `const { spawnSync } = require('node:child_process')`,
+    `const [command, ...args] = process.argv.slice(1)`,
+    `const result = spawnSync(command, args, { stdio: 'ignore', timeout: ${ENGINE_PROBE_TIMEOUT_MS}, killSignal: 'SIGKILL' })`,
+    `process.exit(result.status === 0 ? 0 : 1)`,
+  ].join('; ')
+  return `probe_engine() { ${shellSingleQuote(runtimeNode)} -e ${shellSingleQuote(nodeScript)} "$1" ${args}; }`
+}
+
 /**
  * Make npm recipes work on machines where Harness owns Node instead of installing it system-wide.
  *
  * The verified Node archive provisioned by `harness start` includes npm, but the daemon deliberately
  * does not mutate the user's PATH. A tmux login shell can therefore have neither `node` nor `npm`
- * even though the runtime executing Harness has both. Prefer any npm the user already configured;
- * otherwise prepend the managed runtime's bin directory for this pane only. This is portable across
- * macOS and Linux and avoids an interactive/root package-manager install in an agent launch.
+ * even though the runtime executing Harness has both. npm is only usable together with node: WSL can
+ * inherit Windows' `npm` shim through interop while having no Linux `node`, and that shim then fails with
+ * `exec: node: not found`. Prefer a complete user-configured pair; otherwise prepend the managed
+ * runtime's bin directory for this pane only. This is portable across macOS and Linux and avoids an
+ * interactive/root package-manager install in an agent launch.
  */
 function npmRuntimePrelude(recipe: EngineInstallRecipe, runtimeNode: string, required: boolean): string {
   if (!recipe.executable.npmGlobal) return ''
@@ -642,22 +661,22 @@ function npmRuntimePrelude(recipe: EngineInstallRecipe, runtimeNode: string, req
     .map(shellSingleQuote)
     .join(' ')
   return [
-    'if ! command -v npm >/dev/null 2>&1; then',
+    'if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then',
     `  for harness_node_bin in ${bins}; do`,
     '    if [ -x "$harness_node_bin/node" ] && [ -x "$harness_node_bin/npm" ]; then',
     '      PATH="$harness_node_bin${PATH:+:$PATH}"',
     '      export PATH',
     '      hash -r 2>/dev/null || true',
     ...(required ? [
-      `      printf '%s\\n' 'harness: npm is missing from PATH — enabling Harness managed Node.js/npm'`,
+      `      printf '%s\\n' 'harness: a complete Node.js/npm pair is missing from PATH — enabling Harness managed Node.js/npm'`,
     ] : []),
     '      break',
     '    fi',
     '  done',
     'fi',
     ...(required ? [
-      'if ! command -v npm >/dev/null 2>&1; then',
-      `  printf '%s\\n' 'harness: npm is unavailable and the managed Node.js/npm runtime could not be used.'`,
+      'if ! command -v npm >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then',
+      `  printf '%s\\n' 'harness: a complete Node.js/npm pair is unavailable and the managed runtime could not be used.'`,
       '  exit 1',
       'fi',
     ] : []),
@@ -726,9 +745,15 @@ function installIfMissingThenExecScript(recipe: EngineInstallRecipe, runtimeNode
     '  candidate="$1"',
     '  shift',
     '  if ! resolve_engine "$candidate"; then return 1; fi',
+    '  if ! probe_engine "$resolved"; then return 1; fi',
     '  shift',
     '  harness_engine "$resolved" "$@"',
     '}',
+    engineProbeScript(runtimeNode, recipe.executable.probeArgs),
+    // An already-installed npm engine normally has `#!/usr/bin/env node`. Repair PATH before the first
+    // exec too, or a Windows npm shim / missing Linux node can make that engine fail before installation
+    // is even considered. Optional here: a recipe may resolve to a native executable that needs neither.
+    npmRuntimePrelude(recipe, runtimeNode, false),
     'try_engine "$1" "$@" || true',
     tryCandidates,
     npmRuntimePrelude(recipe, runtimeNode, true),
@@ -747,18 +772,22 @@ function installIfMissingThenExecScript(recipe: EngineInstallRecipe, runtimeNode
   ].filter(Boolean).join('\n')
 }
 
-function availabilityScript(recipe: EngineInstallRecipe | undefined): string {
+function availabilityScript(recipe: EngineInstallRecipe | undefined, runtimeNode: string): string {
   const names = recipe?.executable.names.map(shellSingleQuote).join(' ') ?? ''
   const paths = recipe ? installedPathCandidates(recipe).map(shellSingleQuote).join(' ') : ''
   const candidates = [names, paths].filter(Boolean).join(' ')
   return [
     ...(recipe ? [npmRuntimePrelude(recipe, managedNodePath(), false)] : []),
+    engineProbeScript(runtimeNode, recipe?.executable.probeArgs),
+    'previous_resolved=""',
     `for candidate in "$@" ${candidates}; do`,
     '  case "$candidate" in',
     '    */*) resolved="$candidate" ;;',
     '    *) resolved="$(command -v "$candidate" 2>/dev/null)" || true ;;',
     '  esac',
-    '  if [ -n "$resolved" ] && [ -f "$resolved" ] && [ -x "$resolved" ]; then exit 0; fi',
+    '  if [ -z "$resolved" ] || [ "$resolved" = "$previous_resolved" ]; then continue; fi',
+    '  previous_resolved="$resolved"',
+    '  if [ -f "$resolved" ] && [ -x "$resolved" ] && probe_engine "$resolved"; then exit 0; fi',
     'done',
     ...(recipe?.executable.npmGlobal ? [
       'npm_prefix="$(npm prefix -g 2>/dev/null)" || true',
@@ -783,14 +812,33 @@ export async function commandAvailableInInteractiveShell(
 ): Promise<boolean> {
   const interactive = interactiveEngineShell(shell)
   if (!interactive) {
-    return binaryOnPath(command)
-      || (recipe ? installedPathCandidates(recipe).some((candidate) => binaryOnPath(candidate)) : false)
+    const candidates = [command, ...(recipe ? installedPathCandidates(recipe) : [])]
+      .filter((candidate) => binaryOnPath(candidate))
+    if (!recipe?.executable.probeArgs?.length) return candidates.length > 0
+    for (const candidate of candidates) {
+      if (await executablePassesProbe(candidate, recipe.executable.probeArgs)) return true
+    }
+    return false
   }
   return await new Promise((resolve) => {
     execFile(
       interactive.path,
-      [...interactive.args, availabilityScript(recipe), 'harness-engine-probe', command],
-      { timeout: 5_000 },
+      [...interactive.args, availabilityScript(recipe, managedNodePath()), 'harness-engine-probe', command],
+      {
+        timeout: recipe?.executable.probeArgs?.length ? ENGINE_AVAILABILITY_TIMEOUT_MS : 5_000,
+        ...(recipe?.executable.probeArgs?.length ? { killSignal: 'SIGKILL' as const } : {}),
+      },
+      (error) => resolve(!error),
+    )
+  })
+}
+
+async function executablePassesProbe(command: string, args: readonly string[]): Promise<boolean> {
+  return await new Promise((resolve) => {
+    execFile(
+      command,
+      [...args],
+      { timeout: ENGINE_PROBE_TIMEOUT_MS, killSignal: 'SIGKILL' },
       (error) => resolve(!error),
     )
   })

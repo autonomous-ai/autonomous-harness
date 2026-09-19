@@ -292,19 +292,20 @@ void main() {
         output(0, utf8.encode(r'prompt> '), keyframe: true, cols: 80, rows: 24),
       );
 
-      // Leading edge: the first keystroke after a pause is not held for the batching window.
+      // Leading edge: the first keystroke after a pause is not held for the
+      // batching window. The burst below is issued in ONE event-loop turn:
+      // 'd' lands while the 4ms coalesce window from the leading flush is
+      // still open, so it arms the trailing timer, and 'ef' joins it. No
+      // awaited sleep can sit between them — Windows' timer resolution can
+      // round even a 1ms wait past the whole window, which would honestly
+      // make 'd' a second leading edge and split the batch. Human typing
+      // looks like this block, not like a sleep between keys.
       session.terminal.onOutput?.call('abc');
-      await Future<void>.delayed(const Duration(milliseconds: 1));
-      expect(binarySent, hasLength(1));
-      expect(utf8.decode(binarySent.single.bytes), 'abc');
-
-      // Anything arriving inside the window is batched behind the trailing timer instead.
       session.terminal.onOutput?.call('d');
       session.terminal.onOutput?.call('ef');
-      expect(binarySent, hasLength(1));
-      await Future<void>.delayed(const Duration(milliseconds: 12));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       session.terminal.onOutput?.call('\r');
-      await Future<void>.delayed(const Duration(milliseconds: 12));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
 
       final inputs = binarySent;
       expect(inputs, hasLength(3));
@@ -319,7 +320,7 @@ void main() {
 
       final paste = '\x1b[200~${'x' * 20000}\x1b[201~';
       session.terminal.onOutput?.call(paste);
-      await Future<void>.delayed(const Duration(milliseconds: 12));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       final pasteFrames = binarySent.skip(3).toList();
       expect(pasteFrames, hasLength(3));
       final pasteBytes = <int>[for (final frame in pasteFrames) ...frame.bytes];
@@ -331,7 +332,7 @@ void main() {
 
       session.transportLost();
       session.terminal.onOutput?.call('must-not-send');
-      await Future<void>.delayed(const Duration(milliseconds: 8));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(binarySent, hasLength(6));
       expect(session.status, TerminalSessionStatus.error);
     },

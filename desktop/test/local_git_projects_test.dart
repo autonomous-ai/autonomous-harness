@@ -5,6 +5,12 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/local_git_projects.dart';
 
+/// Compares paths the way the host spells them: the library joins with
+/// `p.join` (host separators) while these fixtures spell forward slashes,
+/// and on Windows the two differ for the same file.
+bool _samePath(String a, String b) =>
+    a.replaceAll(r'\', '/') == b.replaceAll(r'\', '/');
+
 Future<void> _metadata(
   String path,
   String branch, {
@@ -20,10 +26,15 @@ Future<void> _metadata(
 class _Watches {
   final streams = <String, List<StreamController<FileSystemEvent>>>{};
 
+  /// The watcher registers directories with `p.normalize`, whose separator
+  /// follows the host; key the fake the same way so lookups match on Windows
+  /// (where the fixtures' forward slashes and the platform's backslashes mix).
+  static String _key(String path) => path.replaceAll(r'\', '/');
+
   Stream<FileSystemEvent> watch(String path, int events, bool recursive) {
     expect(recursive, isFalse);
     final controller = StreamController<FileSystemEvent>();
-    (streams[path] ??= []).add(controller);
+    (streams[_key(path)] ??= []).add(controller);
     return controller.stream;
   }
 
@@ -32,10 +43,13 @@ class _Watches {
   }
 
   void emit(String directory, FileSystemEvent event) {
-    for (final stream in streams[directory] ?? []) {
+    for (final stream in streams[_key(directory)] ?? []) {
       if (stream.hasListener) stream.add(event);
     }
   }
+
+  List<StreamController<FileSystemEvent>>? at(String path) =>
+      streams[_key(path)];
 
   Future<void> dispose() async {
     for (final stream in streams.values.expand((streams) => streams)) {
@@ -109,7 +123,7 @@ void main() {
         watches.change(root, pointer.path);
         await changed.timeout(const Duration(seconds: 3));
         expect(reader.cached(root)!.remote, 'github.com/team/new-project');
-        expect(watches.streams[oldMetadata]!.single.hasListener, isFalse);
+        expect(watches.at(oldMetadata)!.single.hasListener, isFalse);
         final next = changes.stream.firstWhere(
           (_) => reader.cached(root)?.branch == 'next',
         );
@@ -168,7 +182,7 @@ void main() {
             (_) => reader.cached(root)?.branch == 'after',
           );
           await File('$metadata/HEAD').writeAsString('ref: refs/heads/after\n');
-          final stream = watches.streams[metadata]!.single;
+          final stream = watches.at(metadata)!.single;
           if (failure == 'done') {
             await stream.close();
           } else {
@@ -176,11 +190,11 @@ void main() {
           }
           await changed.timeout(const Duration(seconds: 3));
           expect(reader.cached(root)!.branch, 'after');
-          expect(watches.streams[metadata], hasLength(1));
+          expect(watches.at(metadata), hasLength(1));
           await reader.read(root);
           now = now.add(const Duration(minutes: 1));
           await reader.read(root);
-          expect(watches.streams[metadata], hasLength(2));
+          expect(watches.at(metadata), hasLength(2));
           final recovered = changes.stream.firstWhere(
             (_) => reader.cached(root)?.branch == 'recovered',
           );
@@ -300,9 +314,9 @@ void main() {
       await _metadata(metadata, 'replacement');
       watches.emit(root, FileSystemMoveEvent(metadata, true, moved.path));
       await changed.timeout(const Duration(seconds: 3));
-      expect(watches.streams[metadata], hasLength(2));
-      expect(watches.streams[metadata]!.first.hasListener, isFalse);
-      expect(watches.streams[metadata]!.last.hasListener, isTrue);
+      expect(watches.at(metadata), hasLength(2));
+      expect(watches.at(metadata)!.first.hasListener, isFalse);
+      expect(watches.at(metadata)!.last.hasListener, isTrue);
       final next = changes.stream.firstWhere(
         (_) => reader.cached(root)?.branch == 'next',
       );
@@ -369,7 +383,7 @@ void main() {
           },
           fsWatch: watches.watch,
           createFile: (path) {
-            if (path == head.path) {
+            if (_samePath(path, head.path)) {
               headReads++;
               if (hold) {
                 hold = false;
@@ -419,7 +433,9 @@ void main() {
     });
     await Future.wait([reader.read('$root/repo/src'), reader.read(tree.path)]);
     final project = reader.cached('$root/repo/src')!;
-    expect(project.root, '$root/repo');
+    // The library publishes the root with host separators (p.join); the
+    // fixture spells POSIX, so compare in one spelling.
+    expect(_samePath(project.root!, '$root/repo'), isTrue);
     expect(project.branch, 'main');
     expect(project.remote, 'github.com/team/repo');
     expect(reader.cached(tree.path)!.remote, project.remote);

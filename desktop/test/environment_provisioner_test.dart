@@ -19,6 +19,43 @@ void main() {
     if (await scratch.exists()) await scratch.delete(recursive: true);
   });
 
+  /**
+   * Review cycle-6 P1: with no usable distribution, the setup steps must not offer a
+   * default-targeting install command — an unnamed `wsl -- bash -lc …` runs in the implicit
+   * default, which is exactly the excluded docker-desktop when that is the only distro. The
+   * no-distro steps must name Ubuntu, the distribution they tell the person to install.
+   */
+  test('windowsSetupSteps names a real distro when no usable distribution exists', () {
+    for (final dockerOnly in [
+      <String>[],
+      <String>['docker-desktop'],
+      <String>['docker-desktop', 'docker-desktop-data'],
+    ]) {
+      for (final wslAvailable in [true, false]) {
+        final steps = EnvironmentProvisioner.windowsSetupSteps(
+          wslAvailable: wslAvailable,
+          usable: const [],
+          dockerOnly: dockerOnly,
+        );
+        for (final step in steps) {
+          expect(
+            step.command,
+            isNot(RegExp(r'(^|\s)wsl\s+--')),
+            reason: 'wslAvailable=$wslAvailable dockerOnly=$dockerOnly: '
+                '"${step.title}" offered a default-targeting command',
+          );
+        }
+      }
+    }
+    // With a usable distribution the step names it.
+    final named = EnvironmentProvisioner.windowsSetupSteps(
+      wslAvailable: true,
+      usable: const ['Ubuntu-24.04'],
+      dockerOnly: const [],
+    );
+    expect(named.single.command, contains('-d Ubuntu-24.04'));
+  });
+
   Future<void> createManagedHarness() async {
     await managedNode.parent.create(recursive: true);
     await managedNode.writeAsString('node');
@@ -354,10 +391,14 @@ void main() {
     expect(script, contains('if [ "\$(id -u)" -eq 0 ]'));
     expect(script, contains('terminal.log'));
     expect(script, contains('tmux -V'));
-    expect(
-      (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
-      0,
-    );
+    // `bash -n` needs a POSIX host; the generated script is Linux shell, and
+    // this check can only run where that shell exists.
+    if (!Platform.isWindows) {
+      expect(
+        (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
+        0,
+      );
+    }
   });
 
   test(
@@ -403,10 +444,14 @@ void main() {
         lessThan(script.indexOf('timedatectl set-ntp true')),
       );
       expect(script, isNot(contains('apt_as_root update || true')));
-      expect(
-        (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
-        0,
-      );
+      // `bash -n` needs a POSIX host; the generated script is Linux shell, and
+      // this check can only run where that shell exists.
+      if (!Platform.isWindows) {
+        expect(
+          (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
+          0,
+        );
+      }
     },
   );
 
@@ -781,10 +826,14 @@ void main() {
         contains('This window will close automatically in 5 seconds.'),
       );
       expect(script, contains('sleep 5'));
-      expect(
-        (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
-        0,
-      );
+      // `bash -n` needs a POSIX host; the generated script is Linux shell, and
+      // this check can only run where that shell exists.
+      if (!Platform.isWindows) {
+        expect(
+          (await Process.run('/bin/bash', ['-n', terminalScript!])).exitCode,
+          0,
+        );
+      }
     },
   );
 

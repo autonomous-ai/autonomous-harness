@@ -452,13 +452,18 @@ class _NewAgentDialogState extends State<_NewAgentDialog> {
   bool _picking = false;
   String? _error;
 
-  /// Whether the machine this agent will run on is the computer the app is
-  /// running on, which is what decides where the folder is picked.
+  /// Whether the folder for this agent is picked by the GUI's own panel.
+  ///
+  /// This differs from "this machine is this computer". On Windows the CLI may
+  /// run inside WSL2, which the app reaches over loopback but whose filesystem is
+  /// not the GUI's: a native panel would browse THIS PC and hand back a `C:\…`
+  /// path no Linux process can open. The question that decides the picker is
+  /// `machineSharesGuiFilesystem`.
   ///
   /// Read per build rather than cached: `localOnly`/`localEndpoint` are settled
   /// by `_refreshMachines`, which can land while this dialog is open.
   bool get _machineIsThisComputer =>
-      widget.notifier.stateOf(_machineId)?.isLocalMachine ?? false;
+      widget.notifier.machineSharesGuiFilesystem(_machineId);
 
   /// Create waits while the Codex profile list is still loading on a machine
   /// that can launch into one, so a click cannot land before the choice does.

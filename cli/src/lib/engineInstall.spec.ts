@@ -18,7 +18,7 @@ const OFFICIAL_COMMANDS = {
   kilo: 'npm install -g @kilocode/cli',
   grok: 'curl -fsSL https://x.ai/cli/install.sh | bash',
   agy: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-  copilot: 'npm install -g @github/copilot',
+  copilot: 'curl -fsSL https://gh.io/copilot-install | PREFIX="$HOME/.local" PATH="$HOME/.local/bin:$PATH" bash',
 } as const
 
 describe('ENGINE_INSTALL', () => {
@@ -37,6 +37,12 @@ describe('ENGINE_INSTALL', () => {
     expect(ENGINE_INSTALL.cursor.executable.names[0]).toBe('cursor-agent')
     expect(ENGINE_INSTALL.opencode.command).not.toContain('opencode2')
     expect(ENGINE_INSTALL.opencode.command).not.toContain('@beta')
+  })
+
+  it('uses Copilot’s standalone Linux installer and verifies the binary before launch', () => {
+    expect(ENGINE_INSTALL.copilot.executable.npmGlobal).toBeUndefined()
+    expect(ENGINE_INSTALL.copilot.executable.homeRelativePaths).toContain('.local/bin/copilot')
+    expect(ENGINE_INSTALL.copilot.executable.probeArgs).toEqual(['--version'])
   })
 
   it('generates valid POSIX pane scripts for every recipe', () => {

@@ -26,7 +26,9 @@ void main() {
     const path = '/tmp/My art/ảnh (final) #1.png';
     expect(await opener.open(path, isLocalMachine: true), isNull);
     expect(checked, [path]);
-    expect(launched.single.toFilePath(), path);
+    // The opener runs POSIX-mode here (windows: false); reading the URI back
+    // must use the same semantics, not the host's.
+    expect(launched.single.toFilePath(windows: false), path);
   });
   test('expands home and decodes a file URI once', () async {
     await opener.open('~/Pictures/one.png', isLocalMachine: true);
@@ -80,7 +82,7 @@ void main() {
       );
       expect(requested, target);
       expect(checked.last, '/cache/completed.png');
-      expect(launched.last.toFilePath(), '/cache/completed.png');
+      expect(launched.last.toFilePath(windows: false), '/cache/completed.png');
     }
   });
   test('cancelled and failed downloads never launch a viewer', () async {

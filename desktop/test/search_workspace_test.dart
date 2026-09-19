@@ -68,6 +68,8 @@ void main() {
         );
         await key(tester, LogicalKeyboardKey.escape);
         expect(field, findsNothing);
+        // The picker with session previews is the Open Agent chooser; New Agent
+        // opens its dialog directly and has no inline results to preview.
         await key(tester, LogicalKeyboardKey.keyO, cmd: true);
         await tester.enterText(field, 'Agent 0');
         await tester.pump();

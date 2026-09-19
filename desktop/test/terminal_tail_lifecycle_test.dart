@@ -257,6 +257,8 @@ void main() {
       view.widget.scrollController!.jumpTo(100);
       await tester.pump();
       await chord(tester, LogicalKeyboardKey.keyT);
+      // The pane-choosing picker is the Open Agent chooser; New Agent opens
+      // its dialog directly without a session list.
       await chord(tester, LogicalKeyboardKey.keyO);
       await tester.enterText(
         find.byKey(const ValueKey('swarm-search-input')),

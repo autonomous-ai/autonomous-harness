@@ -18,6 +18,8 @@ export interface EngineInstallExecutable {
   readonly absolutePaths?: readonly string[]
   /** Resolve each name below `npm prefix -g` when the install method is npm. */
   readonly npmGlobal?: boolean
+  /** Harmless argv used to reject an executable that resolves but cannot run on this host. */
+  readonly probeArgs?: readonly string[]
 }
 
 export interface EngineInstallRecipe {
@@ -112,9 +114,13 @@ export const ENGINE_INSTALL: Readonly<Record<ProcessEngine, EngineInstallRecipe>
     executable: { names: ['agy'], homeRelativePaths: ['.local/bin/agy'] },
   },
   copilot: {
-    command: 'npm install -g @github/copilot',
-    source: 'https://docs.github.com/en/copilot/get-started/cli-quickstart',
-    executable: { names: ['copilot'], npmGlobal: true, homeRelativePaths: ['.local/bin/copilot'] },
+    command: 'curl -fsSL https://gh.io/copilot-install | PREFIX="$HOME/.local" PATH="$HOME/.local/bin:$PATH" bash',
+    source: 'https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli',
+    executable: {
+      names: ['copilot'],
+      homeRelativePaths: ['.local/bin/copilot'],
+      probeArgs: ['--version'],
+    },
   },
 }
 

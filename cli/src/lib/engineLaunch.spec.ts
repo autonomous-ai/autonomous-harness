@@ -572,6 +572,76 @@ describe('commandAvailableInInteractiveShell', () => {
       commandAvailableInInteractiveShell('cursor-agent', bashProbeShell(), recipe),
     ).resolves.toBe(true)
   })
+
+  it('rejects a resolved executable that fails its bounded health probe', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-engine-unhealthy-'))
+    dirs.push(binDir)
+    const unhealthy = join(binDir, 'copilot')
+    writeFileSync(unhealthy, '#!/bin/sh\nexit 1\n')
+    chmodSync(unhealthy, 0o700)
+    process.env.HARNESS_ENGINE_TEST_PATH = binDir
+    const recipe: EngineInstallRecipe = {
+      command: 'false',
+      source: 'test fixture',
+      executable: { names: ['copilot'], probeArgs: ['--version'] },
+    }
+
+    await expect(commandAvailableInInteractiveShell('copilot', bashProbeShell(), recipe))
+      .resolves.toBe(false)
+  })
+
+  it('accepts a resolved executable that passes its health probe', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-engine-healthy-'))
+    dirs.push(binDir)
+    executable(binDir, 'copilot')
+    process.env.HARNESS_ENGINE_TEST_PATH = binDir
+    const recipe: EngineInstallRecipe = {
+      command: 'false',
+      source: 'test fixture',
+      executable: { names: ['copilot'], probeArgs: ['--version'] },
+    }
+
+    await expect(commandAvailableInInteractiveShell('copilot', bashProbeShell(), recipe))
+      .resolves.toBe(true)
+  })
+
+  it('probes the same resolved command and recipe name only once', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-engine-dedup-'))
+    dirs.push(binDir)
+    const attempts = join(binDir, 'attempts')
+    const unhealthy = join(binDir, 'copilot')
+    writeFileSync(unhealthy, `#!/bin/sh\n/usr/bin/printf x >> ${JSON.stringify(attempts)}\nexit 1\n`)
+    chmodSync(unhealthy, 0o700)
+    process.env.HARNESS_ENGINE_TEST_PATH = binDir
+    const recipe: EngineInstallRecipe = {
+      command: 'false',
+      source: 'test fixture',
+      executable: { names: ['copilot'], probeArgs: ['--version'] },
+    }
+
+    await expect(commandAvailableInInteractiveShell('copilot', bashProbeShell(), recipe))
+      .resolves.toBe(false)
+    expect(readFileSync(attempts, 'utf8')).toBe('x')
+  })
+
+  it('bounds a health probe that never returns', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-engine-hung-'))
+    dirs.push(binDir)
+    const hung = join(binDir, 'copilot')
+    writeFileSync(hung, '#!/bin/sh\ntrap \'\' TERM\n/bin/sleep 30\n')
+    chmodSync(hung, 0o700)
+    process.env.HARNESS_ENGINE_TEST_PATH = binDir
+    const recipe: EngineInstallRecipe = {
+      command: 'false',
+      source: 'test fixture',
+      executable: { names: ['copilot'], probeArgs: ['--version'] },
+    }
+
+    const started = Date.now()
+    await expect(commandAvailableInInteractiveShell('copilot', bashProbeShell(), recipe))
+      .resolves.toBe(false)
+    expect(Date.now() - started).toBeLessThan(8_000)
+  }, 10_000)
 })
 
 describe('buildEngineLaunchArgv — the grid the pane finds', () => {
@@ -697,6 +767,15 @@ describe('buildEngineLaunchArgv with installIfMissing', () => {
   ): EngineInstallRecipe => ({ command, source: 'test fixture', executable })
   const script = (install: EngineInstallRecipe, runtimeNode?: string): string =>
     buildEngineLaunchArgv('opencode', { installIfMissing: install }, '/bin/zsh', runtimeNode)[2]
+  const scriptWithoutProcessRuntime = (install: EngineInstallRecipe): string => {
+    const original = Object.getOwnPropertyDescriptor(process, 'execPath')
+    try {
+      Object.defineProperty(process, 'execPath', { ...original, value: '/missing/process/node' })
+      return script(install, '/missing/runtime/node')
+    } finally {
+      if (original) Object.defineProperty(process, 'execPath', original)
+    }
+  }
 
   it('execs an installed engine without running the installer', async () => {
     await expect(runPaneScript(script(recipe('false')))).resolves.toMatchObject({ code: 0, ranEngine: true })
@@ -730,11 +809,18 @@ describe('buildEngineLaunchArgv with installIfMissing', () => {
     expect(result.stdout).toContain('install completed, but its executable could not be found')
   })
 
-  it('enables npm from the managed Node runtime when the pane PATH has no npm', async () => {
+  it.each([
+    ['no npm', false],
+    ['a Windows npm shim without Linux node', true],
+  ])('enables the managed Node.js/npm pair when PATH has %s', async (_description, windowsNpm) => {
     const runtimeBin = mkdtempSync(join(tmpdir(), 'harness-managed-node-bin-'))
-    const emptyPath = mkdtempSync(join(tmpdir(), 'harness-empty-path-'))
-    dirs.push(runtimeBin, emptyPath)
+    const interopBin = mkdtempSync(join(tmpdir(), 'harness-windows-npm-bin-'))
+    dirs.push(runtimeBin, interopBin)
     const runtimeNode = executable(runtimeBin, 'node')
+    if (windowsNpm) {
+      writeFileSync(join(interopBin, 'npm'), '#!/bin/sh\nprintf "WINDOWS-NPM-MUST-NOT-RUN\\n"\nexit 91\n')
+      chmodSync(join(interopBin, 'npm'), 0o700)
+    }
     const engineSource = join(runtimeBin, 'engine-source')
     writeFileSync(engineSource, '#!/bin/sh\n/usr/bin/printf "HARNESS-TEST-ENGINE-RAN\\n"\n')
     chmodSync(engineSource, 0o700)
@@ -754,11 +840,95 @@ if [ "$1" = prefix ]; then exit 0; fi
         npmGlobal: true,
       }), runtimeNode),
       'harness-no-such-engine',
-      { PATH: emptyPath },
+      { PATH: interopBin },
     )
 
     expect(result).toMatchObject({ code: 0, ranEngine: true })
-    expect(result.stdout).toContain('enabling Harness managed Node.js/npm')
+    expect(result.stdout).not.toContain('WINDOWS-NPM-MUST-NOT-RUN')
+  })
+
+  it('installs and launches a healthy vendor candidate when the PATH executable fails its probe', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-probed-engine-path-'))
+    const installDir = mkdtempSync(join(tmpdir(), 'harness-probed-engine-install-'))
+    dirs.push(binDir, installDir)
+    const unhealthy = join(binDir, 'copilot')
+    writeFileSync(unhealthy, '#!/bin/sh\nexit 1\n')
+    chmodSync(unhealthy, 0o700)
+    const source = join(installDir, 'source')
+    const installed = join(installDir, 'copilot')
+    writeFileSync(source, '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 0; fi\n/usr/bin/printf "HARNESS-TEST-ENGINE-RAN\\n"\n')
+    chmodSync(source, 0o700)
+    const install = `/bin/cp ${JSON.stringify(source)} ${JSON.stringify(installed)} && /bin/chmod 700 ${JSON.stringify(installed)}`
+    const result = await runPaneScript(
+      script(recipe(install, {
+        names: ['copilot'],
+        absolutePaths: [installed],
+        probeArgs: ['--version'],
+      }), process.execPath),
+      'copilot',
+      { ...process.env, PATH: binDir },
+    )
+
+    expect(result).toMatchObject({ code: 0, ranEngine: true })
+  })
+
+  it('does not install over an existing executable that passes its probe', async () => {
+    const binDir = mkdtempSync(join(tmpdir(), 'harness-probed-engine-healthy-'))
+    dirs.push(binDir)
+    const healthy = join(binDir, 'copilot')
+    const installMarker = join(binDir, 'installer-ran')
+    writeFileSync(healthy, '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 0; fi\n/usr/bin/printf "HARNESS-TEST-ENGINE-RAN\\n"\n')
+    chmodSync(healthy, 0o700)
+    const result = await runPaneScript(
+      script(recipe(`/usr/bin/touch ${JSON.stringify(installMarker)}`, {
+        names: ['copilot'],
+        probeArgs: ['--version'],
+      }), process.execPath),
+      'copilot',
+      { ...process.env, PATH: binDir },
+    )
+
+    expect(result).toMatchObject({ code: 0, ranEngine: true })
+    expect(existsSync(installMarker)).toBe(false)
+  })
+
+  it('bootstraps node before first exec of an already-installed node-shebang engine', async () => {
+    const runtimeBin = mkdtempSync(join(tmpdir(), 'harness-managed-node-shebang-'))
+    const interopBin = mkdtempSync(join(tmpdir(), 'harness-node-shebang-path-'))
+    dirs.push(runtimeBin, interopBin)
+    const runtimeNode = join(runtimeBin, 'node')
+    writeFileSync(runtimeNode, '#!/bin/sh\nscript="$1"\nshift\nexec /bin/sh "$script" "$@"\n')
+    chmodSync(runtimeNode, 0o700)
+    executable(runtimeBin, 'npm')
+    writeFileSync(join(interopBin, 'npm'), '#!/bin/sh\nexit 91\n')
+    chmodSync(join(interopBin, 'npm'), 0o700)
+    const engine = join(interopBin, 'harness-node-engine')
+    writeFileSync(engine, '#!/usr/bin/env node\n/usr/bin/printf "HARNESS-TEST-ENGINE-RAN\\n"\n')
+    chmodSync(engine, 0o700)
+
+    const result = await runPaneScript(
+      script(recipe('false', { names: ['harness-node-engine'], npmGlobal: true }), runtimeNode),
+      'harness-node-engine',
+      { PATH: interopBin },
+    )
+
+    expect(result).toMatchObject({ code: 0, ranEngine: true })
+  })
+
+  it('still execs an installed native engine when no Node.js/npm runtime is available', async () => {
+    const nativeBin = mkdtempSync(join(tmpdir(), 'harness-native-engine-'))
+    dirs.push(nativeBin)
+    const nativeEngine = join(nativeBin, 'harness-native-engine')
+    writeFileSync(nativeEngine, '#!/bin/sh\n/usr/bin/printf "HARNESS-TEST-ENGINE-RAN\\n"\n')
+    chmodSync(nativeEngine, 0o700)
+
+    const result = await runPaneScript(
+      scriptWithoutProcessRuntime(recipe('false', { names: ['harness-native-engine'], npmGlobal: true })),
+      'harness-native-engine',
+      { PATH: nativeBin },
+    )
+
+    expect(result).toMatchObject({ code: 0, ranEngine: true })
   })
 
   it('does not add the npm bootstrap to non-npm installers', () => {

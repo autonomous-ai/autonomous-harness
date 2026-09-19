@@ -1,4 +1,4 @@
-.PHONY: release upload-desktop upload-desktop-linux upload-node-runtime upload-tmux-runtime upload-grid-runtime terminal-local-manual terminal-local-e2e terminal-prod-e2e
+.PHONY: release upload-desktop upload-desktop-linux upload-node-runtime upload-tmux-runtime upload-grid-runtime terminal-local-manual terminal-local-e2e terminal-prod-e2e build-windows-release
 
 ## release: tag this commit vX.Y.Z_desktop and push the tag — CI builds macOS + Linux, publishes to
 ## GCS, and cuts the GitHub Release. The version is bumped from max(last git tag, live metadata.json),
@@ -52,3 +52,8 @@ terminal-local-e2e:
 ## terminal-prod-e2e: run the opt-in production terminal test with explicit evidence variables.
 terminal-prod-e2e:
 	bash scripts/test-terminal-prod-e2e.sh
+
+## build-windows-release: Windows 11 x64 only — analyze, test, build the release app, and write the
+## unsigned distributable bundle + sha256 to dist/. No cross-compiling, no signing, no upload.
+build-windows-release:
+	bash scripts/build-windows-release.sh $(ARGS)

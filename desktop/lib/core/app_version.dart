@@ -10,13 +10,14 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// (`1.0.0+1`, deliberately never bumped — see RELEASE.md). The Linux release
 /// script (`scripts/upload-desktop-linux.sh`) instead writes a plain
 /// `version.txt` next to the built executable; this reads that back when it
-/// exists and falls through to [PackageInfo] everywhere else — macOS,
-/// Windows, or a Linux dev build with no packaged `version.txt`.
+/// exists. Windows previews use the same file to retain the prerelease suffix
+/// that cannot be stamped into numeric PE version resources. Other builds
+/// fall through to [PackageInfo].
 Future<String> runningAppVersion({
   String? executablePath,
   Future<String> Function()? packageInfoVersion,
 }) async {
-  if (Platform.isLinux) {
+  if (Platform.isLinux || Platform.isWindows) {
     final exe = File(executablePath ?? Platform.resolvedExecutable);
     final versionFile = File('${exe.parent.path}/version.txt');
     try {

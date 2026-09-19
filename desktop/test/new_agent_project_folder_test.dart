@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,71 +101,119 @@ Future<void> _mount(WidgetTester tester, _App app) async {
 }
 
 void main() {
-  for (final local in [true, false]) {
-    testWidgets('New prepares only on the selected machine (local=$local)', (
-      tester,
-    ) async {
-      final connection = _Connection();
-      final app = _App(connection, local: local);
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox());
-        app.dispose();
-      });
-      await _mount(tester, app);
-      expect(app.prepared, isEmpty);
-      expect(connection.calls, isEmpty);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('new-agent-folder-newProject')),
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('new-agent-folder-newProject')),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        app.prepared,
-        isEmpty,
-        reason: 'Selecting New does not create folders',
-      );
-      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
-      await tester.pump();
-      final (_, payload, _) = connection.calls.single;
-      if (local) {
-        expect(app.prepared, hasLength(1));
-        expect(payload['cwd'], '/local/Harness Projects/project-test');
-        expect(
-          payload.containsKey('projectSource'),
-          isFalse,
-          reason: 'Current local CLIs retain the existing cwd protocol',
-        );
-      } else {
+  for (final (local, wsl) in [(true, false), (false, false), (true, true)]) {
+    testWidgets(
+      'New prepares only on the selected machine (local=$local, wsl=$wsl)',
+      (tester) async {
+        final connection = _Connection();
+        final app = _App(connection, local: local);
+        app.debugSetLocalCliInWsl(wsl);
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          app.dispose();
+        });
+        await _mount(tester, app);
         expect(app.prepared, isEmpty);
-        expect(payload['projectSource'], 'new');
-        expect(
-          payload.containsKey('cwd'),
-          isFalse,
-          reason: 'An older remote CLI must refuse instead of starting in the wrong folder',
+        expect(connection.calls, isEmpty);
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('new-agent-folder-newProject')),
         );
-      }
-      connection.fail(
-        folder: local ? null : '/remote/Harness Projects/project-test',
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
-      await tester.pump();
-      expect(
-        connection.calls.last.$2['cwd'],
-        '${local ? '/local' : '/remote'}/Harness Projects/project-test',
-      );
-      expect(connection.calls.last.$2.containsKey('projectSource'), isFalse);
-      expect(app.prepared.length, local ? 1 : 0);
-      if (local) {
-        expect(app.labels.single, 'Claude',
-            reason: 'the folder is named after who the harness is');
-      }
-      connection.fail();
-      await tester.pumpAndSettle();
-    });
+        await tester.tap(
+          find.byKey(const ValueKey('new-agent-folder-newProject')),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          app.prepared,
+          isEmpty,
+          reason: 'Selecting New does not create folders',
+        );
+        await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
+        await tester.pump();
+        final (_, payload, _) = connection.calls.single;
+        if (local && !wsl) {
+          expect(app.prepared, hasLength(1));
+          expect(payload['cwd'], '/local/Harness Projects/project-test');
+          expect(
+            payload.containsKey('projectSource'),
+            isFalse,
+            reason: 'Current local CLIs retain the existing cwd protocol',
+          );
+        } else {
+          expect(app.prepared, isEmpty);
+          expect(payload['projectSource'], 'new');
+          expect(
+            payload.containsKey('cwd'),
+            isFalse,
+            reason: 'An older remote CLI must refuse instead of starting in the wrong folder',
+          );
+        }
+        connection.fail(
+          folder: local && !wsl
+              ? null
+              : '/remote/Harness Projects/project-test',
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('create-agent-submit')));
+        await tester.pump();
+        expect(
+          connection.calls.last.$2['cwd'],
+          '${local && !wsl ? '/local' : '/remote'}/Harness Projects/project-test',
+        );
+        expect(connection.calls.last.$2.containsKey('projectSource'), isFalse);
+        expect(app.prepared.length, local && !wsl ? 1 : 0);
+        if (local && !wsl) {
+          expect(app.labels.single, 'Claude',
+              reason: 'the folder is named after who the harness is');
+        }
+        connection.fail();
+        await tester.pumpAndSettle();
+      },
+      skip: wsl && !Platform.isWindows,
+    );
   }
+
+  test('Windows cwd conversion preserves creation receipt recovery', () async {
+    final connection = _Connection();
+    final app = _App(connection, local: true);
+    app.debugSetLocalCliInWsl(true);
+    app.debugLocalCliWslDistro = 'Ubuntu';
+    addTearDown(app.dispose);
+    final attempt = AgentCreationAttempt();
+    final first = app.createAgent(
+      'm',
+      engine: 'claude',
+      folder: r'C:\work\project',
+      attempt: attempt,
+    );
+    final (type, payload, reply) = connection.calls.single;
+    expect(type, 'agent_create');
+    expect(payload['cwd'], '/mnt/c/work/project');
+    expect(payload['creationId'], isNotEmpty);
+    reply.completeError(const WsRequestTimeout('agent_create'));
+    expect(await first, contains('Check status'));
+    final retry = app.createAgent(
+      'm',
+      engine: 'claude',
+      folder: r'C:\work\project',
+      attempt: attempt,
+    );
+    expect(connection.calls.last.$1, 'agent_create_status');
+    expect(connection.calls.last.$2, {'creationId': payload['creationId']});
+    connection.fail();
+    await retry;
+    expect(app.prepared, isEmpty);
+  }, skip: !Platform.isWindows);
+
+  test('Windows network path is refused before agent creation', () async {
+    final connection = _Connection();
+    final app = _App(connection, local: true)..debugSetLocalCliInWsl(true);
+    addTearDown(app.dispose);
+    expect(
+      await app.createAgent('m', engine: 'claude', folder: r'\\server\share'),
+      contains('inside WSL2'),
+    );
+    expect(connection.calls, isEmpty);
+  }, skip: !Platform.isWindows);
 
   testWidgets('Git uses its URL dialog and status retries never clone again', (
     tester,

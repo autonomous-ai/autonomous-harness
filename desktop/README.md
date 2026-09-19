@@ -1,20 +1,20 @@
 # Harness Desktop
 
 Harness Desktop is the native Flutter client for browsing Harness machines and
-interacting with their terminal-backed agents. **macOS is the primary supported and tested
-experience.** Linux builds exist, with feature parity still in progress; Windows support is
-planned and its runner is unexercised. Embedded harness viewers currently require macOS.
+interacting with their terminal-backed agents. **macOS is the primary supported
+and tested experience.** Linux builds exist, with feature parity still in progress.
+Windows 11 x64 has an experimental native desktop with a WSL2 CLI backend.
+Embedded harness viewers currently require macOS.
 
 ## Development
 
-Install a compatible Flutter SDK, then run the project from this directory
-(`desktop/` in the monorepo):
+Install a compatible Flutter SDK, then run from `desktop/`:
 
 ```bash
 cd desktop
 flutter pub get
 flutter test
-flutter run -d macos   # or: flutter run -d linux
+flutter run -d macos   # or: flutter run -d linux, or: flutter run -d windows
 ```
 
 Useful validation commands:
@@ -23,8 +23,49 @@ Useful validation commands:
 dart analyze
 flutter build macos --debug
 flutter build macos --release
-flutter build linux --release   # must run on an Ubuntu host — no cross-compiling
+flutter build linux --release     # must run on an Ubuntu host — no cross-compiling
+flutter build windows --release   # must run on a Windows 11 x64 host
 ```
+
+## Windows prototype
+
+Follow [the Windows quick-start](WINDOWS_QUICKSTART.md) for source builds and
+historical community preview downloads. Packaged builds use the CLI version
+shipped beside the desktop; updates are manual.
+
+The desktop interface runs natively on Windows 11 x64. The supported integration target runs the Harness CLI, managed Node runtime, and tmux terminals in a named WSL2 development distribution. The desktop connects to the daemon over loopback; that connection still requires validation on the installed WSL networking configuration.
+
+Windows setup requires a WSL2 distribution with the CLI and tmux. A native Windows launcher answering `version` does not satisfy that requirement: the CLI's terminal backend requires tmux. Docker Desktop's `docker-desktop` and `docker-desktop-data` distributions are excluded from selection, probes, and installation. WSL commands always name their distribution and pass user arguments as separate arguments.
+
+When prerequisites are missing, setup shows the relevant commands. Recheck inspects readiness; installation uses the explicit automatic setup action or the displayed manual command. Installing a development distribution and creating its Linux user remains an attended Windows setup step. For Ubuntu, the Windows PowerShell command is:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Complete any Windows restart and Ubuntu user creation requested by that installer. Recheck in Harness, then follow the setup command shown for that distribution. Windows folders sent to WSL are converted to the conventional `/mnt/<drive>/...` path; installations using custom drive mounts should select an existing folder with the backend browser. WSL UNC paths require the matching identified distribution. Network shares and ambiguous relative paths are refused.
+
+### Build an unsigned Windows bundle
+
+Use Flutter 3.47 or newer, Node.js 22 with npm, the Visual Studio Desktop
+development with C++ workload, and the Windows SDK. Install the CLI's locked
+build dependencies once with `npm ci` from `cli/`. From `desktop/`, in Git Bash:
+
+```bash
+WINDOWS_RELEASE_VERSION=1.0.0-windows.1 bash scripts/build-windows-release.sh
+```
+
+The script runs dependency resolution, analysis, tests, a Windows release build,
+and a CLI typecheck/bundle build. It packages the entire `Release/` directory,
+matching CLI, app-local MSVC runtime files, and license notices under `dist/`,
+then checks the portable SHA-256 file and archive contents. Keep the executable,
+DLLs, `data/`, and `harness-cli/` directories together when extracting it.
+
+For investigating a known failing baseline, `ALLOW_TEST_FAILURES=1` permits packaging after test failures and returns a nonzero result. Such a bundle is a prototype, not a passed test run. Analysis and native import-inspection failures remain visible. The script does not sign, upload, or publish the bundle.
+
+### Current limits
+
+The migration's checks and remaining work are recorded in [WINDOWS_PORT.md](WINDOWS_PORT.md). A release build alone does not establish a completed WSL setup, signed-in agent session, terminal reconnect, or compatibility on macOS and Linux. Windows self-update is not implemented. Most application shortcuts still use the Meta/Windows key, which conflicts with some Windows system shortcuts; Ctrl+Tab and Ctrl+Shift+Tab remain available for switching panes.
 
 The terminal core is vendored at `third_party/xterm`. Do not replace it with an
 upstream package upgrade without preserving the local rendering and IME fixes.

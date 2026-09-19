@@ -175,7 +175,7 @@ void main() {
               : LogicalKeyboardKey.controlLeft,
           platform: platform == TargetPlatform.macOS ? 'macos' : 'linux',
         );
-        expect(launched.single.toFilePath(), '/tmp/preview.png');
+        expect(launched.single.toFilePath(windows: false), '/tmp/preview.png');
         expect(outbound, isEmpty);
       },
       platform: platform,
@@ -249,7 +249,10 @@ void main() {
         expect(outbound, isEmpty);
         download.result.complete('/cache/downloaded.png');
         await tester.pump();
-        expect(launched.single.toFilePath(), '/cache/downloaded.png');
+        expect(
+          launched.single.toFilePath(windows: false),
+          '/cache/downloaded.png',
+        );
         expect(find.textContaining('Downloading'), findsNothing);
       },
       platform: platform,
