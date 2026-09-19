@@ -27,8 +27,10 @@ if (typeof piece.swing !== 'number' || piece.swing < 0 || piece.swing > 0.9) bad
 if (!Array.isArray(piece.scale) || !piece.scale.length || piece.scale.some((n) => !VALID_SCALE.includes(n))) bad('error  scale must be a non-empty array of C4..B5 notes')
 if (!Array.isArray(piece.bassScale) || !piece.bassScale.length || piece.bassScale.some((n) => !VALID_BASS.includes(n))) bad('error  bassScale must be a non-empty array of C2..C3 notes')
 if (!Array.isArray(piece.chords) || !piece.chords.length) bad('error  chords must be a non-empty array')
+else if (piece.chords.some((c) => !/^[A-G](#|b)?/.test(String(c)))) bad('error  every chord must start with a note name A..G, like Cmaj7, Am7 or G7. The first chord is the home chord.')
+if (piece.memory !== undefined && (!Number.isInteger(piece.memory) || piece.memory < 0 || piece.memory > 8)) bad(`error  memory must be an integer 0..8, the bars of its own music Jev can read (got ${piece.memory})`)
 if (!Array.isArray(piece.moods) || !piece.moods.length) bad('error  moods must be a non-empty array')
-if (!Number.isInteger(piece.leadNotes) || piece.leadNotes < 2 || piece.leadNotes > 32) bad('error  leadNotes must be an integer 2..32')
+if (!Number.isInteger(piece.leadNotes) || piece.leadNotes < 2 || piece.leadNotes > 16) bad('error  leadNotes must be an integer 2..16 (Jev picks every one of them, one question each)')
 if (piece.leadNotes > piece.scale.length * 3) bad('warn  leadNotes long relative to scale; phrase may repeat')
 
 console.log(fail ? 'fail  invalid piece.json' : 'ok   piece.json is valid')

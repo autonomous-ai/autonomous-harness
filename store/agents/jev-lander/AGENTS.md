@@ -18,18 +18,22 @@ immediately.
   "instrument": "LANDER",
   "tickMs": 300,
   "gravity": 1.2,
-  "fuel": 260,
+  "fuel": 60,
   "altitude": 80,
   "safeSpeed": 2.0,
   "style": "The booster is falling under gravity. Bring it down to the pad gently: watch altitude and vertical speed, burn early and hard enough to keep descent in check, and ease off so you touch down soft. A fast touchdown is a crash — go for the gentle landing."
 }
 ```
 
-- **`gravity`** — the downward pull per tick (acceleration). Low (`1.0`) is an easy, forgiving
-  descent that Jev brings down soft; high (`3.0+`) makes it fall fast, burn hard, and start crashing.
-  This is the difficulty dial.
-- **`fuel`** — the paper fuel budget. Each tick thrust (COAST/HOVER/BURN) spends a little fuel. Less
-  fuel means Jev has less room to recover from a bad burn.
+- **`gravity`** — the downward pull per tick. This is the difficulty dial. Full BURN pushes 2.6, so
+  the booster can brake by at most `2.6 − gravity` per tick. `1.0–1.6` lands every time on the
+  template tank; around `2.0–2.2` some flights run dry; at `2.3+` almost all crash; past `2.6` the
+  engine cannot slow the booster at all.
+- **`fuel`** — the tank. A throttle burns as much fuel as it pushes (COAST 0.4, HOVER 1.15, BURN
+  2.6 per tick). A careful descent at gravity 1.2 costs about 32. Give the tank less than the
+  descent costs and the engine dies in the air.
+- **`seed`** — the seed for the flights. Each flight drops from a slightly different height with a
+  slightly different fall. Same seed, same flights.
 - **`altitude`** — how high the booster starts. Higher up = more chance to pick up speed and more
   chance to recover; very low = almost no room to react.
 - **`safeSpeed`** — the maximum touchdown speed for a soft landing. `2.0` is a gentle pad.
@@ -42,8 +46,8 @@ immediately.
 
 Design `lander.json` so the landing is an event:
 
-- **Pick a gravity with tension.** `1.0–1.5` gives clean, readable soft landings. Crank `vol` up to
-  `3+` and watch Jev's burns get twitchy and touchdowns start to crash — that flip is the fun.
+- **Pick a gravity with tension.** `1.0–1.5` gives clean, readable soft landings. Push `gravity`
+  toward `2.2` and watch the tank run dry just above the pad. That flip is the fun.
 - **Choose a fuel budget.** On a high-gravity world, too little fuel means an inevitable crash; too
   much means Jev hovers comfortably.
 - **Write a distinct style line.** "A fast touchdown is a crash, burn early and hard" plays very
@@ -59,15 +63,21 @@ bug to mask.
 
 ## Rules
 
-- Keep `lander.json` valid JSON always. A bad edit freezes the landing on the last good state. You
-  can change `gravity`/`fuel`/`altitude` live — the viewer rebuilds the mission for the new profile.
+- Keep `lander.json` valid JSON always. After a bad edit the viewer keeps flying on the last good
+  settings and shows the parse error in the pane. A good edit starts a new flight at once.
+- The person can also poke the flight in the pane (a downdraft or updraft, a fuel leak, an engine
+  flame-out, the gravity and tank sliders). Those are runtime overrides. Your next edit to
+  `lander.json` resets them.
+- Never propose opening a browser, changing ports, or running a second server. The pane on the
+  left is the viewer.
 - Keep `title`, `description` and `style` truthful — and never present this as real rocketry, real
   telemetry, or real mission control.
 - Jev is reached through `toolchain/jev.mjs`. You can call it directly to ask Jev's read before you
   commit to it (e.g. "what does Jev set at G 3.0?"). Use the `jev` helpers: `noul`, `choice`,
   `score`.
-- Without a `TYPESAFE_API_KEY`, Jev runs on a deterministic local mock that still reads the telemetry
-  and picks a sensible throttle — so the demo runs offline. With a key, the viewer calls the real
+- Without a `TYPESAFE_API_KEY`, Jev runs on a deterministic local stand-in that reads the same
+  telemetry text and follows a gentle glide slope. It adds no randomness, so every crash has a
+  physical cause (a dry tank, or a fall that full burn can no longer stop). The demo runs offline. With a key, the viewer calls the real
   API.
 - The Jev Lander viewer writes `.harness/verdict.json` itself (ticks flown, throttle, landing
   outcome). Do not edit it.

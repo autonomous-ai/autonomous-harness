@@ -1,232 +1,173 @@
-// Jev Lander viewer — a loopback server running a live landing demo. A booster falls out of the sky
-// under gravity; Jev (TypeSafe's System One model) reads altitude, vertical speed and fuel every tick
-// and picks a throttle (CUT / COAST / HOVER / BURN) to bring it down soft. The agent shapes lander.json
-// (the gravity, the fuel budget, the launch height) — crank the gravity up and watch Jev's burns get
-// twitchy and the landings start to crash. The physics is synthetic; the decision loop is the demo.
+// Jev Lander viewer — a loopback server running a live landing demo. A booster falls out of the
+// sky. Every tick the telemetry is written out as text and Jev (TypeSafe's System One model)
+// answers two typed questions in ONE call: which throttle to set (CUT / COAST / HOVER / BURN), and
+// whether this touchdown will be soft. The flight is synthetic; the decision loop is the demo.
+//
+// The chat agent edits lander.json (gravity, fuel, drop height). The pane can also poke the flight
+// live: shove the booster with a gust, spring a fuel leak, put the engine out, change the dials.
 //
 // Harness env: HARNESS_VIEWER_PORT, HARNESS_WORKSPACE. Workspace holds lander.json (watched live).
 
-import { createServer } from 'node:http'
-import { watch, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { evaluate, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
+import { evaluate, jev } from '../toolchain/jev.mjs'
+import { serveViewer, watchConfig, writeVerdict, clean } from './serve.mjs'
+import { DEFAULT, ACTIONS, THRUST, sanitize, createWorld, newFlight, step, stateText, shove, leak, flameout, brakeOf, stopDistance } from './sim.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const clean = (v) => String(v ?? '').replace(/\x1b\[[0-9;]*m/g, '').slice(0, 2000)
+const clampN = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
 
-const DEFAULT = {
-  title: 'Jev Lander',
-  description: 'Jev is the flight computer: throttle a booster down to a soft landing.',
-  instrument: 'LANDER',
-  tickMs: 300, gravity: 1.2, fuel: 260, altitude: 80, safeSpeed: 2.0,
-  style: 'The booster is falling under gravity. Bring it down to the pad gently: watch altitude and vertical speed, burn early and hard enough to keep descent in check, and ease off so you touch down soft. A fast touchdown is a crash — go for the gentle landing.',
+const QUESTIONS = {
+  thrust: jev.choice({
+    CUT: 'engine off, free fall',
+    COAST: 'idle, a small push that barely slows the fall',
+    HOVER: 'a medium push, about enough to hold the speed under normal gravity',
+    BURN: 'full power, the hardest braking',
+  }, 'Which throttle do you set for this tick?'),
+  soft: jev.noul('Will the touchdown be soft?'),
 }
 
-// per-tick vertical acceleration from each throttle setting (minus gravity + drag applied in sim)
-const THRUST = { CUT: 0, COAST: 0.4, HOVER: 1.15, BURN: 2.6 }
-const ACTIONS = ['CUT', 'COAST', 'HOVER', 'BURN']
-
-function stateBlock(p, s) {
-  return `${p.style}
-Telemetry (alt above pad, vertical speed, gravity, fuel remaining):
-ALT ${s.y.toFixed(1)} VY ${s.v.toFixed(1)} G ${p.gravity.toFixed(2)} FUEL ${(s.fuel / p.fuel * 100).toFixed(0)}%
-Which throttle do you set for this tick? ${ACTIONS.join(' / ')}`
-}
+/** Dials the pane may override while it runs. An edit to lander.json resets them. */
+const DIALS = { gravity: [0.1, 5], fuel: [5, 2000], altitude: [10, 400], safeSpeed: [0.2, 10] }
 
 export async function startLanderViewer({ workspace, port = 0 } = {}) {
   workspace = resolve(workspace)
-  mkdirSync(join(workspace, '.harness'), { recursive: true })
 
+  // Every binding is declared before anything can call into the closures below.
+  let world = null
+  let stopped = false, running = false
+  let timer = null, salt = 1, lastVerdictAt = 0
+  let queue = Promise.resolve()
+  let overrides = {}
+  let decision = { thrust: 'CUT', probs: {}, conf: 0, soft: 0.5 }
+  let text = ''
   let error = null
-  let clients = new Set()
-  let lastLine = null // the last frame sent, replayed to a pane that connects later
-  let stopped = false
-  let salt = 1
-  let step = 0
-  let running = false
-  let state = null // {y, v, fuel}
-  let thrust = 'COAST'
-  let episode = 0 // bumps each time an episode restarts on its own, so the next one differs
-  let finished = null // {ok, ticks, vy, fuelLeft, crashSpeed}
-  let history = []    // {step, y, v, action}
-  let notified = false
+  let server = null
+  let history = [] // per decision of this flight: { step, y, v, action }
+  const session = { decisions: 0 }
 
-  let p = readCfg(join(workspace, 'lander.json'))
+  const cfgWatch = watchConfig(join(workspace, 'lander.json'), DEFAULT, () => { overrides = {}; restart(); push(true) })
+  const cfg = () => sanitize({ ...cfgWatch.get(), ...overrides })
 
-  function readCfg(file) {
-    try {
-      const raw = JSON.parse(readFileSync(file, 'utf8'))
-      return { ...DEFAULT, ...raw }  // `altitude` and `startAlt` fall back via DEFAULT
-    } catch (e) {
-      error = clean(e.message)
-      return p || DEFAULT
+  function restart() {
+    world = createWorld(cfg())
+    history = []
+    text = stateText(world, cfg())
+  }
+
+  function frame() {
+    const c = cfg(), w = world
+    return {
+      t: w.t, tickMs: c.tickMs, title: c.title, episode: w.episode,
+      y: w.y, v: w.v, fromY: w.from.y, fuel: w.fuel, tank: c.fuel, startAlt: w.startAlt,
+      thrust: w.thrust, fired: w.fired, flameout: w.flameout, dry: !!w.dry,
+      phase: w.phase, hold: w.hold, ticks: w.ticks, finished: w.finished,
+      landed: w.landed, crashed: w.crashed, streak: w.streak, bestStreak: w.bestStreak, flights: w.flights,
+      dials: { gravity: c.gravity, fuel: c.fuel, altitude: c.altitude, safeSpeed: c.safeSpeed },
+      levels: THRUST, brake: brakeOf(c), stopDistance: Number.isFinite(stopDistance(w, c)) ? stopDistance(w, c) : null,
+      decision, events: w.events, stateText: text, trace: w.trace.slice(-220),
+      running, error, cfgError: cfgWatch.error(), overrides,
     }
   }
-
-  function resetState() {
-    const y0 = p.altitude ?? p.startAlt ?? DEFAULT.altitude
-    const fuel0 = p.fuel ?? DEFAULT.fuel
-    state = { y: y0, v: 0, fuel: fuel0 }
-    thrust = 'COAST'
-    finished = null
-    history = []
-    notified = false
-    step = 0
-    error = null
-  }
-
-  function broadcast(obj) {
-    const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
-    lastLine = line
-    for (const c of clients) c.write(line)
-  }
+  // /state also keeps the older field names (step, gravity, safeSpeed, history).
+  const fullState = () => ({
+    ...frame(), description: cfg().description, instrument: cfg().instrument,
+    step: world.ticks, gravity: cfg().gravity, safeSpeed: cfg().safeSpeed, history: history.slice(-200),
+  })
 
   function verdict() {
-    const last = history[history.length - 1]
-    return {
-      spec: 1,
-      ready: history.length > 0 || finished !== null,
-      summary: error
-        ? 'Jev Lander needs a fix'
-        : finished
-          ? `${p.title} · ${finished.ok ? 'landed soft' : 'crashed at ' + finished.crashSpeed.toFixed(1)} · ${finished.ticks} ticks · ${finished.fuelLeft} fuel left`
-          : `${p.title} · alt ${state.y.toFixed(0)} · vy ${state.v.toFixed(1)} · ${history.length} ticks`,
-      findings: (error ? [{ severity: 'error', kind: 'lander', message: error }] : []).concat(
-        finished
-          ? [{ severity: finished.ok ? 'info' : 'error', kind: 'lander', message: finished.ok ? `Jev landed soft after ${finished.ticks} burns` : `Jev crashed at ${finished.crashSpeed.toFixed(1)} after ${finished.ticks} burns` }]
-          : []
-      ),
+    const c = cfg(), w = world, f = w.finished
+    const problem = cfgWatch.error() || error
+    writeVerdict(workspace, {
+      ready: session.decisions > 0,
+      summary: problem
+        ? `Jev Lander needs a fix: ${problem}`
+        : f
+          ? `${c.title} · ${f.ok ? `landed soft at ${f.crashSpeed.toFixed(1)}` : `crashed at ${f.crashSpeed.toFixed(1)}`} · ${f.fuelLeft} fuel left · ${w.landed} landed, ${w.crashed} crashed`
+          : `${c.title} · alt ${w.y.toFixed(0)} · vy ${w.v.toFixed(1)} · fuel ${w.fuel.toFixed(0)} · ${w.landed} landed, ${w.crashed} crashed`,
+      findings: [
+        ...(problem ? [{ severity: 'error', kind: 'lander', message: problem }] : []),
+        { severity: 'info', kind: 'lander', message: `${session.decisions} decisions, ${w.landed} soft landings, ${w.crashed} crashes. Gravity ${c.gravity}, tank ${c.fuel}, drop from ${c.altitude}. Full BURN brakes by ${brakeOf(c).toFixed(2)} per tick${brakeOf(c) <= 0 ? ': the booster cannot slow down at all' : ''}.` },
+        ...(f && !f.ok ? [{ severity: 'warn', kind: 'lander', message: `The last flight crashed at ${f.crashSpeed.toFixed(1)} (soft is ${c.safeSpeed} or less) with ${f.fuelLeft} fuel left` }] : []),
+      ],
       artifact: 'lander.json',
       phases: [
-        { id: 'learn', name: 'Watching', state: history.length < 5 ? 'active' : 'done' },
-        { id: 'call', name: 'Guiding down', state: history.length >= 5 && !finished ? 'active' : finished ? 'done' : 'pending' },
-        { id: 'land', name: 'Landed', state: finished ? 'active' : 'pending' },
+        { id: 'drop', name: 'Booster released', state: 'done' },
+        { id: 'guide', name: 'Guiding down', state: session.decisions > 0 ? (w.phase === 'flight' ? 'active' : 'done') : 'pending' },
+        { id: 'land', name: 'Touchdown', state: w.landed + w.crashed > 0 ? 'done' : 'pending' },
       ],
-      updatedAt: new Date().toISOString(),
-    }
-  }
-
-  function tail() {
-    const v = verdict()
-    const file = join(workspace, '.harness/verdict.json')
-    writeFileSync(file + '.tmp', JSON.stringify(v))
-    renameSync(file + '.tmp', file)
-    broadcast({
-      type: 'tick', title: p.title, description: p.description, instrument: p.instrument,
-      gravity: p.gravity, fuel: p.fuel, safeSpeed: p.safeSpeed,
-      y: state?.y, v: state?.v, fuel: state?.fuel, thrust, step, running, error,
-      finished, history: history.slice(-200),
     })
   }
 
-  function reset() { resetState(); tail(); if (running) schedule() }
-  function pause() { running = false; clearTimeout(timer) }
-  function start() { if (!running) { running = true; schedule() } }
-  let timer = null
-  function schedule() { clearTimeout(timer); timer = setTimeout(run, p.tickMs) }
-  async function run() {
-    if (stopped) return
-    if (finished) {
-      // Never sit on a finished screen: show the result briefly, then play again.
-      finished.shownAt ??= Date.now()
-      if (Date.now() - finished.shownAt > 3500) { episode++; resetState() }
-      tail(); schedule(); return
-    }
-    await decide()
-    schedule()
+  function push(force = false) {
+    const now = Date.now()
+    if (force || now - lastVerdictAt > 1000) { lastVerdictAt = now; try { verdict() } catch (e) { error = clean(e.message) } }
+    server?.broadcast(frame())
   }
 
-  async function decide() {
+  async function decideOnce() {
     if (stopped) return
     try {
-      const res = await evaluate({
-        state: stateBlock(p, state),
-        questions: {
-          thrust: { type: 'choice', instructions: 'Which throttle do you set for this tick?', options: ACTIONS },
-        },
-        salt: salt++,
-        model: process.env.JEV_MODEL || 'jev-latest',
-      })
-      const pick = String(res.answers.thrust?.choice || 'COAST')
-      thrust = ACTIONS.includes(pick) ? pick : 'COAST'
-      // integrate physics with throttle, gravity and drag
-      const a = THRUST[thrust] - p.gravity
-      state.v += a
-      state.v -= Math.sign(state.v) * state.v * state.v * 0.004 // drag self-limits fall
-      state.y += state.v
-      state.fuel = Math.max(0, state.fuel - THRUST[thrust])
-      step++
-      history.push({ step, y: state.y, v: state.v, action: thrust })
-      if (history.length > 300) history.splice(0, history.length - 300)
-      if (state.y <= 0) {
-        state.y = 0
-        const ok = Math.abs(state.v) <= p.safeSpeed
-        finished = { ok, ticks: step, vy: state.v, fuelLeft: Math.round(state.fuel), crashSpeed: Math.abs(state.v) }
-        notified = true
+      const c = cfg()
+      if (world.phase !== 'flight') { // the result is on screen: nothing to ask
+        const before = world.episode
+        step(world, c, 'CUT')
+        if (world.episode !== before) history = []
+        text = stateText(world, c)
+        return
       }
+      text = stateText(world, c)
+      const res = await evaluate({ state: text, questions: QUESTIONS, salt: salt++, model: process.env.JEV_MODEL || 'jev-latest' })
+      const a = res.answers
+      const thrust = ACTIONS.includes(a.thrust?.choice) ? a.thrust.choice : 'COAST'
+      decision = { thrust, probs: a.thrust?.probabilities ?? {}, conf: Number(a.thrust?.confidence ?? 0), soft: Number(a.soft?.noul ?? 0.5) }
+      session.decisions++
+      step(world, c, thrust)
+      history.push({ step: world.ticks, y: world.y, v: world.v, action: thrust })
+      if (history.length > 300) history.splice(0, history.length - 300)
+      text = stateText(world, c)
       error = null
     } catch (e) {
-      error = clean(e?.message ?? e?.name ?? String(e))
+      error = clean(e?.message ?? String(e))
     }
-    tail()
+  }
+  /** Decisions never overlap: a `tick` from a test waits for the timer's decision, and the other way round. */
+  function decide() { queue = queue.then(decideOnce, decideOnce); return queue }
+
+  function schedule() { clearTimeout(timer); if (running && !stopped) timer = setTimeout(run, cfg().tickMs) }
+  async function run() { const t0 = Date.now(); await decide(); push(); if (running && !stopped) timer = setTimeout(run, Math.max(0, cfg().tickMs - (Date.now() - t0))) }
+
+  async function control(cmd, body) {
+    if (cmd === 'pause') { running = false; clearTimeout(timer) }
+    else if (cmd === 'start') { if (!running) { running = true; schedule() } }
+    else if (cmd === 'reset') { overrides = {}; salt = 1; session.decisions = 0; await queue; restart() }
+    else if (cmd === 'tick') { const n = Math.round(clampN(body.n, 1, 20000, 1)); for (let i = 0; i < n; i++) await decide() }
+    else if (cmd === 'set') {
+      const range = DIALS[body.key]
+      if (range) {
+        const before = cfg().fuel
+        overrides = { ...overrides, [body.key]: clampN(body.value, range[0], range[1], cfg()[body.key]) }
+        // A new tank size keeps the same share of fuel in it, so the gauge moves at once.
+        if (body.key === 'fuel' && world.phase === 'flight') world.fuel = (world.fuel / before) * cfg().fuel
+      }
+    } else if (cmd === 'shove') shove(world, cfg(), clampN(body.dv, -8, 8, -3))
+    else if (cmd === 'leak') leak(world, cfg(), clampN(body.share, 0.05, 0.9, 0.3))
+    else if (cmd === 'flameout') flameout(world, cfg(), clampN(body.ticks, 1, 20, 4))
+    else if (cmd === 'launch') { newFlight(world, cfg()); history = [] }
+    text = stateText(world, cfg())
+    push(true)
+    return { step: world.t }
   }
 
-  const watcher = watch(join(workspace, 'lander.json'), () => {
-    p = readCfg(join(workspace, 'lander.json'))
-    tail()
-    if (running) schedule()
-  })
-
-  const server = createServer(async (req, res) => {
-    res.setHeader('cache-control', 'no-store')
-    res.setHeader('x-content-type-options', 'nosniff')
-    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host ?? '')) { res.writeHead(403); return res.end('Loopback only') }
-    const url = new URL(req.url, 'http://127.0.0.1')
-    if (req.method === 'GET' && url.pathname === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'index.html'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.js'))) }
-    if (req.method === 'GET' && url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
-    if (req.method === 'GET' && url.pathname === '/jev-hud.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'jev-hud.js'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.css') { res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.css'))) }
-    if (req.method === 'GET' && url.pathname === '/state') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ title: p.title, instrument: p.instrument, gravity: p.gravity, fuel: p.fuel, safeSpeed: p.safeSpeed, y: state?.y, v: state?.v, fuel: state?.fuel, thrust, step, running, error, finished, history: history.slice(-200) })) }
-    if (req.method === 'GET' && url.pathname === '/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
-      clients.add(res)
-      if (lastLine) res.write(lastLine)
-      req.on('close', () => clients.delete(res))
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/control') {
-      let body = ''
-      for await (const c of req) { body += c; if (body.length > 1024) break }
-      const cmd = JSON.parse(body || '{}').cmd
-      if (cmd === 'pause') pause()
-      if (cmd === 'start') start()
-      if (cmd === 'reset') reset()
-      if (cmd === 'tick') await decide()
-      res.writeHead(200, { 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ ok: true }))
-    }
-    res.writeHead(404); res.end('Not found')
-  })
-
-  await new Promise((resolveP, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolveP) })
-  resetState()
-  tail()
-  start()
+  restart()
+  server = await serveViewer({ here: HERE, port, state: fullState, control })
+  push(true)
+  running = true
+  schedule()
 
   return {
-    url: `http://127.0.0.1:${server.address().port}`,
-    async close() { stopped = true; clearTimeout(timer); watcher.close(); for (const c of clients) c.end(); server.closeAllConnections(); await new Promise((r) => server.close(r)) },
-  }
-}
-
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    url: server.url,
+    async close() { stopped = true; running = false; clearTimeout(timer); cfgWatch.close(); await server.close() },
   }
 }
 

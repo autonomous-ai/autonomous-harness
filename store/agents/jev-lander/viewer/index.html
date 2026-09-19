@@ -4,58 +4,63 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Lander</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="topbar">
-    <div class="brand"><span class="dot"></span><h1>Jev Lander</h1></div>
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Lander</h1><span class="sub">synthetic flight · Jev sets the throttle</span></div>
     <div class="stats">
-      <div class="stat"><label>Altitude</label><span id="alt">—</span></div>
-      <div class="stat"><label>Vert speed</label><span id="vy">—</span></div>
-      <div class="stat"><label>Throttle</label><span id="thrust">COAST</span></div>
-      <div class="stat"><label>Fuel</label><span id="fuel">—</span></div>
-      <div class="stat"><label>Gravity</label><span id="gravity">g1.2</span></div>
-      <div class="stat"><label>Ticks</label><span id="ticks">0</span></div>
+      <div class="stat alt"><label>Altitude</label><span id="s-alt">—</span></div>
+      <div class="stat"><label>Vert speed</label><span id="s-vy">—</span></div>
+      <div class="stat"><label>Landed</label><span id="s-landed">0</span></div>
+      <div class="stat"><label>Crashed</label><span id="s-crashed">0</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
     <div class="controls">
       <button id="pause">Pause</button>
-      <button id="tick">Step</button>
-      <button class="primary" id="reset">Reset</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
     </div>
   </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
   <main>
     <section id="stage">
-      <div class="panel panel-stage">
-        <div class="panel-title">The landing pad</div>
-        <div id="sky">
-          <canvas id="scene"></canvas>
-          <div id="readout">
-            <div class="ro"><label>ALT</label><span id="r-alt">—</span></div>
-            <div class="ro"><label>VY</label><span id="r-vy">—</span></div>
-            <div class="ro"><label>FUEL</label><span id="r-fuel">—</span></div>
-            <div class="ro"><label>G</label><span id="r-g">—</span></div>
-          </div>
-          <div id="banner" class="hidden"></div>
-        </div>
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" aria-label="The landing. Click above the booster for an updraft, below it for a downdraft."></canvas>
+      </div>
+      <div class="toolbar panel">
+        <button id="flameout" title="The engine goes out for four decisions, whatever Jev sets">Engine out</button>
+        <button id="leak" title="Lose 30% of the fuel that is left">Fuel leak</button>
+        <button id="launch" class="ghost" title="Drop a new booster now">New booster</button>
+        <label class="slider">Gravity <input id="d-gravity" type="range" min="0.4" max="3" step="0.05" value="1.2"> <b id="v-gravity">1.20</b></label>
+        <label class="slider">Tank <input id="d-fuel" type="range" min="15" max="200" step="5" value="60"> <b id="v-fuel">60</b></label>
+        <span class="hint"><b>Click the sky</b>: below the booster for a downdraft, above it for an updraft. An edit to <code>lander.json</code> resets the sliders.</span>
       </div>
     </section>
     <aside id="rail">
       <div class="panel">
-        <div class="panel-title">Jev, the flight computer</div>
+        <div class="panel-title">What Jev reads <span class="right pill" id="phase">IN FLIGHT</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
         <div class="how">
-          A booster is falling out of the sky. Every tick Jev reads
-          <b>altitude, vertical speed and fuel</b> and sets a throttle:
-          <code>CUT</code> (none), <code>COAST</code> (idle), <code>HOVER</code>
-          (hold) or <code>BURN</code> (full). Touch down soft and it's a clean
-          landing; hit hard and the booster is scrap.<br><br>
-          Edit <code>lander.json</code>: crank <code>gravity</code> up and Jev's
-          burns get twitchy and landings start to crash; shrink <code>fuel</code>
-          and it has less room to recover.
+          Jev never sees pixels. Every tick the telemetry is written as the text above, and Jev
+          answers <b>two typed questions in one call</b>: which <b>throttle</b> to set, and whether
+          the touchdown will be <b>soft</b>. The throttle gauge on the right of the scene shows
+          all four options, filled by probability.<br><br>
+          Full BURN pushes 2.6. Gravity pulls all the time, and every tick in the air burns fuel.
+          The bar under the booster is the height it needs to stop at full burn. When it reaches
+          past the pad, or the tank runs dry, no answer can save the landing. The flight is made
+          up. The decision loop is the demo.
         </div>
       </div>
       <div class="panel">
-        <div class="panel-title">Flight log</div>
-        <ul id="log"></ul>
+        <div class="panel-title">Flights <span class="right" id="histNote"></span></div>
+        <div id="hist" class="hist"></div>
       </div>
     </aside>
   </main>

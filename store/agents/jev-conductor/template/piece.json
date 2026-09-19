@@ -9,5 +9,6 @@
   "chords": ["Cmaj7", "Am7", "Fmaj7", "G7"],
   "moods": ["brooding", "hopeful", "driving"],
   "leadNotes": 8,
-  "volume": 0.6
+  "volume": 0.6,
+  "memory": 4
 }

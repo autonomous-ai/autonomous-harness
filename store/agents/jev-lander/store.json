@@ -6,6 +6,7 @@
   "examples": [
     {
       "prompt": "Set Jev Lander up as a rough descent — boost the gravity and cut the fuel. Give Jev a decisive burn-early style line, then watch it read the telemetry every tick, throttle the booster down the pad, and land soft (or slam in when gravity is too high and the burns go twitchy).",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-lander/soft-landing.jpg",
       "caption": "Jev's Landing — a fast decision model flying a booster down to a soft touchdown on every tick"
     }
   ]
