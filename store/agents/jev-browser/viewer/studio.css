@@ -58,7 +58,7 @@
 /* Jev's mind, drawn on the page: a ring whose strength is the probability of acting on that element. */
 .ring { position: absolute; border-radius: 12px; pointer-events: none; z-index: 8; border: 2.5px solid rgba(167,139,250,.9); box-shadow: 0 0 0 4px rgba(167,139,250,.18), 0 0 22px rgba(167,139,250,.55); transition: opacity .1s; }
 .ring.top { border-color: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,.2), 0 0 26px rgba(34,197,94,.7); }
-.ring b { position: absolute; right: -2px; top: -20px; font: 700 11px var(--mono); padding: 1px 6px; border-radius: 6px; background: #4c1d95; color: #fff; }
+.ring b { position: absolute; right: 10px; top: -11px; font: 700 11px var(--mono); padding: 1px 6px; border-radius: 6px; background: #4c1d95; color: #fff; }
 .ring.top b { background: #15803d; }
 
 .cursor { position: absolute; left: 0; top: 0; z-index: 20; pointer-events: none; filter: drop-shadow(0 3px 5px rgba(0,0,0,.45)); will-change: transform; }
