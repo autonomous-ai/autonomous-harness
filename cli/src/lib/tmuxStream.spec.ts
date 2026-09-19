@@ -6,7 +6,18 @@ import {
   normalizeTmuxCaptureLines,
   parseTmuxControlOutput,
   synthesizeTmuxSnapshot,
+  tuiScrollPageCount,
 } from './tmuxStream.js'
+
+describe('tuiScrollPageCount', () => {
+  it('is one page per gesture, never a stack', () => {
+    expect(tuiScrollPageCount(0)).toBe(0)
+    expect(tuiScrollPageCount(-1)).toBe(0)
+    expect(tuiScrollPageCount(1)).toBe(1)
+    expect(tuiScrollPageCount(12)).toBe(1)
+    expect(tuiScrollPageCount(400)).toBe(1)
+  })
+})
 
 describe('tmux control-mode output decoding', () => {
   it('decodes octal bytes without corrupting adjacent UTF-8', () => {

@@ -31,11 +31,13 @@ class FakeStream implements TerminalStreamHandle {
   resumes = 0
   snapshotBegins = 0
   snapshotEnds = 0
+  snapshotOptions: Array<{ tuiOwnsScrollback?: boolean } | undefined> = []
   onEndSnapshot: (() => void) | null = null
 
   beginSnapshot() { this.snapshotBegins++ }
-  async snapshot(): Promise<{ state: 'succeeded'; value: { bytes: Uint8Array; cols: number; rows: number } }> {
+  async snapshot(options?: { tuiOwnsScrollback?: boolean }): Promise<{ state: 'succeeded'; value: { bytes: Uint8Array; cols: number; rows: number } }> {
     this.snapshots++
+    this.snapshotOptions.push(options)
     this.onSnapshot?.(this.snapshots)
     return { state: 'succeeded', value: { bytes: this.snapshotBytes, cols: 120, rows: 40 } }
   }
@@ -151,6 +153,19 @@ describe('TerminalStreamManager', () => {
       requestId: 'missing', protocolVersion: 3, agentId: 'does-not-exist', cols: 100, rows: 30,
     })
     expect(sent.at(-1)?.payload.code).toBe('TERMINAL_AGENT_NOT_FOUND')
+  })
+
+  it('tells a Grok snapshot not to seed tmux history, and leaves other engines alone', async () => {
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-codex', protocolVersion: 3, agentId: 'agent-1', cols: 120, rows: 40,
+    })
+    expect(stream.snapshotOptions.at(-1)).toBeUndefined()
+
+    agents.set('grok-1', session('grok', 'grok-1'))
+    await manager.handleFrame('web-1', 'terminal_open', {
+      requestId: 'open-grok', protocolVersion: 3, agentId: 'grok-1', cols: 120, rows: 40,
+    })
+    expect(stream.snapshotOptions.at(-1)).toEqual({ tuiOwnsScrollback: true })
   })
 
   it('opens with a keyframe, streams coalesced output, and writes ordered raw input', async () => {

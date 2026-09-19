@@ -80,6 +80,11 @@ run('TmuxControlStream real tmux', () => {
     }
     expect(Buffer.concat(chunks).includes(Buffer.from('HARNESS_STREAM_OK'))).toBe(true)
 
+    expect((await opened.value.scroll('up', 5)).state).toBe('succeeded')
+    expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_in_mode}'])).toBe('0')
+    expect((await opened.value.scroll('down', 1)).state).toBe('succeeded')
+    expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_in_mode}'])).toBe('0')
+
     expect((await opened.value.resize({ cols: 110, rows: 35 })).state).toBe('succeeded')
     expect(await tmux(['display-message', '-p', '-t', paneId, '#{pane_width}x#{pane_height}'])).toBe('110x35')
     await opened.value.close()
