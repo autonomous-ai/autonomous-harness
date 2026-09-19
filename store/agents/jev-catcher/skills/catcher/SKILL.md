@@ -1,3 +1,8 @@
+---
+name: catcher
+description: Shape a Jev Catcher session (fall time, glove reach, field width), then verify Jev catches the slow pop flies and drops the fast ones.
+---
+
 # Catching the field
 
 The skill for building `catcher.json` pieces. On the left, Jev is the fielder guarding the outfield:

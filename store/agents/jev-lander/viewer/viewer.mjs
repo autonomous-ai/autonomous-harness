@@ -46,6 +46,7 @@ export async function startLanderViewer({ workspace, port = 0 } = {}) {
   let running = false
   let state = null // {y, v, fuel}
   let thrust = 'COAST'
+  let episode = 0 // bumps each time an episode restarts on its own, so the next one differs
   let finished = null // {ok, ticks, vy, fuelLeft, crashSpeed}
   let history = []    // {step, y, v, action}
   let notified = false
@@ -124,7 +125,12 @@ export async function startLanderViewer({ workspace, port = 0 } = {}) {
   function schedule() { clearTimeout(timer); timer = setTimeout(run, p.tickMs) }
   async function run() {
     if (stopped) return
-    if (finished) { tail(); schedule(); return }
+    if (finished) {
+      // Never sit on a finished screen: show the result briefly, then play again.
+      finished.shownAt ??= Date.now()
+      if (Date.now() - finished.shownAt > 3500) { episode++; resetState() }
+      tail(); schedule(); return
+    }
     await decide()
     schedule()
   }

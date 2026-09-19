@@ -78,6 +78,7 @@ export async function startSlalomViewer({ workspace, port = 0 } = {}) {
   let running = false
   let state = null // {x, rows, gates, next}
   let move = 'HOLD'
+  let episode = 0 // bumps each time an episode restarts on its own, so the next one differs
   let finished = null // {ok, ticks, gates, reason, atGate}
   let history = []    // {step, x, rows, move}
   let notified = false
@@ -102,7 +103,7 @@ export async function startSlalomViewer({ workspace, port = 0 } = {}) {
   }
 
   function resetStateNow(cfg) {
-    rng = mulberry32(2719)
+    rng = mulberry32(2719 + episode * 97)
     const W = cfg.valleyWidth ?? DEFAULT.valleyWidth
     state = { x: W / 2, rows: 0, gates: makeGates(cfg.gates ?? DEFAULT.gates, W, rng), next: 0 }
     move = 'HOLD'
@@ -163,7 +164,12 @@ export async function startSlalomViewer({ workspace, port = 0 } = {}) {
   function schedule() { clearTimeout(timer); timer = setTimeout(run, p.tickMs) }
   async function run() {
     if (stopped) return
-    if (finished) { tail(); schedule(); return }
+    if (finished) {
+      // Never sit on a finished screen: show the result briefly, then play again.
+      finished.shownAt ??= Date.now()
+      if (Date.now() - finished.shownAt > 3500) { episode++; resetState() }
+      tail(); schedule(); return
+    }
     await decide()
     schedule()
   }

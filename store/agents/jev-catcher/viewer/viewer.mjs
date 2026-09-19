@@ -69,6 +69,7 @@ export async function startCatcherViewer({ workspace, port = 0 } = {}) {
   let running = false
   let state = null // {glove, ballTicks, balls, next}
   let move = 'HOLD'
+  let episode = 0 // bumps each time an episode restarts on its own, so the next one differs
   let finished = null // {ok, ticks, caught, dropped, drops}
   let history = []    // {step, glove, move, caught, dropped}
   let notified = false
@@ -93,7 +94,7 @@ export async function startCatcherViewer({ workspace, port = 0 } = {}) {
   }
 
   function resetStateNow(cfg) {
-    rng = mulberry32(5039)
+    rng = mulberry32(5039 + episode * 97)
     const W = cfg.fieldWidth ?? DEFAULT.fieldWidth
     state = { glove: W / 2, ballTicks: cfg.fallTicks ?? DEFAULT.fallTicks, balls: makeBalls(cfg.balls ?? DEFAULT.balls, W, rng), next: 0, catches: 0, drops: 0 }
     move = 'HOLD'
@@ -155,7 +156,12 @@ export async function startCatcherViewer({ workspace, port = 0 } = {}) {
   function schedule() { clearTimeout(timer); timer = setTimeout(run, p.tickMs) }
   async function run() {
     if (stopped) return
-    if (finished) { tail(); schedule(); return }
+    if (finished) {
+      // Never sit on a finished screen: show the result briefly, then play again.
+      finished.shownAt ??= Date.now()
+      if (Date.now() - finished.shownAt > 3500) { episode++; resetState() }
+      tail(); schedule(); return
+    }
     await decide()
     schedule()
   }

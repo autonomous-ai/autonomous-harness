@@ -1,3 +1,8 @@
+---
+name: archer
+description: Shape a Jev Archer range (target speed, bullseye size, shots), then verify Jev plants the slow targets and leaks the fast ones.
+---
+
 # Craft — Jev Archer
 
 Jev Archer is a 1-D tracking game: a target slides across a line and Jev nudges the aim to track it,

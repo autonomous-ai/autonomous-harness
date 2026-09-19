@@ -9,7 +9,7 @@ const els = {
 }
 
 let aim = 12, target = 12, speed = 0.6, width = 24, fuse = 6
-let hits = 0, misses = 0, shots = 16
+let hits = 0, misses = 0, shots = 16, move = 'HOLD'
 let finished = null
 let history = []
 let arrows = []      // {x, hit, t} released arrows for effect
@@ -120,6 +120,7 @@ function onTick(msg) {
   if (typeof msg.speed === 'number') speed = msg.speed
   if (typeof msg.targetWidth === 'number') width = msg.targetWidth
   if (typeof msg.fuse === 'number') fuse = msg.fuse
+  if (typeof msg.shots === 'number') shots = msg.shots
   hits = msg.hits ?? hits
   misses = msg.misses ?? misses
   move = msg.move || move
