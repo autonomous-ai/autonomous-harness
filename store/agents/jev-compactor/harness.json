@@ -4,7 +4,7 @@
   "name": "Jev Compactor",
   "category": "Dev Tools",
   "author": "Autonomous",
-  "description": "A live demo of instant context compaction on a made-up coding-agent session. When the window passes its budget, Jev judges every tool result in one pass: keep, trim or drop. Recall is measured against hidden ground truth. Raise distraction and Jev keeps junk and loses needles.",
+  "description": "Instant context compaction, live. On a made-up coding-agent session, Jev judges every tool result in one pass (keep, trim or drop) and recall is measured against hidden ground truth. Or load your own transcript and get a plan of what Jev would cut. An analysis, not a plugin.",
   "engine": "claude",
   "workspace": {
     "template": "template",

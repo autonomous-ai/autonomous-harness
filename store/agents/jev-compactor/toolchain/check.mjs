@@ -2,8 +2,8 @@
 // check.mjs — validate a session.json for the Jev Compactor harness.
 // Usage: node check.mjs [path/to/session.json]   (default: $HARNESS_WORKSPACE/session.json, else ./session.json)
 // Prints one line per problem. Exit code 1 when there is an error, 0 otherwise (warnings pass).
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, existsSync } from 'node:fs'
+import { join, dirname } from 'node:path'
 
 const file = process.argv[2] || join(process.env.HARNESS_WORKSPACE || '.', 'session.json')
 
@@ -43,6 +43,19 @@ range('focus', 0.1, 1)
 range('summaryTokens', 200, 20000, { integer: true })
 range('taskEvery', 0, 5000, { integer: true })
 range('seed', 0, 2147483647, { integer: true })
+
+// source: the person's own transcript, a file INSIDE the workspace (optional)
+if (p.source !== undefined && p.source !== null) {
+  if (typeof p.source !== 'string' || !p.source.trim()) error('source must be the name of a transcript file inside the workspace')
+  else {
+    const parts = p.source.trim().split(/[\\/]/)
+    if (p.source.trim().startsWith('/') || /^[A-Za-z]:/.test(p.source.trim()) || parts.includes('..')) error(`source "${p.source}" must stay inside the workspace (no absolute path, no "..")`)
+    else if (parts[0].toLowerCase() === '.harness') error('source must not be under .harness')
+    else if (['session.json', 'compaction-plan.json'].includes(p.source.trim().toLowerCase())) error(`source cannot be "${p.source}", the harness writes that file`)
+    else if (!existsSync(join(dirname(file), p.source.trim()))) warn(`source "${p.source}" is not in the workspace yet. Copy the transcript there first`)
+    else console.log(`note   source is set: the pane analyses "${p.source}" instead of the made-up session. tasks, distraction and mix are not used in that mode`)
+  }
+}
 
 // tasks: 2 to 12, each with an id, a title and at least 6 vocabulary words
 const ids = new Set()

@@ -13,7 +13,7 @@
     <div class="brand">
       <span class="dot"></span><h1 id="title">Jev Compactor</h1>
       <span class="sub" id="subtitle">synthetic agent session · made-up repo</span>
-      <span class="pill warn" title="Everything in this pane is generated. It is a demo of the idea, not a real compaction plugin.">SYNTHETIC DEMO</span>
+      <span class="pill warn" id="modePill" title="Everything in this pane is generated. It is a demo of the idea, not a real compaction plugin.">SYNTHETIC DEMO</span>
     </div>
     <div class="controls">
       <button id="pause" title="Pause or resume the session (space)">Pause</button>
@@ -26,9 +26,9 @@
 
   <div id="statbar">
     <div class="big"><label>Tokens now</label><b id="sTokens">—</b><i id="sTokensSub">&nbsp;</i></div>
-    <div class="big"><label>Budget</label><b id="sBudget">—</b><i id="sBudgetSub">&nbsp;</i></div>
+    <div class="big"><label id="sBudgetLabel">Budget</label><b id="sBudget">—</b><i id="sBudgetSub">&nbsp;</i></div>
     <div class="big"><label>Last reduction</label><b id="sReduction" class="ok">—</b><i id="sReductionSub">&nbsp;</i></div>
-    <div class="big"><label>Needle recall</label><b id="sRecall">—</b><i id="sRecallSub">&nbsp;</i></div>
+    <div class="big"><label id="sRecallLabel">Needle recall</label><b id="sRecall">—</b><i id="sRecallSub">&nbsp;</i></div>
     <div class="big"><label>Compaction time</label><b id="sTime">—</b><i id="sTimeSub">&nbsp;</i></div>
     <div class="big"><label>Questions / call</label><b id="sPerCall">—</b><i id="sPerCallSub">&nbsp;</i></div>
     <div class="big"><label>Results judged</label><b id="sJudged">0</b><i id="sJudgedSub">&nbsp;</i></div>
@@ -58,7 +58,7 @@
           </label>
           <span id="overridePill" class="pill hidden" title="You changed this in the pane. Any edit to session.json puts the file back in charge.">PANE OVERRIDE</span>
         </div>
-        <div class="hint">Click a block to inspect or pin it · switch the task and different blocks survive · raise distraction and junk starts to talk like the task</div>
+        <div class="hint" id="hint">Click a block to inspect or pin it · switch the task and different blocks survive · raise distraction and junk starts to talk like the task</div>
       </div>
     </section>
 
@@ -83,13 +83,17 @@
           <b>simple baseline for contrast</b>: it folds the oldest half into one short summary. It is
           not a measurement of any real product.<br><br>
           The agent edits <code>session.json</code>: tasks, vocabulary, <code>budget</code>,
-          <code>trimTo</code>, <code>target</code>, <code>distraction</code>.
+          <code>trimTo</code>, <code>target</code>, <code>distraction</code>.<br><br>
+          <b>Your own transcript:</b> put a transcript file in the workspace and set
+          <code>"source"</code> to its name. Jev judges every tool result in it and the plan is saved
+          to <code>compaction-plan.json</code>. There is no ground truth then, so recall is not
+          shown. It is an analysis. It changes no live session.
         </div>
       </details>
 
       <div class="panel">
         <div class="panel-title">Past compactions <span class="right" id="histAvg"></span></div>
-        <div class="hist-head"><span>#</span><span>before</span><span>after</span><span>recall</span><span>ms</span></div>
+        <div class="hist-head"><span>#</span><span>before</span><span>after</span><span id="histRecallHead">recall</span><span>ms</span></div>
         <ul id="history"></ul>
       </div>
     </aside>

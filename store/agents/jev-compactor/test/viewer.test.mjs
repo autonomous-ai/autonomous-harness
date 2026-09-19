@@ -344,3 +344,303 @@ test('check.mjs accepts the template and rejects an out-of-range value', () => {
     assert.match(bad.stdout, /fail\s+invalid session\.json/)
   }
 })
+
+// ---------------------------------------------------------------------------
+// The person's own transcript ("source"). Every transcript below is made up.
+// ---------------------------------------------------------------------------
+const { parseTranscript, resolveSource, loadTranscript } = await import(join(ROOT, 'viewer/transcript.mjs'))
+const { symlinkSync, mkdirSync, readdirSync } = await import('node:fs')
+
+const big = (word, n) => Array.from({ length: n }, (_, i) => `${word} handles ${word}_${i % 7}(${word})`).join('\n')
+const CLAUDE_LINES = [
+  JSON.stringify({ type: 'summary', summary: 'made-up session' }),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: 'Please fix the webhook retry backoff so failed delivery attempts use jitter.' } }),
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'I will read the webhook retry code.' }, { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/work/app/src/webhook/retry_backoff.ts' } }] } }),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: `export function retry_webhook(delivery) { const backoff = jitter(delivery); return backoff }\n${big('webhook', 200)}` }] } }),
+  '{ this is not json',
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm install', description: 'Install' } }, { type: 'tool_use', id: 't3', name: 'Grep', input: { pattern: 'backoff', path: 'src/' } }] } }),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't3', content: [{ type: 'text', text: `12 matches for backoff in src/webhook/retry.ts delivery jitter\n${big('match', 80)}` }] }, { type: 'tool_result', tool_use_id: 't2', content: `npm WARN deprecated inflight@1.0.6 · added 1,423 packages\n${big('lodash', 900)}` }] } }),
+  JSON.stringify({ type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'sub-agent thread' }] } }),
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't4', name: 'mcp__tracker__get_issue', input: { query: 'login cookie' } }] } }),
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't4', content: big('cookie', 300) }] } }),
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't5', name: 'Edit', input: { file_path: '/work/app/src/orphan.ts', old_string: 'a', new_string: 'b' } }] } }),
+  'also not json',
+  JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '<system-reminder>made-up</system-reminder>' } }),
+]
+const GENERIC_LINES = [
+  JSON.stringify({ role: 'user', content: 'Speed up the invoice search query and its index.' }),
+  JSON.stringify({ role: 'assistant', content: 'Looking at the search index.' }),
+  JSON.stringify({ role: 'tool', name: 'Read', input: { file_path: 'src/search/invoice_index.ts' }, content: `export function search_invoice(query) { const index = query.index; return index }\n${big('invoice', 120)}` }),
+  JSON.stringify({ role: 'tool', name: 'Bash', input: 'docker build .', content: `#12 DEBUG cache hit layer sha256\n${big('layer', 700)}` }),
+  JSON.stringify({ role: 'tool', content: 'a result with no tool name' }),
+  'garbage line',
+  JSON.stringify({ role: 'system', content: 'ignored role' }),
+]
+const SECRETS = ['npm WARN deprecated', 'retry_webhook(delivery)', 'Please fix the webhook']
+
+async function freshOwn(lines, overrides = {}, file = 'my-session.jsonl') {
+  const ws = mkdtempSync(join(tmpdir(), 'jev-compactor-own-'))
+  const template = JSON.parse(readFileSync(join(ROOT, 'template/session.json'), 'utf8'))
+  if (lines) writeFileSync(join(ws, file), lines.join('\n') + '\n')
+  writeFileSync(join(ws, 'session.json'), JSON.stringify({ ...template, source: file, ...overrides }))
+  const viewer = await startCompactorViewer({ workspace: ws, port: 0 })
+  const ctl = async (cmd, extra = {}) => {
+    const res = await fetch(`${viewer.url}/control`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd, ...extra }) })
+    return { status: res.status, body: await res.json() }
+  }
+  const state = async () => (await fetch(`${viewer.url}/state`)).json()
+  await ctl('pause')   // also cancels the automatic first compaction, so tests decide when it runs
+  return { ws, viewer, ctl, state }
+}
+
+test('own transcript: a Claude Code style file parses, tool_use pairs with tool_result, bad lines are skipped', () => {
+  const { blocks, stats } = parseTranscript(CLAUDE_LINES.join('\n'))
+  assert.equal(stats.skipped, 2, 'two lines are not JSON')
+  assert.equal(stats.ignored, 2, 'the summary line and the sub-agent line are not part of this context')
+  assert.equal(stats.toolResults, 4)
+  assert.equal(stats.unpairedUses, 1, 'the Edit call has no result in the file')
+  const tools = blocks.filter((b) => b.role === 'tool')
+  assert.deepEqual(tools.map((b) => [b.tool, b.kind]), [['Read', 'Read'], ['Bash', 'Bash'], ['Grep', 'Grep'], ['mcp__tracker__get_issue', 'Tool'], ['Edit', 'Edit']])
+  assert.equal(tools[0].input, '/work/app/src/webhook/retry_backoff.ts')
+  assert.equal(tools[1].input, 'npm install')
+  assert.equal(tools[2].input, 'backoff in src/')
+  // results arrive out of order (t3 before t2) and still land on the right call
+  assert.match(tools[1].preview, /^npm WARN deprecated/)
+  assert.match(tools[2].preview, /^12 matches for backoff/)
+  assert.ok(tools[1].tokens > tools[2].tokens && tools[1].tokens > 3000, 'tokens are characters / 4')
+  assert.equal(tools[0].tokens, Math.ceil(tools[0].chars / 4))
+  assert.ok(tools.every((b) => b.preview.length <= 300), 'only a short head is kept')
+  const users = blocks.filter((b) => b.role === 'user')
+  assert.equal(users.filter((b) => b.taskText).length, 1, 'the system-reminder line is a message but never a task choice')
+})
+
+test('own transcript: the generic role format parses too', () => {
+  const { blocks, stats } = parseTranscript(GENERIC_LINES.join('\n'))
+  assert.equal(stats.skipped, 1)
+  assert.equal(stats.ignored, 1)
+  assert.equal(stats.messages, 2)
+  assert.deepEqual(blocks.filter((b) => b.role === 'tool').map((b) => [b.tool, b.kind, b.input]), [['Read', 'Read', 'src/search/invoice_index.ts'], ['Bash', 'Bash', 'docker build .'], ['Tool', 'Tool', '']])
+  assert.deepEqual(parseTranscript('').blocks, [])
+  assert.equal(parseTranscript(null).stats.lines, 0)
+})
+
+test('own transcript: a source outside the workspace, under .harness, reserved or missing is refused without throwing', async () => {
+  const ws = mkdtempSync(join(tmpdir(), 'jev-compactor-paths-'))
+  const outside = mkdtempSync(join(tmpdir(), 'jev-compactor-outside-'))
+  writeFileSync(join(outside, 'secret.jsonl'), GENERIC_LINES.join('\n'))
+  mkdirSync(join(ws, '.harness'), { recursive: true })
+  writeFileSync(join(ws, '.harness', 'inside.jsonl'), GENERIC_LINES.join('\n'))
+  writeFileSync(join(ws, 'ok.jsonl'), GENERIC_LINES.join('\n'))
+  symlinkSync(join(outside, 'secret.jsonl'), join(ws, 'link.jsonl'))
+  for (const [src, pattern] of [
+    ['../secret.jsonl', /outside the workspace/], [join(outside, 'secret.jsonl'), /outside the workspace/], ['sub/../../x.jsonl', /outside the workspace/],
+    ['.harness/inside.jsonl', /\.harness/], ['.HARNESS/inside.jsonl', /\.harness/], ['link.jsonl', /outside the workspace/],
+    ['compaction-plan.json', /harness writes/], ['session.json', /harness writes/], ['nope.jsonl', /not found/], ['', /file name/], [42, /file name/], ['.', /outside|not a file/],
+  ]) {
+    const r = resolveSource(ws, src)
+    assert.equal(r.ok, false, String(src))
+    assert.match(r.error, pattern, String(src))
+    assert.equal(loadTranscript(ws, src).ok, false)
+  }
+  assert.equal(resolveSource(ws, 'ok.jsonl').ok, true)
+  assert.equal(resolveSource(ws, './ok.jsonl').rel, 'ok.jsonl')
+
+  // in the viewer: the error is shown, nothing crashes, and the made-up session runs instead
+  const v = await freshOwn(null, { source: '../secret.jsonl' })
+  try {
+    const s = await v.state()
+    assert.equal(s.mode, 'synthetic')
+    assert.match(s.cfgError, /outside the workspace/)
+    await v.ctl('tick', { n: 20 })
+    assert.ok((await v.state()).n > s.n, 'the demo stays alive')
+    assert.equal(existsSync(join(v.ws, 'compaction-plan.json')), false)
+  } finally { await v.viewer.close() }
+})
+
+test('own transcript: the plan file is written with the right totals, and truth-based fields are absent', async () => {
+  const v = await freshOwn(CLAUDE_LINES, { trimTo: 120 })
+  try {
+    let s = await v.state()
+    assert.equal(s.mode, 'transcript')
+    assert.equal(s.source.file, 'my-session.jsonl')
+    assert.equal(s.source.skipped, 2)
+    assert.equal(s.baseline, null, 'no baseline lane without ground truth')
+    assert.deepEqual(s.series, [])
+    assert.equal(s.totals.compactions, 0, 'pause cancelled the automatic run')
+    assert.equal(s.tasks.length, 1)
+    assert.match(s.tasks[0].title, /webhook retry backoff/)
+    assert.ok(s.cfg.budget >= s.tokens, 'the tower starts full, not over')
+    const loaded = s.tokens
+    assert.equal(JSON.parse(readFileSync(join(v.ws, '.harness/verdict.json'), 'utf8')).ready, false)
+    assert.equal(existsSync(join(v.ws, 'compaction-plan.json')), false)
+
+    assert.equal((await v.ctl('tick')).status, 200)   // one decision: Jev judges the transcript
+    s = await v.state()
+    assert.equal(s.totals.compactions, 1)
+    const last = s.last
+    assert.equal(last.before, loaded)
+    assert.equal(last.questions, 5, 'one question per tool result')
+    assert.equal(last.calls, 1)
+    assert.equal(last.keep + last.trim + last.drop, 5)
+    assert.equal(last.after, s.tokens)
+    assert.ok(last.drop >= 1 && last.after < last.before, 'the install log goes')
+    for (const k of ['recall', 'junkRemoved', 'needlesDropped', 'needlesTrimmed', 'junkKept']) assert.equal(k in last, false, `${k} must not exist without ground truth`)
+    assert.equal('avgRecall' in s.totals, false)
+    assert.equal('avgJunkRemoved' in s.totals, false)
+    assert.ok(s.history.every((h) => !('recall' in h)))
+    assert.equal(last.biggestDropped[0].input, 'npm install')
+    assert.ok(s.blocks.filter((b) => b[5] === 3).length >= 3, 'messages are never touched')
+
+    const planText = readFileSync(join(v.ws, 'compaction-plan.json'), 'utf8')
+    const plan = JSON.parse(planText)
+    assert.equal(plan.kind, 'jev-compaction-plan')
+    assert.equal(plan.source, 'my-session.jsonl')
+    assert.match(plan.judge, /mock/)
+    assert.deepEqual(plan.results.map((r) => r.index), [0, 1, 2, 3, 4])
+    assert.deepEqual(plan.results.map((r) => r.tool), ['Read', 'Bash', 'Grep', 'mcp__tracker__get_issue', 'Edit'])
+    const messageTokens = plan.totals.messageTokens
+    assert.equal(plan.totals.tokensBefore, plan.results.reduce((a, r) => a + r.tokens, 0) + messageTokens)
+    assert.equal(plan.totals.tokensAfter, plan.results.reduce((a, r) => a + r.tokensAfter, 0) + messageTokens)
+    assert.equal(plan.totals.tokensBefore, last.before)
+    assert.equal(plan.totals.tokensAfter, last.after)
+    assert.equal(plan.totals.tokensSaved, last.before - last.after)
+    assert.deepEqual([plan.totals.keep, plan.totals.trim, plan.totals.drop], [last.keep, last.trim, last.drop])
+    assert.equal(plan.totals.skippedLines, 2)
+    for (const r of plan.results) {
+      assert.ok(['keep', 'trim', 'drop'].includes(r.verdict))
+      assert.ok(Math.abs(r.probabilities.keep + r.probabilities.trim + r.probabilities.drop - 1) < 0.01)
+      assert.equal(r.tokensAfter, r.verdict === 'drop' ? 0 : r.verdict === 'trim' ? Math.min(r.tokens, 120) : r.tokens)
+    }
+    // the plan and the verdict name tools and inputs, never the content of the transcript
+    const verdictText = readFileSync(join(v.ws, '.harness/verdict.json'), 'utf8')
+    for (const secret of SECRETS) {
+      assert.equal(planText.includes(secret), false, `"${secret}" leaked into the plan`)
+      assert.equal(verdictText.includes(secret), false, `"${secret}" leaked into the verdict`)
+    }
+    const verdict = JSON.parse(verdictText)
+    assert.equal(verdict.spec, 1)
+    assert.equal(verdict.ready, true)
+    assert.equal(verdict.plan, 'compaction-plan.json')
+    assert.equal(verdict.artifact, 'compaction-plan.json')
+    assert.equal(verdict.totals.tokensBefore, last.before)
+    assert.equal(verdict.totals.tokensAfter, last.after)
+    assert.match(verdict.summary, /your transcript/)
+    assert.ok(verdict.findings.some((f) => f.kind === 'source' && /2 lines/.test(f.message)))
+    // nothing else was written to the workspace
+    assert.deepEqual(readdirSync(v.ws).sort(), ['.harness', 'compaction-plan.json', 'my-session.jsonl', 'session.json'])
+    assert.deepEqual(readdirSync(join(v.ws, '.harness')).sort(), ['verdict.json'])
+  } finally { await v.viewer.close() }
+})
+
+test('own transcript: a pinned block is never dropped, and a pin on a dropped block brings it back', async () => {
+  const v = await freshOwn(CLAUDE_LINES)
+  try {
+    await v.ctl('tick')
+    let s = await v.state()
+    const droppedId = s.last.biggestDropped[0].id
+    assert.equal(s.blocks.some((b) => b[0] === droppedId), false, 'Jev dropped the install log')
+    const calls = s.totals.calls
+    assert.equal((await v.ctl('pin', { id: droppedId, pinned: true })).body.pinned, true)
+    s = await v.state()
+    const back = s.blocks.find((b) => b[0] === droppedId)
+    assert.ok(back, 'the pinned block is back in the window')
+    assert.equal(back[2], back[3], 'at full size')
+    assert.equal(back[6], 1)
+    assert.equal(s.last.trigger, 'pin')
+    assert.equal(s.last.reused, true)
+    assert.equal(s.totals.calls, calls, "re-applying a pin reuses Jev's answers, no new call")
+    assert.equal(s.last.pinnedKept, 1)
+    const plan = JSON.parse(readFileSync(join(v.ws, 'compaction-plan.json'), 'utf8'))
+    const row = plan.results.find((r) => r.input === 'npm install')
+    assert.deepEqual([row.verdict, row.jev, row.pinned], ['keep', 'drop', true])
+    assert.equal(plan.totals.pinned, 1)
+    // a fresh "Compact now" asks Jev again and still respects the pin
+    await v.ctl('compact')
+    s = await v.state()
+    assert.equal(s.last.trigger, 'manual')
+    assert.ok(s.totals.calls > calls)
+    assert.ok(s.blocks.some((b) => b[0] === droppedId && b[6] === 1))
+    const info = (await v.ctl('inspect', { id: droppedId })).body.block
+    assert.equal(info.truth, null)
+    assert.equal(info.ideal, null)
+    assert.equal(info.line, 6)
+    assert.equal(info.tool, 'Bash')
+  } finally { await v.viewer.close() }
+})
+
+test('own transcript: the task buttons are the last user messages, and switching one changes the plan', async () => {
+  const lines = [
+    JSON.stringify({ role: 'user', content: 'Fix the refund ledger rounding for cents and chargeback reversal.' }),
+    JSON.stringify({ role: 'tool', name: 'Read', input: { file_path: 'src/refund/ledger_cents.ts' }, content: `export function apply_refund(ledger, cents) { const rounding = ledger.reversal(cents); return rounding } // refund ledger chargeback\n${big('refund', 60)}` }),
+    JSON.stringify({ role: 'user', content: 'Now rotate the login session cookie and its oauth scope expiry.' }),
+    JSON.stringify({ role: 'tool', name: 'Read', input: { file_path: 'src/session/cookie_expiry.ts' }, content: `export function rotate_session(cookie, login) { const expiry = oauth.scope(cookie); return expiry } // session login rotate\n${big('session', 60)}` }),
+  ]
+  const v = await freshOwn(lines)
+  try {
+    let s = await v.state()
+    assert.equal(s.tasks.length, 2)
+    assert.equal(s.currentTask, s.tasks[1].id, 'the last user message is the task by default')
+    await v.ctl('tick')
+    s = await v.state()
+    const kept = (st) => st.blocks.filter((b) => b[5] !== 3 && b[7] === 1).map((b) => b[8])
+    assert.deepEqual(kept(s), ['src/session/cookie_expiry.ts'])
+    assert.equal((await v.ctl('setTask', { task: s.tasks[0].id })).status, 200)
+    await v.ctl('compact')
+    s = await v.state()
+    assert.equal(s.currentTask, s.tasks[0].id)
+    assert.deepEqual(kept(s), ['src/refund/ledger_cents.ts'], 'every run starts from the whole transcript')
+    // reset reloads the file; the other controls still answer
+    assert.equal((await v.ctl('reset')).status, 200)
+    s = await v.state()
+    assert.equal(s.totals.compactions, 0)
+    assert.equal(s.blocks.length, 4)
+    for (const cmd of ['flood', 'start', 'pause', 'setBudget', 'setDistraction']) assert.equal((await v.ctl(cmd, { value: 0.5 })).status, 200)
+  } finally { await v.viewer.close() }
+})
+
+test('own transcript: a big file is judged 100 questions per call, and the synthetic mode is unchanged', async () => {
+  const lines = [JSON.stringify({ role: 'user', content: 'Fix the webhook retry backoff.' })]
+  for (let i = 0; i < 230; i++) lines.push(JSON.stringify({ role: 'tool', name: i % 3 ? 'Bash' : 'Read', input: { command: `step ${i}` }, content: big(i % 5 ? 'lodash' : 'webhook retry backoff', 12) }))
+  const v = await freshOwn(lines)
+  try {
+    await v.ctl('tick')
+    const s = await v.state()
+    assert.equal(s.last.questions, 230)
+    assert.equal(s.last.calls, 3)
+    assert.ok(s.last.perCall <= 100)
+  } finally { await v.viewer.close() }
+
+  // the same harness without `source` is the made-up session, with its ground truth and baseline intact
+  const plain = await fresh()
+  try {
+    const s = await untilCompaction(plain)
+    assert.equal(s.mode, 'synthetic')
+    assert.equal(s.source, null)
+    assert.ok(s.baseline && Array.isArray(s.baseline.blocks))
+    assert.ok(typeof s.last.recall === 'number' && typeof s.last.junkRemoved === 'number')
+    assert.ok('avgRecall' in s.totals)
+    assert.equal(existsSync(join(plain.ws, 'compaction-plan.json')), false, 'the made-up session writes no plan')
+    const verdict = JSON.parse(readFileSync(join(plain.ws, '.harness/verdict.json'), 'utf8'))
+    assert.equal(verdict.artifact, 'session.json')
+    assert.equal('plan' in verdict, false)
+  } finally { await plain.viewer.close() }
+})
+
+test('check.mjs accepts a good source and rejects a bad one', () => {
+  const check = join(ROOT, 'toolchain/check.mjs')
+  const ws = mkdtempSync(join(tmpdir(), 'jev-compactor-check-src-'))
+  const p = JSON.parse(readFileSync(join(ROOT, 'template/session.json'), 'utf8'))
+  writeFileSync(join(ws, 'my-session.jsonl'), GENERIC_LINES.join('\n'))
+  const run = (source) => { writeFileSync(join(ws, 'session.json'), JSON.stringify({ ...p, source })); return spawnSync(process.execPath, [check], { encoding: 'utf8', env: { ...process.env, HARNESS_WORKSPACE: ws } }) }
+  const ok = run('my-session.jsonl')
+  assert.equal(ok.status, 0, ok.stdout)
+  assert.match(ok.stdout, /source is set/)
+  const missing = run('later.jsonl')
+  assert.equal(missing.status, 0, 'a missing file is a warning, the person may copy it next')
+  assert.match(missing.stdout, /warn\s+source/)
+  for (const bad of ['../x.jsonl', '/etc/passwd', '.harness/verdict.json', 'compaction-plan.json', 7]) {
+    const r = run(bad)
+    assert.equal(r.status, 1, String(bad))
+    assert.match(r.stdout, /error\s+source/)
+  }
+})

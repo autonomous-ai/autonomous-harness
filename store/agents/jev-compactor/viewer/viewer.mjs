@@ -15,19 +15,26 @@
 // folds the oldest half of its window into one short summary block. It is a toy baseline, not a
 // measurement of any real product.
 //
-// Everything here is synthetic. It is a demo of the idea, not a real compaction plugin.
+// Everything in that mode is synthetic. It is a demo of the idea, not a real compaction plugin.
+//
+// Second mode, "your transcript": when session.json sets `source` to a transcript file inside the
+// workspace, the viewer loads that real session instead of generating one, lets Jev judge every
+// tool result in it, and writes what Jev would cut to compaction-plan.json. There is no ground
+// truth in that mode, so nothing truth-based is shown. It is an analysis. It changes no live session.
 //
 // Harness env: HARNESS_VIEWER_PORT, HARNESS_WORKSPACE. Workspace holds session.json (watched live).
 
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { evaluate, jev, toWire, hash01, stems, PRICE_PER_MTOK } from '../toolchain/jev.mjs'
+import { evaluate, jev, toWire, hash01, stems, resolveCredentials, PRICE_PER_MTOK } from '../toolchain/jev.mjs'
 import { serveViewer, writeVerdict, watchConfig, mulberry32, clean } from './kit.mjs'
+import { loadTranscript } from './transcript.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-export const KINDS = ['user', 'assistant', 'Read', 'Grep', 'Bash', 'Edit', 'WebFetch', 'summary']
+export const KINDS = ['user', 'assistant', 'Read', 'Grep', 'Bash', 'Edit', 'WebFetch', 'summary', 'Tool']
+export const PLAN_FILE = 'compaction-plan.json'
 const TOOLS = ['Read', 'Grep', 'Bash', 'Edit', 'WebFetch']
 const VERDICTS = ['keep', 'trim', 'drop']
 const CHUNK = 100          // questions per Jev call
@@ -92,6 +99,7 @@ export function normalize(raw = {}) {
     if (v < lo || v > hi) problems.push(`${key} ${v} is outside ${lo}..${hi}, clamped`)
     return clampN(v, lo, hi)
   }
+  if (raw.source !== undefined && raw.source !== null && typeof raw.source !== 'string') problems.push('source must be a file name inside the workspace')
   const cfg = {
     title: typeof raw.title === 'string' && raw.title ? clean(raw.title).slice(0, 80) : DEFAULT.title,
     description: typeof raw.description === 'string' ? clean(raw.description).slice(0, 300) : DEFAULT.description,
@@ -106,6 +114,7 @@ export function normalize(raw = {}) {
     target: num('target', 0.2, 0.9),
     recallTarget: num('recallTarget', 0.5, 1),
     summaryTokens: Math.round(num('summaryTokens', 200, 20000)),
+    source: typeof raw.source === 'string' && raw.source.trim() ? raw.source.trim().slice(0, 400) : null,
     taskEvery: Math.round(num('taskEvery', 0, 5000)),
   }
   // tasks
@@ -281,7 +290,8 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
   let baseStats = null
   let series = []
   let salt = 1
-  let client = process.env.TYPESAFE_API_KEY ? 'typesafe' : 'mock'
+  let client = 'mock'
+  try { client = resolveCredentials() ? 'typesafe' : 'mock' } catch { /* the first call settles it */ }
   let lastBroadcast = 0, broadcastTimer = null
   let lastVerdictWrite = 0
   let rolledOff = 0
@@ -289,8 +299,16 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
   let pinned = new Set()
   let gen = 0                 // bumps on every session reset, so a late Jev answer is ignored
   let retryAt = 0             // after a failed Jev call, wait a little before asking again
+  let mode = 'synthetic'      // or 'transcript' when session.json names a source file that loads
+  let original = []           // transcript mode: every block of the loaded transcript, never shrunk
+  let tTasks = []             // transcript mode: the last few user messages, as task choices
+  let tBudget = 0             // transcript mode: the loaded size, so the tower starts full
+  let sourceInfo = null
+  let sourceError = null
+  let answerCache = null      // transcript mode: Jev's answers for the current task, reused when only pins change
+  let planError = null
 
-  const eff = (k) => (overrides[k] !== undefined ? overrides[k] : cfg[k])
+  const eff = (k) => (overrides[k] !== undefined ? overrides[k] : k === 'budget' && mode === 'transcript' ? Math.max(cfg.budget, tBudget) : cfg[k])
   const taskOf = (id) => cfg.tasks.find((t) => t.id === id) ?? cfg.tasks[0]
   const taskIdx = (id) => cfg.tasks.findIndex((t) => t.id === id)
 
@@ -307,7 +325,7 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
     cfg = r.cfg
     cfgProblems = parseErr ? [parseErr] : r.problems
     overrides = {}
-    const structural = !before || before.seed !== cfg.seed || before.repo !== cfg.repo || JSON.stringify(before.tasks) !== JSON.stringify(cfg.tasks) || JSON.stringify(before.mix) !== JSON.stringify(cfg.mix)
+    const structural = !before || before.seed !== cfg.seed || before.repo !== cfg.repo || JSON.stringify(before.tasks) !== JSON.stringify(cfg.tasks) || JSON.stringify(before.mix) !== JSON.stringify(cfg.mix) || before.source !== cfg.source || !!sourceError
     if (structural || !totals) resetSession()
     else if (cfg.currentTask !== currentTask && before.currentTask !== cfg.currentTask) switchTask(cfg.currentTask, 'config')
   }
@@ -321,6 +339,8 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
     last = null; history = []; series = []
     totals = freshTotals(); baseStats = freshBase()
     error = null; phase = 'filling'; holdUntil = 0; rolledOff = 0
+    mode = 'synthetic'; original = []; tTasks = []; tBudget = 0; sourceInfo = null; sourceError = null; answerCache = null; planError = null
+    if (cfg.source && loadOwnTranscript()) return
     currentTask = cfg.tasks.some((t) => t.id === overrides.task) ? overrides.task : cfg.currentTask
     taskSince = 0
     addEvent(makeMessage('user', `Session start in the made-up repo "${cfg.repo}". First task: ${taskOf(currentTask).title}.`))
@@ -401,6 +421,11 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
   }
 
   function switchTask(id, by) {
+    if (mode === 'transcript') {
+      if (!tTasks.some((t) => t.id === id) || id === currentTask) return false
+      currentTask = id; answerCache = null
+      return true
+    }
     if (!cfg.tasks.some((t) => t.id === id) || id === currentTask) return false
     currentTask = id
     taskSince = eventNo
@@ -452,10 +477,12 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
 
   const qid = (b) => `${b.kind}_${b.id}`   // the question key, also what the HUD shows
   function question(b) {
-    return jev.choice(OPTIONS, `[${b.kind}] ${b.label} · ${fmt(b.tokens)} tokens. Preview: «${b.preview}» Is this tool result still needed for the current task? Trimming would keep only the first ${fmt(eff('trimTo'))} tokens.`)
+    const size = mode === 'transcript' ? b.orig : b.tokens
+    return jev.choice(OPTIONS, `[${b.kind}] ${b.label} · ${fmt(size)} tokens. Preview: «${b.preview}» Is this tool result still needed for the current task? Trimming would keep only the first ${fmt(eff('trimTo'))} tokens.`)
   }
 
   async function compact(trigger = 'budget') {
+    if (mode === 'transcript') return compactTranscript(trigger)
     if (busy) return null
     busy = true; phase = 'judging'
     try {
@@ -576,7 +603,7 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
 
   /** One decision step: one new event; if that pushes the window over budget, Jev compacts it. */
   async function step({ hold = false } = {}) {
-    if (stopped) return
+    if (stopped || mode === 'transcript') return
     if (cfg.taskEvery > 0 && eventNo - taskSince >= cfg.taskEvery) {
       const i = taskIdx(currentTask)
       switchTask(cfg.tasks[(i + 1) % cfg.tasks.length].id, 'auto')
@@ -587,13 +614,236 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
     }
   }
 
+  // ---- the person's own transcript -------------------------------------------------
+  function loadOwnTranscript() {
+    const r = loadTranscript(workspace, cfg.source)
+    if (!r.ok) { sourceError = r.error; return false }
+    mode = 'transcript'
+    original = r.blocks.map((b, i) => ({
+      id: i + 1, kind: b.role === 'tool' ? b.kind : b.role,
+      label: b.role === 'tool' ? (`${b.tool !== b.kind ? `${b.tool} ` : ''}${b.input}`.trim().slice(0, 140) || b.tool) : `${b.role} message`,
+      preview: b.preview, tokens: b.tokens, orig: b.tokens, after: b.tokens, task: null, need: b.role === 'tool' ? 'tool' : 'message', needle: 0,
+      verdict: null, jev: null, probs: null, demoted: false, born: 0, tool: b.tool, input: b.input, line: b.line, taskText: b.taskText, index: -1,
+    }))
+    let ti = 0
+    for (const b of original) if (b.need === 'tool') b.index = ti++
+    nextId = original.length + 1
+    tTasks = original.filter((b) => b.taskText).slice(-5).map((b) => ({ id: `m${b.id}`, blockId: b.id, line: b.line, title: b.taskText, label: b.taskText.length > 26 ? `${b.taskText.slice(0, 25)}…` : b.taskText }))
+    if (!tTasks.length) tTasks = [{ id: 'none', blockId: 0, line: 0, title: 'No user message found. Jev judges against the recent messages only.', label: 'whole session' }]
+    currentTask = tTasks.some((t) => t.id === overrides.task) ? overrides.task : tTasks[tTasks.length - 1].id
+    window_ = original.map((b) => ({ ...b }))
+    tokens = window_.reduce((a, b) => a + b.tokens, 0)
+    tBudget = Math.ceil(tokens / 1000) * 1000
+    sourceInfo = { file: r.rel, bytes: r.bytes, ...r.stats, blocks: original.length, tokens }
+    phase = 'loaded'
+    return true
+  }
+
+  function stateTextTranscript() {
+    const t = tTasks.find((x) => x.id === currentTask)
+    const msgs = original.filter((b) => b.need === 'message').slice(-RECENT_MESSAGES)
+    return [
+      'You are compacting the context window of a coding agent. The window is over budget.',
+      `CURRENT TASK: ${t?.blockId ? t.title : 'continue the work described in the recent messages'}`,
+      'Judge each tool result on its own. Keep what the agent still needs for the CURRENT TASK. Drop the rest.',
+      'RECENT MESSAGES:',
+      ...msgs.map((m) => `${m.kind}: ${m.preview}`),
+    ].join('\n')
+  }
+
+  /** Ask Jev about every tool result: 100 questions per call, a few calls at a time. */
+  async function judge(tools, state) {
+    const answers = {}
+    if (!tools.length) return { answers, calls: 0, ms: 0, callTokens: 0 }
+    const nCalls = Math.ceil(tools.length / CHUNK)
+    const per = Math.ceil(tools.length / nCalls)
+    const chunks = []
+    for (let i = 0; i < tools.length; i += per) chunks.push(tools.slice(i, i + per))
+    let callTokens = 0, next = 0
+    const t0 = performance.now()
+    const worker = async () => {
+      while (next < chunks.length) {
+        const chunk = chunks[next++]
+        const questions = {}
+        for (const b of chunk) questions[qid(b)] = question(b)
+        const res = await evaluate({ state, questions, salt: salt++, mock: compactorMock, model: process.env.JEV_MODEL || 'jev-latest' })
+        const real = Number(res.usage?.input_tokens)
+        callTokens += real > 0 ? real : Math.ceil((JSON.stringify(state).length + JSON.stringify(toWire(questions)).length) / 4)
+        client = res.client
+        Object.assign(answers, res.answers)
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(6, chunks.length) }, worker))
+    return { answers, calls: chunks.length, ms: performance.now() - t0, callTokens }
+  }
+
+  /**
+   * Transcript mode. Every run starts again from the whole transcript, so a new task or a new pin
+   * changes the plan. There is no ground truth here and no pressure pass: the plan is Jev's verdicts.
+   */
+  async function compactTranscript(trigger = 'manual', { reuse = false, stage = false } = {}) {
+    if (busy) return null
+    busy = true
+    try {
+      const myGen = gen
+      if (stage && view?.clients.size && totals.compactions) {
+        // Put the whole transcript back first, so the pane can show the full tower being judged again.
+        window_ = original.map((b) => ({ ...b, tokens: b.orig, verdict: null }))
+        tokens = window_.reduce((a, b) => a + b.tokens, 0)
+        phase = 'loaded'
+        push(true)
+        await new Promise((r) => setTimeout(r, 1100))
+        if (stopped || myGen !== gen) return null
+      }
+      phase = 'judging'
+      const tools = original.filter((b) => b.need === 'tool')
+      const trimTo = eff('trimTo')
+      let j
+      // A pin only re-applies the answers Jev already gave for this task: no new call, no new cost.
+      if (reuse && answerCache && answerCache.task === currentTask) j = { answers: answerCache.answers, calls: 0, ms: 0, callTokens: 0, reused: true }
+      else {
+        j = await judge(tools, stateTextTranscript())
+        if (stopped || myGen !== gen) return null
+        answerCache = { task: currentTask, answers: j.answers, calls: j.calls, ms: j.ms }
+      }
+      const before = original.reduce((a, b) => a + b.orig, 0)
+      const count = { keep: 0, trim: 0, drop: 0 }
+      const verdicts = {}
+      const kept = [], dropped = []
+      let pinnedKept = 0
+      for (const o of original) {
+        if (o.need === 'message') { kept.push({ ...o }); continue }
+        const a = j.answers[qid(o)]
+        const p = a?.probabilities ?? {}
+        o.probs = { keep: Number(p.keep ?? 0), trim: Number(p.trim ?? 0), drop: Number(p.drop ?? 0) }
+        o.jev = VERDICTS.includes(a?.choice) ? a.choice : 'keep'
+        o.verdict = pinned.has(o.id) ? 'keep' : o.jev
+        if (pinned.has(o.id) && o.jev !== 'keep') pinnedKept++
+        o.after = o.verdict === 'drop' ? 0 : o.verdict === 'trim' ? Math.min(o.orig, trimTo) : o.orig
+        count[o.verdict]++
+        verdicts[o.id] = [VERDICTS.indexOf(o.verdict) + 1, +o.probs.keep.toFixed(3), +o.probs.trim.toFixed(3), +o.probs.drop.toFixed(3), 0, o.after]
+        if (o.verdict === 'drop') dropped.push(o)
+        else kept.push({ ...o, tokens: o.after })
+      }
+      window_ = kept
+      tokens = window_.reduce((a, b) => a + b.tokens, 0)
+      const costUsd = (j.callTokens * PRICE_PER_MTOK) / 1e6
+      totals.compactions++
+      totals.questions += j.reused ? 0 : tools.length; totals.calls += j.calls; totals.costUsd += costUsd; totals.inputTokens += j.callTokens; totals.ms += j.ms
+      totals.tokensBefore += before; totals.tokensAfter += tokens
+      last = {
+        n: totals.compactions, trigger, task: currentTask, at: 0, wallAt: Date.now(),
+        before, after: tokens, reduction: before > 0 ? 1 - tokens / before : 0,
+        // after a pin these show the judging run whose answers were reused; its cost was already counted
+        questions: tools.length, calls: j.reused ? answerCache.calls : j.calls, perCall: (j.reused ? answerCache.calls : j.calls) ? Math.round(tools.length / (j.reused ? answerCache.calls : j.calls)) : 0,
+        ms: j.reused ? answerCache.ms : j.ms, costUsd, inputTokens: j.callTokens, client, reused: !!j.reused,
+        keep: count.keep, trim: count.trim, drop: count.drop, pinnedKept, demoted: 0, verdicts,
+        biggestDropped: dropped.sort((x, y) => y.orig - x.orig).slice(0, 8).map((o) => ({ id: o.id, index: o.index, line: o.line, kind: o.kind, tool: o.tool, input: o.input, tokens: o.orig, p: +o.probs.drop.toFixed(3) })),
+        plan: PLAN_FILE,
+      }
+      history.push({ n: last.n, before, after: tokens, reduction: last.reduction, ms: j.ms, questions: tools.length, calls: j.calls, trigger, task: currentTask, demoted: 0 })
+      if (history.length > 40) history.shift()
+      writePlan()
+      error = null
+      return last
+    } catch (e) {
+      error = clean(e?.message ?? e)
+      return null
+    } finally {
+      busy = false
+      phase = totals.compactions ? 'done' : 'loaded'
+    }
+  }
+
+  /** compaction-plan.json: what Jev would cut. Tool names, input summaries and numbers only, never the content. */
+  function writePlan() {
+    try {
+      const t = tTasks.find((x) => x.id === currentTask)
+      const tools = original.filter((b) => b.need === 'tool')
+      const messages = original.filter((b) => b.need === 'message')
+      const plan = {
+        spec: 1, kind: 'jev-compaction-plan',
+        note: 'An analysis of what Jev would cut from this transcript. It changed nothing in any live session. Token counts are estimates (characters / 4).',
+        source: sourceInfo.file, createdAt: new Date().toISOString(),
+        judge: client === 'mock' ? 'offline mock (a stand-in, not live Jev)' : 'live Jev', model: process.env.JEV_MODEL || 'jev-latest',
+        task: { line: t?.line ?? 0, note: 'the user message at this line of the source is what "relevant" meant' },
+        trimTo: eff('trimTo'),
+        totals: {
+          tokensBefore: last.before, tokensAfter: last.after, tokensSaved: last.before - last.after, reduction: +last.reduction.toFixed(4),
+          toolResults: tools.length, keep: last.keep, trim: last.trim, drop: last.drop, pinned: tools.filter((b) => pinned.has(b.id)).length,
+          messages: messages.length, messageTokens: messages.reduce((a, b) => a + b.orig, 0),
+          questions: last.questions, calls: last.calls, ms: +last.ms.toFixed(1), costUsd: +last.costUsd.toFixed(6),
+          skippedLines: sourceInfo.skipped, ignoredLines: sourceInfo.ignored,
+        },
+        results: tools.map((b) => ({
+          index: b.index, line: b.line, tool: b.tool, kind: b.kind, input: b.input, tokens: b.orig, tokensAfter: b.after,
+          verdict: b.verdict, jev: b.jev, pinned: pinned.has(b.id),
+          probabilities: { keep: +b.probs.keep.toFixed(4), trim: +b.probs.trim.toFixed(4), drop: +b.probs.drop.toFixed(4) },
+        })),
+      }
+      const file = join(workspace, PLAN_FILE)
+      writeFileSync(`${file}.tmp`, JSON.stringify(plan, null, 1))
+      renameSync(`${file}.tmp`, file)
+      planError = null
+    } catch (e) {
+      planError = clean(`could not write ${PLAN_FILE}: ${e?.message ?? e}`)
+    }
+  }
+
+  function describeTranscript(id) {
+    const o = original.find((x) => x.id === id)
+    if (!o) return null
+    const inWin = window_.find((x) => x.id === id)
+    const msg = o.need === 'message'
+    return {
+      id: o.id, kind: o.kind, label: o.label, preview: o.preview, tokens: inWin ? inWin.tokens : 0, orig: o.orig,
+      task: null, taskTitle: null, need: o.need, pinned: pinned.has(o.id),
+      gone: inWin ? null : 'Dropped in the plan. Pin it to bring it back.',
+      verdict: o.verdict, jev: o.jev, probs: o.probs, demoted: false, ideal: null,
+      truth: msg ? 'A message. Messages are never judged or touched.' : null,
+      inWindow: !!inWin, canPin: !msg, tool: o.tool, input: o.input, line: o.line, source: sourceInfo?.file ?? null,
+    }
+  }
+
+  function verdictTranscript() {
+    const findings = []
+    const problems = [...cfgProblems, ...(planError ? [planError] : [])]
+    if (problems.length) findings.push({ severity: 'error', kind: 'config', message: problems.join(' · ') })
+    if (error) findings.push({ severity: 'error', kind: 'jev', message: error })
+    const judgeName = client === 'mock' ? 'the offline mock (not live Jev)' : 'live Jev'
+    if (last) {
+      findings.push({ severity: 'info', kind: 'plan', message: `Plan for ${sourceInfo.file}: ${fmt(last.before)} -> ${fmt(last.after)} tokens (${pct(last.reduction)} cut). ${plural(last.questions, 'tool result')}: keep ${last.keep}, trim ${last.trim}, drop ${last.drop}. Full plan in ${PLAN_FILE}. Token counts are estimates (characters / 4). Judged by ${judgeName}.` })
+      findings.push({ severity: 'info', kind: 'speed', message: `${plural(last.questions, 'question')} in ${plural(last.calls, 'call')}, ${last.ms.toFixed(0)} ms, about $${last.costUsd.toFixed(4)} on ${judgeName}.` })
+      if (sourceInfo.skipped) findings.push({ severity: 'warning', kind: 'source', message: `${plural(sourceInfo.skipped, 'line')} of ${sourceInfo.file} could not be parsed and were skipped.` })
+    }
+    return {
+      ready: !!last,
+      summary: problems.length || error
+        ? `${cfg.title} needs a fix`
+        : last
+          ? `${cfg.title} · your transcript · ${fmt(last.before)} -> ${fmt(last.after)} tokens (${pct(last.reduction)} cut) · plan in ${PLAN_FILE}`
+          : `${cfg.title} · loaded ${sourceInfo.file} (${fmt(tokens)} tokens) · Jev judges it in a moment`,
+      findings,
+      artifact: last ? PLAN_FILE : 'session.json',
+      plan: last ? PLAN_FILE : null,
+      totals: last ? { tokensBefore: last.before, tokensAfter: last.after, reduction: +last.reduction.toFixed(4), toolResults: last.questions, keep: last.keep, trim: last.trim, drop: last.drop, questions: last.questions, calls: last.calls, ms: +last.ms.toFixed(1), costUsd: +last.costUsd.toFixed(6) } : null,
+      phases: [
+        { id: 'load', name: 'Transcript loaded', state: 'done' },
+        { id: 'judge', name: 'Jev judges every tool result', state: phase === 'judging' ? 'active' : last ? 'done' : 'pending' },
+        { id: 'plan', name: 'Plan written', state: last ? 'active' : 'pending', artifact: last ? PLAN_FILE : undefined },
+      ],
+    }
+  }
+
   // ---- frames --------------------------------------------------------------
   function frame() {
     const cur = currentTask
     const avg = (a, b) => (b > 0 ? a / b : null)
-    return {
+    const problems = [...cfgProblems, ...(sourceError ? [sourceError] : []), ...(planError ? [planError] : [])]
+    const f = {
+      mode, source: sourceInfo,
       title: cfg.title, description: cfg.description, repo: cfg.repo, client, gen,
-      running, phase, error, cfgError: cfgProblems.length ? cfgProblems.join(' · ') : null,
+      running, phase, error, cfgError: problems.length ? problems.join(' · ') : null,
       cfg: { budget: eff('budget'), trimTo: eff('trimTo'), distraction: eff('distraction'), eventsPerSec: cfg.eventsPerSec, noise: cfg.noise, focus: cfg.focus, target: cfg.target, recallTarget: cfg.recallTarget, summaryTokens: cfg.summaryTokens, taskEvery: cfg.taskEvery, seed: cfg.seed },
       overrides: { budget: overrides.budget !== undefined, distraction: overrides.distraction !== undefined, task: overrides.task !== undefined },
       tasks: cfg.tasks.map((t) => ({ id: t.id, title: t.title, words: t.vocabulary.length })),
@@ -617,25 +867,37 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
       },
       series,
     }
+    if (mode === 'transcript') {
+      // No ground truth here: nothing truth-based leaves the server.
+      f.tasks = tTasks.map((t) => ({ id: t.id, title: t.title, label: t.label }))
+      f.baseline = null
+      f.series = []
+      delete f.totals.avgRecall
+      delete f.totals.avgJunkRemoved
+      delete f.cfg.recallTarget
+    }
+    return f
   }
 
   function verdict() {
+    if (mode === 'transcript') return verdictTranscript()
     const t = totals
     const avgRecall = t.needleBefore > 0 ? t.needleAfter / t.needleBefore : null
     const avgReduction = t.tokensBefore > 0 ? 1 - t.tokensAfter / t.tokensBefore : null
     const baseRecall = baseStats.needleBefore > 0 ? baseStats.needleAfter / baseStats.needleBefore : null
     const findings = []
-    if (cfgProblems.length) findings.push({ severity: 'error', kind: 'config', message: cfgProblems.join(' · ') })
+    const problems = [...cfgProblems, ...(sourceError ? [sourceError] : [])]
+    if (problems.length) findings.push({ severity: 'error', kind: 'config', message: problems.join(' · ') })
     if (error) findings.push({ severity: 'error', kind: 'jev', message: error })
     if (t.compactions) {
       const low = avgRecall != null && avgRecall < cfg.recallTarget
       findings.push({ severity: low ? 'warning' : 'info', kind: 'recall', message: `Needle recall ${pct(avgRecall)} over ${plural(t.compactions, 'compaction')} (target ${pct(cfg.recallTarget)}), average reduction ${pct(avgReduction)}, distraction ${eff('distraction').toFixed(2)}.` })
-      findings.push({ severity: 'info', kind: 'speed', message: `${plural(t.questions, 'question')} in ${plural(t.calls, 'call')} (${Math.round(t.questions / Math.max(1, t.calls))} per call), ${t.ms.toFixed(0)} ms in total, about $${t.costUsd.toFixed(4)} on ${client === 'typesafe' ? 'live Jev' : 'the offline mock'}.` })
+      findings.push({ severity: 'info', kind: 'speed', message: `${plural(t.questions, 'question')} in ${plural(t.calls, 'call')} (${Math.round(t.questions / Math.max(1, t.calls))} per call), ${t.ms.toFixed(0)} ms in total, about $${t.costUsd.toFixed(4)} on ${client !== 'mock' ? 'live Jev' : 'the offline mock'}.` })
       if (baseRecall != null) findings.push({ severity: 'info', kind: 'baseline', message: `Simple "summarize the oldest half" baseline kept ${pct(baseRecall)} of needle tokens on the same synthetic session. It is a toy baseline, not a real product.` })
     }
     return {
       ready: t.compactions > 0,
-      summary: cfgProblems.length || error
+      summary: problems.length || error
         ? `${cfg.title} needs a fix`
         : t.compactions
           ? `${cfg.title} · ${plural(t.compactions, 'compaction')} · recall ${pct(avgRecall)} · reduction ${pct(avgReduction)} · synthetic session`
@@ -669,6 +931,11 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
   function schedule() {
     clearTimeout(timer)
     if (stopped || !running) return
+    if (mode === 'transcript') {
+      // No stream in this mode. Judge the loaded transcript once, a moment after it is on screen.
+      if (!totals.compactions) timer = setTimeout(async () => { if (stopped || !running || mode !== 'transcript' || totals.compactions) return; await compactTranscript('auto'); saveVerdict(true); push(true) }, 1800)
+      return
+    }
     timer = setTimeout(run, 1000 / cfg.eventsPerSec)
   }
   async function run() {
@@ -688,7 +955,10 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
     let reply = null
     if (cmd === 'pause') { running = false; clearTimeout(timer) }
     else if (cmd === 'start') { if (!running) { running = true; schedule() } }
-    else if (cmd === 'reset') { resetSession() }
+    else if (cmd === 'reset') { resetSession(); schedule() }
+    else if (cmd === 'tick' && mode === 'transcript') { if (!totals.compactions) await compactTranscript('auto') }
+    else if (cmd === 'flood' && mode === 'transcript') { /* nothing to pour in: the transcript is already whole */ }
+    else if (cmd === 'compact' && mode === 'transcript') { await compactTranscript('manual', { stage: true }) }
     else if (cmd === 'tick') {
       const n = clampN(Math.round(Number(body.n) || 1), 1, 5000)
       for (let i = 0; i < n; i++) await step()
@@ -708,6 +978,19 @@ export async function startCompactorViewer({ workspace, port = 0 } = {}) {
     } else if (cmd === 'setDistraction') {
       const v = Number(body.value)
       if (Number.isFinite(v)) overrides.distraction = clampN(v, 0, 1)
+    } else if (cmd === 'pin' && mode === 'transcript') {
+      const id = Number(body.id)
+      const o = original.find((x) => x.id === id && x.need === 'tool')
+      if (o) {
+        const on = !(body.pinned === false || (body.pinned === undefined && pinned.has(id)))
+        if (on) pinned.add(id); else pinned.delete(id)
+        // A pin on a block the plan had cut brings it straight back, reusing Jev's answers.
+        const inWin = window_.find((x) => x.id === id)
+        if (on && totals.compactions && (!inWin || inWin.tokens < o.orig)) await compactTranscript('pin', { reuse: true })
+      }
+      reply = { pinned: pinned.has(id) }
+    } else if (cmd === 'inspect' && mode === 'transcript') {
+      reply = { block: describeTranscript(Number(body.id)) }
     } else if (cmd === 'pin') {
       const id = Number(body.id)
       const b = window_.find((x) => x.id === id)

@@ -93,3 +93,8 @@ button.primary { color: #04130a; }
 #history li .lo { color: var(--warn); } #history li .vlo { color: var(--bad); }
 #history li.manual span:first-child { color: var(--cyan); }
 .hist-empty { color: var(--dim); font-size: 12px; padding: 6px 2px; }
+
+/* the person's own transcript */
+body.own .brand .sub { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+input[type=range]:disabled { opacity: .35; }
+.big b.tight { font-size: 15px; letter-spacing: -.5px; } /* three long counts on a real transcript */
