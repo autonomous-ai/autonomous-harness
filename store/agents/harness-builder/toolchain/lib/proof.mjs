@@ -184,6 +184,15 @@ export async function runProof(workspace, id) {
   let usage = null
 
   const child = spawn(bin, args, { cwd: ws, env: agentEnv(process.env, manifest, p.package, ws), detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  // The agent has a process group of its own, so stopping this runner would leave it working — and
+  // spending — with nobody watching. `proof stop` needs its pid, and a runner told to stop takes the
+  // agent down with it.
+  {
+    const started = readBuild(workspace)
+    if (started.proofs[id]) { started.proofs[id].agentPid = child.pid; saveBuild(workspace, started) }
+  }
+  const stopAgent = () => { try { process.kill(-child.pid, 'SIGTERM') } catch { /* gone */ } }
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, () => { stopAgent(); process.exit(143) })
   let buffer = ''
   const onData = (chunk) => {
     const text = chunk.toString()
@@ -309,8 +318,16 @@ export function stopProof(workspace, id) {
     const proof = build.proofs[pid]
     if (!proof) continue
     if (proof.viewer?.pid) stopViewer(proof.viewer.pid)
+    // The agent first (its own process group, or it outlives everything), then the runner.
+    if (proof.agentPid) { try { process.kill(-proof.agentPid, 'SIGTERM') } catch { /* gone */ } }
     if (proof.runnerPid && alive(proof.runnerPid)) { try { process.kill(proof.runnerPid, 'SIGTERM') } catch { /* gone */ } }
     proof.viewer = { ...(proof.viewer ?? {}), pid: null, stopped: true }
+    if (proof.state === 'running') {
+      proof.state = 'stopped'
+      proof.runnerPid = null
+      proof.agentPid = null
+      log(build, `Proof ${pid}: stopped — run it again to prove anything`)
+    }
   }
   saveBuild(workspace, build)
 }
