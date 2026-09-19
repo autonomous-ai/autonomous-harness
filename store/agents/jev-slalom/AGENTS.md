@@ -31,6 +31,9 @@ immediately.
   fall and a bigger payoff for a clean line.
 - **`valleyWidth`** — the width of the course in slots (6–60). Wider = more room to swing; narrower
   = the skier rides closer to the walls.
+- **`gateGap`** — optional. The space between the two poles of a gate, in slots (2–10). Leave it
+  out and the course cuts its usual gap (about a third of the valley, at most 6). Smaller = Jev has
+  to be more exact.
 - **`tickMs`** — how often the world updates (and Jev decides). Fast ticks = frantic carving; slow
   ticks = a contemplative descent.
 - **`style`** — the instruction to Jev. It should name a line strategy (line up early, commit, hug
@@ -57,7 +60,7 @@ at calm speed (bad)? Either extreme is a finding to report, not a bug to mask.
 ## Rules
 
 - Keep `slalom.json` valid JSON always. A bad edit freezes the run on the last good state. You can
-  change `speed`/`gates`/`valleyWidth` live — the viewer rebuilds the course for the new profile.
+  change `speed`/`gates`/`valleyWidth`/`gateGap` live — the viewer rebuilds the course for the new profile.
 - Keep `title`, `description` and `style` truthful — and never present this as a real ski event,
   real race timing, or real coaching.
 - Jev is reached through `toolchain/jev.mjs`. You can call it directly to ask Jev's read before you

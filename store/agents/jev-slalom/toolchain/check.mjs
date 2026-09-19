@@ -23,6 +23,8 @@ if (typeof p.speed !== 'number' || p.speed <= 0) bad('error  speed must be a pos
 if (typeof p.gates !== 'number' || p.gates < 2 || p.gates > 60) bad('error  gates should be 2..60')
 const W = p.valleyWidth ?? 18
 if (typeof W !== 'number' || W < 6 || W > 60) bad('error  valleyWidth should be 6..60')
+// gateGap is optional: leave it out and the course cuts its usual gap (about a third of the valley).
+if (p.gateGap !== undefined && (typeof p.gateGap !== 'number' || p.gateGap < 2 || p.gateGap > 10)) bad('error  gateGap (slots between the poles) should be 2..10')
 if (typeof p.tickMs !== 'number' || p.tickMs < 60 || p.tickMs > 2000) bad('error  tickMs must be ms 60..2000')
 if (!p.style || typeof p.style !== 'string') bad('warn  a style line helps Jev line up coherently')
 

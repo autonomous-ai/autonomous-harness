@@ -23,10 +23,22 @@ reshapes Jev's playing live — edit the tempo, moods or scales while it's on an
   "bassScale": ["C2","G2","A2","F2"],    // the notes Jev may pick for the bass (2..4)
   "chords": ["Cmaj7","Am7","Fmaj7","G7"],// the harmonic palette Jev chooses between (2..8)
   "moods": ["brooding","hopeful"],       // the emotional labels you want to hear (2..4)
-  "leadNotes": 8,               // melody notes per bar
-  "volume": 0.6
+  "leadNotes": 8,               // melody slots per bar (2..16). Jev picks every one, one question each
+  "volume": 0.6,
+  "memory": 4                   // bars of its own music Jev can read (0..8)
 }
 ```
+
+The **first chord in `chords` is the home chord**. Jev starts phrases there and comes back to it,
+so put the tonic first.
+
+`memory` is the honest dial. With a few bars in view Jev follows each chord with one that leads on,
+holds a mood for a phrase, and picks the melody up where it left it. At 0 it cannot know what it
+just played, so the harmony wanders and the mood flickers. Pick it on purpose and say why in chat.
+
+The user can also play in the pane: mood buttons (written into what Jev reads as the audience's
+request), tempo and memory sliders, an instrument toggle, and "One more bar". Those are for their
+session only. Your next save of `piece.json` resets the sliders, so tell the user when you save.
 
 Valid scale notes run C4..B5; valid bass notes run C2..C3. `toolchain/check.mjs` validates all of it.
 
@@ -62,9 +74,9 @@ a narrower scale + small consonant chord palette is what produces harmonically c
 ## Rules
 
 - Never propose opening a browser, changing ports, or running a second server. The viewer is already
-  running on the left; it auto-improves on a clock. The left pane's Play button only unlocks the
-  browser's audio (a user gesture is required before Web Audio starts) — the composition itself
-  flows regardless.
+  running on the left; it writes a bar on every bar of its clock. The pane's "Sound on" button only
+  unlocks the browser's audio (a click is required before Web Audio starts). The composition and
+  everything on the stage run with the sound off too.
 - Jev is reached through `toolchain/jev.mjs`. You can call it directly to preview your idea before
   committing — for example, to ask Jev which of two chord palettes it thinks is more "electric", or
   to have it sketch a mood arc. Use the `jev` helpers: `noul`, `choice`, `score`. See

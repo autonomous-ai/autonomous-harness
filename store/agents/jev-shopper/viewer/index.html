@@ -4,44 +4,84 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Shopper</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/base.css">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="topbar">
-    <div class="brand"><span class="dot"></span><h1>Jev Shopper</h1></div>
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Shopper</h1><span class="sub">made-up shop · made-up prices</span></div>
     <div class="stats">
-      <div class="stat"><label>Ticks</label><span id="ticks">0</span></div>
-      <div class="stat"><label>Best buy</label><span id="pick">—</span></div>
-      <div class="stat"><label>Sure</label><span id="sure">—</span></div>
-      <div class="stat"><label>Cash</label><span id="cash">100</span></div>
+      <div class="stat"><label>Buys</label><span id="s-buys">0</span></div>
+      <div class="stat"><label>Deal calls right</label><span id="s-acc">—</span></div>
+      <div class="stat"><label>Budget left</label><span id="s-cash">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Saved vs usual</label><span id="s-saved">$0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
     <div class="controls">
       <button id="pause">Pause</button>
-      <button id="tick">Step</button>
-      <button class="primary" id="reset">Reset</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
     </div>
   </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
   <main>
     <section id="stage">
-      <div class="panel">
-        <div class="panel-title">The shop window</div>
+      <div class="toolbar panel">
+        <label class="slider">Budget <input id="budget" type="range" min="50" max="1500" step="10" value="600"> <b id="budgetVal">$600</b></label>
+        <label class="slider">Price noise <input id="vol" type="range" min="0" max="0.4" step="0.005" value="0.03"> <b id="volVal">3%</b></label>
+        <label class="slider">Speed <input id="speed" type="range" min="1" max="16" step="0.5" value="4"> <b id="speedVal">4 /s</b></label>
+        <button id="add">+ Add a product</button>
+        <label class="check"><input id="fair" type="checkbox" checked> show the hidden fair price</label>
+        <span class="hint"><b>Click a product</b> to start a flash sale on it. <b>×</b> takes it off the board. More noise makes wobbles look like deals.</span>
+      </div>
+      <div id="board" class="board">
+        <div class="lamp"><b>JEV</b><span id="lampSay">reading the board…</span></div>
         <div id="shelf"></div>
+        <canvas id="fx" aria-hidden="true"></canvas>
+        <div id="result" class="result hidden"></div>
+        <div class="synthetic">made-up prices · paper money</div>
+      </div>
+      <div class="strip panel">
+        <div class="budgetrow">
+          <span class="lab" id="roundLab">Round 1</span>
+          <div class="budgetbar" id="budgetBar"></div>
+          <span class="lab right" id="budgetLab">—</span>
+        </div>
+        <div class="legend">
+          <span><i class="k line"></i>price shown</span>
+          <span><i class="k dash"></i>usual price (average of the last 60 ticks)</span>
+          <span><i class="k deal"></i>deal bar</span>
+          <span><i class="k dots"></i>fair price, hidden from Jev</span>
+          <span><i class="k trail"></i>ticks Jev's spotlight was here</span>
+          <span><i class="k buy"></i>a buy (lands one tick after the call)</span>
+        </div>
       </div>
     </section>
     <aside id="rail">
       <div class="panel">
-        <div class="panel-title">Jev, the buyer</div>
-        <div class="how">
-          Each product streams a live price. On every tick Jev reads the whole window and calls
-          <b>the best buy now</b> — the one whose price is still falling hardest — and says how sure
-          it is. When it's sure enough, it spends on paper.<br><br>
-          Edit <code>shopper.json</code>: tune <code>vol</code> to wobble the prices faster (harder
-          calls), or rewrite <code>products</code> for a new shop window.
-        </div>
+        <div class="panel-title">What Jev reads <span class="right pill" id="phasePill">shopping</span></div>
+        <pre id="stateText" class="statetext"></pre>
       </div>
       <div class="panel">
-        <div class="panel-title">Decisions</div>
-        <ul id="log"></ul>
+        <div class="panel-title">Receipts <span class="right" id="receiptSum"></span></div>
+        <ul id="receipts"></ul>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          The shop is made up. Every product has a hidden <b>fair price</b> that now and then goes on a
+          real sale. The price on the board is the fair price plus <b>noise</b>. On every tick Jev
+          reads the board as the text above and answers <b>two typed questions in one call</b>: which
+          product is the <b>best buy</b> right now, and whether to <b>spend now</b>.<br><br>
+          The spotlight is Jev's answer. The fainter beams and the bar on each card are the
+          probability it gave every product. When Jev says spend and its pick is under the deal bar,
+          an order goes in and <b>lands one tick later</b>. A real sale is still there. A wobble is
+          gone, so noise turns savings into nothing.<br><br>
+          Edit <code>shopper.json</code> to change the products, the noise or the budget. None of
+          this is shopping or money advice.
+        </div>
       </div>
     </aside>
   </main>

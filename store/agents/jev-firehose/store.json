@@ -2,7 +2,7 @@
   "homepage": "https://typesafe.ai",
   "upstream": "https://typesafe.ai",
   "license": "MIT",
-  "tagline": "Jev triages thousands of made-up inbox messages live: fast, cheap, measured",
+  "tagline": "Jev triages thousands of inbox messages live, made-up or your own, for cents",
   "examples": [
     {
       "prompt": "Turn the desk into player support for a made-up game studio. Write 8 teams with sharp descriptions and at least 6 phrases each. Then find the lowest threshold that keeps auto-routing above 95% right at noise 0.3, and tell me how many messages it escalates.",
@@ -12,6 +12,11 @@
     {
       "prompt": "Make it hard. Set noise to 0.7 and tell me what happens to accuracy and escalations, which two teams get mixed up most, and which threshold you would pick.",
       "caption": "Turn the noise dial and read the trade-off on synthetic data"
+    },
+    {
+      "prompt": "I put my own messages in inbox.csv in the workspace. Read only the header and a small sample, design teams from what is really in it, and triage the whole file. Then tell me where the results file is and how the messages split.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-firehose/your-own-messages.jpg",
+      "caption": "Your own messages: triaged once, handed back as triage.csv"
     }
   ]
 }

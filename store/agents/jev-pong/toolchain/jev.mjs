@@ -192,45 +192,52 @@ function pendulumRead(text) {
 }
 
 /**
- * Pong-defender read used by the mock when the state text carries a ball position/velocity and the
- * paddle's centre. We predict where the ball will cross the paddle's wall (reflecting off floor and
- * ceiling) and bias the paddle move toward that intercept, with a reaction that degrades as the ball
- * gets faster. Returns per-move boosts plus a beta error chance so Jev can visibly lose a fast rally.
+ * Pong-defender read used by the mock when the state text carries a ball (position and velocity),
+ * the paddle and the court. It works out where the ball will next cross the paddle's line (the top,
+ * the bottom and the far wall are mirrors), then scores each move by how close it leaves the paddle
+ * to that point after ONE decision. No noise is added and nothing is hidden from it: the only way it
+ * loses is the honest one, a ball that comes back before the paddle can travel that far.
+ *
+ * It reads only the state text, the same text live Jev gets. An older reader asked for a
+ * "court: WxH" label that the viewer never wrote, so it never matched and the mock guessed blind
+ * (confidence about 0.25). The court is now read from "a 200×120 court" as well.
  */
 function pongRead(text) {
-  const num = (re) => { const m = text.match(re); return m ? Number(m[1]) : Number.NaN }
-  const x = num(/ball:\s*x\s+([-0-9.]+)/i)
-  const y = num(/y\s+([-0-9.]+)\s+vx/i)
-  const vx = num(/vx\s+([-0-9.]+)\s+vy/i)
-  const vy = num(/vy\s+([-0-9.]+)/i)
-  const paddleY = num(/centre y\s+([-0-9.]+)/i)
-  const half = num(/half-height\s+([-0-9.]+)/i)
-  const courtH = num(/court:\s*[-0-9.]+\s*[x×]\s*([-0-9.]+)/i)
-  const speed = num(/speed:\s*([-0-9.]+)/i)
-  if (![x, y, vx, vy, paddleY, half, courtH, speed].every(Number.isFinite)) return null
-  const r = 3
-  const span = courtH - 2 * r
-  // When the ball is moving away (rightward), the paddle's job is to stop chasing and hold still so
-  // it's framed to meet the ball when it comes back — letting the rally breathe.
-  if (vx >= 0) return { boost: { HOLD: 1.9, MOVE_UP: 0.7, MOVE_DOWN: 0.7, MOVE_UP_FAST: 0.3, MOVE_DOWN_FAST: 0.3 }, noise: 0, close: false }
-  // time (in ball steps) to reach the left wall
-  const t = -x / vx
-  const dy = vy * t
-  let u = ((y - r + dy) % (2 * span) + 2 * span) % (2 * span)
-  u = u <= span ? u : 2 * span - u
-  const ty = r + u
-  const want = ty - paddleY
-  const goDown = want > half * 0.5
-  const goUp = want < -half * 0.5
+  const num = (re, d = Number.NaN) => { const m = text.match(re); return m ? Number(m[1]) : d }
+  const x = num(/ball:\s*x\s+(-?\d+(?:\.\d+)?)/i)
+  const y = num(/ball:\s*x\s+-?[\d.]+\s+y\s+(-?\d+(?:\.\d+)?)/i)
+  const vx = num(/\bvx\s+(-?\d+(?:\.\d+)?)/i)
+  const vy = num(/\bvy\s+(-?\d+(?:\.\d+)?)/i)
+  const paddleY = num(/centre y\s+(-?\d+(?:\.\d+)?)/i)
+  const half = num(/half-height\s+(\d+(?:\.\d+)?)/i)
+  const court = text.match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s+court/i) || text.match(/court:\s*(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i)
+  if (!court || ![x, y, vx, vy, paddleY, half].every(Number.isFinite) || vx === 0) return null
+  const W = Number(court[1]), H = Number(court[2])
+  const r = num(/radius\s+(\d+(?:\.\d+)?)/i, 3)
+  const face = num(/face at x\s+(\d+(?:\.\d+)?)/i, 0) + r
+  const plain = num(/plain move shifts it\s+(\d+(?:\.\d+)?)/i, 3)
+  const fast = num(/fast move\s+(\d+(?:\.\d+)?)/i, plain * 2)
+  const held = num(/held still for\s+(\d+)/i, 0)
+  // Distance the ball still travels along x before it is back at the paddle's line.
+  const wallX = W - r
+  const dx = vx < 0 ? Math.max(0, x - face) : Math.max(0, wallX - x) + (wallX - face)
+  const ticks = dx / Math.abs(vx)
+  // Fold the straight-line y onto the court: every top or bottom bounce is a mirror.
+  const span = Math.max(1, H - 2 * r)
+  let u = ((y - r + vy * ticks) % (2 * span) + 2 * span) % (2 * span)
+  if (u > span) u = 2 * span - u
+  const crossY = r + u
+  const clampY = (v) => Math.max(half, Math.min(H - half, v))
+  const target = clampY(crossY)
+  const STEP = { MOVE_UP_FAST: -fast, MOVE_UP: -plain, HOLD: 0, MOVE_DOWN: plain, MOVE_DOWN_FAST: fast }
   const boost = {}
-  for (const name of ['MOVE_UP_FAST', 'MOVE_UP', 'HOLD', 'MOVE_DOWN', 'MOVE_DOWN_FAST']) {
-    if (goDown) boost[name] = name === 'MOVE_DOWN' ? 1.8 : name === 'MOVE_DOWN_FAST' ? 1.4 : name === 'HOLD' ? 0.7 : 0.2
-    else if (goUp) boost[name] = name === 'MOVE_UP' ? 1.8 : name === 'MOVE_UP_FAST' ? 1.4 : name === 'HOLD' ? 0.7 : 0.2
-    else boost[name] = name === 'HOLD' ? 1.8 : 0.8
-  }
-  // faster ball → the intercept at the wall changes fast and the paddle has fewer ticks to reach it,
-  // so the physical difficulty (max paddle speed) does the work. No injected noise: a miss is honest.
-  return { boost }
+  // A small cost on travel breaks ties: when two moves end equally close, take the calmer one.
+  for (const [name, d] of Object.entries(STEP)) boost[name] = (-1.7 * Math.abs(clampY(paddleY + d) - target) - 0.25 * Math.abs(d)) / Math.max(0.25, plain)
+  // Can the paddle still get there? Travel it has left, against travel it needs.
+  const need = Math.max(0, Math.abs(crossY - paddleY) - half)
+  const reach = fast * Math.floor(ticks + held)
+  const reachP = Math.max(0.03, Math.min(0.97, sigmoid((reach - need) / Math.max(1, fast) * 0.9 + 0.4)))
+  return { boost, reachP, crossY, ticks }
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +250,9 @@ function mockAnswer(state, qid, q, salt) {
   const h = hash01(`${qid}::${qtext}` + (state ?? ''), salt)
 
   if (q.type === 'noul') {
+    // Pong: "will the paddle reach the ball?" is answered from the same read as the move.
+    const pongNoul = /reach|in time|under control/.test(qtext) ? pongRead(text) : null
+    if (pongNoul) return { type: 'noul', noul: clamp(pongNoul.reachP) }
     // Noul: a probability that something is true. The mock nudges it from the mere prior.
     const mention = text.includes(qtext.split(' ').find((w) => w.length > 3) ?? '')
     let p = 0.5 + (h - 0.5) * 0.5
@@ -320,7 +330,8 @@ function mockAnswer(state, qid, q, salt) {
     if (pong) {
       options.forEach((opt, i) => {
         const b = pong.boost[String(opt)]
-        if (b !== undefined) raw[i] += b
+        // The read replaces the word-overlap guess (which favoured any option named MOVE_*).
+        if (b !== undefined) raw[i] = b + (hash01(String(opt), salt + 7) - 0.5) * 0.12
       })
     }
     // Softmax into a distribution.
@@ -359,6 +370,11 @@ function clamp01(x) {
   return Math.min(1, Math.max(0, x))
 }
 
+// Imports are hoisted, so they can live here with the code that needs them.
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 // ---------------------------------------------------------------------------
 // Wire format. The live API (POST /v1/systemone) takes, per question:
 //   noul    { type, instructions, criteria?: { true: "...", false: "..." } }
@@ -389,6 +405,7 @@ export function canon(q = {}) {
     out.hints = []
   } else {
     out.hints = Array.isArray(q.criteria) ? q.criteria.map(String) : []
+    out.raw = isMap(q.criteria) ? q.criteria : null
   }
   // The mock scores evidence off `criteria` as a flat list of strings.
   out.criteria = [...(out.hints ?? []), ...Object.values(out.descriptions ?? {})].filter((s) => typeof s === 'string')
@@ -486,8 +503,59 @@ export function snapshot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function liveEvaluate(body, key) {
-  const endpoint = process.env.TYPESAFE_API_URL || LIVE_ENDPOINT
+// ---------------------------------------------------------------------------
+// Credentials. Environment variables win. Otherwise a small KEY=VALUE file in the user's home is
+// read, because a viewer started by the Harness daemon does not inherit the variables of the shell
+// you happen to have open. Two live routes are supported, both speaking the same question format:
+//   TypeSafe direct         TYPESAFE_API_KEY                               (api.typesafe.ai)
+//   Cloudflare Workers AI   CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN   (no TypeSafe waitlist)
+// The file is ~/.config/typesafe/credentials (or $TYPESAFE_CREDENTIALS). Keep it chmod 600.
+// ---------------------------------------------------------------------------
+const CRED_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_API_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']
+let credCache = null
+export const credentialsPath = () => process.env.TYPESAFE_CREDENTIALS || join(homedir(), '.config', 'typesafe', 'credentials')
+
+function readCredentialFile() {
+  const now = Date.now()
+  const path = credentialsPath()
+  if (credCache && credCache.path === path && now - credCache.at < 5000) return credCache.values
+  const values = {}
+  try {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*?)\s*$/)
+      if (m && CRED_KEYS.includes(m[1])) values[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2')
+    }
+  } catch { /* no file: fine */ }
+  credCache = { at: now, path, values }
+  return values
+}
+
+/** Which live route to use, or null for the offline stand-in. Never log the returned secret. */
+export function resolveCredentials(explicitKey) {
+  if (explicitKey === '') return null // an explicit empty key forces the offline stand-in
+  // Test suites assume the deterministic stand-in. Under `node --test`, or with JEV_OFFLINE=1, a real
+  // key on the machine is ignored unless it is passed explicitly or JEV_LIVE_TESTS=1 is set.
+  if (!explicitKey && (process.env.JEV_OFFLINE === '1' || (process.env.NODE_TEST_CONTEXT && process.env.JEV_LIVE_TESTS !== '1'))) return null
+  const file = readCredentialFile()
+  const get = (k) => process.env[k] || file[k] || ''
+  const key = explicitKey || get('TYPESAFE_API_KEY')
+  if (key) return { provider: 'typesafe', secret: key, url: get('TYPESAFE_API_URL') || LIVE_ENDPOINT }
+  const account = get('CLOUDFLARE_ACCOUNT_ID'), token = get('CLOUDFLARE_API_TOKEN')
+  if (account && token) return { provider: 'cloudflare', secret: token, url: `${process.env.CLOUDFLARE_API_BASE || 'https://api.cloudflare.com'}/client/v4/accounts/${encodeURIComponent(account)}/ai/run` }
+  return null
+}
+
+/** One safe line for doctor scripts and panes: says which route is active, never the secret. */
+export function describeCredentials() {
+  const c = resolveCredentials()
+  if (!c) return `offline stand-in (no key found in the environment or in ${credentialsPath()})`
+  return c.provider === 'cloudflare' ? 'live Jev through Cloudflare Workers AI' : 'live Jev through the TypeSafe API'
+}
+
+async function liveEvaluate(body, cred) {
+  const endpoint = cred.url
+  const key = cred.secret
+  const payload = cred.provider === 'cloudflare' ? { model: 'typesafe/jev', input: { state: body.state, questions: body.questions } } : body
   let lastErr
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt) { telemetry.retries++; await sleep(250 * 3 ** (attempt - 1)) }
@@ -495,10 +563,15 @@ async function liveEvaluate(body, key) {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       })
-      if (res.ok) return res.json()
+      if (res.ok) {
+        const data = await res.json()
+        // Cloudflare wraps the model's reply as { result, success, errors }.
+        if (data && data.success === false) throw new JevError(`Jev API 422: ${JSON.stringify(data.errors ?? data).slice(0, 200)}`)
+        return data?.result?.answers ? data.result : data
+      }
       const detail = await res.text().catch(() => '')
       lastErr = new JevError(`Jev API ${res.status}: ${detail.slice(0, 200)}`)
       if (res.status !== 429 && res.status !== 529 && res.status < 500) throw lastErr // 401/422: retrying cannot help
@@ -524,19 +597,19 @@ async function liveEvaluate(body, key) {
  * @returns {{client, model, answers, usage, latencyMs}}
  */
 export async function evaluate({ state, questions, key, model = 'jev-latest', salt = 1, mock } = {}) {
-  const apiKey = key ?? process.env.TYPESAFE_API_KEY
-  const client = pickClient(apiKey)
+  const cred = resolveCredentials(key)
+  const client = cred ? cred.provider : 'mock'
   const wire = toWire(questions)
   const t0 = performance.now()
   try {
-    if (client === 'typesafe') {
-      const data = await liveEvaluate({ model, state, questions: wire }, apiKey)
+    if (cred) {
+      const data = await liveEvaluate({ model, state, questions: wire }, cred)
       const rawAnswers = data.answers || data
       const answers = {}
       for (const [qid, q] of Object.entries(questions)) answers[qid] = fromWire(rawAnswers[qid], canon(q))
       const latencyMs = performance.now() - t0
       meter({ client, model: data.model || model, wire, state, answers, usage: data.usage, latencyMs })
-      return { client: 'typesafe', model: data.model || model, answers, usage: data.usage || {}, latencyMs }
+      return { client, model: data.model || model, answers, usage: data.usage || {}, latencyMs }
     }
     // Mock: local, deterministic, instant.
     const text = typeof state === 'string' ? state : JSON.stringify(state)

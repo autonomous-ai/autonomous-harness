@@ -7,6 +7,7 @@
   "examples": [
     {
       "prompt": "Stage a grudge match: a patient corner-lover called Patience against a greedy opportunist called Greed. Make their personalities clash and watch the referee call it as the game tips.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-duel/reversi-war.jpg",
       "caption": "The Quiet War — patience vs greed on a 6x6 board"
     }
   ]

@@ -146,3 +146,45 @@
   .summary-line { font-size: 16px; }
   .summary-sub { font-size: 11px; max-width: 520px; }
 }
+
+/* Your-data mode: the person's own messages. No ground truth, so no accuracy, rings or matrix. */
+.own-only { display: none; }
+body.own .own-only { display: block; }
+body.own .synth-only { display: none; }
+#knob-source { display: none; }
+body.own #knob-source { display: flex; }
+body.own #knob-noise { display: none; }
+.knob-hint.wrap { white-space: normal; line-height: 1.4; }
+#src-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.synth.own { color: var(--accent); }
+.synth.own::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); margin-right: 7px; vertical-align: 1px; }
+.summary.own { left: 24.5%; top: 50%; width: 41%; min-width: 300px; max-width: 470px; padding: 16px 18px 14px; }
+.summary.own .summary-line { font-size: 17px; line-height: 1.5; white-space: normal; }
+.summary.own .summary-sub { font-size: 11.5px; line-height: 1.5; }
+.summary #sum-again { margin-top: 12px; }
+#confHist { width: 100%; height: 86px; display: block; }
+.team-counts { display: flex; flex-direction: column; gap: 3px; }
+.team-counts button { display: grid; grid-template-columns: 10px 92px minmax(0, 1fr) 44px 34px; gap: 7px; align-items: center; padding: 3px 4px; border: 1px solid transparent; background: transparent; text-align: left; font-size: 11px; }
+.team-counts button:hover { border-color: var(--line2); background: rgba(255,255,255,.03); }
+.team-counts .sw { width: 9px; height: 9px; border-radius: 3px; }
+.team-counts .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.team-counts .t { height: 7px; border-radius: 4px; background: rgba(255,255,255,.05); overflow: hidden; }
+.team-counts .t i { display: block; height: 100%; border-radius: 4px; opacity: .85; }
+.team-counts .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+.team-counts .v.dim { color: var(--dim); }
+.ans .q small.plain { color: var(--faint); opacity: 1; text-transform: uppercase; letter-spacing: .8px; }
+.pick { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: #0b0d14; }
+.pick-h { display: flex; align-items: baseline; gap: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 4px; }
+.pick-h small { text-transform: none; letter-spacing: 0; color: var(--faint); }
+.pick-h b { margin-left: auto; color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pick button { width: 100%; text-align: left; font: 12px/1.4 var(--sans); padding: 0; border: none; background: transparent; color: var(--ink); white-space: normal; }
+.pick button:hover span { text-decoration: underline; }
+
+/* A long desk title must not squeeze the six numbers. */
+.brand h1 { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1240px) {
+  .brand h1 { max-width: 118px; }
+  .summary.own { width: 44%; padding: 13px 14px 12px; }
+  .summary.own .summary-line { font-size: 14.5px; }
+  .summary.own .summary-sub { font-size: 10.5px; }
+}

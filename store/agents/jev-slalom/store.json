@@ -6,6 +6,7 @@
   "examples": [
     {
       "prompt": "Set Jev Slalom up as a hard run — push the descent speed up near the limit. Give Jev a decisive line-up-early style, then watch it read the next gate every tick, carve the valley, thread every gate (or clip one and fall when the speed gets too hot).",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-slalom/slope.jpg",
       "caption": "Jev's Run — a fast decision model carving a slalom line and threading each gate on every tick"
     }
   ]

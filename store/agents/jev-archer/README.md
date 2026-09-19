@@ -28,12 +28,32 @@ jev-archer/
 ## The viewer
 
 `viewer/viewer.mjs` runs the range over a loopback HTTP server. Each tick it slides the target one
-step, asks Jev for the aim, and streams the session — the target sliding on its wire, Jev's crosshair
-aim tracking it, arrows releasing to the aim line (lighting the bullseye on a hit, flying past on a
-miss), and a session log — to the pane. It calls `POST /v1/systemone` when `TYPESAFE_API_KEY` is
-set; without it a deterministic mock reads the same range and lines up on the target, so the demo
-runs offline. `.harness/verdict.json` tracks bullseyes, misses, and whether the session was a clean
-day.
+step, asks Jev for the aim, and streams one frame to the pane. It calls `POST /v1/systemone` when
+`TYPESAFE_API_KEY` is set. Without a key, a deterministic stand-in reads the same two numbers, so
+the demo runs offline, and the pane shows a `MOCK` badge. `.harness/verdict.json` tracks bullseyes,
+misses, and whether the range was a clean day. A finished range stays up about three seconds, then
+a new one starts with a new seed.
+
+**The pane** draws a range at dusk at 60 fps and eases between Jev's decisions. A bow draws back in
+the foreground as the release counts down. The arrow flies to the straw wall and sticks where it
+landed: on the target face if it hit it, in the straw if it did not. Score numbers pop, a streak
+counter heats up, and a flag and bunting show the wind. Jev's mind is in the scene: five ghost
+rings, one per option, as bright as their probability; a cone from the arrow tip whose width is how
+unsure Jev is; and a small bar chart that rides under the aim. The top bar shows decisions per
+second, decisions, and cost so far.
+
+**You can play with it:**
+
+- **Target speed** and **Gold size** sliders override `speed` and `bullHalf` at once. The next edit
+  to `archer.json` clears them.
+- **Click the range** to shove the target to that spot. Jev has to find it again.
+- **Gust of wind** pushes the target along its rail for a few ticks.
+- **Slow motion** stretches every tick three times, so you can watch the arrow fly.
+- **Pause**, **Step** (one decision) and **Reset**.
+
+Measured with the offline stand-in, 208 arrows each: at `speed` 0.2 to 0.5 every arrow is a
+bullseye; at 0.6 to 0.7 about 72%; at 0.9 and above 1% to 16%. The aim moves 0.8 slots a tick, so
+at exactly 0.8 it keeps pace (95%). That bump is real, not tuned away.
 
 The range is synthetic: the target slides at a set speed and Jev's "aim" is a moment-to-moment line
 call — read the target, track it, release — which is why a faster target (more drift than the aim can

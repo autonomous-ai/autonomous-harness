@@ -18,6 +18,12 @@ and set `"source": "leads.csv"` in `sheet.json`. Up to 2,000 rows load, one colu
 text and the others ride along as fields Jev also reads. Then type any question as a column header.
 With a live key that is a few seconds and a fraction of a cent for a question over every row.
 
+## You get a file back
+
+`answers.csv` in the workspace always holds the sheet as it stands: each row, its fields, and every
+Jev column's answer with its confidence. Open it in a spreadsheet, or ask the agent on the right to
+work from it.
+
 ## The header grammar
 
 | You type | It becomes |

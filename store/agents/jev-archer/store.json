@@ -6,6 +6,7 @@
   "examples": [
     {
       "prompt": "Set Jev Archer up for a hard range — speed the target up so it slides faster than Jev's aim can correct. Give Jev a lead-the-motion aiming style, then watch it read the target every tick, nudge the aim to track, and release arrow after arrow into (or past) the bullseye.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-archer/range-at-dusk.jpg",
       "caption": "Jev's Day on the Range — a fast decision model tracking the sliding target and planting the bullseye on each shot"
     }
   ]

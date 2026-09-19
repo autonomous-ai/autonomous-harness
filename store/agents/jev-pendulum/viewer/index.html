@@ -1,53 +1,68 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Pendulum</title>
-<link rel="icon" href="data:," />
-<link rel="stylesheet" href="/studio.css" />
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/studio.css">
 </head>
 <body>
-<header id="topbar">
-  <div class="brand"><span class="dot"></span><h1>Jev Pendulum</h1></div>
-  <div id="title"></div>
-  <div class="stats">
-    <div class="stat"><label>Tilt</label><span id="tilt"></span></div>
-    <div class="stat"><label>Action</label><span id="action"></span></div>
-    <div class="stat"><label>Falls</label><span id="falls"></span></div>
-    <div class="stat"><label>Best</label><span id="best"></span></div>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Pendulum</h1><span class="sub">synthetic rig · Jev pushes the cart</span></div>
+    <div class="stats">
+      <div class="stat run"><label>This run</label><span id="s-run">0.0 s</span></div>
+      <div class="stat"><label>Best run</label><span id="s-best">0.0 s</span></div>
+      <div class="stat"><label>Falls</label><span id="s-falls">0</span></div>
+      <div class="stat"><label>Tilt</label><span id="s-tilt">0.0°</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
+    </div>
   </div>
-  <div class="controls">
-    <button id="pause">Pause</button>
-    <button id="tick">Tick</button>
-    <button id="reset" class="primary">Reset</button>
-  </div>
-</header>
-
-<main>
-  <section id="stage">
-    <div class="panel balancer">
-      <canvas id="rod"></canvas>
-      <div id="gauge"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-title">Tilt over time (°)</div>
-      <canvas id="chart"></canvas>
-    </div>
-  </section>
-
-  <aside id="rail">
-    <div class="panel">
-      <div class="panel-title">How it works</div>
-      <p class="how">Jev reads the rod's angle + angular velocity and picks a torque each tick to keep it up. Every <span id="gustLbl"></span> ticks a <b>gust</b> kicks the rod — Jev must recover before the next one. Crank <code>gravity</code> in <code>pendulum.json</code> and watch it get hard.</p>
-    </div>
-    <div class="panel">
-      <div class="panel-title">Recent decisions</div>
-      <ol id="log"></ol>
-    </div>
-  </aside>
-</main>
-
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" aria-label="The balancing rig. Click left or right of the rod to flick it that way."></canvas>
+      </div>
+      <div class="toolbar panel">
+        <button id="gust" title="Send one gust at the rod right now">Gust now</button>
+        <button id="stand" class="ghost" title="Stand the rod up again and start a new run">Stand it up</button>
+        <label class="slider">Gravity <input id="d-gravity" type="range" min="2" max="16" step="0.5" value="7"> <b id="v-gravity">7.0</b></label>
+        <label class="slider">Rod length <input id="d-length" type="range" min="0.4" max="2" step="0.05" value="1"> <b id="v-length">1.00</b></label>
+        <label class="slider">Gusts <input id="d-gustStrength" type="range" min="0" max="1.5" step="0.05" value="0.55"> <b id="v-gustStrength">0.55</b></label>
+        <span class="hint"><b>Click left or right of the rod</b> to flick it that way. The sliders change the rig while it runs; an edit to <code>pendulum.json</code> resets them.</span>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">What Jev reads <span class="right pill" id="phase">BALANCING</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          Jev never sees pixels. About twelve times a second the rig is written as the text above,
+          and Jev answers <b>two typed questions in one call</b>: which way to <b>push</b> the cart,
+          and whether the rod is still <b>under control</b>. The five arrows on the cart are its
+          options, sized by probability. The green one is the push it made.<br><br>
+          Gravity pulls harder the more the rod leans. The hardest shove is fixed. Past the
+          <b>no return</b> lines gravity wins, whatever Jev answers. Raise gravity or shorten the rod
+          and that limit comes sooner. The rig is made up. The decision loop is the demo.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Runs <span class="right" id="histNote"></span></div>
+        <div id="hist" class="hist"></div>
+      </div>
+    </aside>
+  </main>
 <script src="/studio.js"></script>
 <script src="/jev-hud.js" defer></script>
 </body>

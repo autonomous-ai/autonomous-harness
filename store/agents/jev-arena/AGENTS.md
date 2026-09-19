@@ -17,15 +17,25 @@ On the right, you design the world. **You shape the arena; Jev plays it.**
 {
   "title": "My Arena",                       // shows in the viewer header
   "description": "A maze that tests Jev.",   // subtitle
-  "size": 12,                                // grid is size x size (2..32)
+  "width": 18, "height": 12,                 // 2..32 each ("size": 12 still works for a square board)
   "hero":  { "x": 1, "y": 1 },               // where Jev starts
   "goal":  { "x": 10, "y": 10 },             // where Jev must reach
   "walls": [ { "x": 3, "y": 2 }, ... ],      // blocked cells
   "coins": [ { "x": 5, "y": 3 }, ... ],      // collect these on the way
   "rules": "Reach the star. Move one cell at a time; you cannot pass through walls.",
-  "speed": 320                               // ms per decision (>= 60)
+  "speed": 320,                              // ms per decision (60..2000)
+  "sight": 2,                                // cells Jev can see (1..99). 99 = the whole board
+  "remix": false,                            // false: replay YOUR layout. true: a fresh seeded layout after each run
+  "seed": 7                                  // fresh layouts are built from this
 }
 ```
+
+**When the user asks for a world of their own, set `"remix": false`.** With `true` (the starter
+value) your layout plays once and is then replaced by fresh seeded layouts.
+
+`sight` is the honest dial. Jev only knows the walls it has seen, and the step counts it reads
+treat unseen floor as open. A short sight (1 to 3) sends Jev into dead ends it has to back out of.
+The whole board (99) lets it walk the shortest way. Pick it on purpose and say why in chat.
 
 ## Your job
 
@@ -42,13 +52,17 @@ Do NOT just set a goal in an empty room. Every arena.json you ship should be wor
 least a minute.
 
 You can also tune the pace: lower `speed` (~100) for frantic decisions, higher (~500) for a
-deliberate, readable pace. The viewer has Play / Pause / Step / Reset controls so the user can stop
+deliberate, readable pace. The viewer has Pause / Step / Reset controls so the user can stop
 Jev mid-thought and step one decision at a time.
+
+The user can also play in the pane: click a tile to build or break a wall, drop a coin, drag the
+star, and move the Sight, Pace and Walls sliders. Those are overrides for their session only. Your
+next save of `arena.json` resets them, so tell the user when you save.
 
 ## Keep current
 
-- Keep `arena.json` valid JSON at all times. The viewer keeps running on the last good world; a bad
-  edit means Jev stops until it parses again.
+- Keep `arena.json` valid JSON at all times. The viewer keeps running on the last good world and
+  shows the parse error in the pane until the file parses again.
 - Keep `title` and `description` truthful.
 - When you change walls / goal / coins, that is the "pause and watch Jev react" moment. Say so in
   chat after you save.

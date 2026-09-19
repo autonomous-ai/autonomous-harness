@@ -25,8 +25,9 @@ were right, and how many were escalated.
 This is a harness for OpenHarness. The agent on the right edits `firehose.json`. The viewer on the
 left watches that file and reacts live.
 
-**All data here is made up.** The shop, the teams and every message are synthetic. This is a demo of
-speed, cost and calibration, not a real support system.
+**Out of the box all data is made up.** The shop, the teams and every message are synthetic. It is a
+demo of speed, cost and calibration, not a real support system. You can also point it at a file of
+your own messages (see "Bring your own messages").
 
 ## The pane
 
@@ -56,6 +57,34 @@ When a batch is done the pane shows a summary card for about three seconds, for 
 `2,000 messages · 50.0s · $0.0445 · 97.3% right · 10.1% escalated`, then starts the next batch with a
 new seed. It never stops.
 
+## Bring your own messages
+
+Put a file of your own messages in the workspace and point `firehose.json` at it:
+
+```json
+{ "source": "inbox.jsonl", "textColumn": "body", "threshold": 0.55, "teams": [ { "id": "billing", "description": "Payment: card charged, invoice, refund." } ] }
+```
+
+`.csv`, `.tsv`, `.jsonl` and `.json` work, up to 8 MB and 20,000 messages. The file must be inside
+the workspace. Then the generator is off and the pane says "your data". The same five questions run
+on every message, once through the file. There is no answer key, so accuracy, the red rings and the
+confusion matrix are gone. You get a confidence histogram, the share escalated, a count per team,
+and the most and least confident message of each team in the inspector.
+
+The results land in `triage.csv` next to your file, one line per message: `id`, `team`,
+`team_confidence`, `urgency`, `spam`, `needs_human`, `mood`, `escalated`, then your own columns as
+they were. It is rewritten about once a second while it runs, once at the end, and again when you
+move the threshold. When the file is done the summary card stays, with a **Run again** button.
+
+With a key, only the text column is sent to the Jev API, one message per call. Your other columns
+never leave the machine. Without a key nothing leaves the machine, and the offline stand-in's word
+matching gives only a rough triage.
+
+What it costs: the five questions and your team descriptions are sent with every call, so a call is
+about 530 input tokens on the starter desk (about 450 of them are the questions). At $0.042 per
+million input tokens that is about 11 cents for 5,000 messages. Shorter team descriptions make it
+cheaper. The pane shows the real number as it runs.
+
 ## The honest dial
 
 `noise` (0 to 1) sets how many phrases from one wrong team are mixed into each message. It is capped
@@ -84,7 +113,7 @@ jev-firehose/
     check.mjs                   validates firehose.json
     measure.mjs                 scores a desk from the command line, threshold by threshold
     viewer.sh setup.sh doctor.sh init-workspace.sh
-  viewer/                       loopback server (viewer.mjs, kit.mjs) and the pane
+  viewer/                       loopback server (viewer.mjs, kit.mjs), the file loader (source.mjs) and the pane
   test/viewer.test.mjs
 ```
 

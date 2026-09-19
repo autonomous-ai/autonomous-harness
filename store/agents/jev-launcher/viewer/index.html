@@ -1,51 +1,92 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Launcher</title>
-<link rel="icon" href="data:," />
-<link rel="stylesheet" href="/studio.css" />
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/studio.css">
 </head>
 <body>
-<header id="topbar">
-  <div class="brand"><span class="dot"></span><h1>Jev Launcher</h1></div>
-  <div id="title"></div>
-  <div class="controls">
-    <button id="clear">Clear</button>
-    <button id="demo" class="primary">Play the demo</button>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Launcher</h1><span class="sub" id="title">made-up palette · Jev ranks it on every key</span></div>
+    <div class="stats">
+      <div class="stat"><label>First row right</label><span id="s-acc">—</span></div>
+      <div class="stat"><label>Letters to first</label><span id="s-keys">—</span></div>
+      <div class="stat"><label>Launches</label><span id="s-launch">0</span></div>
+      <div class="stat"><label>Key → ranking</label><span id="s-rtt">—</span></div>
+      <div class="stat big"><label>Keystrokes / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Rankings made</label><span id="s-rank">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause typist</button>
+      <button id="reset" class="primary">Reset</button>
+    </div>
   </div>
-</header>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <canvas id="bg" aria-hidden="true"></canvas>
+      <canvas id="fx" aria-hidden="true"></canvas>
 
-<main>
-  <section id="stage">
-    <div class="palette">
-      <div class="input-row">
-        <span class="prompt">❯</span>
-        <input id="query" type="text" placeholder="type to launch…" autocomplete="off" spellcheck="false" />
-        <span id="seq"></span>
+      <div class="palette" id="palette">
+        <div class="input-row">
+          <span class="prompt">❯</span>
+          <div class="input-wrap" id="inputWrap">
+            <input id="query" type="text" placeholder="type to take over…" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" aria-label="Command palette query">
+            <span id="ghostCaret" aria-hidden="true"></span>
+          </div>
+          <span id="who" class="tag demo">DEMO</span>
+          <span id="ready" class="tag wait">KEEP TYPING</span>
+        </div>
+        <div class="beam"><i id="beam"></i></div>
+        <div class="subline"><span id="subline">…</span><span id="banner" class="launch-banner hidden"></span></div>
+        <div id="rows" role="listbox" aria-label="Ranked launch targets"></div>
+        <div class="more"><span id="more"></span><span class="madeup">made-up palette · nothing is ever launched</span></div>
       </div>
-      <div id="results"></div>
-      <div class="hint">Every keystroke, Jev re-ranks the palette. <b>Enter</b> fires the top match.</div>
-    </div>
-    <div class="panel">
-      <div class="panel-title">Jev's pick over the last keystrokes</div>
-      <canvas id="chart"></canvas>
-    </div>
-  </section>
 
-  <aside id="rail">
-    <div class="panel">
-      <div class="panel-title">Live ranking</div>
-      <div id="ranking"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-title">Launched</div>
-      <div id="launched"></div>
-    </div>
-  </aside>
-</main>
+      <div class="strip">
+        <div class="canvas-wrap" id="streamWrap">
+          <canvas id="stream"></canvas>
+          <div class="cap">Jev's mind, key by key · one column per ranking</div>
+        </div>
+        <div class="canvas-wrap" id="bylenWrap">
+          <canvas id="bylen"></canvas>
+          <div class="cap">first row right, by letters typed</div>
+        </div>
+      </div>
 
+      <div class="toolbar panel">
+        <label class="slider" title="Chance that the ghost typist fumbles a letter">Typos <input id="d-typos" type="range" min="0" max="0.6" step="0.02" value="0.06"> <b id="v-typos">6%</b></label>
+        <label class="slider" title="The ghost typist launches after at most this many letters">Letters typed <input id="d-chars" type="range" min="1" max="12" step="1" value="8"> <b id="v-chars">8</b></label>
+        <label class="slider" title="Near-duplicate targets that share the same aliases">Look-alikes <input id="d-lookalikes" type="range" min="0" max="6" step="1" value="0"> <b id="v-lookalikes">0</b></label>
+        <label class="slider" title="How fast the ghost typist types">Typist speed <input id="d-speed" type="range" min="1" max="20" step="1" value="9"> <b id="v-speed">9/s</b></label>
+        <span class="hint"><b>Type</b> to take over. <kbd>↑</kbd><kbd>↓</kbd> pick a row, <kbd>Enter</kbd> launches it on paper, <kbd>Esc</kbd> clears. <b>Click a row</b> to mark it as the right answer and score Jev.</span>
+      </div>
+    </section>
+
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Launch log <span class="right pill" id="logCount">0</span></div>
+        <ul id="log"></ul>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          On every key, the palette and the query are written out as text and Jev answers
+          <b>three typed questions in one call</b>: which target to launch (a probability for every
+          target), which group the person is after, and whether the query is clear enough to launch.<br><br>
+          When nobody types for 15 seconds a <b>ghost typist</b>, tagged DEMO, takes over. It picks a
+          target it wants, types one of its names and launches Jev's first row, so the score is honest.
+          Short queries, typos and look-alike targets make it harder for a real reason: the text Jev
+          reads is less clear. The palette is made up and <b>nothing is ever launched</b>. Edit
+          <code>launcher.json</code> to change the targets.
+        </div>
+      </div>
+    </aside>
+  </main>
 <script src="/studio.js"></script>
 <script src="/jev-hud.js" defer></script>
 </body>

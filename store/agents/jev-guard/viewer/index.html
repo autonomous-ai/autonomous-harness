@@ -1,67 +1,96 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Guard</title>
-<link rel="icon" href="data:," />
-<link rel="stylesheet" href="/studio.css" />
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/studio.css">
 </head>
 <body>
-<header id="topbar">
-  <div class="brand"><span class="dot"></span><h1>Jev Guard</h1></div>
-  <div id="title"></div>
-  <div id="meta"></div>
-  <div class="controls">
-    <button id="judge" class="primary">Judge now</button>
-    <button id="pause">Pause</button>
-    <button id="start">Auto</button>
-    <button id="reset">Reset</button>
-  </div>
-</header>
-
-<main>
-  <section id="stage">
-    <div class="goal panel">
-      <div class="panel-title">Goal</div>
-      <p id="goal"></p>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Guard</h1><span class="sub">a demo review console · not security advice</span></div>
+    <div class="stats">
+      <div class="stat"><label>Stream</label><span id="s-mode">DEMO</span></div>
+      <div class="stat"><label>Project tests</label><span id="s-tests">—</span></div>
+      <div class="stat"><label>Risks caught</label><span id="s-caught">—</span></div>
+      <div class="stat"><label>False alarms</label><span id="s-false">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Edits reviewed</label><span id="s-edits">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
-
-    <div class="panels">
-      <div class="panel">
-        <div class="panel-title">Latest test run</div>
-        <div id="run"><div class="pulse"></div><span>waiting for the agent's first edit…</span></div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="step" title="Review one more demo edit">Step</button>
+      <button id="reset" class="primary">Reset</button>
+    </div>
+  </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <div class="canvas-wrap" id="hero">
+        <canvas id="scene" aria-label="A gauge that says if it is safe to continue, and a chart of Jev's risk for each edit"></canvas>
       </div>
 
-      <div class="panel">
-        <div class="panel-title">Jev's current judgment</div>
-        <div id="verdict" class="verdict">— no run judged yet —</div>
-        <div class="meters">
-          <div class="meter"><label>toward goal</label><div class="bar"><i data-k="toward"></i></div><span class="v" data-v="toward"></span></div>
-          <div class="meter"><label>trust</label><div class="bar"><i data-k="trust"></i></div><span class="v" data-v="trust"></span></div>
-          <div class="meter warn"><label>risk</label><div class="bar"><i data-k="risk"></i></div><span class="v" data-v="risk"></span></div>
+      <div class="console">
+        <div class="panel tree">
+          <div class="panel-title">Files · risk heat</div>
+          <ul id="files"></ul>
+        </div>
+        <div class="panel timeline">
+          <div class="panel-title">Edits <span class="right" id="score"></span></div>
+          <ol id="edits"></ol>
+        </div>
+        <div class="panel diff">
+          <div class="panel-title"><span id="diffTag">Latest flagged edit</span><button id="follow" class="ghost mini hidden">Follow latest</button></div>
+          <div id="diffHead"></div>
+          <div id="diffBody"></div>
+          <div id="diffMind"></div>
         </div>
       </div>
-    </div>
 
-    <div class="panel">
-      <div class="panel-title">Judgment history</div>
-      <canvas id="chart"></canvas>
-    </div>
-  </section>
-
-  <aside id="rail">
-    <div class="panel">
-      <div class="panel-title">Run log</div>
-      <ol id="log"></ol>
-    </div>
-    <div class="panel">
-      <div class="panel-title">Test output</div>
-      <pre id="output"></pre>
-    </div>
-  </aside>
-</main>
-
+      <div class="toolbar panel">
+        <div class="tools" role="group" aria-label="Write a sample edit into project/">
+          <span class="lab">Write into project/</span>
+          <button data-sample="refactor">Harmless refactor</button>
+          <button data-sample="deltest">Delete a test</button>
+          <button data-sample="secret">Leak a fake secret</button>
+          <button data-sample="cleanup" class="ghost">Clean up</button>
+          <button id="judge" title="Run the tests and review project/ as it is now">Judge now</button>
+        </div>
+        <label class="slider" title="Where REVIEW and BLOCK start. Strict catches more and raises more false alarms.">Strictness <input id="strictness" type="range" min="0" max="1" step="0.01" value="0.5"> <b id="strictnessVal">.50</b></label>
+        <label class="slider" title="How well the planted risks in the demo stream are hidden, and how big the diffs around them are.">Hidden risks <input id="subtlety" type="range" min="0" max="1" step="0.01" value="0.35"> <b id="subtletyVal">.35</b></label>
+        <label class="slider" title="How fast the demo stream sends edits">Pace <input id="pace" type="range" min="0" max="1" step="0.01" value="0.25"> <b id="paceVal">1.1/s</b></label>
+        <span class="hint">Click an edit or a dot to read its diff. The buttons write sample files into <code>project/</code> and Jev reviews them at once. Sliders last until <code>goal.json</code> is edited.</span>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">What Jev reads <span class="right pill" id="readTag">—</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Goal and project tests <span class="right pill" id="testPill">—</span></div>
+        <div id="goal" class="how"></div>
+        <pre id="testOut" class="statetext small"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          Every edit in <code>project/</code> becomes a diff. Jev reads the diff and answers <b>many typed
+          questions in one call</b>: is it safe to carry on, is a secret leaked, are tests weakened, is it
+          destructive, and how risky is each file. The chips, the gauge and the heat are those answers.<br><br>
+          When the agent is quiet, a <b>demo stream</b> of made-up edits keeps running. Some have a risk
+          planted in them, so the pane can score Jev: caught, missed, false alarm. Hide the risks better
+          and Jev struggles, because quiet changes look like harmless ones and Jev only reads the first
+          part of a big diff.<br><br>
+          The repo, the diffs and the keys in the demo stream are fake. This is a demo of fast typed
+          decisions. It is <b>not a security tool</b> and not security advice.
+        </div>
+      </div>
+    </aside>
+  </main>
 <script src="/studio.js"></script>
 <script src="/jev-hud.js" defer></script>
 </body>

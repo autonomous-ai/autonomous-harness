@@ -17,6 +17,10 @@ immediately — change a target's aliases and the ranking moves.
   "title": "The Developer's Deck",
   "description": "A command palette for a developer's everyday launch targets.",
   "prompt": "You are Jev, a fast launcher oracle. Pick the ONE launch target the user most likely wants, and be decisive at every keystroke.",
+  "typos": 0.06,       // chance the demo typist fumbles a letter (0..1). A difficulty dial
+  "chars": 8,          // the demo typist launches after at most this many letters (1..12). A difficulty dial
+  "lookalikes": 0,     // how many targets get a near-duplicate twin (0..6). A difficulty dial
+  "stepMs": 110,       // demo typist pace, ms per keystroke (40..2000)
   "targets": [
     { "name": "Run tests", "category": "Dev", "aliases": ["test", "pytest", "npm test", "spec"], "featured": true },
     { "name": "Open Editor", "category": "Apps", "aliases": ["code", "vscode", "ide", "vim"] }
@@ -28,6 +32,11 @@ immediately — change a target's aliases and the ranking moves.
 - **`targets[].aliases`** — the words people would type to reach it. Jev fuzzy-matches your query
   against name + aliases. Better aliases = sharper, more distinct ranking.
 - **`targets[].category`** — a small tag shown next to the name.
+- **`typos`, `chars`, `lookalikes`** — the honest difficulty dials. They change what Jev gets to
+  read, never Jev. With clean full queries the first row is right about 99% of the time. With
+  `typos` 0.35, `chars` 3 and `lookalikes` 6 it is right about 40% of the time. One typed letter
+  alone is right about 35% of the time. Optional: `idleMs` (the demo typist comes back after this
+  long without a human key, default 15000) and `seed`.
 - **`targets[].featured`** — true targets lead when the palette is idle and nothing is typed yet.
 
 ## Your job

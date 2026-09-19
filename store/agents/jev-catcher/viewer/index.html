@@ -4,48 +4,61 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Catcher</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="topbar">
-    <div class="brand"><span class="dot"></span><h1>Jev Catcher</h1></div>
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Catcher</h1><span class="sub">made-up ballpark · Jev slides every tick</span></div>
     <div class="stats">
-      <div class="stat"><label>Ball</label><span id="ball">—</span></div>
-      <div class="stat"><label>Slide</label><span id="move">—</span></div>
-      <div class="stat"><label>Fall</label><span id="fall">—</span></div>
-      <div class="stat"><label>Caught</label><span id="caught">0</span></div>
-      <div class="stat"><label>Drops</label><span id="drops">0</span></div>
+      <div class="stat"><label>Ball</label><span id="s-ball">—</span></div>
+      <div class="stat"><label>Caught</label><span id="s-caught">0</span></div>
+      <div class="stat"><label>Drops</label><span id="s-drops">0</span></div>
+      <div class="stat"><label>Last 20</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-dps">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
     <div class="controls">
       <button id="pause">Pause</button>
-      <button id="tick">Step</button>
-      <button class="primary" id="reset">Reset</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
     </div>
   </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
   <main>
     <section id="stage">
-      <div class="panel panel-stage">
-        <div class="panel-title">The outfield</div>
-        <div id="field">
-          <canvas id="scene"></canvas>
-          <div id="banner" class="hidden"></div>
-        </div>
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" aria-label="The outfield"></canvas>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+      <div class="toolbar panel">
+        <label class="slider">Fall time <input id="d-fall" type="range" min="2" max="20" step="1" value="10"> <b id="v-fall">10</b></label>
+        <label class="slider">Glove reach <input id="d-reach" type="range" min="0.3" max="4" step="0.1" value="1.6"> <b id="v-reach">1.60</b></label>
+        <button id="gust">Gust of wind</button>
+        <button id="slowmo">Slow motion</button>
+        <span class="hint"><b>Click the grass</b> to pop an extra fly there. Sliders override <code>catcher.json</code> until its next edit. The ghost gloves are Jev's five options, brighter means more likely.</span>
       </div>
     </section>
     <aside id="rail">
       <div class="panel">
-        <div class="panel-title">Jev, the fielder</div>
+        <div class="panel-title">What Jev reads <span class="right pill" id="pick">HOLD</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
         <div class="how">
-          Jev is guarding the outfield. A ball pops up and falls to a spot on the line, and every
-          tick it reads the landing spot and the glove's position and slides <code>LEFT</code> /
-          <code>RIGHT</code> (or commits fast) to be under it when it lands. Miss and it drops.<br><br>
-          Edit <code>catcher.json</code>: crank <code>fallTicks</code> down and the balls come too
-          fast for Jev to chase, and the drops pile up; shrink <code>gloveReach</code> and Jev has
-          to read the spot exactly.
+          Every tick Jev gets the line above, the <b>glove</b> and where the next ball <b>lands</b>,
+          and answers one typed question: slide <code>LEFT</code>, <code>RIGHT</code>, a
+          <code>_FAST</code> version of either, or <code>HOLD</code>. The ball is an out only if the
+          glove is within reach of the spot when it comes down.<br><br>
+          The glove covers at most 1.2 slots a tick. Cut <code>fallTicks</code> and a far ball
+          lands before the glove can get there. The park, the flies and the wind are made up. The
+          decision loop is the demo.
         </div>
       </div>
       <div class="panel">
-        <div class="panel-title">Session log</div>
+        <div class="panel-title">Play log</div>
         <ul id="log"></ul>
       </div>
     </aside>

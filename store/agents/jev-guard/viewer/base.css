@@ -1,0 +1,83 @@
+/* base.css — the shared look of the Jev flagship viewers. Load before studio.css.
+   Set --accent / --accent2 in studio.css to give a harness its own colour. */
+:root {
+  --bg: #07080d; --panel: #10121a; --panel2: #161925; --line: #232838; --line2: #2e3550;
+  --ink: #e9ecf5; --dim: #8b92aa; --faint: #565d75;
+  --accent: #a78bfa; --accent2: #6d5bd0;
+  --ok: #34d399; --warn: #fbbf24; --bad: #fb7185; --cyan: #5eead4; --blue: #60a5fa;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: radial-gradient(1100px 700px at 75% -10%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, transparent 60%), var(--bg);
+  color: var(--ink); font: 13px/1.45 var(--mono);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+::selection { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+#topbar {
+  display: flex; align-items: center; gap: 22px; padding: 10px 18px; flex: none; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(20,22,34,.92), rgba(10,11,18,.7)); backdrop-filter: blur(8px);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font: 700 15px var(--mono); letter-spacing: .4px; margin: 0; white-space: nowrap; }
+.brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); animation: dot 2.4s ease-in-out infinite; }
+@keyframes dot { 50% { transform: scale(.72); opacity: .7; } }
+.brand .sub { color: var(--dim); font-size: 11px; }
+.stats { display: flex; gap: 20px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; min-width: 54px; }
+.stat label { font-size: 9px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); }
+.stat span { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.controls { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+button, .btn {
+  font: 600 12px var(--mono); padding: 7px 13px; border: 1px solid var(--line2); border-radius: 8px;
+  background: var(--panel2); color: var(--ink); cursor: pointer; transition: border-color .15s, filter .15s, transform .05s; user-select: none;
+}
+button:hover { border-color: var(--accent); }
+button:active { transform: translateY(1px); }
+button.primary { background: linear-gradient(135deg, var(--accent2), var(--accent)); border-color: transparent; color: #fff; }
+button.primary:hover { filter: brightness(1.12); }
+button.ghost { background: transparent; }
+button.on { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+button[disabled] { opacity: .45; cursor: default; }
+kbd { font: 600 10px var(--mono); padding: 1px 5px; border: 1px solid var(--line2); border-bottom-width: 2px; border-radius: 4px; color: var(--dim); }
+input[type=text], input[type=search], select, textarea {
+  font: 13px var(--mono); color: var(--ink); background: #0b0d14; border: 1px solid var(--line2); border-radius: 8px; padding: 7px 10px; outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+input[type=range] { accent-color: var(--accent); }
+
+main { flex: 1; display: flex; min-height: 0; }
+#stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; overflow: auto; }
+#rail { width: 340px; flex: none; border-left: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; background: rgba(12,13,20,.55); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.panel-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--dim); margin-bottom: 9px; display: flex; align-items: center; gap: 8px; }
+.panel-title .right { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.how { color: var(--dim); font-size: 12.5px; line-height: 1.55; }
+.how b { color: var(--ink); } .how code { color: var(--warn); }
+.pill { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .8px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line2); color: var(--dim); }
+.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.pill.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+
+.canvas-wrap { position: relative; flex: 1; min-height: 320px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: #05060a; }
+.canvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 9px 20px; border-radius: 10px; font: 700 14px var(--mono); white-space: nowrap; backdrop-filter: blur(6px); }
+.banner.ok { background: rgba(16,185,129,.16); border: 1px solid var(--ok); color: var(--ok); box-shadow: 0 0 34px rgba(16,185,129,.35); }
+.banner.bad { background: rgba(225,29,72,.16); border: 1px solid var(--bad); color: var(--bad); box-shadow: 0 0 34px rgba(225,29,72,.35); }
+.hidden { display: none !important; }
+.cfg-error { margin: 0 16px; padding: 8px 12px; border: 1px solid var(--bad); border-radius: 8px; color: var(--bad); background: rgba(225,29,72,.08); font-size: 12px; }
+
+@media (max-width: 900px) {
+  main { flex-direction: column; overflow: auto; }
+  #rail { width: 100%; border-left: none; border-top: 1px solid var(--line); overflow: visible; }
+  body { overflow: auto; }
+}

@@ -87,6 +87,38 @@ Jev gets each team's `id` and `description`, never the phrases. So write them as
 `check.mjs` warns when a phrase shares fewer than 2 words with its own description, when a phrase
 leans toward another team, and when two descriptions share 3 or more words.
 
+## The person's own messages
+
+Set `"source": "inbox.jsonl"` (also `.csv`, `.tsv`, `.json`) and the pane triages the person's own
+file instead of made-up messages. The file must be inside the workspace, up to 8 MB and 20,000
+messages. `textColumn` is optional. Phrases are not needed, and `noise` is ignored.
+
+There is no answer key, so there is no accuracy, no red rings and no confusion matrix. What you can
+read instead:
+
+- **The confidence histogram.** A tall pile near 1.0 means the teams fit the messages. A wide
+  spread, or a pile under the threshold, means the descriptions are vague or a team is missing.
+- **The share escalated** at your threshold, and the curve of it above the slider.
+- **The count per team.** A team with nothing in it is probably not in this inbox. A huge team is
+  probably two teams.
+- **The most and least confident message of a team** (click a bin). The least confident one shows
+  where a description is blurry.
+
+The craft, in order:
+
+1. Read the file's header first, then 20 to 30 messages. Never the whole file.
+2. Design the teams from what is really there. 4 to 10 teams. Plain nouns the senders really use.
+3. `check.mjs`, then `measure.mjs`. Read the least confident ids and the two teams each sits
+   between. Sharpen those two descriptions, or add the team that is missing.
+4. Pick the threshold from the escalated share the person can live with. There is no accuracy to
+   aim at here.
+5. Tell the person where `triage.csv` is. The `triage` block in `.harness/verdict.json` has the
+   path and the counts.
+
+Never copy the person's data around: no pasting it into `firehose.json`, no copies or extracts, as
+little of it in the chat as you can. With a key, only the text column goes to the Jev API. Without
+one, nothing leaves the machine, and the stand-in's word matching is only a rough triage.
+
 ## A good session
 
 1. Write the desk. Run `check.mjs`. Fix errors, read warnings.

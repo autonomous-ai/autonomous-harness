@@ -9,30 +9,70 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="brand"><span class="dot"></span><h1>Jev Conductor</h1></div>
-  <div id="title">Jev in Blue</div>
-  <div id="meta"></div>
+  <div class="brand"><span class="dot"></span><h1>Jev Conductor</h1><span class="sub" id="title"></span></div>
+  <div class="stats">
+    <div class="stat"><label>Bar</label><span id="s-bar">0</span></div>
+    <div class="stat wide-only"><label>Notes written</label><span id="s-notes">0</span></div>
+    <div class="stat" title="Share of the last 32 chord changes where the root moves in a way that leads the ear on"><label>Harmony flow</label><span id="s-flow">—</span></div>
+    <div class="stat" title="Share of the last 32 bars where the mood changed without anyone asking. Low is steady."><label>Mood flicker</label><span id="s-flick">—</span></div>
+    <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+    <div class="stat big"><label>Answers</label><span id="s-dec">0</span></div>
+    <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+  </div>
   <div class="controls">
-    <button id="play" class="primary">Play</button>
+    <button id="sound" class="primary" title="Browsers keep sound off until you click">Sound on</button>
     <button id="pause">Pause</button>
-    <button id="reset">Reset</button>
     <button id="onemore">One more bar</button>
+    <button id="reset">Reset</button>
   </div>
 </header>
+<div id="cfgError" class="cfg-error hidden"></div>
 
 <main>
   <section id="stage">
-    <div id="keyboard"></div>
-    <div id="measures"><ol id="score"></ol></div>
+    <div class="canvas-wrap" id="wrap">
+      <canvas id="roll" aria-label="A scrolling piano roll of the notes Jev is writing, with a live spectrum below"></canvas>
+      <div class="chips">
+        <span class="chip"><i class="k cloud"></i>faint notes: what else Jev considered, by probability</span>
+        <span class="chip" id="audioChip"><i class="k wave"></i><span id="audioNote">sound is off · the spectrum is drawn from the notes</span></span>
+      </div>
+      <div id="request" class="request hidden"></div>
+    </div>
+    <div class="toolbar panel">
+      <div class="group" role="group" aria-label="Ask for a mood"><span class="lab">The audience asks for</span><span id="moods"></span><button id="noMood" class="ghost">no request</button></div>
+      <span class="break"></span>
+      <label class="slider" title="Beats per minute">Tempo <input id="tempo" type="range" min="40" max="220" step="1" value="96"> <b id="tempoVal">96 bpm</b></label>
+      <label class="slider" title="How many of its own last bars Jev can read. At 0 the tune wanders.">Memory <input id="memory" type="range" min="0" max="8" step="1" value="4"> <b id="memoryVal">4 bars</b></label>
+      <div class="group" role="group" aria-label="Instrument"><span class="lab">Instrument</span><button data-inst="keys" class="on">Keys</button><button data-inst="pluck">Pluck</button><button data-inst="pad">Pad</button></div>
+      <span class="hint">Ask for a mood and Jev reads it at once. At memory 0 the tune loses its thread.</span>
+    </div>
   </section>
 
   <aside id="rail">
     <div class="panel">
-      <div class="panel-title">Now playing</div>
-      <div id="now"></div>
+      <div class="panel-title">The bar Jev just wrote <span class="right pill" id="barPill">—</span></div>
+      <div id="chordMind" class="mind"></div>
+      <div id="moodMind" class="mind"></div>
     </div>
     <div class="panel">
-      <div class="panel-title">Composition so far</div>
+      <div class="panel-title">What Jev reads</div>
+      <pre id="stateText" class="statetext"></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-title">How it works</div>
+      <div class="how">
+        Jev writes the tune <b>one bar at a time</b>, two calls a bar. The first picks the
+        <b>chord</b>, the <b>mood</b> and the <b>energy</b>. The second picks the <b>bass</b> and
+        <b>every lead note</b>, one typed question per note, all in one call. The faint notes on the
+        roll are the other notes Jev weighed, as strong as their probability.<br><br>
+        <b>Memory</b> is the honest dial. It is how many of its own last bars Jev can read. With a
+        few bars it follows each chord with one that leads on, holds a mood for a phrase, and picks
+        the melody up where it left it. At 0 it cannot. The tune is made up. Edit
+        <code>piece.json</code> to change the scale, the chords and the moods.
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Bars</div>
       <ol id="log"></ol>
     </div>
   </aside>

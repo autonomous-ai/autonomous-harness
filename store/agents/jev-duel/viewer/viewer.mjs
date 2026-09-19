@@ -1,233 +1,106 @@
 // Jev Duel viewer — a loopback server running a live Reversi battle where Jev (TypeSafe's System
-// One model) plays BOTH sides and a third Jev referees. The agent shapes battle.json (board size,
-// the two rivals' names and "personalities" rendered as state-flavor, referee focus). The viewer
-// runs the game loop, asks each side to choose a move, applies the flips, asks the referee to judge
-// every move, and streams it all to the pane over SSE.
+// One model) plays BOTH sides and a third Jev referees. The chat agent shapes battle.json (board
+// size, the two rivals' names, personalities and insight, the referee's focus). The viewer runs the
+// game, and right after every move it already asks the NEXT player, so the pane can show that
+// player's whole probability spread on the board before the disk lands.
 //
-// Harness env: HARNESS_VIEWER_PORT, HARNESS_WORKSPACE. The workspace holds battle.json which the
-// viewer watches (live edit of rivals/personality reframes both Jevs).
+// The honest dial is `insight` (0..2) per player: how much the text tells Jev about each legal move.
+//
+// The pane lets a person force the next move, swap the two sides, change the board size, the pace
+// and each player's insight. It never idles: a finished game shows the winner for about five
+// seconds, then a new game starts.
+//
+// Harness env: HARNESS_VIEWER_PORT, HARNESS_WORKSPACE. Workspace holds battle.json (watched live).
 
 import { createServer } from 'node:http'
-import { watch, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
-import { join, resolve, dirname } from 'node:path'
+import { watch, readFileSync, existsSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { join, resolve, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { evaluate, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
+import { evaluate, jev, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
+import { DEFAULT, sanitize, newBoard, legalMoves, applyMove, count, other, describeMove, sideState, refState } from './game.mjs'
+import { duelMock } from './mock.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+const FILES = new Set(['index.html', 'studio.css', 'studio.js', 'jev-hud.js'])
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' }
+const REST_MS = 5000
 const clean = (v) => String(v ?? '').replace(/\x1b\[[0-9;]*m/g, '').slice(0, 2000)
+const num = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
 
-const DIRS = [[0, 1], [1, 0], [0, -1], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]]
-
-// Fresh 6x6 board with Othello's starting four disks (O in the upper-left diagonal of the center).
-function newBoard(n) {
-  const b = Array.from({ length: n }, () => Array(n).fill('.'))
-  const h = n / 2
-  b[h - 1][h - 1] = 'O'; b[h - 1][h] = 'X'; b[h][h - 1] = 'X'; b[h][h] = 'O'
-  return b
-}
-
-function clone(b) { return b.map((r) => r.slice()) }
-
-function legalMoves(b, me) {
-  const n = b.length
-  const them = me === 'O' ? 'X' : 'O'
-  const out = []
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    if (b[y][x] !== '.') continue
-    let flips = 0
-    for (const [dx, dy] of DIRS) {
-      let nx = x + dx, ny = y + dy, c = 0
-      while (nx >= 0 && ny >= 0 && nx < n && ny < n && b[ny][nx] === them) { c++; nx += dx; ny += dy }
-      if (c > 0 && nx >= 0 && ny >= 0 && nx < n && ny < n && b[ny][nx] === me) flips += c
-    }
-    if (flips > 0) out.push({ x, y, flips })
-  }
-  return out
-}
-
-function applyMove(b, x, y, me) {
-  const n = b.length
-  const them = me === 'O' ? 'X' : 'O'
-  b[y][x] = me
-  for (const [dx, dy] of DIRS) {
-    let nx = x + dx, ny = y + dy, chain = []
-    while (nx >= 0 && ny >= 0 && nx < n && ny < n && b[ny][nx] === them) { chain.push([nx, ny]); nx += dx; ny += dy }
-    if (chain.length && nx >= 0 && ny >= 0 && nx < n && ny < n && b[ny][nx] === me) {
-      for (const [cx, cy] of chain) b[cy][cx] = me
-    }
-  }
-}
-
-function count(b) {
-  let o = 0, x = 0
-  for (const r of b) for (const c of r) { if (c === 'O') o++; else if (c === 'X') x++ }
-  return { O: o, X: x }
-}
-
-function boardText(b, me) {
-  // Rendered as a plain grid the mock's Reversi reader parses; the "you play O/X" line names the
-  // side Jev is being asked to move for.
-  let s = `you play ${me}\n`
-  s += b.map((r) => r.join('')).join('\n')
-  s += '\n'
-  return s
-}
-
-function stateBlock(battle, board, side, love) {
-  return `Two rivals are playing a live game of Reversi (Othello) on a ${battle.size}x${battle.size} board.
-You are ${side.name}, playing ${side.disk}. ${side.personality}
-Your rival is ${side.rival}, playing ${side.rivalDisk}. ${battle.rivals[side.rival]?.personality || ''}
-
-The board, '.' empty, O and X are claimed disks:
-${boardText(board, side.disk)}
-
-Legal moves and the disks each flips:
-${love.map((m) => `  ${m.x},${m.y} flips ${m.flips}`).join('\n')}
-
-Current score — O: ${count(board).O}, X: ${count(board).X}.
-
-Choose the move that best serves your personality and wins the game. Prefer corners. Never play a legal-move
-coordinate that isn't listed.`
-}
-
-function refState(battle, board, move, side) {
-  const c = count(board)
-  return `You are the referee of a live Reversi battle between ${battle.rivals.O.name} (O) and ${battle.rivals.X.name} (X).
-
-Board just after ${side.name} (${side.disk}) played ${move.x},${move.y} (flipping ${move.flips} disks):
-${boardText(board, 'O')}
-
-Score — O: ${c.O}, X: ${c.X}.
-
-Referee focus: ${battle.referee}`
-
-}
-
-function verdict(battle, c, filled, gameOver, winner, state) {
-  const leader = c.O === c.X ? 'tied' : (c.O > c.X ? `${battle.rivals.O.name} leads` : `${battle.rivals.X.name} leads`)
-  const total = c.O + c.X
-  return {
-    spec: 1,
-    ready: true,
-    summary: state.error
-      ? 'Duel needs a fix'
-      : gameOver
-        ? `${winner ?? 'Draw'} — final ${c.O}–${c.X}`
-        : `${battle.rivals.O.name} (O) vs ${battle.rivals.X.name} (X) — ${leader} ${c.O}–${c.X}`,
-    findings: state.error ? [{ severity: 'error', kind: 'duel', message: state.error }] : [],
-    artifact: 'battle.json',
-    phases: [
-      { id: 'open', name: 'Opening', state: total <= 12 ? 'active' : 'done' },
-      { id: 'midgame', name: 'Midgame', state: total > 12 && !gameOver ? 'active' : total > 12 ? 'done' : 'pending' },
-      { id: 'endgame', name: 'Endgame', state: gameOver ? 'done' : total >= filled * 0.8 ? 'active' : 'pending' },
-    ],
-    updatedAt: new Date().toISOString(),
-  }
-}
+export { sanitize }
 
 export async function startDuelViewer({ workspace, port = 0 } = {}) {
   workspace = resolve(workspace)
   mkdirSync(join(workspace, '.harness'), { recursive: true })
+  const file = join(workspace, 'battle.json')
 
-  let battle = readBattle(join(workspace, 'battle.json'))
-  let board = newBoard(battle.size)
+  // Every binding is declared before anything can call into the closures below.
+  let raw = { ...DEFAULT }
+  let cfgError = null
+  let overrides = {} // { size, speed, insightO, insightX, swapped }
+  let board = newBoard(DEFAULT.size)
   let toMove = 'O'
-  let clients = new Set()
-  let lastLine = null // the last frame sent, replayed to a pane that connects later
-  let stopped = false
-  let salt = 1
-  let running = false
-  let gameOver = false
-  let gameOverAt = 0 // when the last game ended; a new one starts by itself a few seconds later
-  let winner = null
-  let error = null
-  let history = []   // [{n, side, disk, x, y, flips, ref:[...], at}]
-  let moveCount = 0
+  let pending = null // the player to move has already answered: { disk, moves:[{x,y,flips,p}], choice, confidence }
+  let stateText = ''
+  let stopped = false, running = false, busy = false
+  let timer = null, watchTimer = null, salt = 1, lastVerdictAt = 0
+  let gameOver = false, winner = null, rest = 0, error = null
+  let history = [] // [{ n, side, disk, x, y, flips, flipped, ref, human, at }]
+  let moveCount = 0, game = 1
+  const clients = new Set()
+  const totals = { games: 0, winsO: 0, winsX: 0, draws: 0, moves: 0, forced: 0, results: [] }
 
-  function readBattle(file) {
-    try {
-      return { ...DEFAULT_BATTLE, ...JSON.parse(readFileSync(file, 'utf8')) }
-    } catch {
-      return DEFAULT_BATTLE
+  function load() {
+    try { raw = { ...DEFAULT, ...JSON.parse(readFileSync(file, 'utf8')) }; cfgError = null } catch (e) {
+      cfgError = existsSync(file) ? clean(`battle.json: ${e.message}`) : null
+    }
+  }
+  function cfg() {
+    const c = sanitize(raw)
+    if (overrides.size != null) c.size = overrides.size
+    if (overrides.speed != null) c.speed = overrides.speed
+    if (overrides.swapped) c.rivals = { O: c.rivals.X, X: c.rivals.O }
+    if (overrides.insightO != null) c.rivals.O = { ...c.rivals.O, insight: overrides.insightO }
+    if (overrides.insightX != null) c.rivals.X = { ...c.rivals.X, insight: overrides.insightX }
+    return c
+  }
+
+  /** Ask the player to move. Its full answer is kept so the pane can draw it on the board. */
+  async function think() {
+    pending = null
+    if (gameOver) return
+    const c = cfg()
+    const moves = legalMoves(board, toMove)
+    if (!moves.length) return
+    stateText = sideState(c, board, toMove, moves)
+    const options = Object.fromEntries(moves.map((m) => [`${m.x},${m.y}`, `play column ${m.x}, row ${m.y}, flipping ${m.flips}`]))
+    const res = await evaluate({
+      state: stateText,
+      questions: {
+        move: jev.choice(options, 'Choose the strongest Reversi move for your side and your personality, as an "x,y" coordinate from the list.'),
+        confident: jev.noul('Is this a move you feel confident about, rather than a forced one?'),
+      },
+      salt: salt++, model: process.env.JEV_MODEL || 'jev-latest', mock: duelMock,
+    })
+    const a = res.answers.move ?? {}
+    const probs = a.probabilities ?? {}
+    const pick = moves.find((m) => `${m.x},${m.y}` === String(a.choice)) ?? moves[0]
+    pending = {
+      disk: toMove, choice: [pick.x, pick.y], confidence: Number(a.confidence ?? 0), sure: Number(res.answers.confident?.noul ?? 0.5),
+      moves: moves.map((m) => ({ x: m.x, y: m.y, flips: m.flips, p: Number(probs[`${m.x},${m.y}`] ?? 0) })),
+      client: res.client, model: res.model,
     }
   }
 
-  function broadcast(obj) {
-    const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
-    lastLine = line
-    for (const c of clients) c.write(line)
-  }
-
-  function tail() {
-    const c = count(board)
-    const v = verdict(battle, c, board.length * board.length, gameOver, winner, { error })
-    const file = join(workspace, '.harness/verdict.json')
-    writeFileSync(file + '.tmp', JSON.stringify(v))
-    renameSync(file + '.tmp', file)
-    broadcast({
-      type: 'frame',
-      title: battle.title,
-      description: battle.description,
-      size: battle.size,
-      board,
-      toMove,
-      counts: c,
-      running,
-      gameOver,
-      winner,
-      error,
-      rivals: battle.rivals,
-      refereeFocus: battle.referee,
-      history: history.slice(-30),
-      moveCount,
-    })
-  }
-
-  async function askSide(side) {
-    const love = legalMoves(board, side.disk)
-    if (!love.length) return null
+  async function referee(c, move, disk) {
     const res = await evaluate({
-      state: stateBlock(battle, board, side, love),
+      state: refState(c, board, move, disk),
       questions: {
-        move: {
-          type: 'choice',
-          instructions: 'Choose the strongest Reversi move for your side, as a "x,y" coordinate.',
-          options: love.map((m) => `${m.x},${m.y}`),
-        },
-        confident: {
-          type: 'noul',
-          instructions: 'Is this a move you feel confident about, or a defensively forced one?',
-        },
+        strong: jev.score({ 0: 'blunder', 1: 'solid', 2: 'brilliant' }, 'How strong was this move tactically?'),
+        aggressive: jev.noul('Was this an aggressive, disk-taking move rather than a quiet positional one?'),
+        decided: jev.score({ 0: 'wide open', 1: 'leaning', 2: 'decided' }, 'How decided is the game right now?'),
       },
-      salt: salt++,
-      model: process.env.JEV_MODEL || 'jev-latest',
-    })
-    const picked = res.answers.move?.choice
-    const chosen = love.find((m) => `${m.x},${m.y}` === String(picked)) || love[0]
-    return { ...chosen, confidence: res.answers.confident?.noul ?? 0.5, client: res.client, model: res.model, probs: res.answers.move?.probabilities }
-  }
-
-  async function referee(move, side) {
-    const res = await evaluate({
-      state: refState(battle, board, move, side),
-      questions: {
-        strong: {
-          type: 'score',
-          instructions: 'How strong was this move tactically?',
-          legend: { 0: 'blunder', 1: 'solid', 2: 'brilliant' },
-        },
-        aggressive: {
-          type: 'noul',
-          instructions: 'Was this an aggressive, material-taking move or a quiet positional one?',
-        },
-        decided: {
-          type: 'score',
-          instructions: 'How decided is the game right now for the side that just moved?',
-          legend: { 0: 'wide open', 1: 'leaning', 2: 'decided' },
-        },
-      },
-      salt: salt++,
-      model: process.env.JEV_MODEL || 'jev-latest',
+      salt: salt++, model: process.env.JEV_MODEL || 'jev-latest', mock: duelMock,
     })
     const a = res.answers
     return {
@@ -237,121 +110,226 @@ export async function startDuelViewer({ workspace, port = 0 } = {}) {
     }
   }
 
-  async function step() {
-    if (stopped || gameOver) return
+  function newGame() {
+    const c = cfg()
+    board = newBoard(c.size); toMove = 'O'; gameOver = false; winner = null; rest = 0
+    history = []; moveCount = 0; pending = null; error = null; salt += 10
+  }
+
+  function endGame(c) {
+    const n = count(board)
+    gameOver = true; rest = 0
+    winner = n.O === n.X ? null : n.O > n.X ? 'O' : 'X'
+    totals.games++
+    if (winner === 'O') totals.winsO++; else if (winner === 'X') totals.winsX++; else totals.draws++
+    totals.results.push({ game, winner, name: winner ? c.rivals[winner].name : 'Draw', O: n.O, X: n.X, moves: moveCount })
+    if (totals.results.length > 30) totals.results.shift()
+  }
+
+  /** One move: the pending answer (or a person's pick) lands, the referee judges it, the next player is asked. */
+  async function step(forced = null) {
+    if (busy || stopped) return false
+    busy = true
     try {
-      const side = { disk: toMove, name: battle.rivals[toMove]?.name || toMove, personality: battle.rivals[toMove]?.personality || '', rival: toMove === 'O' ? 'X' : 'O', rivalDisk: toMove === 'O' ? 'X' : 'O' }
-      const move = await askSide(side)
-      if (move) {
-        applyMove(board, move.x, move.y, side.disk)
-        moveCount++
-        const ref = await referee(move, side)
-        history.push({ n: moveCount, side: side.name, disk: side.disk, x: move.x, y: move.y, flips: move.flips, ref, at: new Date().toISOString() })
+      const c = cfg()
+      if (gameOver) {
+        rest++
+        if (rest * c.speed >= REST_MS) { game++; newGame(); await think() }
+        return true
+      }
+      if (!pending || pending.disk !== toMove) await think()
+      const legal = legalMoves(board, toMove)
+      let pick = null
+      if (forced) pick = legal.find((m) => m.x === forced.x && m.y === forced.y) ?? null
+      if (forced && !pick) return false
+      if (!pick && pending) pick = legal.find((m) => m.x === pending.choice[0] && m.y === pending.choice[1]) ?? legal[0]
+      if (pick) {
+        const disk = toMove
+        const detail = describeMove(board, pick, disk)
+        const flipped = applyMove(board, pick.x, pick.y, disk)
+        moveCount++; totals.moves++
+        if (forced) totals.forced++
+        const ref = await referee(c, { ...pick, detail }, disk)
+        const p = pending?.moves.find((m) => m.x === pick.x && m.y === pick.y)?.p ?? null
+        history.push({ n: moveCount, side: c.rivals[disk].name, disk, x: pick.x, y: pick.y, flips: pick.flips, flipped, ref, p, human: !!forced, at: new Date().toISOString() })
         if (history.length > 200) history.splice(0, history.length - 200)
       }
-      // Pass if no legal move; game over when neither side can move.
-      const next = toMove === 'O' ? 'X' : 'O'
-      if (!legalMoves(board, next).length) {
-        if (!legalMoves(board, toMove).length) {
-          const c = count(board)
-          if (c.O !== c.X) winner = c.O > c.X ? battle.rivals.O?.name || 'O' : battle.rivals.X?.name || 'X'
-          gameOver = true
-          gameOverAt = Date.now()
-        }
-        // else: stick (both effectively stalled but next side has no move -> keep current side) — handled by loop guard
-      } else {
-        toMove = next
-      }
+      // Pass when the next side has no move; the game is over when neither side can move.
+      const next = other(toMove)
+      if (legalMoves(board, next).length) toMove = next
+      else if (!legalMoves(board, toMove).length) endGame(c)
+      await think()
       error = null
+      return true
     } catch (e) {
-      error = clean(e.message)
+      error = clean(e?.message ?? String(e))
+      return false
+    } finally {
+      busy = false
     }
-    tail()
   }
 
-  let timer = null
-  function schedule() {
-    clearTimeout(timer)
-    timer = setTimeout(run, battle.speed ?? 700)
+  function frame() {
+    const c = cfg(), n = count(board)
+    return {
+      type: 'frame', title: c.title, description: c.description, size: c.size, speed: c.speed,
+      board: board.map((r) => r.join('')), toMove, counts: n, running, gameOver, winner,
+      winnerName: winner ? c.rivals[winner].name : null, restLeftMs: gameOver ? Math.max(0, REST_MS - rest * c.speed) : 0,
+      error, cfgError, rivals: c.rivals, refereeFocus: c.referee,
+      history: history.slice(-30), quality: history.map((h) => [h.disk, Number(h.ref.strong.toFixed(2))]),
+      moveCount, game, pending, totals: { ...totals, results: totals.results.slice(-8) }, stateText, overrides,
+    }
   }
+
+  function verdict() {
+    const c = cfg(), n = count(board), total = n.O + n.X, cells = c.size * c.size
+    const problem = cfgError || error
+    const leader = n.O === n.X ? 'tied' : n.O > n.X ? `${c.rivals.O.name} leads` : `${c.rivals.X.name} leads`
+    const v = {
+      spec: 1,
+      ready: !problem,
+      summary: problem
+        ? `Duel needs a fix: ${problem}`
+        : gameOver
+          ? `${winner ? c.rivals[winner].name : 'Draw'} — final ${n.O}–${n.X} · game ${game}`
+          : `${c.rivals.O.name} (O) vs ${c.rivals.X.name} (X) — ${leader} ${n.O}–${n.X} · game ${game}, ${totals.winsO}–${totals.winsX} in games`,
+      findings: [
+        ...(problem ? [{ severity: 'error', kind: 'duel', message: problem }] : []),
+        { severity: 'info', kind: 'duel', message: `insight O ${c.rivals.O.insight}, X ${c.rivals.X.insight} · ${c.size}x${c.size} · ${c.speed} ms per move · ${totals.forced} moves forced by a person` },
+      ],
+      artifact: 'battle.json',
+      phases: [
+        { id: 'open', name: 'Opening', state: total <= 12 ? 'active' : 'done' },
+        { id: 'midgame', name: 'Midgame', state: total > 12 && !gameOver ? 'active' : total > 12 ? 'done' : 'pending' },
+        { id: 'endgame', name: 'Endgame', state: gameOver ? 'done' : total >= cells * 0.8 ? 'active' : 'pending' },
+      ],
+      updatedAt: new Date().toISOString(),
+    }
+    const out = join(workspace, '.harness/verdict.json')
+    writeFileSync(out + '.tmp', JSON.stringify(v))
+    renameSync(out + '.tmp', out)
+  }
+
+  function push(force = false) {
+    const now = Date.now()
+    if (force || now - lastVerdictAt > 1000) { lastVerdictAt = now; try { verdict() } catch (e) { error = clean(e.message) } }
+    if (!clients.size) return
+    const line = `event: state\ndata: ${JSON.stringify(frame())}\n\n`
+    for (const c of clients) c.write(line)
+  }
+
+  function schedule() { clearTimeout(timer); if (running && !stopped) timer = setTimeout(run, cfg().speed) }
   async function run() {
-    if (stopped) return
-    // Never sit on a finished board: show the result for a few seconds, then play again.
-    if (gameOver) { if (Date.now() - gameOverAt > 5000) reset(); else schedule(); return }
+    const t0 = Date.now(), was = gameOver
     await step()
-    schedule()
-  }
-  function start() { if (!running) { running = true; schedule() } }
-  function pause() { running = false; clearTimeout(timer) }
-  function reset() {
-    board = newBoard(battle.size); toMove = 'O'; gameOver = false; winner = null; history = []; moveCount = 0; salt += 10; error = null
-    tail()
-    if (running) schedule()
+    push(was !== gameOver)
+    if (running && !stopped) timer = setTimeout(run, Math.max(0, cfg().speed - (Date.now() - t0)))
   }
 
-  const watcher = watch(workspace, { recursive: true }, (_, name) => {
-    if (!name) return
-    if (String(name).split('/').join('/') === 'battle.json') {
-      battle = readBattle(join(workspace, 'battle.json'))
-      if (battle.size !== board.length) { board = newBoard(battle.size); toMove = 'O'; moveCount = 0; history = [] }
-      tail()
-      if (running) schedule()
+  /** A dial or the sides changed: the player to move reads new text, so ask it again. */
+  async function rethink() { if (!busy) { busy = true; try { await think() } catch (e) { error = clean(e.message) } finally { busy = false } } }
+
+  async function control(cmd, body) {
+    let ok = true
+    if (cmd === 'pause') { running = false; clearTimeout(timer) }
+    else if (cmd === 'start') { if (!running) { running = true; schedule() } }
+    else if (cmd === 'reset') {
+      Object.assign(totals, { games: 0, winsO: 0, winsX: 0, draws: 0, moves: 0, forced: 0, results: [] })
+      overrides = {}; game = 1; salt = 1; newGame(); await rethink()
     }
+    else if (cmd === 'tick' || cmd === 'step') { const n = Math.round(num(body.n, 1, 20000, 1)); for (let i = 0; i < n; i++) await step() }
+    else if (cmd === 'play') { ok = await step({ x: Math.round(Number(body.x)), y: Math.round(Number(body.y)) }); if (ok && running) schedule() }
+    else if (cmd === 'swap') { overrides = { ...overrides, swapped: !overrides.swapped, insightO: overrides.insightX, insightX: overrides.insightO }; await rethink() }
+    else if (cmd === 'set') {
+      const v = Number(body.value)
+      if (body.key === 'speed') { overrides = { ...overrides, speed: Math.round(num(v, 60, 5000, 700)) }; if (running) schedule() }
+      else if (body.key === 'size' && [4, 6, 8, 10, 12].includes(v)) { overrides = { ...overrides, size: v }; game++; newGame(); await rethink() }
+      else if (body.key === 'insightO' || body.key === 'insightX') { overrides = { ...overrides, [body.key]: Math.round(num(v, 0, 2, 2)) }; await rethink() }
+      else ok = false
+    } else ok = false
+    push(true)
+    return { ok, moveCount, game, gameOver }
+  }
+
+  load()
+  newGame()
+  salt = 1
+  await think()
+
+  // Watch the folder, not the file: an editor that saves by rename would drop a file watch.
+  const watcher = watch(workspace, (_, name) => {
+    if (name && String(name) !== 'battle.json') return
+    clearTimeout(watchTimer)
+    watchTimer = setTimeout(async () => {
+      if (stopped) return
+      const before = JSON.stringify(raw), sizeBefore = cfg().size
+      load()
+      if (JSON.stringify(raw) !== before) {
+        overrides = {}
+        if (cfg().size !== sizeBefore) { game++; newGame() }
+        await rethink()
+      }
+      push(true)
+    }, 40)
   })
 
   const server = createServer(async (req, res) => {
     res.setHeader('cache-control', 'no-store')
     res.setHeader('x-content-type-options', 'nosniff')
+    // Loopback only: a page on another origin (DNS rebinding) must not reach this server.
     if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host ?? '')) { res.writeHead(403); return res.end('Loopback only') }
     const url = new URL(req.url, 'http://127.0.0.1')
-    if (req.method === 'GET' && url.pathname === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'index.html'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.js'))) }
-    if (req.method === 'GET' && url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
-    if (req.method === 'GET' && url.pathname === '/jev-hud.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'jev-hud.js'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.css') { res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.css'))) }
-    if (req.method === 'GET' && url.pathname === '/state') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ title: battle.title, size: battle.size, board, toMove, counts: count(board), running, gameOver, winner, history: history.slice(-30), rivals: battle.rivals })) }
-    if (req.method === 'GET' && url.pathname === '/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
-      clients.add(res)
-      if (lastLine) res.write(lastLine)
-      req.on('close', () => clients.delete(res))
-      return
+    try {
+      if (req.method === 'GET') {
+        const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1)
+        if (FILES.has(name)) { res.writeHead(200, { 'content-type': TYPES[extname(name)] }); return res.end(readFileSync(join(HERE, name))) }
+        if (url.pathname === '/state') {
+          // Keeps the keys older tools read (board as rows of cells, counts, history) and adds the rest.
+          const f = frame()
+          res.writeHead(200, { 'content-type': 'application/json' })
+          return res.end(JSON.stringify({ ...f, board: board.map((r) => r.slice()), rows: f.board }))
+        }
+        if (url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
+        if (url.pathname === '/events') {
+          res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
+          res.write(`event: state\ndata: ${JSON.stringify(frame())}\n\n`)
+          clients.add(res)
+          req.on('close', () => clients.delete(res))
+          return
+        }
+      }
+      if (req.method === 'POST' && url.pathname === '/control') {
+        let body = ''
+        for await (const c of req) { body += c; if (body.length > 65536) { res.writeHead(413); return res.end('Too large') } }
+        let j
+        try { j = JSON.parse(body || '{}') } catch { res.writeHead(400); return res.end('Bad JSON') }
+        const reply = await control(String(j?.cmd ?? ''), j && typeof j === 'object' ? j : {})
+        res.writeHead(200, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify(reply))
+      }
+      res.writeHead(404); res.end('Not found')
+    } catch (e) {
+      res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: clean(e?.message ?? e) }))
     }
-    if (req.method === 'POST' && url.pathname === '/control') {
-      let body = ''
-      for await (const c of req) { body += c; if (body.length > 1024) break }
-      const cmd = JSON.parse(body || '{}').cmd
-      if (cmd === 'pause') pause()
-      if (cmd === 'start') start()
-      if (cmd === 'reset') reset()
-      if (cmd === 'step') await step()
-      res.writeHead(200, { 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ ok: true }))
-    }
-    res.writeHead(404); res.end('Not found')
   })
 
-  await new Promise((resolveP, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolveP) })
-  tail()
-  start()
+  await new Promise((ok, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', ok) })
+
+  push(true)
+  running = true
+  schedule()
 
   return {
     url: `http://127.0.0.1:${server.address().port}`,
-    async close() { stopped = true; clearTimeout(timer); watcher.close(); for (const c of clients) c.end(); server.closeAllConnections(); await new Promise((r) => server.close(r)) },
+    async close() {
+      stopped = true; running = false
+      clearTimeout(timer); clearTimeout(watchTimer)
+      watcher.close()
+      for (const c of clients) c.end()
+      server.closeAllConnections()
+      await new Promise((r) => server.close(r))
+    },
   }
-}
-
-// The default battle is used when battle.json is absent; the workspace template ships the real one.
-const DEFAULT_BATTLE = {
-  title: 'Jev vs Jev',
-  description: 'A Reversi duel between two minds.',
-  size: 6,
-  speed: 700,
-  rivals: {
-    O: { name: 'Jev·O', personality: 'A patient, positional player who loves the corners.' },
-    X: { name: 'Jev·X', personality: 'A greedy opportunist who grabs flips and attacks the center.' },
-  },
-  referee: 'Call it fairly — is the move strong, is it aggressive, how decided is the game?',
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

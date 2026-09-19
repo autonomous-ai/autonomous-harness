@@ -18,7 +18,7 @@
       <div class="stat"><label>Messages done</label><span id="s-done">0</span><small id="s-batch">of 2,000</small></div>
       <div class="stat"><label>Per second</label><span id="s-mps" class="accent">0</span><small id="s-pool">pool of 8</small></div>
       <div class="stat"><label>Cost so far</label><span id="s-cost">$0.0000</span><small id="s-per1k">per 1,000: —</small></div>
-      <div class="stat"><label>Auto-routed right</label><span id="s-acc" class="ok">—</span><small id="s-recent">last 300: —</small></div>
+      <div class="stat"><label id="l-acc">Auto-routed right</label><span id="s-acc" class="ok">—</span><small id="s-recent">last 300: —</small></div>
       <div class="stat"><label>Escalated</label><span id="s-esc" class="warn">0.0%</span><small id="s-escn">0 messages</small></div>
       <div class="stat"><label>Elapsed</label><span id="s-time">0.0s</span><small id="s-answers">0 answers</small></div>
     </div>
@@ -52,10 +52,15 @@
           <div class="summary-line" id="sum-line"></div>
           <div class="summary-sub" id="sum-sub"></div>
           <div class="summary-timer"><i id="sum-timer"></i></div>
+          <button id="sum-again" class="primary hidden">Run again</button>
         </div>
       </div>
       <div id="deck" class="panel">
-        <div class="knob">
+        <div class="knob" id="knob-source">
+          <div class="knob-head"><label>Your file</label><b id="src-name">inbox</b></div>
+          <div class="knob-hint wrap" id="src-note"></div>
+        </div>
+        <div class="knob" id="knob-noise">
           <div class="knob-head"><label for="noise">Noise</label><b id="noise-val">0.20</b><span id="noise-pill" class="pill warn hidden" title="Set in the pane. An edit to firehose.json resets it.">override</span></div>
           <input id="noise" type="range" min="0" max="1" step="0.01" value="0.2">
           <div class="knob-hint">wrong-team phrases mixed in</div>
@@ -64,7 +69,8 @@
           <div class="knob-head"><label for="threshold"><span class="wide-only">Confidence </span>threshold</label><b id="thr-val">0.55</b><span id="thr-pill" class="pill warn hidden" title="Set in the pane. An edit to firehose.json resets it.">override</span><button id="suggest" class="chip hidden" title="Set the threshold to this value"></button></div>
           <canvas id="sweep" height="34"></canvas>
           <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.55">
-          <div class="knob-hint"><i class="key ok"></i>right <i class="key warn"></i>escalated, at every threshold</div>
+          <div class="knob-hint synth-only"><i class="key ok"></i>right <i class="key warn"></i>escalated, at every threshold</div>
+          <div class="knob-hint own-only"><i class="key warn" style="margin-left:0"></i>escalated, at every threshold. Moving it rewrites triage.csv.</div>
         </div>
         <div class="knob actions">
           <button id="burst" class="primary">Burst +500</button>
@@ -80,14 +86,25 @@
       </div>
       <div class="panel">
         <div class="panel-title">How it works</div>
-        <div class="how">
+        <div class="how own-only">
+          These are <b>your own messages</b>, read from a file in the workspace. Jev reads each one once and answers <b>five questions in one call</b>: <code>team</code>, <code>urgency</code>, <code>spam</code>, <code>needs_human</code>, <code>mood</code>.
+          A tile crosses the gate at the height of Jev's <b>confidence</b>. Under the threshold it drops to the amber lane for a big model or a person. There is no answer key here, so nothing is scored right or wrong.
+          <br><br>Results go to <code>triage.csv</code> in the workspace, one line per message. Move the threshold and the file is rewritten. With a key, only the text column is sent to Jev. Without one, nothing leaves this machine.
+        </div>
+        <div class="how synth-only">
           A seeded generator writes <b>made-up</b> inbox messages. Each one has a true team, so the pane can score Jev live.
           Jev reads a message once and answers <b>five questions in one call</b>: <code>team</code>, <code>urgency</code>, <code>spam</code>, <code>needs_human</code>, <code>mood</code>.
           A tile crosses the gate at the height of Jev's <b>confidence</b>. Under the threshold it drops to the amber lane for a big model. A red ring marks a wrong bin.
           <br><br>The chat agent designs the desk in <code>firehose.json</code>: teams, descriptions, phrases, <code>noise</code>, <code>threshold</code>.
         </div>
       </div>
-      <div class="panel">
+      <div class="panel own-only">
+        <div class="panel-title">Confidence <span class="right">amber = under the threshold</span></div>
+        <canvas id="confHist"></canvas>
+        <div class="panel-title" style="margin-top:12px">Where they went</div>
+        <div id="teamCounts" class="team-counts"></div>
+      </div>
+      <div class="panel synth-only">
         <div class="panel-title">Confusion matrix <span class="right" id="mx-note">true team by routed bin</span></div>
         <canvas id="matrix"></canvas>
         <div id="mx-tip" class="mx-tip">Hover a cell.</div>

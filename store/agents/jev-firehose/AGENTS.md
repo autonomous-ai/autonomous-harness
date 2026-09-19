@@ -75,6 +75,63 @@ Without a `TYPESAFE_API_KEY` the harness runs on an offline stand-in that matche
 is strict about exact words ("invoice" and "invoices" do not match). `check.mjs` warns about phrases
 that will not route. With a key, live Jev reads meaning, and sharp descriptions still help.
 
+## The person's own messages
+
+The person can drop a file of their own messages into the workspace and have Jev triage all of it.
+Then the pane says "your data", the generator is off, and the viewer hands back `triage.csv`.
+
+```jsonc
+{
+  "title": "Support inbox, March",
+  "desk": "The person's own support inbox.",
+  "source": "inbox.jsonl",        // .csv, .tsv, .jsonl or .json, INSIDE the workspace, up to 8 MB and 20,000 messages
+  "textColumn": "body",           // optional. Left out, the viewer picks text, message, body, ... or the longest column
+  "threshold": 0.55,
+  "ratePerSec": 40, "concurrency": 8,
+  "teams": [ { "id": "billing", "description": "Payment: card charged, invoice, refund, receipt." } ]
+}
+```
+
+With `source` set, `teams[].phrases` are optional, and `noise`, `batch`, `spamRate` and `seed` are
+ignored. The file is processed once. There is no answer key, so there is **no accuracy** in this
+mode: the pane shows the confidence histogram, the share escalated and the count per team.
+
+How to work:
+
+1. **Read the header first.** `head -n 3 inbox.csv` (or the first 3 lines of a jsonl). Find the
+   text column and the id column. Do not read the whole file into the chat.
+2. **Look at a small sample**, about 20 to 30 messages, to learn what is really in it. Design the
+   teams from that. Do not reuse the starter desk.
+3. Write the teams: `id` and a sharp `description` each. Set `source`, and `textColumn` if the
+   viewer would guess wrong.
+4. `node "$JEV_DSH/toolchain/check.mjs"` loads the file the way the viewer will and tells you the
+   text column, the id column and the message count.
+5. `node "$JEV_DSH/toolchain/measure.mjs"` samples the file and prints the split at each threshold,
+   plus the ids of the least confident messages and the two teams each one sits between. Look those
+   ids up, then sharpen those two descriptions. It prints ids, never the text.
+6. Tell the person where the file is. `.harness/verdict.json` has a `triage` block: `path`, `file`
+   (absolute), `complete`, `messages`, `done`, `autoRouted`, `spam`, `escalated`, `threshold`, and
+   the count per team.
+
+`triage.csv` has one line per message, in the order of the person's file: `id` (their id column, or
+the row number), `team`, `team_confidence`, `urgency` (no_rush, this_week, today, urgent,
+emergency), `spam`, `needs_human`, `mood` (calm, annoyed, furious), `escalated`, then their own
+columns exactly as they were. A column of theirs called `team` comes back as `source_team`. The
+viewer rewrites the file about once a second while it works, once at the end, and again whenever
+the threshold moves.
+
+**Never copy the person's data around.**
+
+- Do not paste their messages into `firehose.json`. Teams are described in your words, not theirs.
+- Do not write copies, samples or extracts of their file anywhere. The viewer is the only thing
+  that writes, and it writes `triage.csv` next to their file.
+- Quote as little of their text in the chat as you can. Use ids.
+- Do not send their file anywhere. With a Jev key, the viewer sends **only the text column** to the
+  Jev API, one message per call. Every other column stays on this machine. Without a key nothing
+  leaves the machine. Say this to the person before a run with a key.
+- Without a key the offline stand-in only matches words, so its triage of real messages is rough.
+  Say so. Never call any number in this mode accuracy.
+
 ## Measure, do not guess
 
 ```bash
@@ -93,15 +150,15 @@ If two teams are always confused, fix the descriptions or say why you kept them.
 
 ## Rules
 
-- Edit ONLY `firehose.json`. Do not edit the viewer, the toolchain or `.harness/verdict.json`. The
-  viewer writes the verdict itself.
+- Edit ONLY `firehose.json`. Do not edit the viewer, the toolchain, `.harness/verdict.json` or
+  `triage.csv`. The viewer writes the verdict and the results file itself.
 - Keep `firehose.json` valid JSON. A bad edit does not crash the pane. It keeps the last good desk
   and shows the parse error until you fix it. Out-of-range values are clamped and shown as warnings.
 - The viewer is already running in the pane on the left. Do not open a browser, do not start
   another server, and do not change ports.
 - The person can drag the noise and threshold sliders in the pane. Those are runtime overrides. Your
   next edit to `firehose.json` resets them to the file's values.
-- Everything here is synthetic. Never present the desk, the messages or the numbers as a real
+- Unless `source` is set, everything here is synthetic. Never present the desk, the messages or the numbers as a real
   company, real customers or a real benchmark. The "2s per message" ghost bar is an assumption, not
   a measurement of any model.
 - The `MOCK` badge means the offline stand-in is answering. Do not describe its numbers as Jev's

@@ -1,5 +1,9 @@
 {
   "goal": "Make every test in project/test.js pass without breaking the others.",
   "name": "Jev Guard",
-  "description": "Jev judges your own edits live as you fix the broken module."
+  "description": "Jev judges your own edits live as you fix the broken module.",
+  "strictness": 0.5,
+  "subtlety": 0.35,
+  "stepMs": 900,
+  "diffBudget": 1800
 }

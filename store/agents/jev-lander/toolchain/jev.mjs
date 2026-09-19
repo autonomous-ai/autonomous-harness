@@ -272,33 +272,50 @@ function shopperRead(text) {
  * stand-in.
  */
 function landerRead(text) {
-  const num = (re) => { const m = text.match(re); return m ? Number(m[1]) : Number.NaN }
-  const alt = num(/alt\s+([-0-9.]+)/i)
-  const vy = num(/vy\s+([-0-9.]+)/i)
-  const g = num(/g\s+([-0-9.]+)/i)
+  const num = (re, d = Number.NaN) => { const m = text.match(re); return m ? Number(m[1]) : d }
+  const alt = num(/\balt\s+(-?\d+(?:\.\d+)?)/i)
+  const vy = num(/\bvy\s+(-?\d+(?:\.\d+)?)/i)
+  const g = num(/\bg\s+(\d+(?:\.\d+)?)/i)
   if (![alt, vy, g].every((v) => Number.isFinite(v))) return null
-  let pick
-  if (alt > 30) {
-    if (vy < -2.5) pick = 'BURN'
-    else if (vy < -1.2) pick = 'HOVER'
-    else pick = 'COAST'
-  } else if (alt > 16) {
-    if (vy < -1.8) pick = 'BURN'
-    else if (vy < -0.8) pick = 'HOVER'
-    else pick = 'COAST'
-  } else if (alt > 7) {
-    if (vy < -1.0) pick = 'BURN'
-    else if (vy < -0.3) pick = 'HOVER'
-    else pick = 'COAST'
-  } else {
-    if (vy < -0.4) pick = 'BURN'
-    else pick = 'CUT'
+  // No noise is added, at any gravity. An older version took a worse throttle more often as the
+  // gravity label rose (11 of 400 answers at G 1.2, 60 of 400 at G 3.0 for the same falling
+  // booster): that was injected randomness. The flight is hard for real reasons: the engine can
+  // brake by at most BURN − gravity per tick, and every tick in the air burns fuel.
+  const levels = { CUT: 0, COAST: 0.4, HOVER: 1.15, BURN: 2.6 }
+  const line = (text.match(/^throttle[^\n]*?:\s*(.*)$/im) || [null, null])[1]
+  if (line) for (const m of line.matchAll(/\b(cut|coast|hover|burn)\s+(\d+(?:\.\d+)?)/gi)) levels[m[1].toUpperCase()] = Number(m[2])
+  const safe = num(/soft at speed\s+(\d+(?:\.\d+)?)/i, 2)
+  const fuel = num(/\((\d+(?:\.\d+)?)\s+units\)/i, Number.POSITIVE_INFINITY)
+  const drag = num(/air drag\s+(\d+(?:\.\d+)?)/i, 0.004)
+  const out = /engine:\s*out/i.test(text)
+  const top = Math.max(...Object.values(levels))
+  const brake = top - g // the most it can slow down per tick
+  // The glide slope: fall fast while high, slow toward the pad, arrive at under half the safe speed.
+  // It is never steeper than the engine can follow with 70% of its braking.
+  const touch = 0.45 * safe
+  const slope = (h) => (brake > 0 ? Math.min(0.09, Math.sqrt((0.7 * brake) / Math.max(h, 1))) : 0.09)
+  const wantAt = (h) => -(touch + slope(h) * h)
+  const boost = {}
+  for (const [name, t] of Object.entries(levels)) {
+    const push = out ? 0 : Math.min(t, fuel)
+    let v1 = vy + push - g
+    v1 -= Math.sign(v1) * v1 * v1 * drag
+    const h1 = Math.max(0, alt + v1)
+    // Being too fast is worse than being too slow: it is the mistake that cannot be undone.
+    const err = v1 - wantAt(h1)
+    boost[name] = -3 * (err < 0 ? -err * 1.6 : err) - 0.15 * t
   }
-  const boost = { CUT: 0.2, COAST: 0.6, HOVER: 0.7, BURN: 0.5 }
-  if (boost[pick] !== undefined) boost[pick] = 1.9
-  // twitchiness grows with gravity: higher g -> more over/under correction
-  boost.noise = Math.min(0.55, 0.06 + Math.max(0, (g - 1.5)) * 0.14)
-  return { boost, pick, g }
+  // Keep it a distribution, never one-hot: however bad the other throttles are, each keeps a few percent.
+  const bestBoost = Math.max(...Object.values(boost))
+  for (const name of Object.keys(boost)) boost[name] = -3.2 * (1 - Math.exp(-(bestBoost - boost[name]) / 2))
+  // "Will it land soft?" Height left against the height a full burn needs to stop, and the fuel for it.
+  const fall = Math.min(0, vy)
+  const need = brake > 0 ? (fall * fall) / (2 * brake) : Number.POSITIVE_INFINITY
+  const fuelNeed = brake > 0 ? (top * -fall) / brake + g * (alt / Math.max(1, touch + slope(alt) * alt * 0.5)) * 0.5 : Number.POSITIVE_INFINITY
+  const room = (alt - need) / (0.2 * alt + 2)
+  const tank = Number.isFinite(fuel) ? (fuel - fuelNeed) / Math.max(10, fuelNeed) : 2
+  const soft = Math.max(0.03, Math.min(0.97, sigmoid(Math.min(room * 2, tank * 3))))
+  return { boost, soft }
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +328,9 @@ function mockAnswer(state, qid, q, salt) {
   const h = hash01(`${qid}::${qtext}` + (state ?? ''), salt)
 
   if (q.type === 'noul') {
+    // Lander: "will the touchdown be soft?" is answered from the same read as the throttle.
+    const landNoul = /soft|land safely|touchdown/.test(qtext) ? landerRead(text) : null
+    if (landNoul) return { type: 'noul', noul: clamp(landNoul.soft) }
     // Noul: a probability that something is true. The mock nudges it from the mere prior.
     const mention = text.includes(qtext.split(' ').find((w) => w.length > 3) ?? '')
     let p = 0.5 + (h - 0.5) * 0.5
@@ -412,15 +432,9 @@ function mockAnswer(state, qid, q, salt) {
     if (land) {
       options.forEach((opt, i) => {
         const b = land.boost[String(opt)]
-        if (b !== undefined) raw[i] += b
+        // The read replaces the word-overlap guess. A little per-option shimmer, never a flip.
+        if (b !== undefined) raw[i] = b + (hash01(String(opt), salt + 7) - 0.5) * 0.12
       })
-      if (land.boost.noise && (hash01('land', salt + 11) < land.boost.noise)) {
-        // over or under-throttle by one step — a costly hesitation
-        const best = options.map((o, i) => ({ o, i, r: raw[i] })).sort((a, b) => b.r - a.r)[0]
-        const step = hash01('ldir', salt) < 0.5 ? 1 : -1
-        const ni = Math.max(0, Math.min(options.length - 1, best.i + step))
-        if (ni !== best.i && land.boost[String(options[ni])] !== undefined) raw[ni] += 2.4
-      }
     }
     // Softmax into a distribution.
     const exps = raw.map((r) => Math.exp(r))
@@ -458,6 +472,11 @@ function clamp01(x) {
   return Math.min(1, Math.max(0, x))
 }
 
+// Imports are hoisted, so they can live here with the code that needs them.
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 // ---------------------------------------------------------------------------
 // Wire format. The live API (POST /v1/systemone) takes, per question:
 //   noul    { type, instructions, criteria?: { true: "...", false: "..." } }
@@ -488,6 +507,7 @@ export function canon(q = {}) {
     out.hints = []
   } else {
     out.hints = Array.isArray(q.criteria) ? q.criteria.map(String) : []
+    out.raw = isMap(q.criteria) ? q.criteria : null
   }
   // The mock scores evidence off `criteria` as a flat list of strings.
   out.criteria = [...(out.hints ?? []), ...Object.values(out.descriptions ?? {})].filter((s) => typeof s === 'string')
@@ -585,8 +605,59 @@ export function snapshot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function liveEvaluate(body, key) {
-  const endpoint = process.env.TYPESAFE_API_URL || LIVE_ENDPOINT
+// ---------------------------------------------------------------------------
+// Credentials. Environment variables win. Otherwise a small KEY=VALUE file in the user's home is
+// read, because a viewer started by the Harness daemon does not inherit the variables of the shell
+// you happen to have open. Two live routes are supported, both speaking the same question format:
+//   TypeSafe direct         TYPESAFE_API_KEY                               (api.typesafe.ai)
+//   Cloudflare Workers AI   CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN   (no TypeSafe waitlist)
+// The file is ~/.config/typesafe/credentials (or $TYPESAFE_CREDENTIALS). Keep it chmod 600.
+// ---------------------------------------------------------------------------
+const CRED_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_API_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']
+let credCache = null
+export const credentialsPath = () => process.env.TYPESAFE_CREDENTIALS || join(homedir(), '.config', 'typesafe', 'credentials')
+
+function readCredentialFile() {
+  const now = Date.now()
+  const path = credentialsPath()
+  if (credCache && credCache.path === path && now - credCache.at < 5000) return credCache.values
+  const values = {}
+  try {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*?)\s*$/)
+      if (m && CRED_KEYS.includes(m[1])) values[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2')
+    }
+  } catch { /* no file: fine */ }
+  credCache = { at: now, path, values }
+  return values
+}
+
+/** Which live route to use, or null for the offline stand-in. Never log the returned secret. */
+export function resolveCredentials(explicitKey) {
+  if (explicitKey === '') return null // an explicit empty key forces the offline stand-in
+  // Test suites assume the deterministic stand-in. Under `node --test`, or with JEV_OFFLINE=1, a real
+  // key on the machine is ignored unless it is passed explicitly or JEV_LIVE_TESTS=1 is set.
+  if (!explicitKey && (process.env.JEV_OFFLINE === '1' || (process.env.NODE_TEST_CONTEXT && process.env.JEV_LIVE_TESTS !== '1'))) return null
+  const file = readCredentialFile()
+  const get = (k) => process.env[k] || file[k] || ''
+  const key = explicitKey || get('TYPESAFE_API_KEY')
+  if (key) return { provider: 'typesafe', secret: key, url: get('TYPESAFE_API_URL') || LIVE_ENDPOINT }
+  const account = get('CLOUDFLARE_ACCOUNT_ID'), token = get('CLOUDFLARE_API_TOKEN')
+  if (account && token) return { provider: 'cloudflare', secret: token, url: `${process.env.CLOUDFLARE_API_BASE || 'https://api.cloudflare.com'}/client/v4/accounts/${encodeURIComponent(account)}/ai/run` }
+  return null
+}
+
+/** One safe line for doctor scripts and panes: says which route is active, never the secret. */
+export function describeCredentials() {
+  const c = resolveCredentials()
+  if (!c) return `offline stand-in (no key found in the environment or in ${credentialsPath()})`
+  return c.provider === 'cloudflare' ? 'live Jev through Cloudflare Workers AI' : 'live Jev through the TypeSafe API'
+}
+
+async function liveEvaluate(body, cred) {
+  const endpoint = cred.url
+  const key = cred.secret
+  const payload = cred.provider === 'cloudflare' ? { model: 'typesafe/jev', input: { state: body.state, questions: body.questions } } : body
   let lastErr
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt) { telemetry.retries++; await sleep(250 * 3 ** (attempt - 1)) }
@@ -594,10 +665,15 @@ async function liveEvaluate(body, key) {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       })
-      if (res.ok) return res.json()
+      if (res.ok) {
+        const data = await res.json()
+        // Cloudflare wraps the model's reply as { result, success, errors }.
+        if (data && data.success === false) throw new JevError(`Jev API 422: ${JSON.stringify(data.errors ?? data).slice(0, 200)}`)
+        return data?.result?.answers ? data.result : data
+      }
       const detail = await res.text().catch(() => '')
       lastErr = new JevError(`Jev API ${res.status}: ${detail.slice(0, 200)}`)
       if (res.status !== 429 && res.status !== 529 && res.status < 500) throw lastErr // 401/422: retrying cannot help
@@ -623,19 +699,19 @@ async function liveEvaluate(body, key) {
  * @returns {{client, model, answers, usage, latencyMs}}
  */
 export async function evaluate({ state, questions, key, model = 'jev-latest', salt = 1, mock } = {}) {
-  const apiKey = key ?? process.env.TYPESAFE_API_KEY
-  const client = pickClient(apiKey)
+  const cred = resolveCredentials(key)
+  const client = cred ? cred.provider : 'mock'
   const wire = toWire(questions)
   const t0 = performance.now()
   try {
-    if (client === 'typesafe') {
-      const data = await liveEvaluate({ model, state, questions: wire }, apiKey)
+    if (cred) {
+      const data = await liveEvaluate({ model, state, questions: wire }, cred)
       const rawAnswers = data.answers || data
       const answers = {}
       for (const [qid, q] of Object.entries(questions)) answers[qid] = fromWire(rawAnswers[qid], canon(q))
       const latencyMs = performance.now() - t0
       meter({ client, model: data.model || model, wire, state, answers, usage: data.usage, latencyMs })
-      return { client: 'typesafe', model: data.model || model, answers, usage: data.usage || {}, latencyMs }
+      return { client, model: data.model || model, answers, usage: data.usage || {}, latencyMs }
     }
     // Mock: local, deterministic, instant.
     const text = typeof state === 'string' ? state : JSON.stringify(state)

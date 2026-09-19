@@ -36,6 +36,7 @@
   let liveAt = performance.now()
   let rev = -1, thr = 0.55, thrQ = 550, noise = 0.2
   let urgencyLegend = [], moodLegend = []
+  let own = false, sourceInfo = null, qSum = 0   // own = the person's own messages: no ground truth, so nothing is right or wrong
 
   let n = 0, capN = 0
   let T = new Uint8Array(0), C = new Uint8Array(0), Q = new Uint16Array(0), S = new Uint8Array(0), D = new Uint8Array(0), M = new Uint8Array(0), U = new Uint8Array(0)
@@ -90,7 +91,9 @@
   // ------------------------------------------------------------------------------------------
   // Items and buckets
   // ------------------------------------------------------------------------------------------
+  const runSize = () => live.batch || config.batch || 2000   // your-data mode: the size of the file, not the batch setting
   const bucketOf = (i) => (S[i] >= 128 ? SPAMB : Q[i] < thrQ ? ESCB : C[i])
+  const isWrong = (i, b) => !own && b !== ESCB && b !== T[i]
   function grow(need) {
     if (need <= capN) return
     const c = Math.max(need, capN * 2, 4096), g = (A, old) => { const a = new A(c); a.set(old); return a }
@@ -115,7 +118,7 @@
   function recv(i, it, animate) {
     grow(i + 1)
     T[i] = it[0]; C[i] = it[1]; Q[i] = it[2]; S[i] = it[3]; D[i] = it[4]; M[i] = it[5]; U[i] = it[6]; where[i] = -1
-    n = i + 1
+    n = i + 1; qSum += it[2]
     addStat(i)
     const hb = Math.min(39, Math.floor(Q[i] / 25))
     if (recentN >= RECENT) { const old = Math.min(39, Math.floor(recentQ[recentN % RECENT] / 25)); if (confHist[old]) confHist[old]-- }
@@ -135,7 +138,7 @@
   function resetWorld(s) {
     teams = s.teams || []; nT = teams.length; SPAMB = nT; ESCB = nT + 1
     buildPalette()
-    n = 0; queue.length = 0; qHead = 0; emitAcc = 0
+    n = 0; qSum = 0; queue.length = 0; qHead = 0; emitAcc = 0
     while (fly.length) freeFly.push(fly.pop())
     pCount = 0; flashes.length = 0; rings.length = 0; labels.length = 0
     recentN = 0; confHist.fill(0)
@@ -177,13 +180,13 @@
     const lw = Math.round(clamp(W * 0.17, 128, 176)), lg = { x: L.lane.x, y: L.lane.y, w: L.lane.w, h: laneH, labelW: lw }
     lg.ax = L.lane.x + lw; lg.ay = L.lane.y + 5; lg.aw = L.lane.w - lw - 6; lg.ah = laneH - 10
     geo.push(lg)
-    fitBins(0); fitGeo(geo[ESCB], Math.max((binList[ESCB]?.length || 0) * 1.3, (config.batch || 2000) * 0.15), geo[0].size)
+    fitBins(0); fitGeo(geo[ESCB], Math.max((binList[ESCB]?.length || 0) * 1.3, runSize() * 0.15), geo[0].size)
     drawBackground(); redrawBins(); retarget()
     fctx.clearRect(0, 0, W, H)
   }
   /** Every team bin shares one tile size, so the filled lengths compare like a bar chart. */
   function fitBins(extra) {
-    let need = ((config.batch || 2000) / Math.max(1, nT + 1)) * 1.5
+    let need = (runSize() / Math.max(1, nT + 1)) * 1.5
     for (let b = 0; b <= nT; b++) need = Math.max(need, ((binList[b]?.length || 0) + (pending[b] || 0) + extra) * 1.5)
     let tight = geo[0]
     for (let b = 0; b <= nT; b++) if (geo[b].aw * geo[b].ah < tight.aw * tight.ah) tight = geo[b]
@@ -206,7 +209,7 @@
   function drawTile(c, b, slot, i) {
     const g = geo[b]; if (!g || slot % g.unit) return
     const p = slotPos(b, slot), s = g.size, x = Math.round(p.x - s / 2), y = Math.round(p.y - s / 2)
-    const wrong = b !== ESCB && b !== T[i]
+    const wrong = isWrong(i, b)
     if (wrong && s <= 3) { c.fillStyle = WRONG; c.fillRect(x, y, s, s); return }
     c.fillStyle = colors[T[i]]; c.globalAlpha = b === ESCB ? 0.82 : 1; c.fillRect(x, y, s, s); c.globalAlpha = 1
     if (wrong) { c.strokeStyle = WRONG; c.lineWidth = 1.5; c.strokeRect(x - 0.25, y - 0.25, s + 0.5, s + 0.5) }
@@ -239,9 +242,9 @@
       const i = movers[m], f = takeFlight(i)
       where[i] = -1
       f.phase = 2; f.t = -Math.random() * 0.25; f.d = 0.62; f.sx = movers[m + 3]; f.sy = movers[m + 4]; f.x = f.sx; f.y = f.sy
-      f.bucket = movers[m + 2]; f.style = 2; f.wrong = f.bucket !== ESCB && f.bucket !== T[i]; pending[f.bucket]++
+      f.bucket = movers[m + 2]; f.style = 2; f.wrong = isWrong(i, f.bucket); pending[f.bucket]++
     }
-    for (const f of fly) if (f.phase === 2 && f.style !== 2) { const nb = bucketOf(f.id); if (nb !== f.bucket) { pending[f.bucket]--; f.bucket = nb; pending[nb]++; f.sx = f.x; f.sy = f.y; f.t = 0; f.d = 0.6; f.style = 2; f.fresh = true; f.wrong = nb !== ESCB && nb !== T[f.id] } }
+    for (const f of fly) if (f.phase === 2 && f.style !== 2) { const nb = bucketOf(f.id); if (nb !== f.bucket) { pending[f.bucket]--; f.bucket = nb; pending[nb]++; f.sx = f.x; f.sy = f.y; f.t = 0; f.d = 0.6; f.style = 2; f.fresh = true; f.wrong = isWrong(f.id, nb) } }
     redrawBins(); retarget(true)
     recount()
   }
@@ -284,7 +287,7 @@
     ensureRoom(b, 1)
     f.phase = 2; f.t = 0; f.bucket = b; f.style = b === ESCB ? 1 : 0; f.d = b === ESCB ? 0.78 : 0.82
     f.sx = L.gateX; f.sy = f.gy; f.x = f.sx; f.y = f.sy
-    f.wrong = b !== ESCB && b !== T[i]
+    f.wrong = isWrong(i, b)
     const p = slotPos(b, binList[b].length + pending[b]); pending[b]++
     f.tx = f.ex = p.x; f.ty = f.ey = p.y; f.fresh = false
     if (flashes.length < 90) flashes.push({ y: f.gy, b, life: 1 })
@@ -392,7 +395,8 @@
       ctx.font = `700 ${g.h < 20 ? 10 : 12}px ui-monospace, Menlo, monospace`; ctx.fillStyle = col
       ctx.fillText(fitText(ctx, name, g.labelW - (two ? 14 : 48)), g.x + 10, two ? g.y + g.h / 2 - 7 : g.y + g.h / 2 + 0.5)
       ctx.font = `${g.h < 20 ? 9 : 10.5}px ui-monospace, Menlo, monospace`; ctx.fillStyle = 'rgba(203,213,225,.72)'
-      const prec = cnt ? Math.round((binRight[b] / cnt) * 100) + '%' : ''
+      const landedAll = Math.max(1, n - (queue.length - qHead) - fly.length)
+      const prec = !cnt ? '' : own ? fmtPct(cnt / landedAll, 0) : Math.round((binRight[b] / cnt) * 100) + '%'
       if (two) ctx.fillText(fmtInt(cnt) + (prec ? ' · ' + prec : ''), g.x + 10, g.y + g.h / 2 + 8)
       else { ctx.textAlign = 'right'; ctx.fillText(fmtInt(cnt), g.x + g.labelW - 6, g.y + g.h / 2 + 0.5); ctx.textAlign = 'left' }
     }
@@ -482,9 +486,10 @@
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
     ctx.font = '700 10.5px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(226,232,240,.9)'
+    if (own && live.phase === 'done') return   // the kept summary card sits here
     ctx.fillText('I N B O X', 12, y - 48)
     ctx.font = '9.5px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(148,163,184,.8)'
-    ctx.fillText('noise ' + noise.toFixed(2), 12, y - 35)
+    ctx.fillText(own && sourceInfo ? fitText(ctx, sourceInfo.name, L.gateX - 70) : 'noise ' + noise.toFixed(2), 12, y - 35)
   }
 
   function draw(now) {
@@ -552,12 +557,19 @@
     shown.acc = t.acc == null ? null : shown.acc == null ? t.acc : shown.acc + (t.acc - shown.acc) * k
     if (now - domAt < 66) return
     domAt = now
-    const batch = config.batch || 1, el = elapsedNow(now)
-    setText($('s-done'), fmtInt(shown.done)); setText($('s-batch'), `of ${fmtInt(batch)}`); setText($('synth'), `all messages are synthetic · made up by a seeded generator · batch ${live.batchNo}`)
-    setText($('s-mps'), shown.mps >= 100 ? fmtInt(shown.mps) : shown.mps.toFixed(1)); setText($('s-pool'), `pool of ${config.concurrency} · ${live.client === 'typesafe' ? 'live' : 'mock'}`)
+    const batch = runSize(), el = elapsedNow(now)
+    setText($('s-done'), fmtInt(shown.done)); setText($('s-batch'), `of ${fmtInt(batch)}`)
+    setText($('synth'), own && sourceInfo ? `your data · ${sourceInfo.name} · ${fmtInt(sourceInfo.used)} messages · only the "${sourceInfo.textColumn}" text goes to Jev` : `all messages are synthetic · made up by a seeded generator · batch ${live.batchNo}`)
+    $('synth').classList.toggle('own', own)
+    setText($('s-mps'), shown.mps >= 100 ? fmtInt(shown.mps) : shown.mps.toFixed(1)); setText($('s-pool'), `pool of ${config.concurrency} · ${live.client && live.client !== 'mock' ? 'live' : 'mock'}`)
     setText($('s-cost'), fmtMoney(shown.cost)); setText($('s-per1k'), n ? `per 1,000: ${fmtMoney((live.costUsd / n) * 1000)}` : 'per 1,000: —')
-    setText($('s-acc'), fmtPct(shown.acc)); setText($('s-recent'), `last 300: ${fmtPct(t.recent)}`)
-    $('s-acc').className = t.acc != null && t.acc < config.targetAccuracy ? 'bad' : 'ok'
+    if (own) {
+      setText($('l-acc'), 'Auto-routed'); setText($('s-acc'), fmtPct(n ? 1 - shown.escPct : null)); setText($('s-recent'), `mean conf ${n ? (qSum / n / 1000).toFixed(2) : '—'}`)
+      $('s-acc').className = 'accent'
+    } else {
+      setText($('l-acc'), 'Auto-routed right'); setText($('s-acc'), fmtPct(shown.acc)); setText($('s-recent'), `last 300: ${fmtPct(t.recent)}`)
+      $('s-acc').className = t.acc != null && t.acc < config.targetAccuracy ? 'bad' : 'ok'
+    }
     setText($('s-esc'), fmtPct(shown.escPct)); setText($('s-escn'), `${fmtInt(t.escN)} to a big model`)
     setText($('s-time'), fmtSecs(el)); setText($('s-answers'), `${fmtInt(n * 5)} answers`)
     $('bar-jev').style.width = clamp((shown.done / batch) * 100, 0, 100) + '%'
@@ -567,18 +579,27 @@
     setText($('ghost-name'), `${config.llmSecondsPerItem}s/msg model`)
     setText($('race-ghost'), `a model taking ${config.llmSecondsPerItem}s per message would be on message ${fmtInt(ghostOn)}`)
     setText($('pause'), live.running ? 'Pause' : 'Resume'); $('pause').classList.toggle('on', !live.running)
-    $('burst').textContent = live.burstLeft > 0 ? `Bursting ${fmtInt(live.burstLeft)}` : 'Burst +500'
+    $('burst').textContent = live.burstLeft > 0 ? `Bursting ${fmtInt(live.burstLeft)}` : 'Burst +500'; $('burst').disabled = live.phase === 'done'
     const ov = live.overrides || {}
     $('noise-pill').classList.toggle('hidden', !ov.noise); $('thr-pill').classList.toggle('hidden', !ov.threshold); $('fileVals').disabled = !(ov.noise || ov.threshold)
-    if (now - matrixAt > 380 && matrixDirty) { matrixAt = now; matrixDirty = false; drawMatrix() }
+    if (now - matrixAt > 380 && matrixDirty) { matrixAt = now; matrixDirty = false; if (own) drawOwnPanel(); else drawMatrix() }
     if (now - sweepAt > 480 && sweepDirty) { sweepAt = now; sweepDirty = false; drawSweep() }
   }
 
   function showSummary(s) {
     const box = $('summary')
     if (!s) { box.classList.add('hidden'); summaryShownFor = -1; return }
-    if (summaryShownFor === s.batchNo) return
-    summaryShownFor = s.batchNo
+    const key = rev + ':' + s.batchNo + ':' + (s.own ? s.escalated : '')
+    if (summaryShownFor === key) return
+    summaryShownFor = key
+    box.classList.toggle('own', !!s.own); $('sum-again').classList.toggle('hidden', !s.own); $('sum-timer').parentElement.classList.toggle('hidden', !!s.own)
+    if (s.own) {
+      setText($('sum-kicker'), `Done · your data · ${s.source}`)
+      $('sum-line').innerHTML = `<span>${fmtInt(s.messages)} messages</span><em>·</em> <span class="acc">${fmtSecs(s.elapsedMs)}</span><em>·</em> <span>${fmtMoney(s.costUsd)}</span><br><span class="ok">${fmtPct(s.messages ? 1 - s.escalatedPct : null)} auto-routed</span><em>·</em> <span class="warn">${fmtPct(s.escalatedPct)} escalated</span>`
+      setText($('sum-sub'), `${s.output} is in the workspace, one line per message · ${fmtInt(s.answers)} typed answers · a ${config.llmSecondsPerItem}s-per-message model would be on message ${fmtInt(s.llmWouldBeOn)}${live.client === 'mock' ? ' · offline stand-in: cost is what live Jev would charge' : ''}`)
+      box.classList.remove('hidden')
+      return
+    }
     setText($('sum-kicker'), `Batch ${s.batchNo} done · all synthetic`)
     $('sum-line').innerHTML = `${fmtInt(s.messages)} messages<em>·</em><span class="acc">${fmtSecs(s.elapsedMs)}</span><em>·</em>${fmtMoney(s.costUsd)}<em>·</em><span class="ok">${fmtPct(s.accuracy)} right</span><em>·</em><span class="warn">${fmtPct(s.escalatedPct)} escalated</span>`
     setText($('sum-sub'), `${fmtInt(s.answers)} typed answers in ${fmtInt(s.messages)} calls · a ${config.llmSecondsPerItem}s-per-message model would be on message ${fmtInt(s.llmWouldBeOn)} · next batch has a new seed`)
@@ -604,6 +625,12 @@
     c.fillStyle = 'rgba(255,255,255,.03)'; c.fillRect(8, 0, w - 16, h)
     c.beginPath(); c.moveTo(x(0), h); for (let j = 0; j <= 100; j++) c.lineTo(x(j), yE(sw[j].esc)); c.lineTo(x(100), h); c.closePath(); c.fillStyle = 'rgba(251,191,36,.22)'; c.fill()
     c.beginPath(); for (let j = 0; j <= 100; j++) c[j ? 'lineTo' : 'moveTo'](x(j), yE(sw[j].esc)); c.strokeStyle = AMBER; c.lineWidth = 1.2; c.stroke()
+    if (own) {
+      const tx0 = x(thr * 100); c.strokeStyle = '#fff'; c.lineWidth = 1; c.beginPath(); c.moveTo(tx0, 0); c.lineTo(tx0, h); c.stroke()
+      c.font = '9px ui-monospace, Menlo, monospace'; c.fillStyle = 'rgba(148,163,184,.8)'; c.textAlign = 'left'; c.fillText('share escalated at each threshold', 11, 10)
+      suggested = null; $('suggest').classList.add('hidden')
+      return
+    }
     const ty = yA(config.targetAccuracy); c.setLineDash([3, 3]); c.strokeStyle = 'rgba(52,211,153,.45)'; c.beginPath(); c.moveTo(8, ty); c.lineTo(w - 8, ty); c.stroke(); c.setLineDash([])
     c.beginPath(); let started = false
     for (let j = 0; j <= 100; j++) { if (sw[j].acc == null) continue; c[started ? 'lineTo' : 'moveTo'](x(j), yA(sw[j].acc)); started = true }
@@ -618,6 +645,30 @@
     else if (n >= 50) { chip.classList.remove('hidden'); chip.textContent = `${Math.round(config.targetAccuracy * 100)}% not reachable`; chip.title = 'No threshold reaches the target on this batch. The noise is too high or the team descriptions overlap.' }
     else chip.classList.add('hidden')
   }
+
+  // ---- your data: confidence histogram and per-team counts (there is no truth to build a matrix from)
+  function drawOwnPanel() {
+    const cv = $('confHist'), w = cv.clientWidth, h = 86; if (!w) return
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr) }
+    const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h)
+    const B = 40, hist = new Float64Array(B); let mx = 1
+    for (let i = 0; i < n; i++) { const k = Math.min(B - 1, Math.floor(Q[i] / (1000 / B))); hist[k]++; if (hist[k] > mx) mx = hist[k] }
+    const bw = (w - 2) / B, base = h - 14
+    for (let k = 0; k < B; k++) {
+      const bh = (hist[k] / mx) * (base - 4)
+      c.fillStyle = (k + 0.5) * (1000 / B) < thrQ ? 'rgba(251,191,36,.85)' : 'rgba(34,211,238,.85)'
+      if (hist[k]) c.fillRect(1 + k * bw, base - Math.max(1.5, bh), Math.max(1, bw - 1), Math.max(1.5, bh))
+    }
+    c.fillStyle = 'rgba(255,255,255,.12)'; c.fillRect(0, base, w, 1)
+    const tx = 1 + thr * (w - 2); c.strokeStyle = '#fff'; c.lineWidth = 1; c.setLineDash([3, 2]); c.beginPath(); c.moveTo(tx, 0); c.lineTo(tx, base); c.stroke(); c.setLineDash([])
+    c.font = '9px ui-monospace, Menlo, monospace'; c.fillStyle = 'rgba(148,163,184,.85)'; c.textBaseline = 'alphabetic'
+    c.textAlign = 'left'; c.fillText('0', 1, h - 2); c.textAlign = 'center'; c.fillText('.5', w / 2, h - 2); c.textAlign = 'right'; c.fillText('1.0', w - 1, h - 2)
+    const rows = []
+    for (let b = 0; b <= nT + 1; b++) rows.push([b, counts[b] || 0])
+    const most = Math.max(1, ...rows.map((r) => r[1]))
+    $('teamCounts').innerHTML = rows.map(([b, cnt]) => `<button data-b="${b}"><span class="sw" style="background:${teamColor(b)}"></span><span class="nm" style="color:${teamColor(b)}">${esc(b === ESCB ? 'escalated' : teamName(b))}</span><span class="t"><i style="width:${(cnt / most) * 100}%;background:${teamColor(b)}"></i></span><span class="v">${fmtInt(cnt)}</span><span class="v dim">${fmtPct(n ? cnt / n : 0, 0)}</span></button>`).join('')
+  }
+  $('teamCounts').addEventListener('click', (e) => { const el = e.target.closest('button[data-b]'); if (el) selectBin(Number(el.dataset.b)) })
 
   // ---- confusion matrix ------------------------------------------------------------------------
   function drawMatrix() {
@@ -676,6 +727,22 @@
     setText($('insp-title'), liveMode ? 'Inspector · live sample' : 'Inspector · pinned')
     $('insp-live').classList.toggle('hidden', !liveMode); $('insp-follow').classList.toggle('hidden', liveMode)
     if (!r) { body.innerHTML = '<div class="how">This message is older than the last 6,000 kept for inspection.</div>'; return }
+    if (r.own) {
+      const b = bucketOf(r.id), a = r.answers || {}
+      const tag = r.failed ? '<span class="tag wrong">no answer · escalated</span>' : b === ESCB ? `<span class="tag esc">escalated · ${r.confidence.toFixed(2)} under ${thr.toFixed(2)}</span>` : b === SPAMB ? '<span class="tag esc">spam bin</span>' : `<span class="tag right">auto-routed · ${r.confidence.toFixed(2)}</span>`
+      body.innerHTML = `
+        <div class="insp-verdict"><span class="sw" style="background:${teamColor(r.choice)}"></span><b>row ${fmtInt(r.row)}</b><span>Jev says</span><b style="color:${teamColor(r.choice)}">${esc(teamName(r.choice))}</b>${tag}</div>
+        <div class="insp-text">${esc(r.text)}</div>
+        <div class="insp-meta">id <b>${esc(r.sourceId)}</b>${(r.fields || []).map(([k, v]) => ` · ${esc(k)} <b>${esc(v)}</b>`).join('')} · ${r.tokens} tok · ${r.latencyMs < 1 ? '<1' : Math.round(r.latencyMs)} ms</div>
+        <div class="ans">
+          <div class="q">team<small class="plain">choice</small></div><div class="bars">${probBars(a.team?.probabilities, a.team?.choice, (k) => { const ix = teams.findIndex((t) => t.id === k); return ix < 0 ? CYAN : colors[ix] }, 4)}</div>
+          <div class="q">urgency<small class="plain">score</small></div>${levelBars(a.urgency, null, urgencyLegend)}
+          <div class="q">spam<small class="plain">noul</small></div>${noulBar(a.spam)}
+          <div class="q">needs_human<small class="plain">noul</small></div>${noulBar(a.needs_human)}
+          <div class="q">mood<small class="plain">score</small></div>${levelBars(a.mood, null, moodLegend)}
+        </div>`
+      return
+    }
     const b = bucketOf(r.id) , right = b === ESCB ? null : b === r.truth
     const tag = right == null ? `<span class="tag esc">escalated · ${(r.confidence).toFixed(2)} under ${thr.toFixed(2)}</span>` : right ? '<span class="tag right">right</span>' : '<span class="tag wrong">wrong bin</span>'
     const parts = (r.parts || []).map((p) => {
@@ -701,6 +768,19 @@
     setText($('insp-title'), 'Inspector · pinned'); $('insp-live').classList.add('hidden'); $('insp-follow').classList.remove('hidden')
     const res = await ctl('bin', { bucket: b })
     if (!sel || sel.kind !== 'bin' || sel.b !== b) return
+    if (res.own) {
+      const isLane = b === ESCB, what = b === SPAMB ? 'spam probability' : 'team confidence'
+      const card = (m, title) => (m ? `<div class="pick"><div class="pick-h">${title}<b>${b === SPAMB ? m.spam.toFixed(2) : m.confidence.toFixed(2)}</b></div><button data-id="${m.id}"><span>${esc(m.text)}</span></button></div>` : '')
+      const descOwn = isLane ? `Jev's team confidence was under ${thr.toFixed(2)}, so these go to a big model or a person instead of a team.` : b === SPAMB ? 'Jev said yes to the spam question. These skip the teams.' : teams[b].description
+      body.innerHTML = `
+        <div class="insp-verdict"><span class="sw" style="background:${teamColor(b)}"></span><b style="color:${teamColor(b)}">${esc(isLane ? 'escalate lane' : teamName(b) + ' bin')}</b><span>${fmtInt(res.count)} messages · ${fmtPct(n ? res.count / n : 0, 0)}</span></div>
+        <div class="insp-meta" style="font-size:12px;color:var(--ink)">${esc(descOwn)}</div>
+        ${card(res.most, `Most confident <small>${what}</small>`)}${card(res.least, `Least confident <small>${what}</small>`)}
+        <div class="insp-meta">Latest here</div>
+        <div class="bin-list">${(res.list || []).map((m) => `<button data-id="${m.id}"><span>${esc(m.text)}</span><em class="e">${m.confidence.toFixed(2).replace(/^0/, '')}</em></button>`).join('') || '<div class="how">Nothing here yet.</div>'}</div>`
+      body.querySelectorAll('button[data-id]').forEach((el) => el.addEventListener('click', () => selectItem(Number(el.dataset.id))))
+      return
+    }
     const cnt = counts[b] || 0, ok = rights[b] || 0, isEsc = b === ESCB
     const wrongFrom = []
     for (let i = 0; i <= nT; i++) if (i !== b && confusion[i] && confusion[i][b]) wrongFrom.push([i, confusion[i][b]])
@@ -736,14 +816,21 @@
       if (Math.abs(s.noise - noise) > 1e-6) { noise = s.noise; syncNoiseUi() }
     }
     const err = $('cfgError'); err.classList.toggle('hidden', !s.error && !s.jevError); if (s.error || s.jevError) setText(err, s.error ? `${s.error}. The demo keeps running on the last good file.` : `Jev call failed: ${s.jevError}`)
-    showSummary(s.phase === 'summary' ? s.summary : null)
+    showSummary(s.phase === 'summary' || s.phase === 'done' ? s.summary : null)
   }
   function onFull(s) {
     const now = performance.now()
     config = s.config || config; urgencyLegend = s.urgencyLegend || []; moodLegend = s.moodLegend || []
+    const modeChanged = own !== !!s.own
+    own = !!s.own; sourceInfo = s.source || null
+    document.body.classList.toggle('own', own)
+    if (own && sourceInfo) { setText($('src-name'), sourceInfo.name); setText($('src-note'), `${fmtInt(sourceInfo.used)} messages · text column "${sourceInfo.textColumn}"${sourceInfo.skipped ? ` · ${fmtInt(sourceInfo.skipped)} empty rows skipped` : ''} · results in ${s.output?.file ?? 'triage.csv'}`) }
+    if (modeChanged) { matrixDirty = true; sweepDirty = true }
     setText($('title'), s.title || 'Jev Firehose'); setText($('desk'), s.desk || ''); document.title = s.title || 'Jev Firehose'
     const warn = $('cfgWarn'); warn.classList.toggle('hidden', !(s.warnings && s.warnings.length)); if (s.warnings && s.warnings.length) setText(warn, 'firehose.json: ' + s.warnings.slice(0, 3).join(' · '))
-    const fresh = s.rev !== rev || s.n < n || (s.teams || []).length !== nT
+    const sizeChanged = (s.batch || 0) !== (live.batch || 0)
+    if (sizeChanged) live = { ...live, batch: s.batch }
+    const fresh = s.rev !== rev || s.n < n || (s.teams || []).length !== nT || sizeChanged
     if (fresh) {
       if (rev !== -1 && binList.some((l) => l.length)) { flctx.clearRect(0, 0, W, H); flctx.drawImage(binLayer, 0, 0, W, H); flushT = 0 }
       rev = s.rev
@@ -796,6 +883,7 @@
   $('pause').addEventListener('click', () => ctl(live.running ? 'pause' : 'start'))
   $('step').addEventListener('click', async () => { if (live.running) await ctl('pause'); ctl('tick', { n: 1 }) })
   $('reset').addEventListener('click', () => ctl('reset'))
+  $('sum-again').addEventListener('click', () => ctl('again'))
   window.addEventListener('keydown', (e) => {
     if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return
     if (e.key === ' ') { e.preventDefault(); $('pause').click() } else if (e.key === 'b' || e.key === 'B') $('burst').click(); else if (e.key === 's' || e.key === 'S') $('step').click()

@@ -176,19 +176,50 @@ function pendulumRead(text) {
   const vel = mV ? Number(mV[1]) : NaN
   if (!Number.isFinite(deg) || !Number.isFinite(vel)) return null
   const a = (deg * Math.PI) / 180
-  // desired torque = -(Kp*a + Kv*vel); pick the action whose torque is closest.
-  const want = -(6.5 * a + 3.2 * vel)
-  const ACTS = { LEFT_HARD: -1.6, LEFT: -0.8, CENTER: 0, RIGHT: 0.8, RIGHT_HARD: 1.6 }
-  const boost = {}
-  for (const [name, t] of Object.entries(ACTS)) {
-    boost[name] = 1.4 - Math.abs(t - Math.max(-1.6, Math.min(1.6, want))) * 0.9
+  const pushLine = (text.match(/^push:(.*)$/im) || [null, null])[1]
+
+  // No noise is added, at any hardness. An older version let a clearly falling rod go more often
+  // as a "hardness" label rose (5 of 400 answers at 0, 16 of 400 at 1): that was injected
+  // randomness. The rig is hard for real reasons, so the stand-in can simply do its best.
+  if (!pushLine) {
+    // Older text: a torque on a fixed pivot. A lean to the right wants a torque to the left.
+    const want = Math.max(-1.6, Math.min(1.6, -(6.5 * a + 3.2 * vel)))
+    const ACTS = { LEFT_HARD: -1.6, LEFT: -0.8, CENTER: 0, RIGHT: 0.8, RIGHT_HARD: 1.6 }
+    const boost = {}
+    for (const [name, t] of Object.entries(ACTS)) boost[name] = -2.4 * Math.abs(t - want) / 0.8
+    return { boost, steady: 0.5 }
   }
-  // The mock can't see the gravity dial — it just balances. But a fast judge on a hard
-  // rig will hesitate more, so the misjudgement rate rises with how hard the balance is.
-  // Low gravity: calm, near-perfect. High gravity: it starts to overshoot and lose it.
-  const hard = (parseFloat((text.match(/hardness:\s*([0-9.]+)/i) || [null, '0'])[1]) || 0)
-  const noise = Math.min(0.55, 0.03 + hard * 0.06)
-  return { boost, noise }
+
+  // Cart text: the actions push a cart, and the line "push:" lists what each one does.
+  const num = (re, d) => { const m = text.match(re); return m ? Number(m[1]) : d }
+  const g = num(/gravity:\s*(\d+(?:\.\d+)?)/i, 7)
+  const L = num(/rod of length\s*(\d+(?:\.\d+)?)/i, 1)
+  const c = num(/damping:\s*(\d+(?:\.\d+)?)/i, 0.5)
+  const cartV = num(/cart:\s*velocity\s*([+-]?\d+(?:\.\d+)?)/i, 0)
+  const drag = num(/rail drag\s*(\d+(?:\.\d+)?)/i, 0)
+  const acts = {}
+  for (const m of pushLine.matchAll(/([a-z_]+)\s+([+-]?\d+(?:\.\d+)?)/gi)) acts[m[1].toUpperCase()] = Number(m[2])
+  const levels = Object.values(acts)
+  if (levels.length < 2) return null
+  const top = Math.max(...levels.map(Math.abs))
+  const gap = Math.max(0.05, top / Math.max(1, (levels.length - 1) / 2))
+  // Ask for a critically damped return to upright, at the rod's own pace (it falls at rate lam).
+  const lam = Math.sqrt((3 * g) / (2 * L))
+  const k1 = lam * lam, k2 = 1.8 * lam
+  // A cart that runs away loses its grip (rail drag eats the push), so lean a little against the
+  // cart's motion to slow it down. Never by more than a third of the lean that can be held.
+  const limit = Math.atan(top / g)
+  const leanFor = Math.max(-limit / 3, Math.min(limit / 3, -0.05 * cartV))
+  const e = a - leanFor
+  const wantRod = (g * Math.sin(a) + ((2 * L) / 3) * (k1 * e + (k2 - c) * vel)) / Math.max(0.3, Math.cos(a))
+  const want = Math.max(-top, Math.min(top, wantRod + drag * cartV))
+  const boost = {}
+  for (const [name, u] of Object.entries(acts)) boost[name] = -2.4 * Math.abs(u - want) / gap
+  // "Is it under control?" Lean, plus where the swing is about to carry it, against the lean
+  // where gravity beats the hardest shove.
+  const used = Math.abs(a + vel / lam) / Math.max(1e-6, limit)
+  const steady = Math.max(0.03, Math.min(0.97, sigmoid((1 - used) * 4)))
+  return { boost, steady }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +232,9 @@ function mockAnswer(state, qid, q, salt) {
   const h = hash01(`${qid}::${qtext}` + (state ?? ''), salt)
 
   if (q.type === 'noul') {
+    // Pendulum: "is the rod under control?" is answered from the same read as the push.
+    const penNoul = /under control|stay up|steady/.test(qtext) ? pendulumRead(text) : null
+    if (penNoul && /^push:/m.test(text)) return { type: 'noul', noul: clamp(penNoul.steady) }
     // Noul: a probability that something is true. The mock nudges it from the mere prior.
     const mention = text.includes(qtext.split(' ').find((w) => w.length > 3) ?? '')
     let p = 0.5 + (h - 0.5) * 0.5
@@ -261,17 +295,11 @@ function mockAnswer(state, qid, q, salt) {
     // visibly wobble — that wiggle is the demo.
     const pen = pendulumRead(text)
     if (pen) {
-      let picked
       options.forEach((opt, i) => {
         const b = pen.boost[String(opt)]
-        if (b !== undefined) raw[i] += b
+        // The read replaces the word-overlap guess. A little per-option shimmer, never a flip.
+        if (b !== undefined) raw[i] = b + (hash01(String(opt), salt + 7) - 0.5) * 0.12
       })
-      if (pen.noise && (hash01('pen', salt + 9) < pen.noise)) {
-        // flip the current best to two neighbours over — a big, costly overcorrection
-        const best = options.map((o, i) => ({ o, i, r: raw[i] })).sort((a, b) => b.r - a.r)[0]
-        const ni = Math.max(0, Math.min(options.length - 1, best.i + (hash01('dir', salt) < 0.5 ? -2 : 2)))
-        if (ni !== best.i) raw[ni] += 2.2
-      }
     }
     // Softmax into a distribution.
     const exps = raw.map((r) => Math.exp(r))
@@ -309,6 +337,11 @@ function clamp01(x) {
   return Math.min(1, Math.max(0, x))
 }
 
+// Imports are hoisted, so they can live here with the code that needs them.
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 // ---------------------------------------------------------------------------
 // Wire format. The live API (POST /v1/systemone) takes, per question:
 //   noul    { type, instructions, criteria?: { true: "...", false: "..." } }
@@ -339,6 +372,7 @@ export function canon(q = {}) {
     out.hints = []
   } else {
     out.hints = Array.isArray(q.criteria) ? q.criteria.map(String) : []
+    out.raw = isMap(q.criteria) ? q.criteria : null
   }
   // The mock scores evidence off `criteria` as a flat list of strings.
   out.criteria = [...(out.hints ?? []), ...Object.values(out.descriptions ?? {})].filter((s) => typeof s === 'string')
@@ -436,8 +470,59 @@ export function snapshot() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function liveEvaluate(body, key) {
-  const endpoint = process.env.TYPESAFE_API_URL || LIVE_ENDPOINT
+// ---------------------------------------------------------------------------
+// Credentials. Environment variables win. Otherwise a small KEY=VALUE file in the user's home is
+// read, because a viewer started by the Harness daemon does not inherit the variables of the shell
+// you happen to have open. Two live routes are supported, both speaking the same question format:
+//   TypeSafe direct         TYPESAFE_API_KEY                               (api.typesafe.ai)
+//   Cloudflare Workers AI   CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN   (no TypeSafe waitlist)
+// The file is ~/.config/typesafe/credentials (or $TYPESAFE_CREDENTIALS). Keep it chmod 600.
+// ---------------------------------------------------------------------------
+const CRED_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_API_URL', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN']
+let credCache = null
+export const credentialsPath = () => process.env.TYPESAFE_CREDENTIALS || join(homedir(), '.config', 'typesafe', 'credentials')
+
+function readCredentialFile() {
+  const now = Date.now()
+  const path = credentialsPath()
+  if (credCache && credCache.path === path && now - credCache.at < 5000) return credCache.values
+  const values = {}
+  try {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*?)\s*$/)
+      if (m && CRED_KEYS.includes(m[1])) values[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2')
+    }
+  } catch { /* no file: fine */ }
+  credCache = { at: now, path, values }
+  return values
+}
+
+/** Which live route to use, or null for the offline stand-in. Never log the returned secret. */
+export function resolveCredentials(explicitKey) {
+  if (explicitKey === '') return null // an explicit empty key forces the offline stand-in
+  // Test suites assume the deterministic stand-in. Under `node --test`, or with JEV_OFFLINE=1, a real
+  // key on the machine is ignored unless it is passed explicitly or JEV_LIVE_TESTS=1 is set.
+  if (!explicitKey && (process.env.JEV_OFFLINE === '1' || (process.env.NODE_TEST_CONTEXT && process.env.JEV_LIVE_TESTS !== '1'))) return null
+  const file = readCredentialFile()
+  const get = (k) => process.env[k] || file[k] || ''
+  const key = explicitKey || get('TYPESAFE_API_KEY')
+  if (key) return { provider: 'typesafe', secret: key, url: get('TYPESAFE_API_URL') || LIVE_ENDPOINT }
+  const account = get('CLOUDFLARE_ACCOUNT_ID'), token = get('CLOUDFLARE_API_TOKEN')
+  if (account && token) return { provider: 'cloudflare', secret: token, url: `${process.env.CLOUDFLARE_API_BASE || 'https://api.cloudflare.com'}/client/v4/accounts/${encodeURIComponent(account)}/ai/run` }
+  return null
+}
+
+/** One safe line for doctor scripts and panes: says which route is active, never the secret. */
+export function describeCredentials() {
+  const c = resolveCredentials()
+  if (!c) return `offline stand-in (no key found in the environment or in ${credentialsPath()})`
+  return c.provider === 'cloudflare' ? 'live Jev through Cloudflare Workers AI' : 'live Jev through the TypeSafe API'
+}
+
+async function liveEvaluate(body, cred) {
+  const endpoint = cred.url
+  const key = cred.secret
+  const payload = cred.provider === 'cloudflare' ? { model: 'typesafe/jev', input: { state: body.state, questions: body.questions } } : body
   let lastErr
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt) { telemetry.retries++; await sleep(250 * 3 ** (attempt - 1)) }
@@ -445,10 +530,15 @@ async function liveEvaluate(body, key) {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       })
-      if (res.ok) return res.json()
+      if (res.ok) {
+        const data = await res.json()
+        // Cloudflare wraps the model's reply as { result, success, errors }.
+        if (data && data.success === false) throw new JevError(`Jev API 422: ${JSON.stringify(data.errors ?? data).slice(0, 200)}`)
+        return data?.result?.answers ? data.result : data
+      }
       const detail = await res.text().catch(() => '')
       lastErr = new JevError(`Jev API ${res.status}: ${detail.slice(0, 200)}`)
       if (res.status !== 429 && res.status !== 529 && res.status < 500) throw lastErr // 401/422: retrying cannot help
@@ -474,19 +564,19 @@ async function liveEvaluate(body, key) {
  * @returns {{client, model, answers, usage, latencyMs}}
  */
 export async function evaluate({ state, questions, key, model = 'jev-latest', salt = 1, mock } = {}) {
-  const apiKey = key ?? process.env.TYPESAFE_API_KEY
-  const client = pickClient(apiKey)
+  const cred = resolveCredentials(key)
+  const client = cred ? cred.provider : 'mock'
   const wire = toWire(questions)
   const t0 = performance.now()
   try {
-    if (client === 'typesafe') {
-      const data = await liveEvaluate({ model, state, questions: wire }, apiKey)
+    if (cred) {
+      const data = await liveEvaluate({ model, state, questions: wire }, cred)
       const rawAnswers = data.answers || data
       const answers = {}
       for (const [qid, q] of Object.entries(questions)) answers[qid] = fromWire(rawAnswers[qid], canon(q))
       const latencyMs = performance.now() - t0
       meter({ client, model: data.model || model, wire, state, answers, usage: data.usage, latencyMs })
-      return { client: 'typesafe', model: data.model || model, answers, usage: data.usage || {}, latencyMs }
+      return { client, model: data.model || model, answers, usage: data.usage || {}, latencyMs }
     }
     // Mock: local, deterministic, instant.
     const text = typeof state === 'string' ? state : JSON.stringify(state)

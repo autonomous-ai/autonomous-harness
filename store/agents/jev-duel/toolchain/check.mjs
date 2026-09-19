@@ -27,6 +27,7 @@ for (const disk of ['O', 'X']) {
   if (!r) { bad(`error  rivals.${disk} is required`); continue }
   if (!r.name || typeof r.name !== 'string') bad(`error  rivals.${disk}.name is required`)
   if (!r.personality || typeof r.personality !== 'string') bad(`error  rivals.${disk}.personality is required`)
+  if (r.insight !== undefined && ![0, 1, 2].includes(r.insight)) bad(`error  rivals.${disk}.insight must be 0, 1 or 2 (got ${r.insight})`)
   if (!/^[ox]$/i.test(String(r.name).replace(/[^oxO]/g, '')) && /(O|X)/.test(r.name)) {
     // names like "Patience (O)" are fine; flag nothing, keep it permissive
   }

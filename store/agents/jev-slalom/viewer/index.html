@@ -4,43 +4,57 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Slalom</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="topbar">
-    <div class="brand"><span class="dot"></span><h1>Jev Slalom</h1></div>
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Slalom</h1><span class="sub">made-up course · Jev steers every tick</span></div>
     <div class="stats">
-      <div class="stat"><label>Gate</label><span id="gate">—</span></div>
-      <div class="stat"><label>Steer</label><span id="move">—</span></div>
-      <div class="stat"><label>Speed</label><span id="speed">—</span></div>
-      <div class="stat"><label>Pos</label><span id="pos">—</span></div>
-      <div class="stat"><label>Ticks</label><span id="ticks">0</span></div>
+      <div class="stat"><label>Gate</label><span id="s-gate">—</span></div>
+      <div class="stat"><label>Clean runs</label><span id="s-clean">0</span></div>
+      <div class="stat"><label>Falls</label><span id="s-falls">0</span></div>
+      <div class="stat"><label>Last 20 gates</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-dps">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
     <div class="controls">
       <button id="pause">Pause</button>
-      <button id="tick">Step</button>
-      <button class="primary" id="reset">Reset</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
     </div>
   </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
   <main>
     <section id="stage">
-      <div class="panel panel-stage">
-        <div class="panel-title">The course</div>
-        <div id="course">
-          <canvas id="scene"></canvas>
-          <div id="banner" class="hidden"></div>
-        </div>
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" aria-label="The slalom course"></canvas>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+      <div class="toolbar panel">
+        <label class="slider">Speed <input id="d-speed" type="range" min="0.8" max="5" step="0.1" value="2.2"> <b id="v-speed">2.2</b></label>
+        <label class="slider">Gate gap <input id="d-gap" type="range" min="2" max="10" step="0.25" value="6"> <b id="v-gap">6.00</b></label>
+        <button id="gust">Gust of wind</button>
+        <button id="slowmo">Slow motion</button>
+        <span class="hint"><b>Click the snow ahead</b> of the skier to plant an extra gate there. Sliders override <code>slalom.json</code> until its next edit. The fan of lines is Jev's five options, bolder means more likely.</span>
       </div>
     </section>
     <aside id="rail">
       <div class="panel">
-        <div class="panel-title">Jev, the racer</div>
+        <div class="panel-title">What Jev reads <span class="right pill" id="pick">HOLD</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
         <div class="how">
-          Jev is skiing the slalom. A line of gates sweeps down toward it, and every tick it reads
-          its position and the next gate and steers <code>LEFT</code> / <code>RIGHT</code> (or
-          commits fast) to thread each gap. Clip a gate or hit the wall and the run is over.<br><br>
-          Edit <code>slalom.json</code>: crank <code>speed</code> up and Jev's aim starts to wobble
-          and it falls; change <code>gates</code> for a longer or shorter course.
+          Every tick Jev gets the lines above, the <b>skier</b>, the <b>next gate</b> and how many
+          rows away it is, and answers one typed question: steer <code>LEFT</code>,
+          <code>RIGHT</code>, a <code>_FAST</code> version of either, or <code>HOLD</code>. Pass
+          between the poles or the run is over.<br><br>
+          The skier moves at most 1.9 slots sideways a tick. Raise <code>speed</code> and there are
+          fewer ticks between gates, until the skier cannot cross the valley in time. The course and
+          the wind are made up. The decision loop is the demo.
         </div>
       </div>
       <div class="panel">

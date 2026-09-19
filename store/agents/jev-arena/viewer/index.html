@@ -1,90 +1,82 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Jev Arena</title>
-    <link rel="stylesheet" href="/studio.css" />
-  </head>
-  <body>
-    <main class="arena">
-      <header class="masthead">
-        <div class="titles">
-          <div class="eyebrow">
-            <span class="dot"></span> JEV ARENA · live system-one brain
-          </div>
-          <h1 id="title">Jev Arena</h1>
-          <p id="description">A tiny grid world where Jev decides every move.</p>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Arena</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Arena</h1><span class="sub" id="description">made-up grid world · Jev decides every move</span></div>
+    <div class="stats">
+      <div class="stat"><label>Run</label><span id="s-run">1</span></div>
+      <div class="stat"><label>Goals</label><span id="s-goals">0</span></div>
+      <div class="stat"><label>Coins</label><span id="s-coins">0</span></div>
+      <div class="stat"><label>Moves / shortest</label><span id="s-moves">0 / 0</span></div>
+      <div class="stat" title="Shortest tour divided by the moves Jev took, over all finished runs"><label>Score</label><span id="s-eff">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
+    </div>
+  </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main class="arena">
+    <section id="stage" class="stage-wrap">
+      <div class="canvas-wrap stage" id="wrap">
+        <canvas id="board" aria-label="The arena. Click a tile to build or break a wall, or to drop a coin. Drag the star to move the goal."></canvas>
+        <div class="chips">
+          <span class="chip"><i class="k arrow"></i>arrows: Jev's odds for each move</span>
+          <span class="chip"><i class="k dots"></i>dots: where the step counts point</span>
+          <span class="chip"><i class="k fog"></i>dark: not seen yet</span>
         </div>
-        <div class="modelbadge">
-          <span class="model" id="model">jev-latest</span>
-          <span class="client" id="client">mock</span>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+      <div class="toolbar panel">
+        <div class="tools" role="group" aria-label="What a click on the board does">
+          <span class="lab">Click a tile to</span>
+          <button data-tool="wall" class="on">Build or break a wall</button>
+          <button data-tool="coin">Drop a coin</button>
         </div>
-      </header>
-
-      <section class="stage-wrap">
-        <div class="stage">
-          <canvas id="board"></canvas>
-          <div id="toast" class="toast" hidden></div>
-          <div id="overlay" class="overlay" hidden>
-            <div class="card">
-              <h2 id="overlay-title">Goal reached ⭐</h2>
-              <p id="overlay-msg">Jev made it across the arena.</p>
-              <button id="reset-big" class="btn primary">Play again</button>
-            </div>
-          </div>
+        <span class="hint">Drag the star to move the goal. Lower the sight and Jev walks into dead ends it cannot see.</span>
+        <span class="break"></span>
+        <label class="slider" title="How many cells Jev can see around itself. Less sight means more dead ends.">Sight <input id="sight" type="range" min="1" max="11" step="1" value="2"> <b id="sightVal">2</b></label>
+        <label class="slider" title="Time between decisions">Pace <input id="speed" type="range" min="60" max="1000" step="10" value="300"> <b id="speedVal">300 ms</b></label>
+        <label class="slider" title="Share of the board that is wall in a fresh layout">Walls <input id="density" type="range" min="0" max="40" step="1" value="30"> <b id="densityVal">30%</b></label>
+        <button id="remix">New layout</button>
+      </div>
+    </section>
+    <aside id="rail" class="brain">
+      <div class="panel">
+        <div class="panel-title">What Jev reads <span class="right pill" id="heading">COIN</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          Jev never sees the picture. Every move, the board is written as the text above and Jev
+          answers <b>four typed questions in one call</b>: which way to <b>move</b>, what it is
+          <b>heading</b> for, whether it is <b>sure</b>, and whether it is <b>boxed in</b>.
+          The arrows on the board are its answer, sized by probability.<br><br>
+          Jev only knows the walls it has seen. The step counts treat dark floor as open, so with a
+          short <b>sight</b> the dotted way runs through walls it has not met, and it has to back
+          out of dead ends. <span id="rules"></span> The world is made up. Edit
+          <code>arena.json</code> to draw your own.
         </div>
-        <aside class="brain">
-          <div class="brain-head">
-            <h2>Jev's brain</h2>
-            <span class="live" id="live">thinking…</span>
-          </div>
-
-          <div class="brainstats">
-            <div class="stat">
-              <span class="k">decisions</span>
-              <span class="v" id="moves">0</span>
-            </div>
-            <div class="stat">
-              <span class="k">coins</span>
-              <span class="v" id="coins">0</span>
-            </div>
-            <div class="stat">
-              <span class="k">confidence</span>
-              <span class="v" id="confidence">–</span>
-            </div>
-          </div>
-
-          <div class="actions" id="actions" aria-label="Jev's move probabilities"></div>
-
-          <div class="confidence-rail">
-            <div class="rail-track"><div class="rail-fill" id="rail-fill"></div></div>
-            <div class="rail-labels"><span>unsure</span><span>certain</span></div>
-          </div>
-
-          <div class="log">
-            <h3>decision feed</h3>
-            <ol id="log"></ol>
-          </div>
-
-          <div class="controls">
-            <button id="start" class="btn primary">▶ Start</button>
-            <button id="pause" class="btn">⏸ Pause</button>
-            <button id="step" class="btn">⏭ Step</button>
-            <button id="reset" class="btn danger">↺ Reset</button>
-          </div>
-        </aside>
-      </section>
-
-      <section class="rules">
-        <p id="rules">Reach the goal. Jev decides each move.</p>
-        <p class="hint">
-          The agent on the right edits
-          <code>arena.json</code> — the world reshapes and Jev plays it live.
-        </p>
-      </section>
-    </main>
-    <script src="/studio.js" type="module"></script>
-  <script src="/jev-hud.js" defer></script>
-  </body>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Runs</div>
+        <ul id="feed"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
 </html>

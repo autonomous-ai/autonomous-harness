@@ -56,6 +56,31 @@ instead" baseline keeps about 49%. No randomness is injected into the judge.
 - Budget and distraction sliders, "Compact now", "Flood +40", pause, step and reset.
 - Pane changes are runtime overrides. Any edit to `session.json` puts the file back in charge.
 
+## Bring your own transcript
+
+Put a real coding-agent transcript in the workspace and set `"source": "my-session.jsonl"` in
+`session.json`. The pane switches from "synthetic demo" to "your transcript": it shows the whole
+session as a tower, Jev judges every tool result (task = your last user message, 100 questions per
+call), and the viewer writes `compaction-plan.json`: per tool result its index, line, tool, input
+summary, tokens, verdict and probabilities, plus the totals. You can pick another user message as
+the task, pin blocks and compact again.
+
+Be clear about what this is: **an analysis of what Jev would cut and how much it would save. It is
+not a plugin. It does not change any live session.** There is no ground truth for a real session,
+so needle recall, the truth strip and the baseline lane are hidden. Token counts are estimates
+(characters / 4).
+
+- Claude Code transcripts live under `~/.claude/projects/<project folder>/<session>.jsonl`. A
+  simple generic format also works: lines of `{ "role", "name"?, "input"?, "content" }`.
+- The file must be inside the workspace, not under `.harness`, and at most 64 MB. Lines that do not
+  parse are skipped and counted.
+- The transcript's content is never written anywhere. The plan and the verdict hold tool names,
+  input summaries (a file path, a command) and numbers.
+- With no Jev key on your machine (environment or credentials file) nothing leaves it and the
+  offline mock judges. With a key, the task
+  message, the last few messages and about the first 300 characters of each tool result are sent
+  to the Jev API.
+
 ## Anatomy
 
 ```
@@ -69,6 +94,7 @@ jev-compactor/
     check.mjs                  # validates session.json
     viewer.sh setup.sh doctor.sh init-workspace.sh
   viewer/                      # loopback viewer server and the pane
+  viewer/transcript.mjs        # reads your own transcript (Claude Code or generic lines)
   test/viewer.test.mjs
 ```
 

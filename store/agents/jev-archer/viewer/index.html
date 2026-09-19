@@ -4,47 +4,59 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Archer</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="topbar">
-    <div class="brand"><span class="dot"></span><h1>Jev Archer</h1></div>
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Archer</h1><span class="sub">made-up range · Jev aims every tick</span></div>
     <div class="stats">
-      <div class="stat"><label>Arrow</label><span id="arrow">—</span></div>
-      <div class="stat"><label>Aim</label><span id="move">—</span></div>
-      <div class="stat"><label>Speed</label><span id="speed">—</span></div>
-      <div class="stat"><label>Bullseyes</label><span id="hits">0</span></div>
-      <div class="stat"><label>Missed</label><span id="misses">0</span></div>
+      <div class="stat"><label>Arrow</label><span id="s-arrow">—</span></div>
+      <div class="stat"><label>Bullseyes</label><span id="s-hits">0</span></div>
+      <div class="stat"><label>Missed</label><span id="s-miss">0</span></div>
+      <div class="stat"><label>Last 20</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-dps">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
     <div class="controls">
       <button id="pause">Pause</button>
-      <button id="tick">Step</button>
-      <button class="primary" id="reset">Reset</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
     </div>
   </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
   <main>
     <section id="stage">
-      <div class="panel panel-stage">
-        <div class="panel-title">The range</div>
-        <div id="range">
-          <canvas id="scene"></canvas>
-          <div id="banner" class="hidden"></div>
-        </div>
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" aria-label="The archery range"></canvas>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+      <div class="toolbar panel">
+        <label class="slider">Target speed <input id="d-speed" type="range" min="0.1" max="3" step="0.05" value="0.6"> <b id="v-speed">0.60</b></label>
+        <label class="slider">Gold size <input id="d-bull" type="range" min="0.3" max="3" step="0.05" value="1"> <b id="v-bull">1.00</b></label>
+        <button id="gust">Gust of wind</button>
+        <button id="slowmo">Slow motion</button>
+        <span class="hint"><b>Click the range</b> to shove the target there. Sliders override <code>archer.json</code> until its next edit. The ghost rings are Jev's five options, brighter means more likely.</span>
       </div>
     </section>
     <aside id="rail">
       <div class="panel">
-        <div class="panel-title">Jev, the archer</div>
+        <div class="panel-title">What Jev reads <span class="right pill" id="pick">HOLD</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
         <div class="how">
-          Jev is on the line. A target slides back and forth, and every tick it reads the target's
-          position and nudges its aim <code>LEFT</code> / <code>RIGHT</code> to track it, releasing
-          an arrow each window. Land it in the bullseye to score; miss and it flies by.<br><br>
-          Edit <code>archer.json</code>: crank <code>speed</code> up and the target outruns Jev's
-          aim and the misses pile up; shrink <code>bullHalf</code> and Jev has to be exact.
+          Every tick Jev gets the two numbers above, the <b>aim</b> and the <b>target</b>, and answers
+          one typed question: nudge the aim <code>LEFT</code>, <code>RIGHT</code> or <code>HOLD</code>.
+          Every sixth tick the arrow goes where the aim is. On the <b>gold</b> it is a bullseye.<br><br>
+          The aim moves 0.8 slots a tick. Push <code>speed</code> past that and the target outruns
+          it. The range, the target and the wind are made up. The decision loop is the demo.
         </div>
       </div>
       <div class="panel">
-        <div class="panel-title">Session log</div>
+        <div class="panel-title">Shot log</div>
         <ul id="log"></ul>
       </div>
     </aside>

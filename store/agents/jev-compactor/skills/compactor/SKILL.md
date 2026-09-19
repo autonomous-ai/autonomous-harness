@@ -77,6 +77,31 @@ the pressure pass trims the keeps Jev was least sure about. Some of those are re
 5. Try one bad idea on purpose: give two tasks the same words. Watch Jev keep the wrong task's
    blocks. Report it.
 
+## The person's own transcript
+
+Set `"source": "my-session.jsonl"` in `session.json` and the pane analyses a real transcript from
+the workspace instead of the made-up session.
+
+- Find it: Claude Code writes one `.jsonl` per session under `~/.claude/projects/<project folder>/`
+  (the project path with `/` turned into `-`). `ls -t ~/.claude/projects/*/*.jsonl | head` shows the
+  newest. Ask the person which one.
+- Copy it into the workspace: `cp "<file>" ./my-session.jsonl`. Inside the workspace, not under
+  `.harness`, at most 64 MB. Never edit the original.
+- **Never paste its contents into chat.** Do not read it. Read `compaction-plan.json` and
+  `.harness/verdict.json` instead: they hold tool names, input summaries and numbers only.
+- With a Jev key, the task message, the last few messages and the head (about 300 characters) of
+  each tool result go to the Jev API. With no key on the machine (environment or credentials file) the offline mock
+  judges and nothing leaves it. Tell the person which one ran.
+- There is no ground truth: no recall, no truth strip, no baseline. Report tokens before and after,
+  the reduction, keep / trim / drop counts, questions, calls, time, cost and the biggest drops.
+- The task is the last user message. If the cut looks wrong, suggest another task button, or a pin,
+  then "Compact now". `trimTo` is the only tuning knob that matters here.
+- It is an analysis of what Jev would cut, not a plugin. No live session changes.
+
+A good report: "my-session.jsonl, 1,144,012 -> 67,087 estimated tokens (94.1% cut). 167 tool
+results: keep 13, trim 19, drop 135. 2 calls, mock. Biggest cuts: package-lock.json reads and
+npm install logs."
+
 ## Reporting
 
 Give the settings and the measured numbers together, for example:

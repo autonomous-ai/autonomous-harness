@@ -11,12 +11,14 @@ the market Jev trades and the `style` brief it follows.
 
 ## The loop
 
-1. Update `market.json` (instrument, volatility, drift, style). The viewer watches it and reframes
-   Jev live — no restart, no second server.
+1. Update `market.json` (instrument, volatility, trend, drift, fee, style). The viewer watches it and
+   reframes Jev live — no restart, no second server. Changing `startPrice`, `capital`, `seed` or
+   `episodeDays` restarts the paper year.
 2. `node "$JEV_DSH/toolchain/check.mjs"` verifies the workspace's `market.json` is valid and
    reports the verdict. Run it before you call a desk done.
-3. Watch the equity curve. Does Jev make coherent policy on your market — buy the trend, cut the
-   losses — or just churn? That observation is the finding.
+3. Watch the equity curve against buy-and-hold and the "right side of the trend" gauge. Does Jev
+   make coherent policy on your market — buy the trend, cut the losses — or just churn? That
+   observation is the finding. `.harness/verdict.json` carries the same numbers.
 
 ## Reading Jev
 

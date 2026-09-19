@@ -18,12 +18,21 @@ reframes both rivals live — edit the personalities mid-game and the fight chan
   "size": 6,               // even, 4..12. 6 is a tense, fast game.
   "speed": 700,            // ms per move (min 200)
   "rivals": {
-    "O": { "name": "Patience", "personality": "Patient and positional. You prize the corners above all..." },
-    "X": { "name": "Greed",    "personality": "Greedy and opportunistic. Every turn you want the biggest flip..." }
+    "O": { "name": "Patience", "personality": "Patient and positional. You prize the corners above all...", "insight": 2 },
+    "X": { "name": "Greed",    "personality": "Greedy and opportunistic. Every turn you want the biggest flip...", "insight": 2 }
   },
   "referee": "Call it fairly: how strong was the move, was it aggressive or quiet, and how decided is the game now? Name the leader and warn when the game tips."
 }
 ```
+
+`insight` (0, 1 or 2) is the honest dial. It sets how much the text tells that player about each
+legal move: 0 is only the flips, 1 adds where the square sits, 2 adds what the rival can do in reply.
+A player that reads more plays better. Give both rivals 2 for a fair fight, or lower one on purpose
+for a handicap match, and say which in chat.
+
+The user can also play in the pane: click a dot to force a move, swap sides, change the board size,
+the pace, and each player's "Reads" slider. Those are overrides for their session only. Your next
+save of `battle.json` resets them, so tell the user when you save.
 
 `O` and `X` are the disks. Each rival needs a `name` and a `personality` — a short, vivid instruction
 that reframes how Jev chooses a move. `toolchain/check.mjs` validates the shape.

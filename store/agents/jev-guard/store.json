@@ -7,6 +7,7 @@
   "examples": [
     {
       "prompt": "Fix the broken module in project/ so every test in test.js passes. Make Jev Guard watch you work and tell you — live — when your change is risky and when the goal is truly met.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-guard/review-console.jpg",
       "caption": "Ship it green — Jev guarding your fix, run by run"
     }
   ]

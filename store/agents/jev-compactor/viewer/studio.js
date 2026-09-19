@@ -5,8 +5,8 @@
   const $ = (id) => document.getElementById(id)
   const canvas = $('scene'), wrap = canvas.parentElement, ctx = canvas.getContext('2d')
   const MONO = "ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace"
-  const KIND_COLORS = ['#e2e8f0', '#c4b5fd', '#38bdf8', '#2dd4bf', '#8b9bc4', '#fb923c', '#f472b6', '#64748b']
-  const KIND_NAMES = ['user', 'assistant', 'Read', 'Grep', 'Bash', 'Edit', 'WebFetch', 'summary']
+  const KIND_COLORS = ['#e2e8f0', '#c4b5fd', '#38bdf8', '#2dd4bf', '#8b9bc4', '#fb923c', '#f472b6', '#64748b', '#818cf8']
+  const KIND_NAMES = ['user', 'assistant', 'Read', 'Grep', 'Bash', 'Edit', 'WebFetch', 'summary', 'Tool']
   const V_NAMES = ['', 'KEEP', 'TRIM', 'DROP'], V_KEYS = ['', 'keep', 'trim', 'drop']
   const V_COLORS = ['', '#4ade80', '#fbbf24', '#fb7185']
   const GREEN = '#4ade80', AMBER = '#fbbf24', ROSE = '#fb7185', INK = '#e9ecf5', DIM = '#8b92aa', FAINT = '#565d75'
@@ -47,6 +47,9 @@
   let sliderHold = 0
   let taskKey = ''
   let histKey = ''
+  let lastMode = ''
+  let dropRows = []          // transcript mode: click areas of the "biggest dropped blocks" list
+  const solo = () => S?.mode === 'transcript'   // the person's own transcript: no baseline lane, no ground truth
 
   // ---- server link -------------------------------------------------------------
   async function post(cmd, extra = {}) {
@@ -77,8 +80,8 @@
         v = mkBlock(item, now, fresh ? Math.min(i * 6, 700) : 0)
         if (isBase) { v.share = item[3]; v.orig = item[2]; v.task = -2; v.need = 0; v.pinned = 0; v.verdict = 0; v.label = '' }
         lane.map.set(id, v)
-        const idx = prev ? lane.order.indexOf(prev) + 1 : 0
-        lane.order.splice(idx, 0, v)
+        if (fresh) lane.order.push(v)
+        else { const idx = prev ? lane.order.indexOf(prev) + 1 : 0; lane.order.splice(idx, 0, v) }
       } else if (isBase) { v.tokens = item[2]; v.share = item[3] }
       else {
         v.pinned = item[6]; v.task = item[4]; v.need = item[5]
@@ -104,27 +107,29 @@
       gen = s.gen
       for (const lane of [jevLane, baseLane]) { lane.order = []; lane.map.clear() }
       scan = null; ghost = null; chips = []; particles = []; floaters = []
-      lastCompN = s.last?.n ?? 0; lastBaseN = s.baseline.compactions
+      lastCompN = s.last?.n ?? 0; lastBaseN = s.baseline?.compactions ?? 0
       odo.tween = null; odo.v = first ? 0 : odo.v
       if (autoSelect) { selectedId = null; inspected = null }
     }
     const newComp = s.last && s.last.n !== lastCompN && s.last.verdicts && !document.hidden
     if (newComp) finishScan(now)
     S = s
+    if (s.mode !== lastMode) { lastMode = s.mode; L = layout(); budgetDisp = s.cfg.budget }
     if (!budgetDisp) budgetDisp = s.cfg.budget
     syncLane(jevLane, s.blocks, now, newComp ? s.last.verdicts : null, false)
-    syncLane(baseLane, s.baseline.blocks, now, null, true)
+    if (s.baseline) syncLane(baseLane, s.baseline.blocks, now, null, true)
+    else if (baseLane.order.length) { baseLane.order = []; baseLane.map.clear() }
     if (newComp) {
       lastCompN = s.last.n
       scan = { t0: now, dur: clamp(900 + s.last.questions * 3, 1000, 1700), n: s.last.n }
-      ghost = { y: jevLane.topY, t0: now, text: `BEFORE ${fmtInt(s.last.before)}` }
-      if (L) floaters.push({ x: L.towerX + L.towerW / 2, y: Math.max(L.top + 60, jevLane.topY + 40), text: `−${fmtPct(s.last.reduction)} · ${fmtInt(s.last.questions)} questions · ${fmtMs(s.last.ms)}`, color: GREEN, t0: now + scan.dur * 0.75, big: true })
+      ghost = s.last.reused ? null : { y: jevLane.topY, t0: now, text: `BEFORE ${fmtInt(s.last.before)}` }
+      if (L) floaters.push({ x: L.towerX + L.towerW / 2, y: Math.max(L.top + 60, jevLane.topY + 40), text: s.last.reused ? `pin applied · now −${fmtPct(s.last.reduction)} · Jev's answers reused` : `−${fmtPct(s.last.reduction)} · ${fmtInt(s.last.questions)} questions · ${fmtMs(s.last.ms)}`, color: GREEN, t0: now + scan.dur * 0.75, big: true })
       odo.tween = { from: odo.v, to: s.tokens, t0: now + 120, dur: scan.dur + 350 }
       if (autoSelect) setTimeout(pickAuto, scan.dur + 200)
       else if (selectedId != null) setTimeout(fetchInspect, scan.dur + 200)
     } else if (s.last && s.last.n !== lastCompN) lastCompN = s.last.n
     else if (odo.tween) odo.tween.to = s.tokens
-    if (s.baseline.compactions !== lastBaseN) {
+    if (s.baseline && s.baseline.compactions !== lastBaseN) {
       if (lastBaseN != null && s.baseline.compactions > lastBaseN && L && !document.hidden) {
         const lost = s.baseline.lastRecall == null ? null : 1 - s.baseline.lastRecall
         floaters.push({ x: L.baseX + L.baseW / 2, y: L.bBottom - 40, text: lost == null ? 'folded' : `lost ${Math.round(lost * 100)}% of needles`, color: ROSE, t0: now })
@@ -139,41 +144,57 @@
   const setText = (el, t) => { if (el.textContent !== t) el.textContent = t }
   function renderDom(s) {
     setText($('title'), s.title)
-    setText($('subtitle'), `synthetic agent session · made-up repo "${s.repo}"`)
+    const own = s.mode === 'transcript'
+    setText($('subtitle'), own ? `${s.source.file} · ${fmtInt(s.source.lines)} lines${s.source.skipped ? ` · ${fmtInt(s.source.skipped)} skipped` : ''} · tokens are estimates (characters / 4)` : `synthetic agent session · made-up repo "${s.repo}"`)
+    const pill = $('modePill')
+    setText(pill, own ? 'YOUR TRANSCRIPT' : 'SYNTHETIC DEMO')
+    pill.className = own ? 'pill ok' : 'pill warn'
+    pill.title = own ? 'This is a transcript file from your workspace. Jev only analyses it. Nothing in a live session changes.' : 'Everything in this pane is generated. It is a demo of the idea, not a real compaction plugin.'
+    document.body.classList.toggle('own', own)
+    for (const id of ['step', 'flood']) $(id).disabled = own
+    $('distraction').disabled = own
+    setText($('hint'), own ? 'Your own transcript · the plan is saved to compaction-plan.json · pick which message is "the task", pin blocks, then Compact now' : 'Click a block to inspect or pin it · switch the task and different blocks survive · raise distraction and junk starts to talk like the task')
     document.title = s.title
     const last = s.last, t = s.totals
     setText($('sTokens'), fmtInt(s.tokens))
     setText($('sTokensSub'), `${Math.round((s.tokens / s.cfg.budget) * 100)}% full · ${s.blocks.length} blocks`)
     setText($('sBudget'), fmtInt(s.cfg.budget))
-    setText($('sBudgetSub'), `target ${Math.round(s.cfg.target * 100)}% · trim ${fmtInt(s.cfg.trimTo)}`)
+    setText($('sBudgetLabel'), own ? 'Loaded size' : 'Budget')
+    setText($('sBudgetSub'), own ? `a trim keeps ${fmtInt(s.cfg.trimTo)} tokens` : `target ${Math.round(s.cfg.target * 100)}% · trim ${fmtInt(s.cfg.trimTo)}`)
     setText($('sReduction'), last ? '−' + fmtPct(last.reduction) : '—')
     setText($('sReductionSub'), last ? `${fmtInt(last.before)} → ${fmtInt(last.after)}` : 'waiting for the first one')
     const rec = $('sRecall')
-    setText(rec, last ? fmtPct(last.recall) : '—')
-    rec.className = !last || last.recall == null ? '' : last.recall >= s.cfg.recallTarget ? 'ok' : last.recall >= s.cfg.recallTarget - 0.1 ? 'warn' : 'bad'
-    setText($('sRecallSub'), t.avgRecall == null ? `goal ${fmtPct(s.cfg.recallTarget, 0)}` : `avg ${fmtPct(t.avgRecall)} · goal ${fmtPct(s.cfg.recallTarget, 0)}`)
+    setText($('sRecallLabel'), own ? 'Keep / trim / drop' : 'Needle recall')
+    setText($('histRecallHead'), own ? 'cut' : 'recall')
+    if (own) { setText(rec, last ? `${last.keep} / ${last.trim} / ${last.drop}` : '—'); rec.className = last && String(rec.textContent).length > 13 ? 'tight' : '' }
+    else {
+      setText(rec, last ? fmtPct(last.recall) : '—')
+      rec.className = !last || last.recall == null ? '' : last.recall >= s.cfg.recallTarget ? 'ok' : last.recall >= s.cfg.recallTarget - 0.1 ? 'warn' : 'bad'
+    }
+    if (own) setText($('sRecallSub'), 'no ground truth in this mode')
+    else setText($('sRecallSub'), t.avgRecall == null ? `goal ${fmtPct(s.cfg.recallTarget, 0)}` : `avg ${fmtPct(t.avgRecall)} · goal ${fmtPct(s.cfg.recallTarget, 0)}`)
     setText($('sTime'), last ? fmtMs(last.ms) : '—')
-    setText($('sTimeSub'), s.client === 'typesafe' ? 'live Jev · wall clock' : 'offline mock')
+    setText($('sTimeSub'), s.client !== 'mock' ? 'live Jev · wall clock' : 'offline mock')
     setText($('sPerCall'), last ? String(last.perCall) : '—')
     setText($('sPerCallSub'), last ? `${fmtInt(last.questions)} in ${last.calls} call${last.calls === 1 ? '' : 's'}` : 'up to 100')
     setText($('sJudged'), fmtInt(t.questions))
     setText($('sJudgedSub'), `in ${fmtInt(t.calls)} call${t.calls === 1 ? '' : 's'} · ${fmtInt(t.compactions)} run${t.compactions === 1 ? '' : 's'}`)
     setText($('sCost'), fmtUsd(t.costUsd))
-    setText($('sCostSub'), s.client === 'typesafe' ? '$0.042 per M tokens' : 'at live Jev prices')
+    setText($('sCostSub'), s.client !== 'mock' ? '$0.042 per M tokens' : 'at live Jev prices')
 
     const err = $('cfgError'), msg = s.cfgError ? (s.cfgError.startsWith('session.json') ? s.cfgError : `session.json: ${s.cfgError}`) + ' · the last good session keeps running' : s.error ? `Jev: ${s.error}` : ''
     err.classList.toggle('hidden', !msg); setText(err, msg)
 
     const pause = $('pause'); setText(pause, s.running ? 'Pause' : 'Resume'); pause.classList.toggle('on', !s.running)
 
-    const key = JSON.stringify(s.tasks.map((x) => x.id))
+    const key = JSON.stringify(s.tasks.map((x) => [x.id, x.label]))
     const box = $('tasks')
     if (key !== taskKey) {
       taskKey = key
       box.textContent = ''
       for (const task of s.tasks) {
         const b = document.createElement('button')
-        b.textContent = task.id; b.title = task.title; b.dataset.task = task.id
+        b.textContent = task.label ?? task.id; b.title = task.title; b.dataset.task = task.id
         b.addEventListener('click', () => post('setTask', { task: task.id }))
         box.appendChild(b)
       }
@@ -189,21 +210,21 @@
     setText($('distractionOut'), s.cfg.distraction.toFixed(2))
     $('overridePill').classList.toggle('hidden', !(s.overrides.budget || s.overrides.distraction || s.overrides.task))
 
-    const hk = `${s.gen}:${s.history.length}:${s.history.at(-1)?.n ?? 0}`
+    const hk = `${s.gen}:${s.mode}:${s.history.length}:${s.history.at(-1)?.n ?? 0}`
     if (hk !== histKey) {
       histKey = hk
       const ul = $('history'); ul.textContent = ''
-      if (!s.history.length) { const li = document.createElement('div'); li.className = 'hist-empty'; li.textContent = 'None yet. The first one fires when the tower passes the budget line.'; ul.appendChild(li) }
+      if (!s.history.length) { const li = document.createElement('div'); li.className = 'hist-empty'; li.textContent = own ? 'None yet. Jev judges the transcript a moment after it loads.' : 'None yet. The first one fires when the tower passes the budget line.'; ul.appendChild(li) }
       for (const h of [...s.history].reverse()) {
         const li = document.createElement('li')
         if (h.trigger === 'manual') li.className = 'manual'
-        const cells = [[`${h.n}`, ''], [fmtInt(h.before), ''], [fmtInt(h.after), 'after'], [h.recall == null ? '—' : fmtPct(h.recall, 0), h.recall == null ? '' : h.recall < s.cfg.recallTarget - 0.1 ? 'vlo' : h.recall < s.cfg.recallTarget ? 'lo' : ''], [h.ms < 10 ? h.ms.toFixed(1) : String(Math.round(h.ms)), '']]
+        const cells = [[`${h.n}`, ''], [fmtInt(h.before), ''], [fmtInt(h.after), 'after'], [own ? '−' + fmtPct(h.reduction, 0) : h.recall == null ? '—' : fmtPct(h.recall, 0), own || h.recall == null ? '' : h.recall < s.cfg.recallTarget - 0.1 ? 'vlo' : h.recall < s.cfg.recallTarget ? 'lo' : ''], [h.ms < 10 ? h.ms.toFixed(1) : String(Math.round(h.ms)), '']]
         for (const [text, cls] of cells) { const sp = document.createElement('span'); sp.textContent = text; if (cls) sp.className = cls; li.appendChild(sp) }
         li.title = `#${h.n} · task ${h.task} · ${h.trigger === 'manual' ? 'pressed by hand' : 'budget hit'} · ${h.questions} questions in ${h.calls} call(s)${h.demoted ? ` · ${h.demoted} squeezed` : ''}`
         ul.appendChild(li)
       }
     }
-    setText($('histAvg'), t.compactions ? `avg cut ${fmtPct(t.avgReduction, 0)} · recall ${fmtPct(t.avgRecall, 0)}` : '')
+    setText($('histAvg'), !t.compactions ? '' : own ? `${fmtInt(t.questions)} judged · ${fmtUsd(t.costUsd)}` : `avg cut ${fmtPct(t.avgReduction, 0)} · recall ${fmtPct(t.avgRecall, 0)}`)
   }
 
   function pickAuto() {
@@ -241,10 +262,10 @@
     const label = el('span', 'ins-label', b.label); label.title = b.label
     top.append(kind, label)
     const meta = el('div', 'ins-meta')
-    const tok = el('span'); tok.innerHTML = `<b>${fmtInt(b.tokens)}</b> tokens${b.orig !== b.tokens ? ` (was ${fmtInt(b.orig)})` : ''}`
+    const tok = el('span'); tok.innerHTML = `<b>${fmtInt(b.tokens)}</b> tokens${b.orig !== b.tokens ? ` (was ${fmtInt(b.orig)})` : ''}${b.line ? ` · line ${fmtInt(b.line)}` : ''}`
     meta.append(tok)
     if (b.gone) meta.append(el('span', 'pill bad', 'GONE'))
-    if (b.need !== 'message' && b.inWindow) {
+    if (b.need !== 'message' && (b.inWindow || b.canPin)) {
       const pin = el('button', b.pinned ? 'on' : '', b.pinned ? 'Pinned' : 'Pin')
       pin.title = 'A pinned block is never dropped or trimmed'
       pin.addEventListener('click', async () => { await post('pin', { id: b.id, pinned: !b.pinned }); fetchInspect() })
@@ -264,11 +285,12 @@
         row.append(el('span', '', k), t, el('span', '', b.probs[k].toFixed(2).replace(/^0/, '')))
         body.append(row)
       }
-    } else { vh.append(el('b', '', 'not judged yet')); body.append(vh); body.append(el('div', 'ins-truth', 'New since the last compaction. Jev judges it at the next one.')) }
+    } else { vh.append(el('b', '', 'not judged yet')); body.append(vh); body.append(el('div', 'ins-truth', solo() ? 'Not judged yet. Jev judges the whole transcript in a moment.' : 'New since the last compaction. Jev judges it at the next one.')) }
     const note = b.pinned && b.jev && b.jev !== 'keep' ? `Pinned by you, so it stayed (Jev said ${b.jev}).`
       : b.demoted ? `Squeezed by the pressure pass: Jev said ${b.jev}, but the window had to reach the target, so it became ${b.verdict}.`
       : b.gone ? b.gone : ''
     body.append(el('div', 'ins-note', note))
+    if (!b.truth) { body.append(el('div', 'ins-truth', 'No ground truth here: this is your own transcript. Jev\'s verdict is a suggestion. Pin the block if you disagree.')); return }
     const truth = el('div', 'ins-truth')
     truth.append(el('b', '', 'Ground truth: '), document.createTextNode(b.truth + ' '))
     if (b.ideal) {
@@ -308,7 +330,8 @@
   canvas.addEventListener('mouseleave', () => { mouse.x = mouse.y = -1; hoverId = null; wrap.classList.remove('hot') })
   canvas.addEventListener('click', (e) => {
     const r = canvas.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top
-    const id = hitTest()
+    const row = dropRows.find((r) => mouse.x >= r.x0 && mouse.x <= r.x1 && mouse.y >= r.y0 && mouse.y <= r.y1)
+    const id = row ? row.id : hitTest()
     if (id != null) { selectedId = id; autoSelect = false; fetchInspect() }
     else { autoSelect = true; selectedId = null; pickAuto() }
   })
@@ -347,7 +370,7 @@
     const baseW = clamp(W * 0.11, 92, 132)
     const baseX = W - pad - baseW
     const midX = chipX + chipW + 10
-    const midW = Math.max(120, baseX - 26 - midX)
+    const midW = solo() ? Math.max(120, W - pad - midX) : Math.max(120, baseX - 26 - midX)
     const odoW = W - pad - midX
     return { pad, towerW, gaugeX, gaugeW, towerX, stripX, stripW, chipX, chipW, top, bottom, Hb, baseW, baseX, midX, midW, odoW, bTop: top, bBottom: bottom, bHb: Hb }
   }
@@ -491,7 +514,7 @@
       ctx.globalAlpha = alpha
       const sx = isBase ? x - 9 : x + w + 5
       if (isBase) { if (v.share > 0.004) { ctx.fillStyle = GREEN; ctx.globalAlpha = alpha * clamp(0.25 + v.share, 0, 1); ctx.fillRect(sx, y, 5, Math.max(hh, 0.7)) } }
-      else if (v.need !== 3) {
+      else if (v.need !== 3 && !solo()) {
         const rel = v.task === curIdx && v.need > 0
         ctx.fillStyle = rel ? (v.need === 2 ? GREEN : '#86efac') : '#3a2430'
         ctx.globalAlpha = alpha * (rel ? (v.need === 2 ? 1 : 0.6) : 0.9)
@@ -585,7 +608,7 @@
 
   function drawCard(x, y, w, now) {
     const last = S.last
-    const extra = last && (last.demoted || last.needlesDropped || last.junkKept)
+    const extra = last && (last.demoted || last.needlesDropped || last.junkKept || last.pinnedKept || last.reused)
     const h = last ? (extra ? 172 : 154) : 84
     rr(x, y, w, h, 10); ctx.fillStyle = 'rgba(16,18,26,.82)'; ctx.fill(); ctx.strokeStyle = '#232838'; ctx.lineWidth = 1; ctx.stroke()
     const px = x + 12, pw = w - 24
@@ -594,11 +617,12 @@
       font(12, 700); ctx.fillStyle = INK; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
       ctx.fillText('Waiting for the first one', px, y + 44)
       font(10.5, 500); ctx.fillStyle = DIM
-      ctx.fillText('It fires when the tower passes', px, y + 62); ctx.fillText('the budget line, or press Compact now.', px, y + 76)
+      ctx.fillText(solo() ? 'Your transcript is loaded. Jev judges' : 'It fires when the tower passes', px, y + 62); ctx.fillText(solo() ? 'every tool result in a moment.' : 'the budget line, or press Compact now.', px, y + 76)
       return h
     }
     caps(`LAST COMPACTION #${last.n}`, px, y + 20)
-    caps(last.trigger === 'manual' ? 'BY HAND' : 'BUDGET HIT', px + pw, y + 20, last.trigger === 'manual' ? '#5eead4' : FAINT, 9, 'right')
+    const why = { manual: 'BY HAND', auto: 'AFTER LOAD', pin: 'PIN CHANGED' }[last.trigger] ?? 'BUDGET HIT'
+    caps(why, px + pw, y + 20, last.trigger === 'manual' ? '#5eead4' : FAINT, 9, 'right')
     const red = '−' + fmtPct(last.reduction)
     const redPx = fit(red, pw * 0.42, 22, 700, 12)
     ctx.fillStyle = GREEN; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic'
@@ -620,9 +644,14 @@
     ctx.textAlign = 'left'; ctx.fillStyle = GREEN; ctx.fillText(`KEEP ${last.keep}`, px, y + 82)
     ctx.textAlign = 'center'; ctx.fillStyle = AMBER; ctx.fillText(`TRIM ${last.trim}`, px + pw / 2, y + 82)
     ctx.textAlign = 'right'; ctx.fillStyle = ROSE; ctx.fillText(`DROP ${last.drop}`, px + pw, y + 82)
-    const okRecall = last.recall == null || last.recall >= S.cfg.recallTarget
-    meter(px, y + 101, pw, 'needle recall', last.recall, okRecall ? GREEN : last.recall >= S.cfg.recallTarget - 0.1 ? AMBER : ROSE)
-    meter(px, y + 119, pw, 'junk removed', last.junkRemoved, '#5eead4')
+    if (solo()) {
+      meter(px, y + 101, pw, 'tokens cut', last.reduction, GREEN)
+      meter(px, y + 119, pw, 'results cut', (last.trim + last.drop) / Math.max(1, last.questions), '#5eead4')
+    } else {
+      const okRecall = last.recall == null || last.recall >= S.cfg.recallTarget
+      meter(px, y + 101, pw, 'needle recall', last.recall, okRecall ? GREEN : last.recall >= S.cfg.recallTarget - 0.1 ? AMBER : ROSE)
+      meter(px, y + 119, pw, 'junk removed', last.junkRemoved, '#5eead4')
+    }
     const line = `${fmtInt(last.questions)} questions · ${last.calls} call${last.calls === 1 ? '' : 's'} · ${fmtMs(last.ms)} · ${fmtUsd(last.costUsd)}`
     fit(line, pw, 10.5, 600, 8); ctx.fillStyle = DIM; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
     ctx.fillText(line, px, y + 142)
@@ -631,6 +660,8 @@
       if (last.demoted) bits.push(`${last.demoted} squeezed to reach target`)
       if (last.needlesDropped) bits.push(`${last.needlesDropped} needle${last.needlesDropped === 1 ? '' : 's'} dropped`)
       if (last.junkKept) bits.push(`${last.junkKept} junk kept`)
+      if (last.pinnedKept) bits.push(`${last.pinnedKept} kept because you pinned ${last.pinnedKept === 1 ? 'it' : 'them'}`)
+      if (last.reused) bits.push("reused Jev's answers")
       const t = bits.join(' · ')
       fit(t, pw, 10.5, 600, 8); ctx.fillStyle = AMBER; ctx.fillText(t, px, y + 160)
     }
@@ -667,6 +698,41 @@
     ctx.fillStyle = GREEN; ctx.beginPath(); ctx.arc(X(pts.length - 1), Y(lp[1]), 2.6, 0, Math.PI * 2); ctx.fill()
   }
 
+  function drawDropped(x, y, w, h) {
+    dropRows = []
+    if (h < 64 || w < 100) return
+    rr(x, y, w, h, 10); ctx.fillStyle = 'rgba(12,14,20,.7)'; ctx.fill(); ctx.strokeStyle = '#1d2230'; ctx.lineWidth = 1; ctx.stroke()
+    caps('BIGGEST DROPPED BLOCKS', x + 12, y + 18)
+    if (w > 330) caps('CLICK ONE TO INSPECT OR PIN IT', x + w - 12, y + 18, FAINT, 8.5, 'right')
+    const rows = S.last?.biggestDropped ?? []
+    font(11, 600); ctx.textBaseline = 'middle'
+    if (!rows.length) { ctx.fillStyle = DIM; ctx.textAlign = 'left'; ctx.fillText(S.last ? 'Jev dropped nothing.' : 'Nothing yet. Jev judges the transcript in a moment.', x + 12, y + 42); return }
+    const rowH = 25, foot = 24
+    let ry = y + 28
+    const max = Math.max(...rows.map((r) => r.tokens), 1)
+    for (const r of rows) {
+      if (ry + rowH > y + h - foot) break
+      const hot = mouse.x >= x + 6 && mouse.x <= x + w - 6 && mouse.y >= ry && mouse.y < ry + rowH
+      if (hot || r.id === selectedId) { rr(x + 6, ry + 1, w - 12, rowH - 2, 5); ctx.fillStyle = r.id === selectedId ? 'rgba(255,255,255,.09)' : 'rgba(255,255,255,.05)'; ctx.fill() }
+      ctx.fillStyle = 'rgba(251,113,133,.16)'; ctx.fillRect(x + 12, ry + rowH - 4, (w - 24) * (r.tokens / max), 2)
+      const kc = KIND_COLORS[KIND_NAMES.indexOf(r.kind)] ?? '#818cf8'
+      ctx.fillStyle = kc; rr(x + 12, ry + rowH / 2 - 4, 8, 8, 2); ctx.fill()
+      font(11, 700); ctx.textAlign = 'right'; ctx.fillStyle = INK
+      const right = `${fmtInt(r.tokens)} tok`
+      ctx.fillText(right, x + w - 76, ry + rowH / 2)
+      font(10, 600); ctx.fillStyle = ROSE; ctx.fillText(`drop ${r.p.toFixed(2).replace(/^0/, '')}`, x + w - 12, ry + rowH / 2)
+      font(11, 600); ctx.textAlign = 'left'; ctx.fillStyle = hot ? INK : '#b9c0d4'
+      const room = w - 24 - 14 - 76 - ctx.measureText(right).width - 16
+      const text = `${r.tool}  ${r.input}`
+      const maxChars = Math.max(4, Math.floor(room / 6.7))
+      ctx.fillText(text.length > maxChars ? text.slice(0, maxChars - 1) + '…' : text, x + 26, ry + rowH / 2)
+      dropRows.push({ id: r.id, x0: x + 6, x1: x + w - 6, y0: ry, y1: ry + rowH })
+      ry += rowH
+    }
+    font(10, 600); ctx.textAlign = 'left'; ctx.fillStyle = GREEN
+    ctx.fillText(`full plan saved to ${S.last.plan} in your workspace`, x + 12, y + h - 12)
+  }
+
   function draw(dt, now) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, W, H)
@@ -684,7 +750,7 @@
     L.bHb = (L.bBottom - L.bTop) * 0.84
 
     stepLane(jevLane, dt, now, budgetDisp, L.top, L.bottom, L.Hb)
-    stepLane(baseLane, dt, now, budgetDisp, L.bTop, L.bBottom, L.bHb)
+    if (!solo()) stepLane(baseLane, dt, now, budgetDisp, L.bTop, L.bBottom, L.bHb)
 
     // scan line progress + triggers
     let scanY = null
@@ -699,8 +765,8 @@
     // ---- Jev lane ----
     const { towerX, towerW, gaugeX, gaugeW, top, bottom, Hb } = L
     const budgetY = bottom - Hb
-    caps(towerW < 270 ? 'JEV LANE' : 'CONTEXT WINDOW · JEV LANE', gaugeX, L.pad + 8)
-    if (S.totals.avgRecall != null) caps(`AVG RECALL ${fmtPct(S.totals.avgRecall)}`, towerX + towerW + 10, L.pad + 8, GREEN, 9, 'right')
+    caps(solo() ? (towerW < 270 ? 'YOUR SESSION' : 'YOUR SESSION · EVERY BLOCK') : towerW < 270 ? 'JEV LANE' : 'CONTEXT WINDOW · JEV LANE', gaugeX, L.pad + 8)
+    if (!solo() && S.totals.avgRecall != null) caps(`AVG RECALL ${fmtPct(S.totals.avgRecall)}`, towerX + towerW + 10, L.pad + 8, GREEN, 9, 'right')
     // backdrop
     ctx.fillStyle = 'rgba(255,255,255,.018)'; ctx.fillRect(towerX, top, towerW, bottom - top)
     ctx.strokeStyle = 'rgba(255,255,255,.045)'; ctx.lineWidth = 1
@@ -724,9 +790,9 @@
     fl.addColorStop(0, 'rgba(74,222,128,0)'); fl.addColorStop(0.5, 'rgba(74,222,128,.7)'); fl.addColorStop(1, 'rgba(74,222,128,0)')
     ctx.fillStyle = fl; ctx.fillRect(gaugeX - 4, bottom + 1, towerW + 44, 1.5)
 
-    drawLine(gaugeX - 2, towerX + towerW + 12, bottom - Hb * axis(S.cfg.target), 'rgba(74,222,128,.7)', `TARGET ${Math.round(S.cfg.target * 100)}%`, true, 'after')
+    if (!solo()) drawLine(gaugeX - 2, towerX + towerW + 12, bottom - Hb * axis(S.cfg.target), 'rgba(74,222,128,.7)', `TARGET ${Math.round(S.cfg.target * 100)}%`, true, 'after')
     const over = jevLane.sumAt > budgetDisp
-    drawLine(gaugeX - 2, towerX + towerW + 12, budgetY, over ? ROSE : AMBER, `BUDGET ${fmtK(budgetDisp)}`, false, 'after')
+    drawLine(gaugeX - 2, towerX + towerW + 12, budgetY, over ? ROSE : AMBER, `${solo() ? 'LOADED' : 'BUDGET'} ${fmtK(budgetDisp)}`, false, 'after')
 
     if (ghost) {
       const t = (now - ghost.t0) / 4200
@@ -782,8 +848,8 @@
     // ---- odometer band ----
     const mx = L.midX
     caps('TOKENS IN CONTEXT', mx, L.pad + 8)
-    const phase = scan ? 'JEV IS JUDGING EVERY TOOL RESULT' : !S.running ? 'PAUSED' : S.phase === 'hold' ? 'COMPACTED' : 'FILLING'
-    caps(phase, W - L.pad, L.pad + 8, scan ? GREEN : !S.running ? AMBER : S.phase === 'hold' ? GREEN : FAINT, 9, 'right')
+    const phase = scan || S.phase === 'judging' ? 'JEV IS JUDGING EVERY TOOL RESULT' : solo() ? (S.last ? 'PLAN READY' : 'LOADED') : !S.running ? 'PAUSED' : S.phase === 'hold' ? 'COMPACTED' : 'FILLING'
+    caps(phase, W - L.pad, L.pad + 8, scan || S.phase === 'judging' || (solo() && S.last) ? GREEN : solo() ? FAINT : !S.running ? AMBER : S.phase === 'hold' ? GREEN : FAINT, 9, 'right')
     // odometer value
     const prev = odo.v
     if (odo.tween) {
@@ -801,7 +867,7 @@
     drawOdometer(mx, bandTop, odoPx, Math.max(0, odo.v), odo.speed, digits, now, odo.hot)
     font(11, 600); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = DIM
     const curTask = S.tasks.find((t) => t.id === S.currentTask)
-    const sub = `of ${fmtInt(budgetTarget)} budget · task: ${curTask?.id ?? ''}`
+    const sub = solo() ? `estimated tokens · loaded ${fmtInt(S.source.tokens)} · task: ${curTask?.label ?? ''}` : `of ${fmtInt(budgetTarget)} budget · task: ${curTask?.id ?? ''}`
     fit(sub, L.odoW, 11, 600, 8); ctx.fillStyle = DIM
     ctx.fillText(sub, mx, bandBottom - 4)
 
@@ -809,10 +875,12 @@
     const cardY = bandBottom + 10
     const cardH = drawCard(mx, cardY, L.midW, now)
     const chartY = cardY + cardH + 10
-    drawChart(mx, chartY, L.midW, bottom - chartY)
+    if (solo()) drawDropped(mx, chartY, L.midW, bottom - chartY)
+    else { dropRows = []; drawChart(mx, chartY, L.midW, bottom - chartY) }
 
     // ---- baseline lane ----
     const bx = L.baseX, bw = L.baseW
+    if (!solo()) {
     caps('SUMMARIZE INSTEAD', bx + bw, bandBottom + 18, '#aab3c8', 9, 'right', bw + 12)
     caps('SIMPLE BASELINE', bx + bw, bandBottom + 30, FAINT, 8, 'right', bw + 12)
     caps(S.baseline.avgRecall == null ? 'NO FOLD YET' : `AVG RECALL ${fmtPct(S.baseline.avgRecall, 0)}`, bx + bw, bandBottom + 42, S.baseline.avgRecall == null ? FAINT : ROSE, 8.5, 'right', bw + 12)
@@ -820,6 +888,7 @@
     drawTower(baseLane, bx, bw, now, L.bTop, true)
     ctx.fillStyle = 'rgba(148,163,184,.5)'; ctx.fillRect(bx - 12, L.bBottom + 1, bw + 16, 1.5)
     drawLine(bx - 12, bx + bw + 4, L.bBottom - L.bHb, 'rgba(251,191,36,.8)', null, false)
+    }
 
     // particles
     particles = particles.filter((p) => p.life < p.max)
@@ -852,12 +921,12 @@
     let lx = gaugeX
     const ly = H - 10
     font(9.5, 600); ctx.textBaseline = 'middle'; ctx.textAlign = 'left'
-    for (let k = 0; k < 7; k++) {
+    for (const k of solo() ? [0, 1, 2, 3, 4, 5, 6, 8] : [0, 1, 2, 3, 4, 5, 6]) {
       ctx.fillStyle = KIND_COLORS[k]; rr(lx, ly - 4, 8, 8, 2); ctx.fill()
       ctx.fillStyle = DIM; ctx.fillText(KIND_NAMES[k], lx + 12, ly + 0.5)
       lx += 12 + ctx.measureText(KIND_NAMES[k]).width + 12
     }
-    const truthLegend = [[GREEN, 'truth: needed now'], ['#3a2430', 'not needed']]
+    const truthLegend = solo() ? [] : [[GREEN, 'truth: needed now'], ['#3a2430', 'not needed']]
     let need = 0
     for (const [, t] of truthLegend) need += 12 + ctx.measureText(t).width + 12
     if (lx + 10 + need < W - L.pad) {

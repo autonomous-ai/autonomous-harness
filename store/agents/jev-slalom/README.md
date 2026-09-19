@@ -27,11 +27,35 @@ jev-slalom/
 ## The viewer
 
 `viewer/viewer.mjs` runs the course over a loopback HTTP server. Each tick it advances the skier
-down the valley, asks Jev for the steer, and streams the run — the skier's x and snow trail, the
-gates sweeping toward it (lighting up as they're threaded), a dashed line to the target gate, and a
-run log — to the pane. It calls `POST /v1/systemone` when `TYPESAFE_API_KEY` is set; without it a
-deterministic mock reads the same course and lines up on the next gate, so the demo runs offline.
-`.harness/verdict.json` tracks ticks carved, gates threaded, and any fall.
+down the valley, asks Jev for the steer, and streams one frame to the pane. It calls
+`POST /v1/systemone` when `TYPESAFE_API_KEY` is set. Without a key, a deterministic stand-in reads
+the same lines of text, so the demo runs offline, and the pane shows a `MOCK` badge.
+`.harness/verdict.json` tracks ticks carved, gates threaded, and any fall. A finished run stays up
+about three seconds, then a new one starts with a new seed.
+
+**The pane** draws a snowy slope from above at 60 fps and eases between Jev's decisions. The camera
+follows the skier down past two layers of pines that slide by at different speeds. The skis carve
+two lines that stay on the snow, turns throw spray, and snow drifts across the view. Each gate
+flashes green when it is threaded and red, with a bent pole, when it is clipped. A clean run coasts
+under a finish banner into confetti; a fall throws the skis off in a cloud of snow. Jev's mind is in
+the scene: a fan of five predicted paths, one per option, as bold as their probability, with the
+chosen one glowing. The top bar shows decisions per second, decisions, and cost so far.
+
+**You can play with it:**
+
+- **Speed** and **Gate gap** sliders override `speed` and `gateGap` at once. The gap slider re-cuts
+  every gate still ahead. The next edit to `slalom.json` clears them.
+- **Click the snow ahead** of the skier to plant an extra gate there. It must be at least 5 rows
+  ahead and 5 rows from another gate.
+- **Gust of wind** shoves the skier sideways for a few ticks. Jev has to steer back.
+- **Slow motion** stretches every tick three times.
+- **Pause**, **Step** (one decision) and **Reset**.
+
+Measured with the offline stand-in over 1,500 ticks on the 18-gate template: `speed` 1.2 to 2.6,
+every run clean; 3.0 and 3.6, every run falls at the second gate; 4.4, every run falls at the
+first. It is a cliff, not a slope: the skier moves at most 1.9 slots sideways a tick, and past
+about 2.8 rows a tick there are not enough ticks between gates to cross the valley. No randomness
+is added.
 
 The course is synthetic: gates alternate sides of a valley, and the skier descends at a fixed
 `speed`. Jev's "steer" is a moment-to-moment line call — line up on the gate, commit as it arrives —
