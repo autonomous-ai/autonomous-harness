@@ -1,0 +1,13 @@
+{
+  "title": "Jev Blocks",
+  "description": "Jev plays a falling-blocks puzzle. One call per piece picks the placement. The game is synthetic.",
+  "seed": 7,
+  "gravity": 2,
+  "speedup": 0.5,
+  "decisionMs": 110,
+  "moveMs": 35,
+  "garbageRows": 0,
+  "weights": { "I": 1, "O": 1, "T": 1, "S": 1, "Z": 1, "J": 1, "L": 1 },
+  "board": [],
+  "style": "Keep the stack low, flat and free of holes. Leave the right column open and go for four lines at once when it is safe. When the stack gets high, stop waiting and clear lines."
+}

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Compactor</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand">
+      <span class="dot"></span><h1 id="title">Jev Compactor</h1>
+      <span class="sub" id="subtitle">synthetic agent session · made-up repo</span>
+      <span class="pill warn" title="Everything in this pane is generated. It is a demo of the idea, not a real compaction plugin.">SYNTHETIC DEMO</span>
+    </div>
+    <div class="controls">
+      <button id="pause" title="Pause or resume the session (space)">Pause</button>
+      <button id="step" title="Add exactly one event">Step</button>
+      <button id="flood" title="Pour 40 events into the window at once">Flood +40</button>
+      <button id="reset" title="Restart the session from its seed">Reset</button>
+      <button class="primary" id="compact" title="Ask Jev to judge every tool result right now (c)">Compact now</button>
+    </div>
+  </div>
+
+  <div id="statbar">
+    <div class="big"><label>Tokens now</label><b id="sTokens">—</b><i id="sTokensSub">&nbsp;</i></div>
+    <div class="big"><label>Budget</label><b id="sBudget">—</b><i id="sBudgetSub">&nbsp;</i></div>
+    <div class="big"><label>Last reduction</label><b id="sReduction" class="ok">—</b><i id="sReductionSub">&nbsp;</i></div>
+    <div class="big"><label>Needle recall</label><b id="sRecall">—</b><i id="sRecallSub">&nbsp;</i></div>
+    <div class="big"><label>Compaction time</label><b id="sTime">—</b><i id="sTimeSub">&nbsp;</i></div>
+    <div class="big"><label>Questions / call</label><b id="sPerCall">—</b><i id="sPerCallSub">&nbsp;</i></div>
+    <div class="big"><label>Results judged</label><b id="sJudged">0</b><i id="sJudgedSub">&nbsp;</i></div>
+    <div class="big"><label>Cost so far</label><b id="sCost">$0</b><i id="sCostSub">&nbsp;</i></div>
+  </div>
+
+  <div id="cfgError" class="cfg-error hidden"></div>
+
+  <main>
+    <section id="stage">
+      <div class="canvas-wrap"><canvas id="scene"></canvas></div>
+
+      <div class="panel console">
+        <div class="row">
+          <span class="cap">Current task</span>
+          <div id="tasks" class="tasks"></div>
+          <span id="taskTitle" class="task-title"></span>
+        </div>
+        <div class="row">
+          <label class="slider"><span class="cap">Budget</span>
+            <input id="budget" type="range" min="0" max="1000" step="1" value="500">
+            <output id="budgetOut">—</output>
+          </label>
+          <label class="slider"><span class="cap">Distraction</span>
+            <input id="distraction" type="range" min="0" max="1" step="0.01" value="0.12">
+            <output id="distractionOut">—</output>
+          </label>
+          <span id="overridePill" class="pill hidden" title="You changed this in the pane. Any edit to session.json puts the file back in charge.">PANE OVERRIDE</span>
+        </div>
+        <div class="hint">Click a block to inspect or pin it · switch the task and different blocks survive · raise distraction and junk starts to talk like the task</div>
+      </div>
+    </section>
+
+    <aside id="rail">
+      <div data-jev-hud class="hud-slot"></div>
+      <div class="panel" id="inspector">
+        <div class="panel-title">Inspector <span class="right" id="insId"></span></div>
+        <div id="insBody" class="ins-empty">Click any block in the tower.</div>
+      </div>
+
+      <details class="panel how-panel">
+        <summary class="panel-title">How it works <span class="right">open</span></summary>
+        <div class="how">
+          A made-up coding agent works in a made-up repo. Its context fills with messages and tool
+          results. Each tool result secretly belongs to <b>one task</b>, or is <b>junk</b> (logs,
+          lockfiles, test spam). That hidden label is the ground truth.<br><br>
+          Over budget, Jev judges <b>every tool result at once</b>: the state is the current task
+          plus the last few messages, and each result is one question, <code>keep</code> /
+          <code>trim</code> / <code>drop</code>, up to 100 per call. Messages are never touched. If
+          the window is still above the target, the keeps Jev was least sure about get squeezed.<br><br>
+          <b>Needle recall</b> is the share of truly needed tokens that survived. The slim tower is a
+          <b>simple baseline for contrast</b>: it folds the oldest half into one short summary. It is
+          not a measurement of any real product.<br><br>
+          The agent edits <code>session.json</code>: tasks, vocabulary, <code>budget</code>,
+          <code>trimTo</code>, <code>target</code>, <code>distraction</code>.
+        </div>
+      </details>
+
+      <div class="panel">
+        <div class="panel-title">Past compactions <span class="right" id="histAvg"></span></div>
+        <div class="hist-head"><span>#</span><span>before</span><span>after</span><span>recall</span><span>ms</span></div>
+        <ul id="history"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js" defer></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

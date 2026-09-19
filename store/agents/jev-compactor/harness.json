@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-compactor",
+  "name": "Jev Compactor",
+  "category": "Dev Tools",
+  "author": "Autonomous",
+  "description": "A live demo of instant context compaction on a made-up coding-agent session. When the window passes its budget, Jev judges every tool result in one pass: keep, trim or drop. Recall is measured against hidden ground truth. Raise distraction and Jev keeps junk and loses needles.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "session.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

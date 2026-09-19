@@ -1,0 +1,17 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev plays a falling-blocks puzzle, its whole mind drawn on the board, live",
+  "examples": [
+    {
+      "prompt": "Design a hard challenge for Jev Blocks: start with 6 garbage rows, use an S and Z heavy piece mix, set gravity to 12 with a speedup of 1, and write a style line that tells Jev to dig out first. Then watch the pane and tell me at what gravity Jev starts to miss placements.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-blocks/mind-on-the-board.jpg",
+      "caption": "Find the breaking point: a fast decision model placing every piece while it really falls"
+    },
+    {
+      "prompt": "Draw a custom starting board in blocks.json that is one I piece away from clearing four lines, keep gravity low, and tell Jev to go for four. Report whether it takes the four-line clear.",
+      "caption": "A hand-drawn board to test whether Jev sees the four-line clear"
+    }
+  ]
+}

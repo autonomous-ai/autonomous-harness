@@ -1,0 +1,13 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Watch Jev compact a made-up agent session in one pass, measured honestly",
+  "examples": [
+    {
+      "prompt": "Design a session for a made-up repo: five tasks with sharp, separate vocabularies, a 300,000 token budget and trimTo 300. Then find the highest distraction where needle recall still stays above 90% while the reduction stays above 70%. Report the numbers you saw.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-compactor/context-tower.jpg",
+      "caption": "A synthetic agent session where Jev judges every tool result at once and the context tower collapses"
+    }
+  ]
+}
