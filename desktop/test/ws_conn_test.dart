@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:harness/core/models.dart' show ConnectionStatus;
 import 'package:harness/ws/ws_conn.dart';
 import 'package:harness/ws/ws_pool.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -301,6 +302,67 @@ void main() {
   });
 
   test(
+    'a fixed reconnect delay retries at that pace instead of backing off',
+    () async {
+      // Nobody on the port: each attempt is refused at once. With the backoff the second attempt is
+      // 2s out and the third 4s; with a flat delay they come every tick — the policy the socket to
+      // this computer's own daemon uses, so a restarted daemon is found within a second.
+      final free = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = free.port;
+      await free.close();
+      var reconnecting = 0;
+      conn = WsConn(
+        wsBaseUrl: 'wss://unused.example',
+        autonomousEnv: 'prod',
+        machineId: 'm1',
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (status) {
+          if (status == ConnectionStatus.reconnecting) reconnecting++;
+        },
+        transportKind: WsTransportKind.localPlaintext,
+        localWsUri: Uri.parse('ws://127.0.0.1:$port/api/local-ws'),
+        fixedReconnectDelay: const Duration(milliseconds: 100),
+      );
+      await conn!.connect();
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+      expect(
+        reconnecting,
+        greaterThanOrEqualTo(4),
+        reason: 'backoff would allow one',
+      );
+    },
+  );
+
+  test('4403 on a local socket is reported, and the retry goes on', () async {
+    // "machine mismatch": the daemon serves another id than the one selected. The app is told so it
+    // can find out which; the socket keeps retrying (the answer may be a re-key of this very row)
+    // instead of the silent 30s loop this used to be.
+    hub = await FakeHub.start(closeCodeOnSelect: 4403);
+    final failures = <String>[];
+    final statuses = <ConnectionStatus>[];
+    conn = WsConn(
+      wsBaseUrl: 'wss://unused.example',
+      autonomousEnv: 'prod',
+      machineId: 'm1',
+      accessTokenProvider: (_, _) async => 'sso-token',
+      onAuthFailure: (_) {},
+      onLocalFailure: (code, reason) => failures.add('$code:$reason'),
+      onEvent: (_) {},
+      onStatus: statuses.add,
+      transportKind: WsTransportKind.localPlaintext,
+      localWsUri: Uri.parse('ws://127.0.0.1:${hub.port}/api/local-ws'),
+    );
+    await conn!.connect();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(failures, hasLength(1));
+    expect(failures.single, startsWith('4403:'));
+    expect(statuses, contains(ConnectionStatus.reconnecting));
+    expect(conn!.isClosed, isFalse);
+  });
+
+  test(
     '4401 refreshes once and reconnects with the new access token',
     () async {
       hub = await FakeHub.start(rejectOldToken: true);
@@ -380,4 +442,45 @@ void main() {
       await pool.closeAll();
     },
   );
+
+  test('WsPool reuses a local socket asked for with the same reconnect policy, and swaps it on a change', () async {
+    // The pool reuses a socket only when its own key and the socket's `endpointKey` agree. A key
+    // computed on one side and not the other churned EVERY socket on EVERY lookup — measured in
+    // the running app as `agents_list … failed: Bad state: WS closed` in a loop.
+    hub = await FakeHub.start();
+    final pool = WsPool(
+      wsBaseUrl: 'wss://unused.example',
+      autonomousEnv: 'prod',
+      accessTokenProvider: (_, _) async => '',
+      onAuthFailure: (_) {},
+      onEvent: (_, _) {},
+      onStatus: (_, _) {},
+    );
+    final uri = Uri.parse('ws://127.0.0.1:${hub.port}/api/local-ws');
+    final flat = pool.connFor(
+      'm1',
+      transportKind: WsTransportKind.localPlaintext,
+      localWsUri: uri,
+      fixedReconnectDelay: const Duration(seconds: 1),
+    );
+    final again = pool.connFor(
+      'm1',
+      transportKind: WsTransportKind.localPlaintext,
+      localWsUri: uri,
+      fixedReconnectDelay: const Duration(seconds: 1),
+    );
+    expect(identical(flat, again), isTrue, reason: 'same policy, same socket');
+    final backoff = pool.connFor(
+      'm1',
+      transportKind: WsTransportKind.localPlaintext,
+      localWsUri: uri,
+    );
+    expect(
+      identical(flat, backoff),
+      isFalse,
+      reason: 'a new policy is a new socket',
+    );
+    expect(flat.isClosed, isTrue);
+    await pool.closeAll();
+  });
 }

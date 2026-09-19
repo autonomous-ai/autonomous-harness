@@ -82,6 +82,14 @@ class WsConn {
   final String? observerShareId;
   final int localProtocolVersion;
 
+  /// A flat delay between reconnect attempts instead of the exponential backoff (1s→30s). Set for
+  /// the socket to THIS computer's daemon: a refused connect on the loopback costs microseconds and
+  /// nothing on the wire, and the daemon comes back within a second or two of a restart or an
+  /// update handoff — waiting up to 30s to notice is what made a local terminal sit on
+  /// "reconnecting" long after the daemon was up. Null keeps the backoff, which the relayed
+  /// machines need: every one of their selects has the daemon dial the backend (15s handshake).
+  final Duration? fixedReconnectDelay;
+
   /// A viewer build's end-to-end session with the machine, minted fresh on every connect — the
   /// role the harness CLI plays everywhere else (see [RelayCodec]). Null leaves the relay's frames
   /// as they are, which is right for the local transport and the dev fixture.
@@ -154,8 +162,12 @@ class WsConn {
   /// local failure like NO_PEER_LINK) — [WsPool] must not hand a closed connection back out.
   bool get isClosed => _closing;
   bool get isLocal => transportKind == WsTransportKind.localPlaintext;
+
+  /// Must produce exactly what WsPool.connFor computes as its desired key — the pool reuses a
+  /// socket only when the two agree, and closes it otherwise. A key that could never match churned
+  /// every socket on every `_conn()` call (measured: `agents_list` failing "WS closed" in a loop).
   String get endpointKey => isLocal
-      ? 'local:${localWsUri.toString()}'
+      ? 'local:${localWsUri.toString()}:${fixedReconnectDelay?.inMilliseconds ?? 'backoff'}'
       : 'cloud:$wsBaseUrl:$autonomousEnv';
 
   WsConn({
@@ -172,6 +184,7 @@ class WsConn {
     this.localApiKey,
     this.observerShareId,
     this.localProtocolVersion = 1,
+    this.fixedReconnectDelay,
     this.relayCodecs,
     this.transportPlugins,
   });
@@ -692,6 +705,15 @@ class WsConn {
         onStatus(ConnectionStatus.disconnected);
         return;
       }
+      if (code == 4403) {
+        // The daemon does not serve the machine id this socket selected ("machine mismatch",
+        // localWsServer.ts): it runs on another id now — a sign-out and sign-in gave the account a
+        // new machine, or a first start with no backend left it on the computer id. Retrying the
+        // same select every 30s used to be the whole response, silently and for good. Reported so
+        // the app can look up which id the daemon does serve; the retry stays, in case the answer
+        // is a re-key of this very row.
+        onLocalFailure?.call(code!, channel.closeReason ?? 'machine mismatch');
+      }
       _scheduleReconnect();
       return;
     }
@@ -726,7 +748,9 @@ class WsConn {
     onStatus(ConnectionStatus.reconnecting);
     _reconnectTimer?.cancel();
     final exponent = min(max(_attempt - 1, 0), 5);
-    final delay = Duration(milliseconds: min(30000, 1000 * (1 << exponent)));
+    final delay =
+        fixedReconnectDelay ??
+        Duration(milliseconds: min(30000, 1000 * (1 << exponent)));
     _reconnectTimer = Timer(delay, connect);
   }
 
@@ -755,7 +779,13 @@ class WsConn {
     await sub?.cancel();
     final channel = _channel;
     _channel = null;
-    await channel?.sink.close();
+    // Bounded: a channel whose connect was refused (the daemon down, a 1s retry in flight) has a
+    // sink whose close never completes, and this used to wait on it for good — an app closing a
+    // machine while its daemon was down hung right here.
+    await channel?.sink.close().timeout(
+      const Duration(seconds: 2),
+      onTimeout: () => null,
+    );
     onStatus(ConnectionStatus.disconnected);
   }
 

@@ -8,6 +8,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/ws/local_cli_discovery.dart';
+import 'package:harness/ws/ws_conn.dart';
 
 /// A daemon that answers whatever the test says, with the supervisor's callbacks captured so the
 /// test can fire "it became ready" itself.
@@ -59,6 +60,28 @@ class _SignedInCli extends CliLogin {
 }
 
 /// Stops at the machine list: this test is about the daemon gate, not what comes after it.
+/// A socket that answers nothing: the load a connect triggers must not reach for a real pool.
+class _QuietConnection extends WsConn {
+  _QuietConnection()
+    : super(
+        wsBaseUrl: 'ws://fixture.invalid',
+        autonomousEnv: 'test',
+        machineId: 'm-local',
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (_) {},
+      );
+  @override
+  Future<void> waitUntilReady({required Duration timeout}) async {}
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) async => const {'agents': []};
+}
+
 class _Notifier extends AppNotifier {
   int refreshes = 0;
   _Notifier(LocalCliDiscovery discovery)
@@ -68,6 +91,7 @@ class _Notifier extends AppNotifier {
         configStore: null,
         localCliDiscovery: discovery,
         cliLogin: _SignedInCli(),
+        connectionForTest: (_) => _QuietConnection(),
       ) {
     // Already known, so the retry path does not go looking for it over the
     // network — this test is about the daemon gate, not the profile.
@@ -198,6 +222,39 @@ void main() {
       reason: 'the supervisor is what turns this into a recovery',
     );
   });
+
+  test(
+    'the socket that just connected restores a cleared local endpoint',
+    () async {
+      // A refresh during the daemon's restart cleared this row's endpoint; the socket then came back
+      // on its own retry. `connected` is the proof the endpoint is good — put it back, or the tiles
+      // stay "Offline" and `_canAttachPane` refuses them for good.
+      final discovery = _ScriptedDiscovery([LocalCliProbe.ready(_endpoint)]);
+      final notifier = _Notifier(discovery)..status = AppStatus.authenticated;
+      addTearDown(notifier.dispose);
+      await notifier.ensureCliDaemonReady();
+
+      const row = Machine(
+        machineId: 'm-local',
+        computerId: '0123456789abcdef0123456789abcdef',
+        authMode: MachineAuthMode.remote,
+        status: 'online',
+      );
+      notifier.machines = [row];
+      final state = MachineState(row)
+        ..localOnly = true
+        ..localEndpoint = null
+        ..connectionStatus = ConnectionStatus.connected;
+      notifier.machineStates['m-local'] = state;
+      expect(state.usesLocalTransport, isFalse);
+
+      notifier.onMachineConnectedForTest('m-local');
+
+      expect(state.usesLocalTransport, isTrue);
+      expect(state.localEndpoint, same(_endpoint));
+      expect(state.transportMode, MachineTransportMode.localPlaintext);
+    },
+  );
 
   test('a daemon nobody answers for is still "did not start"', () async {
     final discovery = _ScriptedDiscovery([
