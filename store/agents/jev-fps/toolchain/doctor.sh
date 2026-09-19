@@ -6,4 +6,6 @@ if ! node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 18 ? 0
   echo "fail   node >= 18 required (found $(node -v))"; exit 1
 fi
 echo "ok   node $(node -v)"
+cd "$(dirname "$0")/.."
+node -e "import('./toolchain/jev.mjs').then((m) => console.log('ok   Jev: ' + m.describeCredentials())).catch((e) => console.log('warn   Jev client did not load: ' + e.message))"
 echo "done"

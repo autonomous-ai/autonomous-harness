@@ -3,7 +3,8 @@
 // STRICT about the documented wire shape (choice: criteria map, score: criteria array, no
 // `options`/`legend` keys) and answers 422 otherwise. Also checks retry-on-529 and telemetry.
 import { createServer } from 'node:http'
-import { readdirSync } from 'node:fs'
+import { readdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,9 +17,15 @@ const server = createServer(async (req, res) => {
   hits++
   if (overloadFirst) { overloadFirst = false; res.writeHead(529); return res.end('overloaded') }
   const fail = (msg) => { res.writeHead(422, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: msg })) }
-  if (req.headers.authorization !== 'Bearer test-key') { res.writeHead(401); return res.end('bad key') }
   let j
   try { j = JSON.parse(body) } catch { return fail('not json') }
+  // Cloudflare Workers AI: same questions, wrapped as { model, input }, reply wrapped as { result }.
+  const cf = req.url === '/client/v4/accounts/acct-1/ai/run'
+  if (cf) {
+    if (req.headers.authorization !== 'Bearer cf-token') { res.writeHead(401); return res.end('bad token') }
+    if (j.model !== 'typesafe/jev' || !j.input) return fail('cloudflare wants { model: "typesafe/jev", input }')
+    j = { model: 'jev-latest', ...j.input }
+  } else if (req.headers.authorization !== 'Bearer test-key') { res.writeHead(401); return res.end('bad key') }
   if (j.model !== 'jev-latest') return fail('model')
   if (j.state == null) return fail('state required')
   const answers = {}
@@ -41,7 +48,8 @@ const server = createServer(async (req, res) => {
     } else return fail(`${id}: type`)
   }
   res.writeHead(200, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ model: 'jev-1.13', answers, usage: { input_tokens: 321, output_tokens: 12 } }))
+  const reply = { model: 'jev-1.13', answers, usage: { input_tokens: 321, output_tokens: 12 } }
+  res.end(JSON.stringify(cf ? { result: reply, success: true, errors: [] } : reply))
 })
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
 process.env.TYPESAFE_API_URL = `http://127.0.0.1:${server.address().port}/v1/systemone`
@@ -75,8 +83,24 @@ for (const name of readdirSync(ROOT).filter((n) => n.startsWith('jev-')).sort())
     // mock path still works and is metered
     const mk = await evaluate({ key: '', state: 'aim x 3.0 target x 9.0', questions: { a: jev.choice(['LEFT', 'RIGHT'], 'go') } })
     const mockOk = mk.client === 'mock' && typeof mk.answers.a.choice === 'string'
+    // Newer clients: a credentials file, and the Cloudflare route.
+    let routes = 'n/a'
+    if (typeof m.resolveCredentials === 'function') {
+      const dir = mkdtempSync(join(tmpdir(), 'jev-cred-'))
+      process.env.TYPESAFE_CREDENTIALS = join(dir, 'credentials')
+      process.env.CLOUDFLARE_API_BASE = `http://127.0.0.1:${server.address().port}`
+      writeFileSync(process.env.TYPESAFE_CREDENTIALS, '# comment\nCLOUDFLARE_ACCOUNT_ID=acct-1\nexport CLOUDFLARE_API_TOKEN="cf-token"\n')
+      await new Promise((r) => setTimeout(r, 0))
+      const c1 = m.resolveCredentials()
+      const viaCf = c1?.provider === 'cloudflare' ? await evaluate({ state: 'x', questions: { a: jev.choice({ keep: 'k', drop: 'd' }, 'Keep?') } }) : null
+      const forcedMock = await evaluate({ key: '', state: 'x', questions: { a: jev.noul('x?') } })
+      const safeLine = m.describeCredentials()
+      routes = c1?.provider === 'cloudflare' && viaCf?.client === 'cloudflare' && viaCf.answers.a.choice === 'keep' && forcedMock.client === 'mock' && !/cf-token/.test(safeLine)
+      delete process.env.TYPESAFE_CREDENTIALS; delete process.env.CLOUDFLARE_API_BASE
+      if (!routes) bad++
+    }
     if (!(ok && fastFail && mockOk)) bad++
-    console.log(`${ok && fastFail && mockOk ? 'OK  ' : 'BAD '} ${name.padEnd(14)} live=${ok} fastFail401=${fastFail} mock=${mockOk}`)
+    console.log(`${ok && fastFail && mockOk && routes !== false ? 'OK  ' : 'BAD '} ${name.padEnd(14)} live=${ok} fastFail401=${fastFail} mock=${mockOk} credentialsFile+cloudflare=${routes}`)
   } catch (e) {
     bad++
     console.log(`BAD  ${name.padEnd(14)} ${e.message}`)

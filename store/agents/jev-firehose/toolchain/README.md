@@ -31,3 +31,27 @@ commit to it — the viewer and any direct calls share the same client.
   `--noise 0.3`. Without a key it is free. With a key, each message is one real call.
 
 All data these tools make is synthetic.
+
+## Going live
+
+Without a key everything runs on the offline stand-in and the pane says `MOCK`. For the real model,
+give the harness a key. The viewer is started by the Harness daemon, which does not see variables
+you export in a shell, so the reliable place is a small file in your home folder:
+
+```sh
+mkdir -p ~/.config/typesafe && chmod 700 ~/.config/typesafe
+printf 'TYPESAFE_API_KEY=%s\n' 'paste-your-key-here' > ~/.config/typesafe/credentials
+chmod 600 ~/.config/typesafe/credentials
+```
+
+Two routes work, and both speak the same question format:
+
+| route | what goes in the file | where to get it |
+|---|---|---|
+| TypeSafe direct | `TYPESAFE_API_KEY=...` | https://console.typesafe.ai/keys (there may be a waitlist) |
+| Cloudflare Workers AI | `CLOUDFLARE_ACCOUNT_ID=...` and `CLOUDFLARE_API_TOKEN=...` | a Cloudflare API token with Workers AI permission, no TypeSafe waitlist |
+
+Environment variables of the same names win over the file. Restart the harness after changing the
+file. `toolchain/doctor.sh` prints which route is active and never prints the key. One file serves
+every Jev harness on the machine. Never paste a key into the chat, and never save one in the
+workspace. Under `node --test`, or with `JEV_OFFLINE=1`, a key is ignored so tests stay deterministic.

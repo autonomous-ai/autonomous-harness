@@ -173,7 +173,8 @@
 
   let lastAt = 0
   function render(s) {
-    const live = s.client === 'typesafe'
+    const live = s.client && s.client !== 'mock'
+    const route = s.client === 'cloudflare' ? 'Cloudflare Workers AI' : 'the TypeSafe API'
     badge.textContent = s.lastError ? 'ERROR' : live ? 'LIVE' : 'MOCK'
     badge.className = 'jh-badge ' + (s.lastError ? 'err' : live ? 'live' : 'mock')
     $k('rate').textContent = s.questionsPerSec >= 10 ? Math.round(s.questionsPerSec) : s.questionsPerSec.toFixed(1)
@@ -189,8 +190,8 @@
     errBox.hidden = !s.lastError
     errBox.textContent = s.lastError || ''
     foot.innerHTML = live
-      ? `${fmtInt(s.calls)} calls · ${fmtInt(s.questions)} typed answers · ${fmtInt(s.inputTokens)} input tokens at $${s.pricePerMTok}/MTok. Output is free.`
-      : `${fmtInt(s.calls)} calls · ${fmtInt(s.questions)} typed answers. Running on the offline stand-in — cost is what live Jev would charge ($${s.pricePerMTok}/MTok). Set <code>TYPESAFE_API_KEY</code> for the real model.`
+      ? `Live Jev through ${route}. ${fmtInt(s.calls)} calls · ${fmtInt(s.questions)} typed answers · ${fmtInt(s.inputTokens)} input tokens at ${s.pricePerMTok}/MTok. Output is free.`
+      : `${fmtInt(s.calls)} calls · ${fmtInt(s.questions)} typed answers. Running on the offline stand-in — cost is what live Jev would charge ($${s.pricePerMTok}/MTok). For the real model put <code>TYPESAFE_API_KEY=…</code> in <code>~/.config/typesafe/credentials</code>.`
     if (s.last && s.last.at !== lastAt) {
       lastAt = s.last.at
       pulse.classList.remove('beat'); void pulse.offsetWidth; pulse.classList.add('beat')
