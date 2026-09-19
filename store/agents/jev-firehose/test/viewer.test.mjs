@@ -3,7 +3,7 @@
 // except where a test waits for the file watcher or the free-running loop.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,14 +12,16 @@ import { spawnSync } from 'node:child_process'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
-const { startFirehoseViewer, sanitize, makeMessage, loadDefaults } = await import(join(ROOT, 'viewer/viewer.mjs'))
+const { startFirehoseViewer, sanitize, makeMessage, loadDefaults, TRIAGE_COLUMNS } = await import(join(ROOT, 'viewer/viewer.mjs'))
+const { loadSource, parseDelimited, csvCell } = await import(join(ROOT, 'viewer/source.mjs'))
 const TEMPLATE = JSON.parse(readFileSync(join(ROOT, 'template/firehose.json'), 'utf8'))
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function fresh(overrides = {}, rawText = null) {
+async function fresh(overrides = {}, rawText = null, files = {}) {
   const ws = mkdtempSync(join(tmpdir(), 'jev-firehose-test-'))
   const file = join(ws, 'firehose.json')
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(ws, name), text)
   writeFileSync(file, rawText ?? JSON.stringify({ ...TEMPLATE, ...overrides }))
   const viewer = await startFirehoseViewer({ workspace: ws, port: 0 })
   const base = viewer.url
@@ -71,6 +73,7 @@ test('config from firehose.json really shows up in /state', async () => {
     assert.deepEqual(s.config, { noise: 0.33, threshold: 0.61, targetAccuracy: 0.9, ratePerSec: 77, concurrency: 3, batch: 321, llmSecondsPerItem: 5, spamRate: 0.2, seed: 99 })
     assert.deepEqual(s.teams.map((t) => t.id), ['brakes', 'wheels', 'fitting'])
     assert.equal(s.stats.batch, 321)
+    assert.equal(s.batch, 321); assert.equal(s.own, false); assert.equal(s.source, null)
     assert.deepEqual(s.warnings, [])
     await v.hold()
     const t = await v.ctl('tick', { n: 40 })
@@ -292,4 +295,201 @@ test('check.mjs accepts the template and rejects out-of-range values', () => {
   assert.match(bad.stdout, /noise is 1\.4/); assert.match(bad.stdout, /concurrency is 200/); assert.match(bad.stdout, /teams has 1 entries/)
   const thin = run({ ...TEMPLATE, teams: [{ id: 'a', description: 'Alpha things.', phrases: ['one', 'two'] }, TEMPLATE.teams[0]] })
   assert.equal(thin.status, 1); assert.match(thin.stdout, /needs at least 4/)
+})
+
+
+// ---------------------------------------------------------------------------------------------
+// Your-data mode: `source` names a file in the workspace. No generator, no ground truth, and the
+// results are handed back as triage.csv. Every message below is made up for the test.
+// ---------------------------------------------------------------------------------------------
+const OWN_TEAMS = TEMPLATE.teams.map((t) => ({ id: t.id, description: t.description }))   // no phrases on purpose
+const OWN = { title: 'My inbox', desk: 'Made-up test inbox.', source: 'inbox.jsonl', threshold: 0.55, ratePerSec: 200, concurrency: 8, teams: OWN_TEAMS }
+const BODIES = [
+  'my card was charged twice for the same payment', 'the courier lost the package during delivery', 'the lamp arrived broken and I want a replacement',
+  'I cannot login, the password reset email never comes', 'the app shows a crash report when I open the cart page', 'please cancel my order, I picked the wrong colour',
+  'I want to pause my club subscription for two months', 'we are a reseller and need a bulk quote', 'click this link to claim your prize, lucky winner, free gift', 'hello, a question about something else entirely',
+]
+const jsonl = (n) => Array.from({ length: n }, (_, i) => JSON.stringify({ ticket: `T-${1000 + i}`, customer: `person${i}@example.test`, channel: i % 3 ? 'email' : 'chat', body: BODIES[i % BODIES.length] + (i % 4 === 0 ? ', also the refund for my payment' : '') })).join('\n') + '\n'
+const readCsv = (ws) => parseDelimited(readFileSync(join(ws, 'triage.csv'), 'utf8'), ',')
+const until = async (fn, ms = 4000) => { const end = Date.now() + ms; for (;;) { const v = await fn(); if (v || Date.now() > end) return v; await wait(60) } }
+
+test('your data: a jsonl file is loaded, triaged once, and handed back as triage.csv', async () => {
+  const v = await fresh(OWN, null, { 'inbox.jsonl': jsonl(60) })
+  try {
+    let s = await v.state()
+    assert.equal(s.own, true)
+    assert.equal(s.error, null)
+    assert.deepEqual({ name: s.source.name, textColumn: s.source.textColumn, idColumn: s.source.idColumn, used: s.source.used }, { name: 'inbox.jsonl', textColumn: 'body', idColumn: 'ticket', used: 60 })
+    assert.equal(s.stats.batch, 60, 'the batch is the file, not the batch setting')
+    assert.equal(s.batch, 60, 'the pane is told the real size of the run')
+    assert.deepEqual(s.warnings, [], 'teams need no phrases when a source is set')
+    await v.hold()
+    const t = await v.ctl('tick', { n: 60 })
+    assert.equal(t.body.did, 60)
+    s = await v.state()
+    assert.equal(s.phase, 'done')
+    assert.equal(s.summary.own, true); assert.equal(s.summary.messages, 60); assert.equal(s.summary.output, 'triage.csv')
+    const rows = readCsv(v.ws)
+    assert.deepEqual(rows[0], [...TRIAGE_COLUMNS, 'customer', 'channel', 'body'], 'header: the triage columns, then the file\'s own columns')
+    assert.deepEqual(TRIAGE_COLUMNS, ['id', 'team', 'team_confidence', 'urgency', 'spam', 'needs_human', 'mood', 'escalated'])
+    assert.equal(rows.length, 61, 'one line per message, plus the header')
+    assert.deepEqual(rows.slice(1).map((r) => r[0]), Array.from({ length: 60 }, (_, i) => `T-${1000 + i}`), 'the file\'s own ids, in the file\'s order')
+    const ids = new Set(OWN_TEAMS.map((x) => x.id))
+    for (const r of rows.slice(1)) {
+      assert.ok(ids.has(r[1]), `team ${r[1]}`); assert.ok(Number(r[2]) > 0 && Number(r[2]) <= 1)
+      assert.ok(['no_rush', 'this_week', 'today', 'urgent', 'emergency'].includes(r[3])); assert.ok(['calm', 'annoyed', 'furious'].includes(r[6]))
+      for (const k of [4, 5, 7]) assert.ok(['yes', 'no'].includes(r[k]))
+    }
+    assert.equal(rows[1][1], 'billing'); assert.equal(rows[2][1], 'shipping'); assert.equal(rows[9][4], 'yes', 'the prize message is flagged as spam')
+    assert.equal(rows[1][10], BODIES[0] + ', also the refund for my payment', 'the original text rides along untouched')
+    // processed once: it does not loop
+    assert.equal((await v.ctl('tick', { n: 5 })).body.did, 0)
+    assert.equal((await v.state()).n, 60)
+    const again = await v.ctl('again')
+    assert.equal(again.status, 200)
+    s = await v.state()
+    assert.equal(s.phase, 'run'); assert.equal(s.n < 60, true)
+  } finally { await v.viewer.close() }
+})
+
+test('your data: a csv file with quotes, commas, line breaks and a clashing column survives the round trip', async () => {
+  const nasty = 'He said "hi", then\nleft, twice'
+  const csv = ['id,subject,message,team', '7,"Refund, please","my card was charged twice, the refund for my payment is missing",old-team', `8,Broken,${csvCell(nasty + ' the lamp arrived broken and I want a replacement')},`, '9,Empty,,x', '10,Parcel,"the courier lost the package during delivery"," padded "'].join('\r\n') + '\r\n'
+  const v = await fresh({ ...OWN, source: 'mail.csv' }, null, { 'mail.csv': csv })
+  try {
+    const s = await v.state()
+    assert.equal(s.own, true)
+    assert.equal(s.source.textColumn, 'message'); assert.equal(s.source.idColumn, 'id'); assert.equal(s.source.used, 3); assert.equal(s.source.skipped, 1)
+    await v.hold(); await v.ctl('tick', { n: 10 })
+    const rows = readCsv(v.ws)
+    assert.deepEqual(rows[0], [...TRIAGE_COLUMNS, 'subject', 'message', 'source_team'], 'a column called team is renamed, never dropped')
+    assert.deepEqual(rows.slice(1).map((r) => r[0]), ['7', '8', '10'], 'the row with no text is skipped')
+    assert.equal(rows[1][8], 'Refund, please'); assert.equal(rows[1][10], 'old-team')
+    assert.equal(rows[2][9], nasty + ' the lamp arrived broken and I want a replacement', 'quotes, commas and a line break come back exactly')
+    assert.equal(rows[3][10], ' padded ', 'outer spaces are kept')
+    assert.equal(rows[1][1], 'billing'); assert.equal(rows[2][1], 'returns'); assert.equal(rows[3][1], 'shipping')
+  } finally { await v.viewer.close() }
+})
+
+test('your data: a source outside the workspace is refused and nothing is written', async () => {
+  const outside = mkdtempSync(join(tmpdir(), 'jev-firehose-outside-'))
+  writeFileSync(join(outside, 'secret.csv'), 'text\nthis must never be read\n')
+  for (const source of [`../${outside.split('/').pop()}/secret.csv`, join(outside, 'secret.csv'), '.harness/x.jsonl', 'triage.csv', 'notes.txt']) {
+    const v = await fresh({ ...OWN, source }, null, { 'triage.csv': 'mine\n', 'notes.txt': 'x\n' })
+    try {
+      const s = await v.state()
+      assert.equal(s.own, false, source)
+      assert.ok(s.error, `an error is shown for ${source}`)
+      assert.match(s.error, /inside the workspace|\.harness|results are written|must be a \.csv/)
+      assert.equal(s.source, null)
+      await v.hold()
+      assert.equal((await v.ctl('tick', { n: 5 })).body.did, 5, 'the synthetic desk keeps the pane alive')
+      assert.equal(readFileSync(join(v.ws, 'triage.csv'), 'utf8'), 'mine\n', 'an existing triage.csv is not touched')
+      const verdict = JSON.parse(readFileSync(join(v.ws, '.harness/verdict.json'), 'utf8'))
+      assert.equal(verdict.ready, false); assert.ok(verdict.findings.some((f) => f.kind === 'source' && f.severity === 'error')); assert.equal(verdict.triage, undefined)
+    } finally { await v.viewer.close() }
+  }
+  const direct = loadSource(outside, '../etc/passwd.csv')
+  assert.equal(direct.rows.length, 0); assert.match(direct.error, /inside the workspace/)
+})
+
+test('your data: moving the threshold re-buckets and rewrites triage.csv', async () => {
+  const v = await fresh({ ...OWN, threshold: 0.3 }, null, { 'inbox.jsonl': jsonl(120) })
+  try {
+    await v.hold(); await v.ctl('tick', { n: 120 })
+    const yes = () => readCsv(v.ws).slice(1).filter((r) => r[7] === 'yes').length
+    const before = yes(), loose = (await v.state()).stats
+    assert.equal(before, loose.escalated)
+    const strict = (await v.ctl('threshold', { value: 0.9 })).body.stats
+    assert.ok(strict.escalated > loose.escalated + 10, `escalated ${loose.escalated} -> ${strict.escalated}`)
+    assert.equal(await until(() => yes() === strict.escalated), true, 'the file on disk follows the slider')
+    assert.equal(readCsv(v.ws).length, 121, 'still one line per message')
+    const s = await v.state()
+    assert.equal(s.summary.escalated, strict.escalated, 'the kept summary card shows the new split')
+    const verdict = await until(() => { const x = JSON.parse(readFileSync(join(v.ws, '.harness/verdict.json'), 'utf8')); return x.triage?.escalated === strict.escalated ? x : null })
+    assert.equal(verdict.triage.path, 'triage.csv'); assert.equal(verdict.triage.file, join(v.ws, 'triage.csv')); assert.equal(verdict.triage.complete, true)
+    assert.equal(verdict.triage.messages, 120); assert.equal(verdict.triage.done, 120); assert.equal(verdict.triage.threshold, 0.9)
+    assert.equal(Object.values(verdict.triage.teams).reduce((a, b) => a + b, 0) + verdict.triage.spam + verdict.triage.escalated, 120, 'the counts add up')
+    assert.match(verdict.summary, /your data .* results in triage\.csv/)
+  } finally { await v.viewer.close() }
+})
+
+test('your data: there is no ground truth, so no accuracy anywhere', async () => {
+  const v = await fresh(OWN, null, { 'inbox.jsonl': jsonl(80) })
+  try {
+    await v.hold(); await v.ctl('tick', { n: 80 })
+    const s = await v.state()
+    for (const k of ['accuracy', 'right', 'binRight', 'recentAccuracy']) assert.equal(k in s.stats, false, `stats.${k}`)
+    assert.equal(s.suggested, null)
+    assert.equal('accuracy' in s.summary, false); assert.equal('right' in s.summary, false)
+    assert.ok(s.stats.meanConfidence > 0 && s.stats.routedPct > 0)
+    const rec = (await v.ctl('inspect', { id: 5 })).body.record
+    assert.equal(rec.own, true); assert.equal('right' in rec, false); assert.equal('truth' in rec, false)
+    assert.equal(rec.sourceId, 'T-1005'); assert.ok(rec.text.length > 5); assert.deepEqual(Object.keys(rec.answers), ['team', 'urgency', 'spam', 'needs_human', 'mood'])
+    const sweep = (await v.ctl('sweep')).body.sweep
+    assert.equal('accuracy' in sweep[50], false); assert.ok(sweep[90].escalatedPct >= sweep[10].escalatedPct)
+    const bin = (await v.ctl('bin', { bucket: 0 })).body
+    assert.equal(bin.own, true); assert.ok(bin.most.confidence >= bin.least.confidence, 'most and least confident message of the team')
+    assert.equal('right' in bin.list[0], false)
+    const verdict = JSON.parse(readFileSync(join(v.ws, '.harness/verdict.json'), 'utf8'))
+    assert.equal(/\bright\b/.test(JSON.stringify(verdict.findings)), false, 'the verdict claims no accuracy')
+  } finally { await v.viewer.close() }
+})
+
+test('your data: the free-running loop finishes the file, stops, and keeps the summary', async () => {
+  const v = await fresh({ ...OWN, ratePerSec: 400 }, null, { 'inbox.jsonl': jsonl(90) })
+  try {
+    const s = await until(async () => { const x = await v.state(); return x.phase === 'done' ? x : null }, 6000)
+    assert.ok(s, 'the file finishes on its own')
+    assert.equal(s.n, 90)
+    await wait(3600)   // longer than the synthetic summary pause: it must NOT start another batch
+    const later = await v.state()
+    assert.equal(later.phase, 'done'); assert.equal(later.n, 90); assert.equal(later.batchNo, 1)
+    assert.equal(readCsv(v.ws).length, 91)
+  } finally { await v.viewer.close() }
+})
+
+test('the loader never throws, caps the file, and csv cells are quoted properly', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'jev-firehose-loader-'))
+  writeFileSync(join(ws, 'bad.jsonl'), '{"text":"fine"}\n{not json\n')
+  assert.match(loadSource(ws, 'bad.jsonl').error, /could not be parsed/)
+  assert.match(loadSource(ws, 'missing.csv').error, /cannot be read/)
+  assert.match(loadSource(ws, 42).error, /file name/)
+  writeFileSync(join(ws, 'list.json'), JSON.stringify(['first message', { note: 'second message', n: 7, nested: { a: 1 } }, 5]))
+  const list = loadSource(ws, 'list.json', { textColumn: 'note' })
+  assert.equal(list.error, null); assert.deepEqual(list.rows.map((r) => r.text), ['first message', 'second message'], 'a bare string is a message, a bare number is skipped')
+  assert.deepEqual(list.rows[0].cells, ['first message', '', ''], 'a bare string lands in the text column')
+  assert.deepEqual(list.rows[1].cells, ['second message', '7', '{"a":1}'], 'other values are kept as they were')
+  writeFileSync(join(ws, 'many.tsv'), 'text\tn\n' + Array.from({ length: 50 }, (_, i) => `message ${i}\t${i}`).join('\n'))
+  const capped = loadSource(ws, 'many.tsv', { limit: 20 })
+  assert.equal(capped.rows.length, 20); assert.equal(capped.info.truncated, true); assert.equal(capped.rows[19].id, '20', 'row numbers when the file has no id column')
+  assert.match(loadSource(ws, 'many.tsv', { textColumn: 'nope' }).error, /not a column/)
+  assert.equal(csvCell('plain'), 'plain'); assert.equal(csvCell('a,b'), '"a,b"'); assert.equal(csvCell('say "hi"'), '"say ""hi"""'); assert.equal(csvCell('two\nlines'), '"two\nlines"'); assert.equal(csvCell(null), '')
+})
+
+test('check.mjs and measure.mjs accept a source', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'jev-firehose-check-own-'))
+  writeFileSync(join(ws, 'inbox.jsonl'), jsonl(40))
+  const run = (tool, cfg, args = []) => { writeFileSync(join(ws, 'firehose.json'), JSON.stringify(cfg)); return spawnSync(process.execPath, [join(ROOT, 'toolchain', tool), ...args], { env: { ...process.env, HARNESS_WORKSPACE: ws }, encoding: 'utf8' }) }
+  const good = run('check.mjs', OWN)
+  assert.equal(good.status, 0, good.stdout)
+  assert.match(good.stdout, /source inbox\.jsonl: 40 messages, text column "body", id column "ticket"/)
+  const escape = run('check.mjs', { ...OWN, source: '../../etc/hosts.csv' })
+  assert.equal(escape.status, 1); assert.match(escape.stdout, /inside the workspace/)
+  const wrongCol = run('check.mjs', { ...OWN, textColumn: 'nope' })
+  assert.equal(wrongCol.status, 1); assert.match(wrongCol.stdout, /not a column/)
+  const m = run('measure.mjs', OWN, ['--n', '40'])
+  assert.equal(m.status, 0, m.stdout + m.stderr)
+  assert.match(m.stdout, /40 of 40 of your messages/); assert.match(m.stdout, /no accuracy/); assert.match(m.stdout, /escalated/); assert.match(m.stdout, /least confident/)
+  assert.equal(/my card was charged/.test(m.stdout), false, 'measure prints ids, not the person\'s text')
+})
+
+test('triage.csv never turns a message into a spreadsheet formula', async () => {
+  const { csvCell } = await import('../viewer/source.mjs')
+  assert.equal(csvCell('=HYPERLINK("http://evil.example","click")'), `"'=HYPERLINK(""http://evil.example"",""click"")"`)
+  assert.equal(csvCell('@SUM(A1)'), "'@SUM(A1)")
+  assert.equal(csvCell('+1 555 0100'), "'+1 555 0100")
+  assert.equal(csvCell('-5'), '-5')
+  assert.equal(csvCell('+1.5'), '+1.5')
+  assert.equal(csvCell('plain text'), 'plain text')
 })

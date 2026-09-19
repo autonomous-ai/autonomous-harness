@@ -3,12 +3,14 @@
 //
 //   node toolchain/check.mjs [path/to/firehose.json]
 //
+// With "source" set (the person's own messages) it also loads that file the way the viewer will.
 // Errors (exit code 1): values the viewer would have to clamp or drop.
 // Warnings (exit code 0): words that make the desk harder to route than you meant, for example a
 // phrase that shares more words with another team's description than with its own.
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { stems } from './jev.mjs'
+import { loadSource } from '../viewer/source.mjs'
 
 const ws = process.env.HARNESS_WORKSPACE || '.'
 const file = process.argv[2] || join(ws, 'firehose.json')
@@ -29,7 +31,19 @@ const RANGES = {
   noise: [0, 1], threshold: [0, 1], targetAccuracy: [0.5, 1], ratePerSec: [1, 400], concurrency: [1, 64],
   batch: [50, 100000], llmSecondsPerItem: [0.1, 120], spamRate: [0, 0.5],
 }
-const REQUIRED = ['noise', 'threshold', 'ratePerSec', 'concurrency', 'batch']
+// With `source` set the person's own file is the stream: the generator is off, so `noise`, `batch`
+// and the teams' phrases are not needed.
+const own = p.source !== undefined && p.source !== null
+const REQUIRED = own ? ['threshold', 'ratePerSec', 'concurrency'] : ['noise', 'threshold', 'ratePerSec', 'concurrency', 'batch']
+if (own) {
+  if (typeof p.source !== 'string' || !p.source.trim()) error('source must be a file name inside the workspace, for example "inbox.jsonl"')
+  else {
+    const r = loadSource(dirname(resolve(file)), p.source, { textColumn: typeof p.textColumn === 'string' ? p.textColumn : undefined })
+    if (r.error) error(r.error)
+    else console.log(`ok     source ${r.info.name}: ${r.info.used} messages, text column "${r.info.textColumn}"${r.info.idColumn ? `, id column "${r.info.idColumn}"` : ', row numbers as ids'}${r.info.skipped ? `, ${r.info.skipped} empty rows skipped` : ''}${r.info.truncated ? ' (file is longer, the rest is ignored)' : ''}`)
+  }
+  if (p.textColumn !== undefined && typeof p.textColumn !== 'string') error('textColumn must be a column name')
+} else if (p.textColumn !== undefined) warn('textColumn is only used together with source')
 const WHOLE = ['concurrency', 'batch']
 for (const [key, [lo, hi]] of Object.entries(RANGES)) {
   const v = p[key]
@@ -58,7 +72,7 @@ else {
     seen.add(id)
     if (typeof t?.description !== 'string' || !t.description.trim()) error(`team ${name} needs a description`)
     const phrases = Array.isArray(t?.phrases) ? t.phrases.filter((x) => typeof x === 'string' && x.trim()) : []
-    if (phrases.length < 4) error(`team ${name} has ${phrases.length} phrases, needs at least 4`)
+    if (!own && phrases.length < 4) error(`team ${name} has ${phrases.length} phrases, needs at least 4`)
     if (t?.weight !== undefined && (typeof t.weight !== 'number' || t.weight < 0.1 || t.weight > 10)) error(`team ${name} weight must be 0.1..10`)
     desc.push(new Set(stems(`${id.replace(/[_-]+/g, ' ')} ${t?.description ?? ''}`)))
   })
@@ -86,4 +100,4 @@ else {
 }
 
 if (errors) { console.log(`fail   invalid firehose.json (${errors} error${errors > 1 ? 's' : ''}, ${warns} warning${warns === 1 ? '' : 's'})`); process.exit(1) }
-console.log(`ok     firehose.json is valid (${teams.length} teams, ${teams.reduce((a, t) => a + t.phrases.length, 0)} phrases, ${warns} warning${warns === 1 ? '' : 's'})`)
+console.log(`ok     firehose.json is valid (${teams.length} teams, ${own ? 'your own messages' : teams.reduce((a, t) => a + (t.phrases?.length ?? 0), 0) + ' phrases'}, ${warns} warning${warns === 1 ? '' : 's'})`)

@@ -30,7 +30,12 @@ commit to it — the viewer and any direct calls share the same client.
   threshold that meets `targetAccuracy`, and the most confused team pairs. Flags: `--n 600`,
   `--noise 0.3`. Without a key it is free. With a key, each message is one real call.
 
-All data these tools make is synthetic.
+Both tools accept `"source"` (the person's own messages). `check.mjs` then loads the file the way the
+viewer will and reports the text column, the id column and the message count. `measure.mjs` samples
+the file and prints the split at each threshold and the ids of the least confident messages. It
+prints ids, never the text, and no accuracy, because there is no answer key.
+
+Without `source`, all data these tools make is synthetic.
 
 ## Going live
 

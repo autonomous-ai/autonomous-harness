@@ -243,7 +243,9 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
   // The point of asking is to use the answers: answers.csv in the workspace always holds the sheet
   // as it stands (demo columns left out), so the person or the chat agent can sort, filter or share it.
   const ANSWERS = 'answers.csv'
-  const csvCell = (v) => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
+  // Rows may be untrusted text: a cell starting with = + - @ would run as a formula in a spreadsheet,
+  // so it gets a leading single quote, unless it is only a number.
+  const csvCell = (v) => { let s = v == null ? '' : String(v); if (/^[=+\-@\t\r]/.test(s) && !/^[+-]?\d+(\.\d+)?$/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
   function answersCsv() {
     const cols = columns.filter((c) => c.source !== 'demo')
     const metaKeys = [...new Set(rows.flatMap((r) => Object.keys(r.meta ?? {})))].slice(0, 24)
