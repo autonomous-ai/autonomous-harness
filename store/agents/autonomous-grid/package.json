@@ -1,0 +1,11 @@
+{
+  "name": "@autonomous/grid-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:live": "node test/live.mjs",
+    "start": "./viewer.sh"
+  },
+  "engines": { "node": ">=22" }
+}

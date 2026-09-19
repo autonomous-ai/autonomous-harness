@@ -892,6 +892,7 @@ const GRID_ENGINE_REFUSALS: Partial<Record<AgentEngine, string>> = {
   devin: 'Devin runs on its own hosted service and documents no endpoint override',
   muse: 'Muse Code documents no way to change its endpoint',
   commandcode: 'Command Code documents no way to change its endpoint',
+  terminal: 'a terminal runs no engine to point at a grid — start one inside it and it will use its own login',
 }
 
 /** Engines that can be pointed at a grid today, for error text that names what to pick instead. */

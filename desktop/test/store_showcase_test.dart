@@ -84,7 +84,7 @@ class _Notifier extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     bool bypassPermission = false,
     String? permissionMode,
     String? codexHome,
@@ -376,35 +376,59 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('says what it starts with and sends it', (tester) async {
+    final task = find.byKey(const ValueKey('new-agent-task'));
+    String taskText(WidgetTester tester) =>
+        tester.widget<TextField>(task).controller!.text;
+
+    testWidgets('fills the task with the prompt and sends it', (tester) async {
       final app = await open(tester);
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('new-agent-first-message')),
-          matching: find.text(_lamp.prompt),
-        ),
-        findsOneWidget,
-      );
+      expect(taskText(tester), _lamp.prompt, reason: 'trimmed, not rewritten');
       await create(tester);
       expect(app.prompts, [_lamp.prompt]);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('starts without it once removed', (tester) async {
+    testWidgets('sends the task as edited', (tester) async {
       final app = await open(tester);
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('new-agent-first-message-remove')),
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('new-agent-first-message-remove')),
-      );
+      await tester.ensureVisible(task);
+      await tester.enterText(task, '${_lamp.prompt} Make it brass.\nAnd tall.');
+      await tester.pump();
+      await create(tester);
+      expect(app.prompts, ['${_lamp.prompt} Make it brass.\nAnd tall.']);
+    });
+
+    testWidgets('starts with nothing sent once the task is cleared', (
+      tester,
+    ) async {
+      final app = await open(tester);
+      final clear = find.byKey(const ValueKey('new-agent-task-clear'));
+      await tester.ensureVisible(clear);
+      await tester.tap(clear);
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('new-agent-first-message')),
-        findsNothing,
-      );
+      expect(taskText(tester), isEmpty);
+      expect(clear, findsNothing);
       await create(tester);
       expect(app.prompts, [null]);
+    });
+
+    testWidgets('⌘Return creates from inside the task, Return adds a line', (
+      tester,
+    ) async {
+      final app = await open(tester);
+      await tester.ensureVisible(task);
+      await tester.tap(task);
+      await tester.pump();
+      await tester.enterText(task, 'Draw a desk lamp');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(app.prompts, isEmpty, reason: 'Return alone never creates');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      expect(app.prompts, hasLength(1));
+      expect(app.prompts.single, startsWith('Draw a desk lamp'));
     });
   });
 
@@ -455,11 +479,11 @@ void main() {
         reason: 'New Harness is open',
       );
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('new-agent-first-message')),
-          matching: find.text(_gear.prompt),
-        ),
-        findsOneWidget,
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('new-agent-task')))
+            .controller!
+            .text,
+        _gear.prompt,
       );
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -522,11 +546,11 @@ void main() {
         reason: 'New Harness is open',
       );
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('new-agent-first-message')),
-          matching: find.text('Build a harness for LilyPond.'),
-        ),
-        findsOneWidget,
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('new-agent-task')))
+            .controller!
+            .text,
+        'Build a harness for LilyPond.',
       );
       expect(find.text('Harness Builder'), findsWidgets);
 

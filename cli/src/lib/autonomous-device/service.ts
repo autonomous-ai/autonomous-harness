@@ -21,6 +21,12 @@ export interface AutonomousDeviceServiceOptions {
    * acknowledgment is what makes the move real. `'no_app'` when no Desktop window is connected.
    */
   stepFocus?: (direction: 'next' | 'previous', currentAgentId: string | undefined) => Promise<{ machineId: string; agentId: string } | 'no_agents' | 'no_app'>
+  /**
+   * One piece of a finger stroke for the focused terminal's scrollback, the way the USB dial's glass
+   * reports it — same `dial_scroll` forward, the terminal does the arithmetic. `false` when no Desktop
+   * window is connected to scroll.
+   */
+  scroll?: (phase: 'down' | 'move' | 'up', dy: number, velocity: number) => boolean
   submit: (agentId: string, text: string, deliveryId: string) => void
   cancelDelivery: (deliveryId: string) => boolean
   stop: (agentId: string) => Promise<boolean>
@@ -38,10 +44,14 @@ export interface AutonomousDeviceServiceOptions {
   emit?: (frame: AutonomousDeviceFrame) => void
 }
 interface Entry { deviceId: string; digest: string; receipt: AutonomousDeviceReceipt }
-const CAPABILITIES = ['focus.get', 'focus.ensure', 'focus.step', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
+const CAPABILITIES = ['focus.get', 'focus.ensure', 'focus.step', 'scroll', 'agents.list', 'turn.send', 'turn.stop', 'status', 'recap', 'question.answer', 'receipt.get'] as const
 export const AUTONOMOUS_DEVICE_CAPABILITIES: string[] = [...CAPABILITIES]
 const MUTATIONS = new Set(['turn.send', 'turn.stop', 'question.answer'])
 const STEP_RESULTS_MAX = 512
+const SCROLL_PHASES = new Set(['down', 'move', 'up'])
+/** Device pixels per report and px/s: generous for any glass, tight enough that a bad value cannot fling a terminal for minutes. */
+const SCROLL_DY_MAX = 4096
+const SCROLL_VELOCITY_MAX = 100_000
 const APP_FOCUS_WAIT_MS = 2000
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const KEY = /^[A-Za-z0-9_-]{1,64}$/
@@ -125,6 +135,20 @@ export class AutonomousDeviceService {
     // A desk of one: the only neighbour is the agent already in front — nothing to move, nothing to await.
     if (before.focus?.machineId === target.machineId && before.focus.agentId === target.agentId) return before
     return this.waitForAppFocus(Date.now() + APP_FOCUS_WAIT_MS, s => s.focusRevision !== before.focusRevision)
+  }
+
+  /**
+   * A stroke is a stream, not a mutation: no idempotency key, no receipt, nothing retained. A lost `move`
+   * is a shorter scroll; a lost `up` is what the next `down` closes on the app side, as for the dial.
+   */
+  private scroll(req: Record<string, unknown>): void {
+    const phase = req.phase
+    if (typeof phase !== 'string' || !SCROLL_PHASES.has(phase)) fail('INVALID_REQUEST', 'phase must be down, move or up')
+    const dy = req.dy ?? 0, velocity = req.velocity ?? 0
+    if (!Number.isInteger(dy) || Math.abs(dy as number) > SCROLL_DY_MAX) fail('INVALID_REQUEST', `dy must be an integer within ±${SCROLL_DY_MAX}`)
+    if (!Number.isInteger(velocity) || Math.abs(velocity as number) > SCROLL_VELOCITY_MAX) fail('INVALID_REQUEST', `velocity must be an integer within ±${SCROLL_VELOCITY_MAX}`)
+    if (!this.options.scroll) fail('FOCUS_UNAVAILABLE', 'Scrolling is not wired on this machine')
+    if (!this.options.scroll(phase as 'down' | 'move' | 'up', dy as number, velocity as number)) fail('FOCUS_UNAVAILABLE', 'Open Harness Desktop to scroll a terminal')
   }
 
   /** Enable-time fallback only. The desktop must acknowledge its selected pane. */
@@ -265,7 +289,7 @@ export class AutonomousDeviceService {
     try {
       if (!UUID.test(String(req.requestId))) fail('INVALID_REQUEST', 'requestId must be a UUIDv4')
       if (!AUTONOMOUS_DEVICE_CAPABILITIES.includes(type)) fail('UNSUPPORTED_CAPABILITY', 'Operation is not supported')
-      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get', 'focus.ensure'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : type === 'focus.step' ? ['direction', 'idempotencyKey', 'focusRevision'] : ['machineId', 'agentId']),
+      const allowed = ['type', 'requestId', ...(['agents.list', 'focus.get', 'focus.ensure'].includes(type) ? [] : type === 'receipt.get' ? ['idempotencyKey'] : type === 'focus.step' ? ['direction', 'idempotencyKey', 'focusRevision'] : type === 'scroll' ? ['phase', 'dy', 'velocity'] : ['machineId', 'agentId']),
         ...(MUTATIONS.has(type) ? ['idempotencyKey'] : []), ...(type === 'turn.send' ? ['text', 'focusRevision'] : type === 'question.answer' ? ['questionRequestId', 'answers', 'focusRevision'] : type === 'recap' ? ['n'] : [])]
       if (Object.keys(req).some(k => !allowed.includes(k))) fail('INVALID_REQUEST', 'Unknown request field')
       if (type === 'receipt.get') {
@@ -275,6 +299,7 @@ export class AutonomousDeviceService {
       if (type === 'focus.get') return response(this.focusSnapshot())
       if (type === 'focus.ensure') return response(await this.ensureFocus())
       if (type === 'focus.step') return response(await this.stepFocus(deviceId, req))
+      if (type === 'scroll') { this.scroll(req); return response({}) }
       if ('focusRevision' in req && (typeof req.focusRevision !== 'string' || !req.focusRevision)) fail('INVALID_REQUEST', 'focusRevision must be a nonempty string')
       if (type === 'agents.list') {
         return response({ machineId: this.options.machineId, agents: this.options.agents().map(a => {

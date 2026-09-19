@@ -1,4 +1,4 @@
-import type { AgentEngine } from '../engines/types.js'
+import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
 import type { RegisteredSession } from './registry.js'
 import {
   probeTerminalAgents,
@@ -48,13 +48,23 @@ function sharesPlacement(
  * a first-run prompt (Claude folder trust is the common case). Once a session binds, process identity is
  * authoritative again so a different process in the same pane cannot inherit an existing transcript.
  */
+/**
+ * Whether a row may own an observed engine process at its own route. The same engine, or a
+ * terminal — a shell somebody typed `claude` into: the process is what the terminal is running now,
+ * and the row adopts the engine (cli.ts `onObserved` → `registry.adoptEngine`) rather than a second
+ * agent being minted for the same pane.
+ */
+function routeEngineMatches(current: Pick<RegisteredSession, 'engine'>, observed: Pick<DiscoveredTerminalAgent, 'engine'>): boolean {
+  return current.engine === observed.engine || isTerminalEngine(current.engine)
+}
+
 function unboundRouteOwner(
   current: readonly RegisteredSession[],
   observed: DiscoveredTerminalAgent,
 ): RegisteredSession | undefined {
   const matches = current.filter((candidate) => (
     !candidate.sessionId
-    && candidate.engine === observed.engine
+    && routeEngineMatches(candidate, observed)
     && sharesPlacement(candidate, observed)
   ))
   return matches.length === 1 ? matches[0] : undefined
@@ -66,7 +76,7 @@ function unboundRouteObservation(
 ): DiscoveredTerminalAgent | undefined {
   if (current.sessionId) return undefined
   const matches = observed.filter((candidate) => (
-    candidate.engine === current.engine && sharesPlacement(current, candidate)
+    routeEngineMatches(current, candidate) && sharesPlacement(current, candidate)
   ))
   return matches.length === 1 ? matches[0] : undefined
 }
@@ -304,8 +314,13 @@ export class TerminalAgentReconciler {
         if (terminalVerified) await this.deps.onTerminalAvailability?.(current, true)
         if (observed) {
           this.engineMisses.delete(current.agentId)
-        } else if (current.active && terminalVerified && !current.runtimes.some((runtime) =>
+        } else if (current.active && terminalVerified && !isTerminalEngine(current.engine) && !current.runtimes.some((runtime) =>
           probe.ambiguousPlacements.has(terminalPlacementKey(runtime)))) {
+          // A live pane with no engine process in it. For an agent that is a dormant engine; for a
+          // terminal (`engine === 'terminal'`) it is simply a shell at its prompt, which is why the
+          // branch is skipped for one. A terminal that ADOPTED an engine (`terminalHost`, engine no
+          // longer `terminal`) does come through here when that engine exits — the handler turns it
+          // back into a terminal rather than marking it dormant (cli.ts `onDormant`).
           const misses = (this.engineMisses.get(current.agentId) ?? 0) + 1
           if (misses >= MISS_LIMIT) {
             this.engineMisses.delete(current.agentId)

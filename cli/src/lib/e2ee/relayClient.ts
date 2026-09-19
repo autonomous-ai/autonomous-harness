@@ -11,6 +11,7 @@
  */
 import { WebSocket } from 'ws'
 import * as C from './core.js'
+import { encryptDownFrame } from './applicationFrames.js'
 import { deriveTerminalBinaryKey, openTerminalBinary, sealTerminalBinary, type TerminalBinaryClear } from '../terminalBinary.js'
 import { pwCpaceGenerator, pwContext, stretchPassword } from './passwordPake.js'
 import { ReplayWindow } from './replayWindow.js'
@@ -36,12 +37,14 @@ export class RelaySessionCrypto {
   private groupKey: Uint8Array | null = null
   private epoch = ''
   private p2pVersion = 0
+  private viewerVersion = 0
   private groupRecv = new Map<string, number>() // epoch -> highest counter seen
 
   constructor(private readonly deps: RelayCryptoDeps) {}
 
   get ready(): boolean { return this.c2s !== null && this.s2c !== null }
   get terminalP2pVersion(): number { return this.p2pVersion }
+  get viewerForwardingVersion(): number { return this.viewerVersion }
 
   helloFrame(): Frame {
     return {
@@ -69,7 +72,7 @@ export class RelaySessionCrypto {
     } catch { return false }
     const opened = C.aeadOpen(keys.s2c, 0, C.utf8('e2e-welcome'), C.b64d(encB64))
     if (!opened) return false
-    let initial: { groupKey?: string; epoch?: string; features?: { terminalP2p?: unknown } }
+    let initial: { groupKey?: string; epoch?: string; features?: { terminalP2p?: unknown; viewerForwarding?: unknown } }
     try { initial = JSON.parse(new TextDecoder().decode(opened)) as typeof initial } catch { return false }
     if (!initial.groupKey || !initial.epoch) return false
     this.c2s = keys.c2s
@@ -81,6 +84,7 @@ export class RelaySessionCrypto {
     this.p2pVersion = Number.isSafeInteger(initial.features?.terminalP2p)
       ? Number(initial.features?.terminalP2p)
       : 0
+    this.viewerVersion = initial.features?.viewerForwarding === 1 ? 1 : 0
     return true
   }
 
@@ -103,7 +107,9 @@ export class RelaySessionCrypto {
   /** Encrypt an outgoing (local app → remote machine) frame if its type requires it. */
   wrapOutgoing(frame: Frame): Frame {
     const type = frame.type as string | undefined
-    if (!type || !this.c2s || !C.isEncryptedDownType(type)) return frame
+    // Sharing, viewer forwarding and fleet RPCs are negotiated extensions; the shared crypto core stays
+    // byte-identical — see applicationFrames.ts for the one list.
+    if (!type || !this.c2s || !encryptDownFrame(type)) return frame
     const payload = C.wrapPayload(this.c2s, 'p', this.c2sCounter++, type, undefined, frame.payload)
     return { ...frame, payload }
   }

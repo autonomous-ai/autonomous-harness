@@ -31,6 +31,9 @@ import {
   type TerminalP2pPolicy,
 } from './terminalP2p.js'
 import { warmStunUrls } from './stunSelect.js'
+import { RemoteViewerProxy } from './remoteViewerProxy.js'
+import { VIEWER_UP_TYPES } from './viewerWire.js'
+import { isWrapped } from './e2ee/core.js'
 
 const CONNECT_TIMEOUT_MS = 15_000
 const LINGER_MS = 30_000
@@ -87,9 +90,52 @@ function binaryBytes(raw: RawData): Uint8Array {
   return new Uint8Array()
 }
 
+/** One local client attached to a pooled upstream: where its frames go, and what to tell it on close. */
+interface AttachedClient {
+  sink: LocalClientSink
+  onClosed: (code: number, reason: string) => void
+}
+
+/**
+ * `entry.sink` / `entry.onClosed` as the fan-out over what is attached: a frame reaches every client,
+ * a client whose socket refuses it is dropped, and a close is told to each. Null when nobody is
+ * attached — which is what the linger and the viewer proxy already key on.
+ */
+function bindAttached(entry: Entry): void {
+  const clients = entry.attached
+  if (clients.size === 0) { entry.sink = null; entry.onClosed = null; return }
+  entry.sink = {
+    sendFrame: (frame) => {
+      let delivered = false
+      for (const client of [...clients]) {
+        if (client.sink.sendFrame(frame)) delivered = true
+        else clients.delete(client)
+      }
+      return delivered
+    },
+    sendBinary: (frame) => {
+      let delivered = false
+      for (const client of [...clients]) {
+        if (client.sink.sendBinary(frame)) delivered = true
+        else clients.delete(client)
+      }
+      return delivered
+    },
+  }
+  entry.onClosed = (code, reason) => { for (const client of [...clients]) client.onClosed(code, reason) }
+}
+
 interface Entry {
+  viewers?: RemoteViewerProxy
   ws: WebSocket
   crypto: RelaySessionCrypto
+  /**
+   * Every local client selected onto this machine right now. ONE upstream session per machine — the
+   * desktop's, usually — but a second local client (`harness remote` creating a terminal there, an
+   * E2E script watching) must not take the desktop's place: `sink` fans out to all of them and
+   * `onClosed` tells each, and the entry lingers only once the last one has detached.
+   */
+  attached: Set<AttachedClient>
   sink: LocalClientSink | null
   onClosed: ((code: number, reason: string) => void) | null
   lingerTimer: ReturnType<typeof setTimeout> | null
@@ -178,6 +224,21 @@ export class RemoteRelayPool {
     private readonly peers: MachinePeerStore,
   ) {}
 
+  /** Background CLI jobs must not replace the desktop window's one pooled sink. Each isolated
+   * client gets its own encrypted session, released immediately instead of retained for reconnect. */
+  async acquireIsolated(
+    machineId: string, autonomousEnv: string, selectFrame: Frame,
+    sink: LocalClientSink, onClosed: (code: number, reason: string) => void,
+  ): Promise<RelaySession> {
+    const isolated = new RemoteRelayPool(this.auth, this.backendWsBase, this.selfIdentity, this.peers)
+    const session = await isolated.acquire(machineId, autonomousEnv, selectFrame, {
+      ...sink,
+      sendFrame: frame => sink.sendFrame(frame.type === 'connected'
+        ? { ...frame, payload: { ...framePayload(frame), relayIsolation: true } } : frame),
+    }, onClosed)
+    return { ...session, detach: () => isolated.invalidate(machineId) }
+  }
+
   /** Force-drops a pooled entry so the next `acquire()` dials fresh instead of reusing it. For when
    *  the transport itself never closed but the app-level session behind it is known dead anyway — e.g.
    *  the relayed machine's own Harness process restarted, dropping its in-memory E2EE session state
@@ -188,6 +249,7 @@ export class RemoteRelayPool {
     const entry = this.entries.get(machineId)
     if (!entry) return
     this.entries.delete(machineId)
+    entry.viewers?.close()
     entry.heartbeat?.stop()
     if (entry.lingerTimer) clearTimeout(entry.lingerTimer)
     if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
@@ -215,23 +277,24 @@ export class RemoteRelayPool {
     sink: LocalClientSink,
     onClosed: (code: number, reason: string) => void,
   ): Promise<RelaySession> {
+    const client: AttachedClient = { sink, onClosed }
     const existing = this.entries.get(machineId)
     if (existing) {
       if (existing.lingerTimer) { clearTimeout(existing.lingerTimer); existing.lingerTimer = null }
-      existing.sink = sink
-      existing.onClosed = onClosed
+      existing.attached.add(client)
+      bindAttached(existing)
       sink.sendFrame({ type: 'connected', payload: { machineId, e2ee: false } })
-      return this.sessionFor(machineId, existing)
+      return this.sessionFor(machineId, existing, client)
     }
     const inFlight = this.pending.get(machineId)
     const entry = await (inFlight ?? this.connect(machineId, autonomousEnv, selectFrame))
-    entry.sink = sink
+    entry.attached.add(client)
+    bindAttached(entry)
     // The real backend `connected{machineId}` ack that resolved the connect above was consumed
     // internally by dial()'s handshake logic, not forwarded — this local client (whether it triggered
     // the dial or joined one already in flight) still needs its own ack to know the select succeeded.
     sink.sendFrame({ type: 'connected', payload: { machineId, e2ee: false } })
-    entry.onClosed = onClosed
-    return this.sessionFor(machineId, entry)
+    return this.sessionFor(machineId, entry, client)
   }
 
   private connect(machineId: string, autonomousEnv: string, selectFrame: Frame): Promise<Entry> {
@@ -269,6 +332,7 @@ export class RemoteRelayPool {
     const entry: Entry = {
       ws,
       crypto,
+      attached: new Set(),
       sink: null,
       onClosed: null,
       lingerTimer: null,
@@ -289,6 +353,14 @@ export class RemoteRelayPool {
       upgradeOrphan: null,
       upgradeDone: false,
     }
+    entry.viewers = new RemoteViewerProxy({
+      supported: () => crypto.viewerForwardingVersion === 1,
+      deliver: (frame) => { entry.sink?.sendFrame(frame) },
+      send: (type, payload) => {
+        if (!crypto.ready || ws.readyState !== WebSocket.OPEN) return false
+        try { ws.send(JSON.stringify(crypto.wrapOutgoing({ type, payload }))); return true } catch { return false }
+      },
+    })
     // Two phases before this connection is usable: (1) machine_select ack, (2) this daemon's own
     // e2e_hello/e2e_welcome as the "client" role — see lib/e2ee/relayClient.ts. Only once BOTH are done
     // does the app's onOutgoing/sink start receiving anything, so it never sees a half-encrypted stream.
@@ -409,6 +481,9 @@ export class RemoteRelayPool {
           try { ws.close(4404, 'peer revoked trust') } catch { ws.terminate() }
           return
         }
+        // The relay cannot inject response bytes/headers into a local browser in plaintext.
+        if (typeof frame.type === 'string' && VIEWER_UP_TYPES.has(frame.type)
+          && (!isWrapped(frame.payload) || frame.payload.__e2e?.k !== 'p')) return
         const plain = crypto.unwrapIncoming(frame)
         if (!plain) return
         const type = typeof plain.type === 'string' ? plain.type : ''
@@ -438,6 +513,7 @@ export class RemoteRelayPool {
         // synchronously inside it) must arrive after, or the app-side stream-id match silently drops it
         // (streamId is still null at that point, since terminal_ready — the thing that sets it — has
         // not been delivered yet).
+        if (entry.sink && entry.viewers?.receive(plain)) return
         entry.sink?.sendFrame(plain)
         this.noteTerminalResponse(entry, plain, 'relay')
       })
@@ -454,6 +530,7 @@ export class RemoteRelayPool {
     try {
       await handshake
     } catch (err) {
+      entry.viewers?.close()
       // A rejected handshake MUST take the socket down with it. Only `e2e_denied` used to; the timeout
       // (peer never answered e2e_hello) and `machine_select_error` just dropped their reference, leaving
       // an OPEN socket nothing could reach — not in `entries`, no heartbeat, but still auto-answering
@@ -470,6 +547,7 @@ export class RemoteRelayPool {
     }
     // Handshake done — from here on, a close is the entry's real end-of-life, not a handshake failure.
     ws.on('close', (code, reasonBuf) => {
+      entry.viewers?.close()
       entry.heartbeat?.stop()
       if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)
       if (entry.upgradeTimer) clearTimeout(entry.upgradeTimer)
@@ -496,7 +574,7 @@ export class RemoteRelayPool {
     return entry
   }
 
-  private sessionFor(machineId: string, entry: Entry): RelaySession {
+  private sessionFor(machineId: string, entry: Entry, client: AttachedClient | null = null): RelaySession {
     return {
       send: async (frame) => {
         const payload = framePayload(frame)
@@ -547,8 +625,12 @@ export class RemoteRelayPool {
         if (p2pFailed) this.demoteP2p(machineId, entry, 'send_failed')
       },
       detach: () => {
-        entry.sink = null
-        entry.onClosed = null
+        // This client only; the upstream stays for whoever else is on it, and lingers a while for
+        // the next select once nobody is.
+        if (client) entry.attached.delete(client)
+        bindAttached(entry)
+        if (entry.attached.size > 0) return
+        entry.viewers?.reset()
         entry.lingerTimer = setTimeout(() => {
           if (!entry.sink) {
             if (entry.p2pRetryTimer) clearTimeout(entry.p2pRetryTimer)

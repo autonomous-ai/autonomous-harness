@@ -17,6 +17,7 @@ class AgentChoice {
     required this.label,
     required this.mark,
     this.detail,
+    this.creator,
     this.keywords,
     this.description,
   });
@@ -25,11 +26,15 @@ class AgentChoice {
   final String id;
   final String label;
 
-  /// What it makes and whose it is — "Code · Anthropic".
+  /// The line under the name: what it is, in the project's own words —
+  /// "Advanced physics simulation".
   final String? detail;
 
-  /// More words the search matches but no row draws — the Store's broad
-  /// shelf, so "media" finds Typst beside its own "Documents".
+  /// Who makes it — "Google DeepMind" — beside the name, quieter than it.
+  final String? creator;
+
+  /// More words the search matches but no row draws — the Store's shelf and
+  /// the package's own domain, so "media" and "documents" both find Typst.
   final String? keywords;
 
   /// A sentence or two for the preview.
@@ -211,9 +216,10 @@ class _AgentPickerState extends State<AgentPicker> {
     if (label.startsWith(needle)) return 0;
     if (label.contains(needle)) return 1;
     if (choice.id.toLowerCase().contains(needle)) return 2;
+    if (choice.creator?.toLowerCase().contains(needle) ?? false) return 3;
     if ((choice.detail?.toLowerCase().contains(needle) ?? false) ||
         (choice.keywords?.toLowerCase().contains(needle) ?? false)) {
-      return 3;
+      return 4;
     }
     return -1;
   }
@@ -638,10 +644,36 @@ class _AgentPickerState extends State<AgentPicker> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12),
         leading: SizedBox(width: 24, child: Center(child: choice.mark(22))),
-        title: SearchResultText(
-          choice.label,
-          matches: matches(choice.label, title: true),
-          style: const TextStyle(fontSize: 14, color: Colors.white),
+        // "MuJoCo by Google DeepMind": the name first and bright, whose it is
+        // after it and quiet.
+        title: Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Flexible(
+              child: SearchResultText(
+                choice.label,
+                matches: matches(choice.label, title: true),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            if (choice.creator case final creator?) ...[
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'by $creator',
+                  key: ValueKey('new-agent-agent-row-by-${choice.id}'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: Colors.white54),
+                ),
+              ),
+            ],
+          ],
         ),
         subtitle: choice.detail == null
             ? null
@@ -747,22 +779,43 @@ class _AgentPreview extends StatelessWidget {
                 choice.mark(28),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    choice.label,
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: choice.label,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (choice.creator case final creator?)
+                          TextSpan(
+                            text: '  by $creator',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.white54,
+                            ),
+                          ),
+                      ],
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
                   ),
                 ),
               ],
             ),
             if (choice.detail case final detail?) ...[
-              const SizedBox(height: 6),
-              Text(detail, style: _muted),
+              const SizedBox(height: 8),
+              Text(
+                detail,
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  color: Colors.white70,
+                ),
+              ),
             ],
             if (chips.isNotEmpty) ...[
               const SizedBox(height: 12),

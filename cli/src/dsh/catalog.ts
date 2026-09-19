@@ -39,7 +39,13 @@ export function parseStoreCatalog(value: unknown): StoreCatalog {
   return { spec: 1, entries: entries.sort((a, b) => a.id.localeCompare(b.id)) }
 }
 
-interface Cache { url: string; checkedAt: number; etag?: string; catalog: StoreCatalog }
+/**
+ * [document] is the catalog exactly as published, and it is what goes to disk: [catalog] is that
+ * document parsed by THIS CLI, which drops every field it does not know. A cache of the parsed copy
+ * outlived the CLI that wrote it — upgraded, the next one sent the saved ETag, heard 304 and kept a
+ * catalog cut down to the old CLI's fields (no examples, then no taglines) until the Store next changed.
+ */
+interface Cache { url: string; checkedAt: number; etag?: string; catalog: StoreCatalog; document: unknown }
 interface CatalogOptions {
   url: string
   cacheFile: string
@@ -62,12 +68,15 @@ export class LiveStoreCatalog {
     this.fetcher = options.fetch ?? fetch
     try {
       if (statSync(options.cacheFile).size > MAX_BYTES) return
-      const saved = JSON.parse(readFileSync(options.cacheFile, 'utf8')) as Cache
-      if (saved.url !== options.url || !Number.isFinite(saved.checkedAt)) return
+      const saved = JSON.parse(readFileSync(options.cacheFile, 'utf8')) as Record<string, unknown>
+      if (saved.url !== options.url || typeof saved.checkedAt !== 'number' || !Number.isFinite(saved.checkedAt)) return
       const catalog = parseStoreCatalog(saved.catalog)
-      this.cache = { url: saved.url, checkedAt: Math.min(saved.checkedAt, this.now()), catalog,
-        ...(typeof saved.etag === 'string' && saved.etag.length < 500 ? { etag: saved.etag } : {}) }
-      this.nextAttempt = this.cache.checkedAt + CATALOG_REFRESH_MS
+      // A cache from before `whole` holds only what the CLI that wrote it knew. Serve it, but download
+      // the whole document at the first refresh rather than revalidating a copy that is missing fields.
+      const whole = saved.whole === true
+      this.cache = { url: saved.url, checkedAt: Math.min(saved.checkedAt, this.now()), catalog, document: saved.catalog,
+        ...(whole && typeof saved.etag === 'string' && saved.etag.length < 500 ? { etag: saved.etag } : {}) }
+      this.nextAttempt = whole ? this.cache.checkedAt + CATALOG_REFRESH_MS : 0
     } catch { /* First launch, unreadable cache, or old format: use the bundled shelf. */ }
   }
 
@@ -87,7 +96,8 @@ export class LiveStoreCatalog {
         signal: AbortSignal.timeout(this.options.timeoutMs ?? 4_000),
         redirect: 'error',
       })
-      if (response.status === 304 && this.cache) {
+      // Only an answer to our own If-None-Match: a copy we did not ask about is never "not modified".
+      if (response.status === 304 && this.cache?.etag) {
         this.cache = { ...this.cache, checkedAt: this.now() }
       } else {
         if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`)
@@ -105,16 +115,19 @@ export class LiveStoreCatalog {
             chunks.push(value)
           }
         } finally { await reader.cancel().catch(() => {}) }
-        const catalog = parseStoreCatalog(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        const document: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        const catalog = parseStoreCatalog(document)
         const etag = response.headers.get('etag')
-        this.cache = { url: this.options.url, checkedAt: this.now(), catalog, ...(etag && etag.length < 500 ? { etag } : {}) }
+        this.cache = { url: this.options.url, checkedAt: this.now(), catalog, document, ...(etag && etag.length < 500 ? { etag } : {}) }
       }
       this.nextAttempt = this.now() + CATALOG_REFRESH_MS
       // A read-only disk must not discard metadata that was fetched successfully.
       try {
         mkdirSync(dirname(this.options.cacheFile), { recursive: true, mode: 0o700 })
         const temporary = `${this.options.cacheFile}.${randomUUID()}.tmp`
-        writeFileSync(temporary, JSON.stringify(this.cache), { mode: 0o600 })
+        const { url, checkedAt, etag, document } = this.cache
+        // `catalog` keeps its name so an older CLI still reads this file (and parses it for itself).
+        writeFileSync(temporary, JSON.stringify({ url, checkedAt, ...(etag ? { etag } : {}), whole: true, catalog: document }), { mode: 0o600 })
         renameSync(temporary, this.options.cacheFile)
       } catch { /* The in-memory catalog still works. */ }
     } catch {

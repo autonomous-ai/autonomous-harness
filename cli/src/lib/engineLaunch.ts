@@ -1,13 +1,14 @@
 import { execFile } from 'node:child_process'
 import { homedir, userInfo } from 'node:os'
 import { isAbsolute, basename, dirname, join } from 'node:path'
-import type { AgentEngine } from '../engines/types.js'
-import { binaryOnPath } from './binaryOnPath.js'
+import { isTerminalEngine, type AgentEngine } from '../engines/types.js'
+import { binaryOnPath, resolveBinaryOnPath } from './binaryOnPath.js'
 import { engineBin } from './engineBin.js'
 import type { EngineInstallRecipe } from './engineInstall.js'
 import { GRID_NO_UPDATE_CHECK_VAR, gridBinaryPath } from './gridExec.js'
 import { managedNodePath } from './nodeRuntime.js'
 import { RAISE_OPEN_FILES_SH } from './openFiles.js'
+import { ENGINE_EXIT_PANE_OPTION } from './tmux.js'
 
 /**
  * Best-effort "skip permission prompts" flag per engine, confirmed against each vendor's own docs.
@@ -33,6 +34,8 @@ export const BYPASS_PERMISSION_FLAGS: Readonly<Record<AgentEngine, string[] | nu
   grok: null,
   agy: null,
   copilot: null,
+  // A shell has no permissions to bypass.
+  terminal: null,
 }
 
 /**
@@ -104,6 +107,7 @@ export const FIRST_PROMPT_ARGS: Readonly<Record<AgentEngine, readonly string[] |
   grok: null,
   agy: null,
   copilot: null,
+  terminal: null,
 }
 
 /** A first prompt is a message, not a document. Enforced at the wire (`agent_create`) before any pane
@@ -158,6 +162,7 @@ export const NAMED_AGENT_ARGS: Readonly<Record<AgentEngine, readonly string[] | 
   grok: null,
   agy: null,
   copilot: null,
+  terminal: null,
 }
 
 /** An agent name is an identifier the engine looks a file up by — never a path, never prose. */
@@ -191,6 +196,9 @@ export interface LaunchCommandOptions {
   permissionMode?: string
   /** Resume this engine session id on launch, when a launch-resume flag is known for the engine. */
   resumeSessionId?: string
+  /** FORK this engine session id on launch — a new session that starts with its history, the source
+   *  untouched ([LAUNCH_FORK_FLAG]). Takes precedence over `resumeSessionId`. */
+  forkSessionId?: string
   /**
    * The message the session opens with, already submitted — see [FIRST_PROMPT_ARGS]. Appended LAST,
    * after every flag, because two of the three engines take it positionally and a positional is only
@@ -201,6 +209,13 @@ export interface LaunchCommandOptions {
    * what the user typed.
    */
   firstPrompt?: string
+  /**
+   * Terminal only: print the tile's banner before the first prompt — the wordmark, where this pane
+   * is, that an agent typed here becomes the tile, and `harness remote`. Every NEW terminal tile
+   * gets it (`agent_create`); a pane rebuilt by restore or restart is not a new tile and names
+   * nothing here.
+   */
+  terminalHint?: { machineName: string }
   /**
    * Extra argv the caller has already composed, appended last.
    *
@@ -290,15 +305,38 @@ export const LAUNCH_RESUME_FLAG: Readonly<Partial<Record<AgentEngine, string[]>>
   copilot: ['--resume'],
 }
 
+/**
+ * "Open a NEW session that starts with everything session <id> has" — a fork, per engine. Confirmed
+ * against each CLI's own `--help` (2026-09-18): `claude --resume <id> --fork-session` ("When resuming,
+ * create a new session ID") and `codex fork <id>` ("Fork a previous interactive session"). The source
+ * session is left exactly as it was; the two then diverge.
+ *
+ * Same shape rule as [LAUNCH_RESUME_FLAG]: a leading token that does not start with `-` is a
+ * subcommand and goes first. `after` is appended once the id is in place. An engine absent here has no
+ * native fork; `forkAgent.ts` falls back to a handoff (a composed first prompt) where the engine takes
+ * one, and refuses otherwise — never a plain `--resume`, which would put two processes on ONE session.
+ */
+export const LAUNCH_FORK_FLAG: Readonly<Partial<Record<AgentEngine, { lead: string[]; after?: string[] }>>> = {
+  claude: { lead: ['--resume'], after: ['--fork-session'] },
+  codex: { lead: ['fork'] },
+}
+
+export function supportsNativeFork(engine: AgentEngine): boolean {
+  return LAUNCH_FORK_FLAG[engine] !== undefined
+}
+
 /** The executable argv, before the interactive-shell wrapper is applied. */
 export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandOptions = {}): string[] {
   const argv = [engineBin(engine)]
-  const resumeFlag = opts.resumeSessionId ? LAUNCH_RESUME_FLAG[engine] : undefined
+  // A fork is a resume that leaves the source alone; the two are exclusive, and the fork wins.
+  const fork = opts.forkSessionId ? LAUNCH_FORK_FLAG[engine] : undefined
+  const resumeFlag = fork ? fork.lead : opts.resumeSessionId ? LAUNCH_RESUME_FLAG[engine] : undefined
+  const sessionArg = fork ? opts.forkSessionId : opts.resumeSessionId
   const resumeIsSubcommand = !!resumeFlag?.length && !resumeFlag[0].startsWith('-')
   // Subcommand-style resume (`codex resume <id>`, `amp threads continue <id>`, `muse resume <id>`) is
   // parsed positionally and must be the first argv after the binary, ahead of any other flag.
-  if (resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
-    argv.push(...resumeFlag, opts.resumeSessionId)
+  if (resumeIsSubcommand && resumeFlag && sessionArg) {
+    argv.push(...resumeFlag, sessionArg, ...(fork?.after ?? []))
   }
   const modeFlags = opts.permissionMode ? permissionModeFlags(engine, opts.permissionMode) : null
   if (modeFlags) {
@@ -307,8 +345,8 @@ export function buildEngineCommandArgv(engine: AgentEngine, opts: LaunchCommandO
     const flags = BYPASS_PERMISSION_FLAGS[engine]
     if (flags) argv.push(...flags)
   }
-  if (!resumeIsSubcommand && resumeFlag && opts.resumeSessionId) {
-    argv.push(...resumeFlag, opts.resumeSessionId)
+  if (!resumeIsSubcommand && resumeFlag && sessionArg) {
+    argv.push(...resumeFlag, sessionArg, ...(fork?.after ?? []))
   }
   if (opts.extraArgs?.length) argv.push(...opts.extraArgs)
   if (opts.firstPrompt) argv.push(...firstPromptArgs(engine, opts.firstPrompt))
@@ -360,17 +398,20 @@ export function buildEngineLaunchArgv(
   shell: string | undefined = undefined,
   runtimeNode: string = managedNodePath(),
   gridBinary: string = gridBinaryPath(),
+  tmuxBinary: string | null = resolveBinaryOnPath('tmux'),
 ): string[] {
+  if (isTerminalEngine(engine)) return buildTerminalLaunchArgv(opts, shell)
   const command = buildEngineCommandArgv(engine, opts)
   const interactive = interactiveEngineShell(shell)
   if (!interactive) return command
+  const enginePrelude = engineFallbackPrelude(engine, interactive.path, tmuxBinary)
   // The clear comes FIRST, before the install as well as before the engine. An installer is a child
   // of this shell and inherits what it inherits: `npm` is not going to spend someone's Anthropic key,
   // but an install script that probes for credentials to configure itself would, and the whole point
   // of this launch is that the agent's environment is the one the user asked for.
   // Then the grid's PATH entry at the FRONT (its dir holds only `grid`), and — for a DSH agent — Harness's
   // Node at the END, only when the shell found none. The two never meet: one prepends, one appends.
-  const prelude = clearEnvPrelude(opts.clearEnv) + gridPanePrelude(gridBinary) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
+  const prelude = enginePrelude + clearEnvPrelude(opts.clearEnv) + gridPanePrelude(gridBinary) + (opts.harnessNode ? harnessNodePrelude(runtimeNode) : '')
   // rc files (notably nvm) call getcwd() before running this command. Start the shell in a safe
   // directory and enter the selected workspace only after those files have loaded: an IDE can replace
   // a workspace inode between the desktop picker resolving it and tmux spawning the pane.
@@ -383,12 +424,123 @@ export function buildEngineLaunchArgv(
     ? installIfMissingThenExecScript(opts.installIfMissing, runtimeNode)
     : opts.installFirst
       ? installThenExecScript(opts.installFirst)
-      : 'exec "$@"'
+      : 'harness_engine "$@"'
   // The open-files raise goes ahead of everything, the installer included: a pane inherits the tmux
   // SERVER's soft limit, which is launchd's 256 whenever the desktop app started the daemon that
   // started the server, and an engine (Claude Code refuses outright) or an npm install under 256 is
   // the failure the person then reads in the pane. See openFiles.ts.
   return [interactive.path, ...interactive.args, RAISE_OPEN_FILES_SH + prelude + cwdPrelude + body, 'harness-engine', ...(opts.cwd ? [opts.cwd] : []), ...command]
+}
+
+/**
+ * The shell function every engine launch runs its engine through, instead of a bare `exec`.
+ *
+ * The engine is a CHILD of the pane's shell, and when it exits — `/exit`, Ctrl-C, a crash — the
+ * pane does not die with it: the wrapper records the exit status on the pane (`ENGINE_EXIT_PANE_OPTION`,
+ * which is how the daemon tells "the engine left" from "the install is still running") and `exec`s
+ * the user's interactive shell in its place, exactly as a terminal opened with ⌘⇧T is. The daemon
+ * then turns the row back into a terminal (`registry.releaseEngine`) rather than deleting it, and
+ * typing the engine's name into that shell adopts it again (`adoptEngine`). A 127 is the one exit
+ * that still ends the pane: the command was not found at all, and "not installed" needs to stay
+ * a failure the app can name rather than a prompt with an error above it.
+ *
+ * `tmuxBinary` is the daemon's own tmux, quoted into the script, because the pane's shell may not
+ * have it on PATH (the managed runtime never is). Without one the marker is skipped and the fallback
+ * still happens — only a failure at launch then takes the daemon's full wait to notice.
+ *
+ * Without a terminal on stdin there is nobody to hand a shell to, so the function exits with the
+ * engine's status instead — which is also what keeps the specs that run these scripts honest.
+ *
+ * `"$@" || status=$?` rather than `"$@"; status=$?`: a rc file that turned on `set -e` would end
+ * the script on the engine's non-zero exit before the fallback ran (see RAISE_OPEN_FILES_SH).
+ */
+export function engineFallbackPrelude(engine: AgentEngine, shellPath: string, tmuxBinary: string | null): string {
+  const loginArgs = basename(shellPath).toLowerCase() === 'zsh' ? ' -l' : ''
+  // Named by the command a person would type (`cursor-agent`, `cmd`), not the engine id.
+  const command = basename(engineBin(engine)) || engine
+  const mark = tmuxBinary && isAbsolute(tmuxBinary)
+    ? `  [ -n "\${TMUX_PANE:-}" ] && ${shellSingleQuote(tmuxBinary)} set-option -p -t "$TMUX_PANE" ${ENGINE_EXIT_PANE_OPTION} "$harness_status" >/dev/null 2>&1 || true\n`
+    : ''
+  return 'harness_engine() {\n'
+    + '  harness_status=0\n'
+    + '  "$@" || harness_status=$?\n'
+    + '  if [ "$harness_status" -eq 127 ]; then exit 127; fi\n'
+    + mark
+    // Only a pane — something with a terminal on stdin — gets a shell to type into. Run without one
+    // (a spec exercising the script, a wrapper piped somewhere) the engine's own status is the answer.
+    + '  if ! [ -t 0 ]; then exit "$harness_status"; fi\n'
+    + `  printf '\\n%s\\n' ${shellSingleQuote(`harness: ${command} exited ($harness_status). This pane is a shell now — run ${command} again, or stop the pane.`).replace('($harness_status)', `('"$harness_status"')`)}\n`
+    + `  exec ${shellSingleQuote(shellPath)}${loginArgs}\n`
+    + '}\n'
+}
+
+/**
+ * The wordmark, as `cli/scripts/install.sh` prints it when an install is done (its `print_logo`);
+ * `engineLaunch.spec.ts` holds the two to the same five lines. Printed through `printf '%s\n'` with
+ * every line single-quoted, so the backslashes and the backtick reach the pane as drawn.
+ */
+export const HARNESS_WORDMARK_LINES: readonly string[] = [
+  '    _',
+  '   | |__   __ _ _ __ _ __   ___  ___ ___',
+  "   | '_ \\ / _` | '__| '_ \\ / _ \\/ __/ __|",
+  '   | | | | (_| | |  | | | |  __/\\__ \\__ \\',
+  '   |_| |_|\\__,_|_|  |_| |_|\\___||___/___/',
+]
+
+/**
+ * What a new terminal tile says before its prompt, every time one is opened — the installer's
+ * finale, in the tile: the wordmark, where this pane is, and three things to type, each explained
+ * in a column. An agent typed here becomes the tile (and the shell is back when it exits);
+ * `harness remote` is the one thing only a tile can act on, since it swaps the tile it is typed in.
+ * Every line stays under 78 columns — a pane is 80 wide when it prints them, before the app has
+ * sized it, and a wrapped line stays wrapped in the scrollback. The block ends on a blank line, so
+ * the prompt does not sit against it.
+ */
+export function terminalHintLines(machineName: string): string[] {
+  // A hostname can be long (a cloud VM's FQDN runs to 50 characters); past the width the line has
+  // left it is cut with an ellipsis rather than wrapped, which is the one thing the block promises.
+  const name = machineName.trim() || 'this machine'
+  const where = name.length > 62 ? `${name.slice(0, 61)}…` : name
+  const row = (command: string, what: string): string => `    ${command.padEnd(29)}  ${what}`
+  return [
+    '',
+    ...HARNESS_WORDMARK_LINES,
+    '',
+    `  Terminal on ${where}`,
+    '',
+    row('claude · codex · opencode …', 'run an agent here — this tile becomes it'),
+    row('harness remote', 'open a terminal on another machine'),
+    row('harness --help', 'everything else'),
+    '',
+  ]
+}
+
+/**
+ * Full argv for a plain terminal pane: the user's login shell, nothing exec'd over it.
+ *
+ * The outer `-c` shell is non-interactive on purpose — it loads no rc files, only raises the
+ * open-files limit (a `claude` typed into this terminal later would otherwise refuse under
+ * launchd's 256, exactly as a launched engine would) and enters the workspace — then `exec`s the
+ * interactive shell, which loads the user's startup files once, the way Terminal.app would. zsh
+ * gets `-l` so its login files run; bash reads .bashrc on an interactive non-login start, which is
+ * where Ubuntu keeps nvm and vendor PATH edits, so it gets no flag (same reasoning as
+ * `interactiveEngineShell`). Without a resolvable shell the pane runs `/bin/sh`, which at least
+ * gives the person a prompt.
+ */
+export function buildTerminalLaunchArgv(
+  opts: Pick<LaunchCommandOptions, 'cwd' | 'terminalHint'> = {},
+  shell: string | undefined = undefined,
+): string[] {
+  const candidate = shell === undefined ? currentUserShell() : shell
+  const path = candidate && isAbsolute(candidate) ? candidate : '/bin/sh'
+  const loginArgs = basename(path).toLowerCase() === 'zsh' ? ['-l'] : []
+  const cwdPrelude = opts.cwd
+    ? `if ! cd -- "$1"; then printf '%s\\n' 'harness: the selected working directory is unavailable.' >&2; fi\n`
+    : ''
+  const hintPrelude = opts.terminalHint
+    ? `printf '%s\\n' ${terminalHintLines(opts.terminalHint.machineName).map(shellSingleQuote).join(' ')}\n`
+    : ''
+  return [path, '-c', RAISE_OPEN_FILES_SH + cwdPrelude + hintPrelude + 'shift\nexec "$@"', 'harness-terminal', opts.cwd ?? '', path, ...loginArgs]
 }
 
 /**
@@ -458,7 +610,7 @@ function clearEnvPrelude(names: readonly string[] | undefined): string {
 function installThenExecScript(install: string): string {
   return [
     `printf '%s\\n' 'harness: installing the engine — this pane becomes the agent when it finishes' 'harness: $ ${install.replace(/'/g, "'\\''")}' ''`,
-    `if eval ${JSON.stringify(install)}; then exec "$@"; fi`,
+    `if eval ${JSON.stringify(install)}; then harness_engine "$@"; fi`,
     `printf '\\n%s\\n' 'harness: the install failed, so the agent was not started. The command is above; fix it and create the agent again.'`,
     'exit 1',
   ].join('\n')
@@ -575,7 +727,7 @@ function installIfMissingThenExecScript(recipe: EngineInstallRecipe, runtimeNode
     '  shift',
     '  if ! resolve_engine "$candidate"; then return 1; fi',
     '  shift',
-    '  exec "$resolved" "$@"',
+    '  harness_engine "$resolved" "$@"',
     '}',
     'try_engine "$1" "$@" || true',
     tryCandidates,

@@ -86,6 +86,20 @@ gcs_cp() {
   gcloud "${args[@]}" "$src" "$dst"
 }
 
+# gcs_refuse_republish <gs://…> — a versioned artifact is IMMUTABLE once published: the CDN in front of
+# it caches for a year and serves the FIRST bytes it saw for that path, so a re-upload of the same
+# version leaves the manifest naming bytes no daemon will ever receive (the self-updater verifies the
+# sha and refuses). Same guard as desktop/scripts/upload-desktop.sh; always a new version, never an
+# overwrite.
+gcs_refuse_republish() {
+  local dst="$1"
+  if gcloud storage ls "$dst" >/dev/null 2>&1; then
+    echo "error: $dst already exists — versioned artifacts are immutable (the CDN keeps the first bytes)." >&2
+    echo "       Publish a NEW version instead of re-uploading this one (see cli/RELEASE.md)." >&2
+    exit 1
+  fi
+}
+
 cleanup() { rm -f "${SRC:-}" "${DST:-}"; }
 trap cleanup EXIT
 
@@ -138,6 +152,8 @@ NOTIFY_SHA="$(sha256_of "$NOTIFY")"; NOTIFY_SIZE="$(wc -c < "$NOTIFY" | tr -d ' 
 echo ">> uploading cli.js ($CLI_SIZE bytes) + notify.mjs ($NOTIFY_SIZE bytes)"
 # Immutable per-version path — see the CDN_ASSET_BASE_URL note above. Long max-age here is what
 # actually lets the CDN cache these instead of hitting GCS on every daemon's install/update.
+gcs_refuse_republish "gs://${GCS_BUCKET}/${CLI_GCS}"
+gcs_refuse_republish "gs://${GCS_BUCKET}/${NOTIFY_GCS}"
 gcs_cp "$CLI"    "gs://${GCS_BUCKET}/${CLI_GCS}"    "public, max-age=31536000, immutable"
 gcs_cp "$NOTIFY" "gs://${GCS_BUCKET}/${NOTIFY_GCS}" "public, max-age=31536000, immutable"
 

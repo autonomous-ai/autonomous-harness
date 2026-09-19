@@ -1,0 +1,4 @@
+# Runtime floor matches Harness's managed Grid runtime. Fallback installs this exact upstream.
+GRID_MIN_VERSION="0.3.47"
+UPSTREAM_REPO="https://github.com/autonomous-ai/autonomous-grid.git"
+UPSTREAM_COMMIT="0b8d0e34109735ffd73aadf7288120451cc436fc"

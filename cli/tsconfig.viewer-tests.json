@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "lib": ["ES2023", "DOM"],
+    "incremental": false
+  },
+  "include": ["scripts/remote-viewer-peer.ts", "scripts/remote-viewer-live.ts", "scripts/remote-viewers-stack.ts"]
+}

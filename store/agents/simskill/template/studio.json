@@ -1,0 +1,10 @@
+{
+  "spec": 1,
+  "title": "City lab",
+  "parameters": {
+    "demand": 360,
+    "green": 30,
+    "duration": 240,
+    "seed": 11
+  }
+}

@@ -168,6 +168,25 @@ esac
     ])
   })
 
+  it('treats a fresh tmux installation with no server as an available empty inventory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-no-server-'))
+    dirs.push(dir)
+    const tmux = join(dir, 'tmux')
+    writeFileSync(tmux, `#!/bin/sh
+if [ "$1" = list-panes ]; then
+  printf 'no server running on /tmp/tmux-1000/default\\n' >&2
+  exit 1
+fi
+`)
+    chmodSync(tmux, 0o700)
+    process.env.PATH = `${dir}${delimiter}${originalPath ?? ''}`
+
+    await expect(new TmuxBackend().inventory()).resolves.toEqual({
+      state: 'available',
+      roots: [],
+    })
+  })
+
   it('respawns a pane in place with -k, an optional cwd, and the exact argv, no shell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmux-backend-respawn-'))
     dirs.push(dir)
@@ -189,8 +208,8 @@ printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
       .resolves.toEqual({ state: 'succeeded', dispatch: 'executed' })
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual([
       // The `;` inside an argv element is never shell-interpreted — it lands as one literal token.
-      'set-option -w -t %9 remain-on-exit on ; respawn-pane -k -c /tmp/work -t %9 claude --resume abc; rm -rf /',
-      'set-option -w -t %9 remain-on-exit on ; respawn-pane -k -t %9 claude',
+      'set-option -w -t %9 remain-on-exit on ; set-option -p -t %9 @harness_engine_exit  ; respawn-pane -k -c /tmp/work -t %9 claude --resume abc; rm -rf /',
+      'set-option -w -t %9 remain-on-exit on ; set-option -p -t %9 @harness_engine_exit  ; respawn-pane -k -t %9 claude',
     ])
   })
 
@@ -269,7 +288,7 @@ printf '%s\\n' "$*" >> "$TMUX_BACKEND_CALLS"
     // `remain-on-exit` is chained BEFORE the respawn, not after: an engine handed a rejected key can
     // exit before a follow-up call lands, taking its own error message down with it.
     expect(readFileSync(calls, 'utf8').trim()).toBe(
-      'set-option -w -t %42 remain-on-exit on ; respawn-pane -k -c /tmp/work'
+      'set-option -w -t %42 remain-on-exit on ; set-option -p -t %42 @harness_engine_exit  ; respawn-pane -k -c /tmp/work'
       + ' -e ANTHROPIC_BASE_URL=https://relay.example/relay -e ANTHROPIC_MODEL=GLM-4.7-Flash'
       + ' -t %42 /bin/zsh -lic exec "$@" harness-engine claude --resume sess-1',
     )

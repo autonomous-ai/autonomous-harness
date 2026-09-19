@@ -77,6 +77,61 @@ describe('live Store catalog', () => {
     expect(readFileSync(join(root, 'catalog.json'), 'utf8')).toBe(before)
   })
 
+  it('keeps the catalog on disk as published, so a newer CLI reads the fields this one drops', async () => {
+    const published = { ...first, tagline: 'Arcade games', futureField: 'kept for the next CLI' }
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify(document([published as DshRegistryEntry, viewer])), { headers: { etag: '"v1"' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 304 }))
+    const catalog = make()
+    await catalog.refresh()
+    expect(catalog.current().find(e => e.id === first.id)).not.toHaveProperty('futureField')
+    const file = join(root, 'catalog.json')
+    const onDisk = () => JSON.parse(readFileSync(file, 'utf8'))
+    expect(onDisk()).toMatchObject({ whole: true, etag: '"v1"', catalog: { spec: 1, entries: [published, viewer] } })
+    // Restarted, it trusts that copy: the ETag is sent, a 304 keeps it, and it is still whole on disk.
+    const restarted = make()
+    expect(restarted.current().find(e => e.id === first.id)?.tagline).toBe('Arcade games')
+    now += CATALOG_REFRESH_MS
+    await restarted.refresh()
+    expect(fetcher.mock.calls[1][1]?.headers).toMatchObject({ 'if-none-match': '"v1"' })
+    expect(onDisk()).toMatchObject({ whole: true, checkedAt: now, catalog: { entries: [published, viewer] } })
+  })
+
+  it('a catalog served without an ETag is saved without one and downloaded in full each time', async () => {
+    fetcher.mockImplementation(async () => new Response(JSON.stringify(document())))
+    await make().refresh()
+    const saved = JSON.parse(readFileSync(join(root, 'catalog.json'), 'utf8'))
+    expect(saved).toMatchObject({ whole: true, catalog: document() })
+    expect(saved).not.toHaveProperty('etag')
+    const restarted = make()
+    now += CATALOG_REFRESH_MS
+    await restarted.refresh()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls[1][1]?.headers).not.toHaveProperty('if-none-match')
+  })
+
+  it('downloads the whole catalog again, not revalidating, over a cache an older CLI cut down', async () => {
+    // What a CLI before `whole` wrote: its own parse of the catalog, fields it did not know already gone.
+    const file = join(root, 'catalog.json')
+    const cutDown = { url: 'https://catalog.example.test/catalog.json', checkedAt: now, etag: '"v1"', catalog: document() }
+    writeFileSync(file, JSON.stringify(cutDown))
+    const catalog = make()
+    expect(catalog.current().map(e => e.id)).toEqual([first.id, viewer.id])
+    expect(catalog.current()[0].tagline).toBeUndefined()
+
+    // A 304 it did not ask for changes nothing, and the next refresh tries again.
+    fetcher.mockResolvedValueOnce(new Response(null, { status: 304 }))
+    await catalog.refresh()
+    expect(fetcher.mock.calls[0][1]?.headers).not.toHaveProperty('if-none-match')
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(cutDown)
+
+    now += 30_000
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify(document([{ ...first, tagline: 'Arcade games' }, viewer])), { headers: { etag: '"v1"' } }))
+    expect((await catalog.refresh()).find(e => e.id === first.id)?.tagline).toBe('Arcade games')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls[1][1]?.headers).not.toHaveProperty('if-none-match')
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ whole: true, etag: '"v1"' })
+  })
+
   it('falls back on first offline launch or a corrupt cache', async () => {
     writeFileSync(join(root, 'catalog.json'), '{bad')
     fetcher.mockRejectedValue(new Error('offline'))

@@ -28,14 +28,14 @@ function tempRoot(): string {
   return root
 }
 
-function seedSession(root: string): void {
+function seedSession(root: string, opts: { expiresInMs?: number } = {}): void {
   const authDir = join(root, 'auth')
   mkdirSync(authDir, { recursive: true })
   writeFileSync(join(authDir, 'session.json'), JSON.stringify({
     version: 1,
     accessToken: 'tok_seeded',
     refreshToken: 'refresh_seeded',
-    expiresAt: Date.now() + 60 * 60_000, // an hour out — accessToken() must not attempt a refresh
+    expiresAt: Date.now() + (opts.expiresInMs ?? 60 * 60_000), // an hour out — accessToken() must not attempt a refresh
     autonomousEnv: 'prod',
     computerId: 'a'.repeat(32),
     machineId: 'm_seeded',
@@ -49,9 +49,13 @@ function envFor(root: string, backendUrl?: string): NodeJS.ProcessEnv {
     HOME: root,
     HARNESS_AUTH_DIR: join(root, 'auth'),
     ADAPTER_DATA_DIR: join(root, 'data'),
+    ADAPTER_RUNTIME_DIR: join(root, 'runtime'),
     ADAPTER_CLI_DIR: join(root, 'cli'),
     ADAPTER_COMPUTER_ID_FILE: join(root, 'computer-id'),
     ADAPTER_UPDATE_DISABLE: 'true',
+    // Sign-in should exercise the fake backend, never a developer's Grid binary or its installer.
+    HARNESS_GRID_BIN: join(root, 'grid-unavailable'),
+    DISABLE_GRID_INSTALL: 'true',
     ...(backendUrl ? { BACKEND_WS_URL: backendUrl } : {}),
   }
 }
@@ -138,6 +142,17 @@ describe('harness auth status --json', () => {
       autonomousEnv: 'prod',
       expiresAt: expect.any(Number),
     })
+  })
+
+  it('reports loggedIn:true and offline:true when the token needs a refresh the service cannot serve', () => {
+    // Near expiry forces a refresh; port 1 refuses it. That is a signed-in computer with no network —
+    // not a signed-out one. It used to read as loggedIn:false and send the desktop app to a login
+    // screen that could not have succeeded without the network either.
+    const root = tempRoot()
+    seedSession(root, { expiresInMs: 30_000 })
+    const result = runSync(root, ['auth', 'status', '--json'], 'http://127.0.0.1:1')
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout.trim())).toMatchObject({ loggedIn: true, offline: true, machineId: 'm_seeded' })
   })
 })
 

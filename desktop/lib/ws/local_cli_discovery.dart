@@ -19,6 +19,18 @@ class LocalCliEndpoint {
   final int protocolVersion;
   final int terminalProtocolVersion;
 
+  /// The machine this daemon serves, as the daemon itself says (`/api/status.machineId`) — the id
+  /// its local WS answers `machine_select` for. Null from a daemon too old to report one.
+  ///
+  /// This is what lets the app stand up "this computer" with no backend: a machine row built from
+  /// it attaches over the loopback exactly like one the backend listed.
+  final String? machineId;
+
+  /// Whether the daemon currently holds its socket to the backend. NOT part of readiness: a daemon
+  /// with no backend still serves every agent on this computer, and that is most of what the app
+  /// does. False means remote machines and the profile are unavailable for now, nothing more.
+  final bool backendOnline;
+
   /// Older daemons report local working folders in status before they support
   /// project metadata in agent frames. This snapshot never describes a peer.
   final Map<String, AgentProject> agentProjects;
@@ -28,6 +40,8 @@ class LocalCliEndpoint {
     required this.wsUri,
     required this.protocolVersion,
     required this.terminalProtocolVersion,
+    this.machineId,
+    this.backendOnline = true,
     this.agentProjects = const {},
   });
 }
@@ -295,11 +309,16 @@ class LocalCliDiscovery {
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
     void Function(LocalCliEndpoint endpoint)? onSnapshot,
+    void Function(bool online)? onBackendOnline,
   }) {
     var backoff = initialBackoff;
     var nextSpawnAllowedAt = DateTime.now();
     var quietTicks = 0;
     var wasReady = false;
+    // The daemon's backend link as last observed. Reported on every CHANGE, including the first
+    // ready probe, so the app learns "offline" at boot and "back" the moment the daemon reconnects —
+    // this tick is the only poll of `/api/status` there is, and it is the right cadence for it.
+    bool? backendOnline;
     // A spawn+grace-window cycle can outlast `checkInterval` — without this, an overlapping tick
     // would race a second `harness start` before the first cycle's backoff state even lands (the same
     // "port already in use" failure mode a second concurrent spawn hits today).
@@ -317,6 +336,11 @@ class LocalCliDiscovery {
         onSnapshot?.call(seen.endpoint!);
         if (!wasReady) onReady?.call(seen.endpoint!);
         wasReady = true;
+        final online = seen.endpoint!.backendOnline;
+        if (online != backendOnline) {
+          backendOnline = online;
+          onBackendOnline?.call(online);
+        }
         return;
       }
       wasReady = false;
@@ -461,18 +485,14 @@ class LocalCliDiscovery {
         version: version,
       );
     }
-    // `discoveryReady` is local-only (tmux/agent-process scanning) and can go true well before the
-    // daemon has actually connected to the backend — `/api/machines` and friends proxy straight to
-    // it, so treating discovery-ready as "ready" raced the handshake and surfaced as a bogus 30s
-    // receive-timeout right after boot. `connected` is the daemon's own backend-socket state
-    // (missing field ⇒ older CLI ⇒ accepted, same idiom as above).
-    if (body['connected'] == false) {
-      return LocalCliProbe.notReady(
-        'not connected to the backend yet',
-        pid: pid,
-        version: version,
-      );
-    }
+    // `connected` is the daemon's own backend-socket state. It used to gate readiness — so a
+    // computer that could not reach the backend never got past "Starting local service…", with a
+    // daemon, tmux and every agent sitting right there on the loopback. It is reported instead
+    // (`backendOnline`), and the app decides what it cannot do without it. Missing field ⇒ older
+    // CLI ⇒ online, same idiom as `discoveryReady`. The daemon bounds its own backend proxies
+    // (PROXY_BACKEND_TIMEOUT_MS) and serves its cached machine list meanwhile.
+    final backendOnline = body['connected'] != false;
+    final machineId = body['machineId'];
     final advertisedComputerId = _normalizeComputerId(body['computerId']);
     final advertised = body['localWs'];
     if (advertisedComputerId != localComputerId) {
@@ -512,6 +532,10 @@ class LocalCliDiscovery {
             .replace(scheme: base.scheme == 'https' ? 'wss' : 'ws'),
         protocolVersion: protocolVersion as int,
         terminalProtocolVersion: terminalProtocolVersion as int,
+        machineId: machineId is String && machineId.isNotEmpty
+            ? machineId
+            : null,
+        backendOnline: backendOnline,
         agentProjects: _localAgentProjects(
           body['sessions'],
           identity.environment,

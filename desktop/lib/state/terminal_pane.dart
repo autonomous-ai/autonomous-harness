@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../terminal/terminal_session.dart';
+import '../core/models.dart' show SharedHarness;
 
 /// What a tile shows.
 ///
@@ -28,6 +29,7 @@ class TerminalPane {
     this.agentId,
     this.kind = PaneKind.terminal,
     this.url,
+    this.viewerError,
     this.ownerAgentId,
   }) : assert(
          kind == PaneKind.terminal || (agentId == null && ownerAgentId != null),
@@ -40,6 +42,7 @@ class TerminalPane {
   /// [PaneKind.web] only: what the tile loads. Changes when the agent's frame
   /// names a new viewer URL; the panel navigates rather than remounts.
   String? url;
+  String? viewerError;
 
   /// [PaneKind.web] only: the agent whose viewer this is. Kept OFF [agentId]
   /// on purpose — everything that attaches a terminal, persists a layout or
@@ -64,6 +67,8 @@ class TerminalPane {
   String? agentId;
 
   TerminalSession? session;
+  SharedHarness? sharedHarness;
+  String? sharedOwnerName;
 
   /// Last visible geometry, retained while this controller is parked off screen.
   Size? lastViewSize;

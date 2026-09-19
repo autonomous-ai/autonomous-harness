@@ -1,0 +1,8 @@
+upstream/
+juce/
+.venv/
+.build/
+.sumo/
+__pycache__/
+*.pyc
+coverage/

@@ -1,0 +1,28 @@
+{
+  "method": "Independent STEP reimport; no worker Python executed",
+  "units": "mm",
+  "checks": {
+    "one_upstream_solid": true,
+    "two_assembly_solids": true,
+    "valid_upstream_brep": true,
+    "valid_assembly_brep": true,
+    "positive_volumes": true,
+    "token_24_by_24_by_5_mm": true,
+    "token_volume_700_pi_mm3": true,
+    "holder_32_by_32_by_7_mm": true,
+    "holder_cylinder_radii": true,
+    "radial_clearance_0_3_mm": true,
+    "no_geometric_intersection": true,
+    "upstream_token_geometry_preserved": true
+  },
+  "all_checks_passed": true,
+  "token_volume_mm3": 2199.114857512874,
+  "holder_volume_mm3": 3253.2762724249546,
+  "radial_clearance_mm": 0.3000000000000007,
+  "intersection_volume_mm3": 0.0,
+  "identity_removed_volume_mm3": 0.0,
+  "identity_added_volume_mm3": 0.0,
+  "limitations": [
+    "Numerical geometry only; no physical printing, insertion, or manufacturing tolerance verification"
+  ]
+}

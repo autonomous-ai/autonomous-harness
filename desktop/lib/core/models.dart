@@ -66,6 +66,27 @@ class CurrentUserProfile {
   }
 }
 
+/// A view-only invitation. It never contains a full machine credential.
+class SharedHarness {
+  const SharedHarness({
+    required this.id,
+    required this.agentId,
+    required this.name,
+    this.engine,
+    required this.expiresAt,
+  });
+  final String id, agentId, name;
+  final String? engine;
+  final DateTime expiresAt;
+  factory SharedHarness.fromJson(Map<String, dynamic> j) => SharedHarness(
+    id: j['id'] as String,
+    agentId: j['agentId'] as String,
+    name: j['name'] as String,
+    engine: j['engine'] as String?,
+    expiresAt: DateTime.parse(j['expiresAt'] as String),
+  );
+}
+
 /// Control-plane machine (GET /api/machines).
 class Machine {
   final String machineId;
@@ -77,6 +98,9 @@ class Machine {
   final String? engine;
   final String? name;
   final String? hostname;
+  final bool isShared;
+  final String? ownerName;
+  final List<SharedHarness> sharedHarnesses;
   final String? status;
 
   const Machine({
@@ -87,6 +111,9 @@ class Machine {
     this.engine,
     this.name,
     this.hostname,
+    this.isShared = false,
+    this.ownerName,
+    this.sharedHarnesses = const [],
     this.status,
   });
 
@@ -105,6 +132,12 @@ class Machine {
     engine: j['engine'] as String?,
     name: j['name'] as String?,
     hostname: j['hostname'] as String?,
+    isShared: j['shared'] == true,
+    ownerName: j['ownerName'] as String?,
+    sharedHarnesses: [
+      for (final row in j['shares'] as List? ?? const [])
+        SharedHarness.fromJson(Map<String, dynamic>.from(row as Map)),
+    ],
     status: j['status'] as String?,
   );
 
@@ -116,6 +149,9 @@ class Machine {
     engine: engine,
     name: name ?? this.name,
     hostname: hostname,
+    isShared: isShared,
+    ownerName: ownerName,
+    sharedHarnesses: sharedHarnesses,
     status: status,
   );
 }
@@ -151,6 +187,25 @@ enum GridWebSearch {
 }
 
 /// Data-plane agent (RPC agents_list).
+/// Where a forked agent came from — see [Agent.forkedFrom].
+class ForkedFrom {
+  final String agentId;
+  final String name;
+
+  const ForkedFrom({required this.agentId, required this.name});
+
+  static ForkedFrom? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final agentId = raw['agentId'];
+    if (agentId is! String || agentId.isEmpty) return null;
+    final name = raw['name'];
+    return ForkedFrom(
+      agentId: agentId,
+      name: name is String && name.isNotEmpty ? name : 'an agent',
+    );
+  }
+}
+
 class Agent {
   final String id;
   final String? sessionId;
@@ -199,6 +254,9 @@ class Agent {
   /// when there is none (yet). A change means the viewer pane must navigate.
   final String? viewerUrl;
 
+  /// Why this remote viewer could not be forwarded, including old-daemon update guidance.
+  final String? viewerError;
+
   /// What the harness's viewer pane is called — the shared viewer's own name ("3D Viewer"), or
   /// the harness's name and "Viewer" for one it ships ("Marp Viewer") — as the daemon worked it
   /// out. Null from an older daemon or with no viewer; see [PaneGrid] for what stands in.
@@ -206,6 +264,16 @@ class Agent {
 
   /// The harness's last verdict on this workspace, or null when it has not written one.
   final AgentVerdict? verdict;
+
+  /// The agent this one was forked from (`agent_fork`), or null for every
+  /// other agent. Carries the source's name as it was at the fork, because the
+  /// source may be renamed or gone by the time the badge is read.
+  final ForkedFrom? forkedFrom;
+
+  /// Whether the daemon can fork this agent (`agent_fork`), as it said on the
+  /// frame; null from a daemon that predates the field — then the engine
+  /// decides (see [canFork]).
+  final bool? forkable;
 
   const Agent({
     required this.id,
@@ -229,9 +297,23 @@ class Agent {
     this.dsh,
     this.dshName,
     this.viewerUrl,
+    this.viewerError,
     this.viewerName,
     this.verdict,
+    this.forkedFrom,
+    this.forkable,
   });
+
+  /// The engines whose sessions can be forked — natively (Claude Code's
+  /// `--fork-session`, `codex fork`) or by a handoff message (OpenCode takes a
+  /// first prompt). The daemon is the authority when it says (`forkable`);
+  /// this is the answer for one that does not.
+  static const forkableEngines = {'claude', 'codex', 'opencode'};
+
+  /// Whether to offer Fork for this agent at all. Devin, Cursor and the rest
+  /// can neither fork nor open with a message, so the button is not drawn
+  /// rather than drawn and refused.
+  bool get canFork => forkable ?? forkableEngines.contains(engine);
 
   /// What to draw this agent AS: its harness when it has one, else its engine.
   String? get identityEngine => dsh ?? engine;
@@ -291,8 +373,11 @@ class Agent {
       dsh: _safeDsh(j['dsh']),
       dshName: _safeLabel(j['dshName']),
       viewerUrl: _safeViewerUrl(j['viewerUrl']),
+      viewerError: _safeDetail(j['viewerError']),
       viewerName: _safeLabel(j['viewerName']),
       verdict: AgentVerdict.fromJson(j['verdict']),
+      forkedFrom: ForkedFrom.fromJson(j['forkedFrom']),
+      forkable: j['forkable'] is bool ? j['forkable'] as bool : null,
     );
   }
 
@@ -318,8 +403,11 @@ class Agent {
     dsh: dsh,
     dshName: dshName,
     viewerUrl: viewerUrl,
+    viewerError: viewerError,
     viewerName: viewerName,
     verdict: verdict,
+    forkedFrom: forkedFrom,
+    forkable: forkable,
   );
 
   /// `owner/name`, exactly the shape the DSH manifest schema allows and nothing else — the
@@ -727,7 +815,11 @@ class GridModel {
   /// grid this is one of the user's own computers, which is the useful part of the answer.
   final String node;
 
-  const GridModel({required this.id, required this.node});
+  /// The grid it is served on — the section it was listed under. Null on an older daemon that
+  /// sends only the own grid's list, which the retarget then targets as it always did.
+  final String? grid;
+
+  const GridModel({required this.id, required this.node, this.grid});
 }
 
 /// Which `grid` a machine would run, as its daemon reports beside the model list (`gridCli`).
@@ -751,11 +843,30 @@ enum GridCli {
 
 /// The picker's whole answer: which grid was asked, and what it offers.
 ///
+/// One grid the machine is signed into, with what it serves. [own] marks the account's private
+/// grid — the picker calls that one "Local"; a shared grid goes by its name.
+class GridSection {
+  final String name;
+  final bool own;
+  final List<GridModel> models;
+
+  const GridSection({
+    required this.name,
+    required this.own,
+    required this.models,
+  });
+}
+
 /// `gridName` is null when the machine has no grid yet — told apart from "a grid with nothing on
 /// it", because the two need different sentences in front of a person.
 class GridModels {
   final String? gridName;
   final List<GridModel> models;
+
+  /// Every grid the machine is signed into, own grid first, each with its live models — the
+  /// picker's sections. Empty on an older daemon, which sends only [models] for the own grid; the
+  /// picker then draws that one section as it always did.
+  final List<GridSection> grids;
 
   /// The engines a Local model can be offered to at all, as the daemon on that machine names them
   /// (`localModelEngines`; the set of launch contracts in its `gridLaunch.ts`). Null when the
@@ -777,16 +888,26 @@ class GridModels {
   const GridModels({
     required this.gridName,
     required this.models,
+    this.grids = const [],
     this.localModelEngines,
     this.gridCli,
     this.reachable = true,
   });
+
+  /// The sections to draw: [grids] when the daemon sent them, else the own grid alone.
+  List<GridSection> get sections => grids.isNotEmpty
+      ? grids
+      : [
+          if (gridName != null)
+            GridSection(name: gridName!, own: true, models: models),
+        ];
 
   /// The machine could not be asked. Says nothing about the account, because nothing is known —
   /// including which engines it would have offered, or whether it has a `grid`.
   const GridModels.unreachable()
     : gridName = null,
       models = const [],
+      grids = const [],
       localModelEngines = null,
       gridCli = null,
       reachable = false;

@@ -2,6 +2,7 @@
   "homepage": "https://strudel.cc",
   "upstream": "https://github.com/tidalcycles/strudel",
   "license": "MIT",
+  "tagline": "Music live coding environment for the browser",
   "evaluation": [
     {
       "method": "tool",

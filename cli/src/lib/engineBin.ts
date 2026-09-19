@@ -10,11 +10,11 @@ import { accessSync, constants, readlinkSync, realpathSync, statSync } from 'nod
 import { homedir } from 'node:os'
 import { basename, delimiter, isAbsolute, join, normalize, sep } from 'node:path'
 import { env } from '../config/env.js'
-import { ENGINES, type AgentEngine } from '../engines/types.js'
+import { ENGINES, PROCESS_ENGINES, type AgentEngine } from '../engines/types.js'
 
 // Keep this historical import surface for callers, but never duplicate the
 // catalog here. `engines/types.ts` is the one iterable source of truth.
-export { ENGINES }
+export { ENGINES, PROCESS_ENGINES }
 
 /** Public vendor command shown to users and matched by the real-binary smoke matrix. */
 export const ENGINE_CLI_COMMANDS: Readonly<Record<AgentEngine, string>> = {
@@ -34,6 +34,9 @@ export const ENGINE_CLI_COMMANDS: Readonly<Record<AgentEngine, string>> = {
   grok: 'grok',
   agy: 'agy',
   copilot: 'copilot',
+  // A terminal has no command: the pane runs the user's login shell (engineLaunch.ts). The empty
+  // string is what keeps every "is this binary installed" probe honest — nothing to look for.
+  terminal: '',
 }
 
 export interface ExecutableFileIdentity {
@@ -79,6 +82,7 @@ export const ENGINE_CLI_ALIASES: Readonly<Record<AgentEngine, readonly string[]>
   grok: ['grok', 'agent'],
   agy: ['agy'],
   copilot: ['copilot'],
+  terminal: [],
 }
 
 let interactivePathCache: { shell: string; daemonPath: string; value: string[] } | null = null
@@ -210,7 +214,7 @@ function uniqueIdentities(identities: readonly ExecutableFileIdentity[]): Execut
 export function engineBinaryOwnershipSnapshot(): AgentCommandOwnershipSnapshot {
   const engineCandidates = new Map<AgentEngine, ExecutableFileIdentity[]>()
   const engineFileKeys = new Map<AgentEngine, Set<string>>()
-  for (const engine of ENGINES) {
+  for (const engine of PROCESS_ENGINES) {
     const configured = enginePathOverride(engine)
     const commands = [
       ...(configured ? [configured] : []),
@@ -284,7 +288,7 @@ export function engineFileOwners(
   snapshot: AgentCommandOwnershipSnapshot,
 ): AgentEngine[] {
   if (!snapshot.engineFileKeys) return []
-  return ENGINES.filter((engine) => fileKeys.some((fileKey) => !!fileKey && snapshot.engineFileKeys!.get(engine)?.has(fileKey)))
+  return PROCESS_ENGINES.filter((engine) => fileKeys.some((fileKey) => !!fileKey && snapshot.engineFileKeys!.get(engine)?.has(fileKey)))
 }
 
 export function agentAliasOwner(
@@ -408,6 +412,7 @@ export function enginePathOverride(engine: AgentEngine): string | undefined {
     case 'grok': return env.GROK_PATH
     case 'agy': return env.AGY_PATH
     case 'copilot': return env.COPILOT_PATH
+    case 'terminal': return undefined
   }
 }
 
@@ -430,5 +435,7 @@ export function engineBin(engine: AgentEngine): string {
     case 'grok': return env.GROK_PATH || ENGINE_CLI_COMMANDS.grok
     case 'agy': return env.AGY_PATH || ENGINE_CLI_COMMANDS.agy
     case 'copilot': return env.COPILOT_PATH || ENGINE_CLI_COMMANDS.copilot
+    // Never launched by name — `buildEngineLaunchArgv` builds the shell argv itself.
+    case 'terminal': return ENGINE_CLI_COMMANDS.terminal
   }
 }

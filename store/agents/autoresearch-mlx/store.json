@@ -1,0 +1,10 @@
+{
+  "homepage": "https://github.com/trevin-creator/autoresearch-mlx",
+  "upstream": "https://github.com/trevin-creator/autoresearch-mlx",
+  "license": "MIT",
+  "tagline": "Karpathy's autoresearch on Apple Silicon, no PyTorch required",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/autoresearch-mlx/screenshots/studio.png",
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/autoresearch-mlx/screenshots/narrow.png"
+  ]
+}

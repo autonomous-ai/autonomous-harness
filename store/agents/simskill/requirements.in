@@ -1,0 +1,2 @@
+cmake==4.4.3
+eclipse-sumo==1.27.1; sys_platform != "darwin" or platform_machine != "x86_64"

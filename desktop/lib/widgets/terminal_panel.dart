@@ -1,3 +1,5 @@
+import '../sharing/share_harness_dialog.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -47,6 +49,9 @@ class TerminalPanel extends StatefulWidget {
   /// where there is nothing to close it back to.
   final VoidCallback? onClose;
   final VoidCallback? onRestart;
+
+  /// Forks this harness — a second agent with its history (fork_agent_dialog.dart).
+  final VoidCallback? onFork;
   final VoidCallback? onDelete;
 
   final VoidCallback? onToggleZoom;
@@ -58,6 +63,9 @@ class TerminalPanel extends StatefulWidget {
   /// Only the focused grid tile may claim keyboard focus on mount/rebuild.
   final bool focused;
   final bool visible;
+
+  /// Coalesces streaming output for an unfocused tile without delaying input.
+  final Duration? outputRepaintInterval;
   final Size? viewportSize;
 
   /// A shared terminal can move to another tab without being remounted.
@@ -97,6 +105,7 @@ class TerminalPanel extends StatefulWidget {
     required this.session,
     required this.focused,
     this.visible = true,
+    this.outputRepaintInterval,
     this.viewportSize,
     this.paneLocation,
     this.layoutRequest,
@@ -109,6 +118,7 @@ class TerminalPanel extends StatefulWidget {
     this.onToggleComposer,
     this.onClose,
     this.onRestart,
+    this.onFork,
     this.onDelete,
     this.onToggleZoom,
     this.zoomed = false,
@@ -1254,9 +1264,10 @@ class _TerminalPanelState extends State<TerminalPanel>
                           session.terminal,
                           key: _terminalViewKey,
                           controller: _controller,
-                          autoResize: widget.visible,
+                          autoResize: widget.visible && !session.readOnly,
                           resizeBuffer: false,
                           renderingEnabled: widget.visible,
+                          outputRepaintInterval: widget.outputRepaintInterval,
                           scrollController: _scrollController,
                           focusNode: _focusNode,
                           autofocus: widget.focused && !showComposer,
@@ -1385,6 +1396,7 @@ class _TerminalPanelState extends State<TerminalPanel>
       compact: widget.compactHeader,
       close: widget.onClose != null,
       restart: widget.onRestart != null,
+      fork: widget.onFork != null,
       delete: widget.onDelete != null,
       composer: widget.composerVisible,
       toggleComposer: widget.onToggleComposer != null,
@@ -1409,6 +1421,7 @@ class _TerminalPanelState extends State<TerminalPanel>
         onRestart: widget.onRestart == null
             ? null
             : () => widget.onRestart?.call(),
+        onFork: widget.onFork == null ? null : () => widget.onFork?.call(),
         onDelete: widget.onDelete == null
             ? null
             : () => widget.onDelete?.call(),
@@ -1430,6 +1443,7 @@ class _TerminalHeader extends StatelessWidget {
   final bool readOnly;
   final VoidCallback? onClose;
   final VoidCallback? onRestart;
+  final VoidCallback? onFork;
 
   /// Ends the agent (with a confirmation), as the rail's row menu does. Null
   /// where the pane cannot name a live agent to end.
@@ -1457,6 +1471,7 @@ class _TerminalHeader extends StatelessWidget {
     this.readOnly = false,
     this.onClose,
     this.onRestart,
+    this.onFork,
     this.onDelete,
     this.compact = false,
     this.onToggleZoom,
@@ -1531,7 +1546,12 @@ class _TerminalHeader extends StatelessWidget {
       if (profile != null) 'Codex profile: $profile',
       'Double-click to rename',
     ].join('\n');
-    final remoteComposer = machine != null && !machine.isLocalMachine
+    // A terminal has no prompt to compose a message for — a shell reads keys,
+    // and the composer's Enter-to-send would be a line nobody asked for.
+    final remoteComposer =
+        machine != null &&
+            !machine.isLocalMachine &&
+            !isTerminalEngine(session.engineId)
         ? onToggleComposer
         : null;
     // The icon cluster, plus the model picker that now sits at its left — without the extra the
@@ -1547,13 +1567,18 @@ class _TerminalHeader extends StatelessWidget {
             .where((part) => part.isNotEmpty)
             .lastOrNull ??
         project?.name;
+    // A fork says so first: "forked from X" is the one fact about this pane
+    // that the folder and the branch — shared with its source — cannot tell.
+    final forkedFrom = agent?.forkedFrom;
     final details = [
+      if (forkedFrom != null) 'forked from ${forkedFrom.name}',
       if (folder?.isNotEmpty == true) folder!,
       if (project?.branch?.trim().isNotEmpty == true) project!.branch!,
       machineName,
     ];
+    final forkIndex = forkedFrom != null ? 0 : null;
     final branchIndex = project?.branch?.trim().isNotEmpty == true
-        ? (folder?.isNotEmpty == true ? 1 : 0)
+        ? (forkedFrom != null ? 1 : 0) + (folder?.isNotEmpty == true ? 1 : 0)
         : null;
     final strip = PaneHeaderHover(
       child: SizedBox(
@@ -1701,6 +1726,7 @@ class _TerminalHeader extends StatelessWidget {
                                 session.machineId,
                                 session.agentId,
                                 model.id,
+                                gridName: model.grid,
                               ),
                             ),
                             onUseOwnLogin: () => unawaited(
@@ -1709,29 +1735,45 @@ class _TerminalHeader extends StatelessWidget {
                                 session.agentId,
                               ),
                             ),
-                            // The pane's own context, because the flow opens a dialog before it
-                            // opens a pane — and the pane's own MACHINE, because a picker on a
-                            // remote agent's pane is asking about the models that computer can
-                            // serve, not this one's.
+                            // The pane's own context, because the door opens New Agent — and
+                            // the pane's own MACHINE, because a picker on a remote agent's pane
+                            // is asking about the models that computer can serve, not this one's.
                             onRunLocalModel: () => unawaited(
                               notifier.runLocalModel(
                                 context,
                                 machineId: session.machineId,
-                                chooseMachine: false,
                               ),
                             ),
                           )
                         : null,
+                    onShare:
+                        readOnly ||
+                            notifier
+                                    .stateOf(session.machineId)
+                                    ?.machine
+                                    .isShared ==
+                                true
+                        ? null
+                        : () => showShareHarnessDialog(
+                            context,
+                            notifier,
+                            session.machineId,
+                            session.agentId,
+                            session.agentName,
+                          ),
                     zoomed: zoomed,
                     onZoom: onToggleZoom,
                     onRestart: onRestart,
+                    onFork: onFork,
                     onDelete: onDelete,
                     onClose: onClose,
+                    terminal: isTerminalEngine(session.engineId),
                     onToggleComposer: remoteComposer,
                     composerVisible: composerVisible,
                     // A harness agent's viewer, shown or hidden from the
                     // pane it belongs to.
-                    onToggleViewer: agent?.viewerUrl == null
+                    onToggleViewer:
+                        agent?.viewerUrl == null && agent?.viewerError == null
                         ? null
                         : () => notifier.toggleViewerPane(
                             session.machineId,
@@ -1745,6 +1787,8 @@ class _TerminalHeader extends StatelessWidget {
                         : agentIdentity(agent).color,
                     details: Tooltip(
                       message: [
+                        if (forkedFrom != null)
+                          'Forked from ${forkedFrom.name}',
                         if (project != null) project.cwd,
                         if (project?.branch?.isNotEmpty == true)
                           'Branch: ${project!.branch}',
@@ -1769,6 +1813,14 @@ class _TerminalHeader extends StatelessWidget {
                                   if (i == branchIndex) ...[
                                     Icon(
                                       LucideIcons.gitBranch300,
+                                      size: 12,
+                                      color: AppColors.mutedStrong,
+                                    ),
+                                    const SizedBox(width: 4),
+                                  ],
+                                  if (i == forkIndex) ...[
+                                    Icon(
+                                      LucideIcons.gitFork300,
                                       size: 12,
                                       color: AppColors.mutedStrong,
                                     ),

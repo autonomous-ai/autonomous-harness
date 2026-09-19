@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 40 40%27%3E%3Crect width=%2740%27 height=%2740%27 rx=%2710%27 fill=%27%232b4034%27/%3E%3Ctext x=%2710%27 y=%2729%27 font-size=%2730%27 fill=%27%23eff1d5%27%3Eh%3C/text%3E%3C/svg%3E">
+<title>Harness Studio</title>
+  <link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <main id="app" aria-busy="true">
+    <header class="topbar"><a class="wordmark" href="/" aria-label="Reload studio"><span class="mark">h</span> HARNESS <span class="muted">/ STUDIO</span></a><span id="connection" class="connection">Connecting</span></header>
+    <section class="heading"><div><p class="eyebrow" id="category">MAKE SOMETHING GOOD</p><h1 id="title">Opening your studio…</h1><p id="description" class="description">Your workspace will appear here.</p></div><div class="heading-actions"><button id="reset" class="quiet" disabled>Reset controls</button><button id="run" class="primary" disabled>Run</button></div></section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="remote" class="notice" hidden>The agent saved new controls. <button id="refresh">Load update</button></div>
+    <section class="workspace">
+      <div class="canvas-column">
+        <div class="stage-frame"><div class="stage-heading"><span id="scene-label">WORKBENCH</span><button id="motion" class="icon-button" aria-pressed="true">Pause motion</button></div><div id="stage" class="stage" aria-label="Interactive workbench"></div><div class="stage-caption"><span id="hint">Explore. Adjust. Make it yours.</span><span id="provenance">Waiting for a run</span></div></div>
+        <div class="metrics" id="metrics" aria-label="Run measurements"></div>
+        <section class="result-panel"><div class="panel-heading"><h2 id="result-title">Your next idea starts here</h2><span id="run-time" class="muted"></span></div><p id="result-description" class="muted">Adjust the controls, then make your first run.</p><div id="artifacts" class="artifacts"></div><details id="job-details" hidden><summary>Run details</summary><pre id="log"></pre></details></section>
+      </div>
+      <aside class="inspector" aria-label="Studio controls"><div class="panel-heading"><h2>Make it yours</h2><span id="dirty" class="small-label">SAVED</span></div><form id="controls"></form><div id="extra-actions" class="extra-actions"></div><div class="tip"><span class="spark">✳</span><p id="tip">Every run is saved. Follow a hunch.</p></div><section class="history-section"><div class="panel-heading"><h2>Recent explorations</h2><button id="latest" class="text-button" hidden>Back to latest</button></div><ol id="history" class="history"></ol></section></aside>
+    </section>
+    <footer><span id="credit"></span><span>Made with curiosity.</span></footer>
+  </main>
+  <div id="announcement" class="sr-only" aria-live="polite"></div>
+  <script type="module" src="/studio.mjs"></script>
+</body>
+</html>

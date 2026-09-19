@@ -1,0 +1,89 @@
+{
+  "title": "House of ideas",
+  "description": "Make room for a new idea. Shape a small building, inspect its spaces, and open the real IFC model anywhere.",
+  "category": "Architecture",
+  "scene": "A SMALL SPACE WITH POSSIBILITIES",
+  "hint": "Drag to orbit \u00b7 choose a room \u00b7 switch to floor plan",
+  "tip": "Try a wider studio or an extra storey. The quantities come from the exported IFC model.",
+  "previewLabel": "Building preview \u00b7 export to inspect IFC",
+  "controls": [
+    {
+      "id": "width",
+      "label": "Building width",
+      "type": "number",
+      "value": 10,
+      "min": 6,
+      "max": 18,
+      "step": 0.5,
+      "integer": false,
+      "unit": "m",
+      "hint": ""
+    },
+    {
+      "id": "depth",
+      "label": "Building depth",
+      "type": "number",
+      "value": 8,
+      "min": 5,
+      "max": 14,
+      "step": 0.5,
+      "integer": false,
+      "unit": "m",
+      "hint": ""
+    },
+    {
+      "id": "storeys",
+      "label": "Storeys",
+      "type": "number",
+      "value": 2,
+      "min": 1,
+      "max": 4,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "height",
+      "label": "Ceiling height",
+      "type": "number",
+      "value": 3,
+      "min": 2.5,
+      "max": 4,
+      "step": 0.1,
+      "integer": false,
+      "unit": "m",
+      "hint": ""
+    },
+    {
+      "id": "use",
+      "label": "Ground floor",
+      "type": "select",
+      "value": "studio",
+      "options": [
+        {
+          "value": "studio",
+          "label": "Creative studio"
+        },
+        {
+          "value": "home",
+          "label": "Quiet home"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "build",
+      "label": "Make this building",
+      "description": ""
+    },
+    {
+      "id": "bonsai",
+      "label": "Read Bonsai scene",
+      "description": "Read the local Blender/Bonsai bridge without changing its model"
+    }
+  ],
+  "credit": "Bonsai MCP \u00b7 Show2Instruct",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history."
+}

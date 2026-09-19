@@ -46,6 +46,16 @@ function make(over: { rows?: Partial<Listed>[]; linked?: string[]; rpc?: (t: str
 }
 
 describe('DeviceFleet', () => {
+  it('never lists another machine\'s terminal to the dial — the far daemon answers as to an app', async () => {
+    const { fleet } = make({
+      rpc: async () => ({ agents: [
+        { id: 't1', name: 'Terminal 1', engine: 'terminal' },
+        { id: 'c1', name: 'Claude 1', engine: 'claude' },
+      ] }),
+    })
+    expect((await fleet.listAgents('m1')).map((a) => a.id)).toEqual(['c1'])
+  })
+
   it('throws away the E2EE session after two missed round trips, and keeps the last verdict', async () => {
     // THE FAILURE THIS EXISTS FOR IS SILENT AND PERMANENT. A session outlives the machine that agreed to
     // it: establish() returns instantly for anything in the map, so once the far end stops answering,

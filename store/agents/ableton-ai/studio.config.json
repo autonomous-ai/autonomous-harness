@@ -1,0 +1,107 @@
+{
+  "title": "Loop room",
+  "description": "A small pattern can become a whole mood. Make a loop, play with its pulse, and keep the happy accidents.",
+  "category": "Music",
+  "scene": "A PLACE TO FIND YOUR RHYTHM",
+  "hint": "Tap the steps \u00b7 press Play to hear your pattern",
+  "tip": "Try half the notes at a slower tempo. Export MIDI to keep working in your DAW.",
+  "previewLabel": "Local synth audition \u00b7 Live not connected",
+  "controls": [
+    {
+      "id": "tempo",
+      "label": "Tempo",
+      "type": "number",
+      "value": 96,
+      "min": 50,
+      "max": 160,
+      "step": 1,
+      "integer": true,
+      "unit": "BPM",
+      "hint": ""
+    },
+    {
+      "id": "scale",
+      "label": "Mood",
+      "type": "select",
+      "value": "minor",
+      "options": [
+        {
+          "value": "minor",
+          "label": "Moonlit \u00b7 minor"
+        },
+        {
+          "value": "major",
+          "label": "Sunroom \u00b7 major"
+        },
+        {
+          "value": "pentatonic",
+          "label": "Floating \u00b7 pentatonic"
+        }
+      ]
+    },
+    {
+      "id": "density",
+      "label": "Pattern density",
+      "type": "number",
+      "value": 6,
+      "min": 2,
+      "max": 12,
+      "step": 1,
+      "integer": true,
+      "unit": "notes",
+      "hint": ""
+    },
+    {
+      "id": "seed",
+      "label": "New variation",
+      "type": "number",
+      "value": 3,
+      "min": 1,
+      "max": 32,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "swing",
+      "label": "Swing",
+      "type": "number",
+      "value": 0,
+      "min": 0,
+      "max": 0.3,
+      "step": 0.05,
+      "integer": false,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "pattern",
+      "label": "Custom rhythm",
+      "type": "text",
+      "value": "",
+      "maxLength": 16,
+      "hidden": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "render",
+      "label": "Keep this loop",
+      "description": ""
+    },
+    {
+      "id": "live",
+      "label": "Read Live session",
+      "description": "Read the connected Ableton session through its local bridge"
+    }
+  ],
+  "credit": "Ableton AI \u00b7 Freek Van der Herten and contributors",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history.",
+  "theme": {
+    "accent": "#a75c39",
+    "tint": "#efe4d6",
+    "stage": "#28211e",
+    "stage-accent": "#f2bc88"
+  }
+}

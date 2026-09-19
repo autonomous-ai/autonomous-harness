@@ -11,6 +11,8 @@ class PaneHeaderActions extends StatelessWidget {
     required this.zoomed,
     this.onZoom,
     this.onRestart,
+    this.onFork,
+    this.onShare,
     this.onDelete,
     this.onClose,
     this.onToggleComposer,
@@ -20,10 +22,21 @@ class PaneHeaderActions extends StatelessWidget {
     this.viewerColor,
     this.details,
     this.modelPicker,
+    this.terminal = false,
   });
 
   final bool zoomed, composerVisible;
-  final VoidCallback? onZoom, onRestart, onDelete, onClose, onToggleComposer;
+
+  /// The pane is a shell, not a harness: Restart and Stop say so, because
+  /// "Stop Harness" over a terminal reads as a button for something else.
+  final bool terminal;
+  final VoidCallback? onShare;
+  final VoidCallback? onZoom,
+      onRestart,
+      onFork,
+      onDelete,
+      onClose,
+      onToggleComposer;
 
   /// A harness agent's viewer: show it beside this terminal, or hide it.
   /// Absent for an agent that has no viewer.
@@ -90,6 +103,10 @@ class PaneHeaderActions extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (onShare != null) ...[
+              action('Share harness', Icons.person_add_alt_1_outlined, onShare),
+              const SizedBox(width: 2),
+            ],
             if (modelPicker != null) ...[
               modelPicker!,
               const SizedBox(width: 4),
@@ -119,9 +136,21 @@ class PaneHeaderActions extends StatelessWidget {
               onZoom,
             ),
             const SizedBox(width: 2),
-            action('Restart Harness', LucideIcons.refreshCw, onRestart),
+            action(
+              terminal ? 'Restart Terminal' : 'Restart Harness',
+              LucideIcons.refreshCw,
+              onRestart,
+            ),
             const SizedBox(width: 2),
-            action('Stop Harness', Icons.stop_rounded, onDelete),
+            if (onFork != null) ...[
+              action('Fork Harness', LucideIcons.gitFork, onFork),
+              const SizedBox(width: 2),
+            ],
+            action(
+              terminal ? 'Stop Terminal' : 'Stop Harness',
+              Icons.stop_rounded,
+              onDelete,
+            ),
             const SizedBox(width: 2),
             action('Close Pane', LucideIcons.x, onClose),
           ],

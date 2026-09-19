@@ -2,6 +2,7 @@
   "homepage": "https://www.remotion.dev",
   "upstream": "https://github.com/remotion-dev/remotion",
   "license": "MIT",
+  "tagline": "Make videos programmatically",
   "evaluation": [
     {
       "method": "tool",

@@ -1,0 +1,99 @@
+{
+  "title": "Instrument maker",
+  "description": "Find a sound that feels like you. Shape a synth, play a little, and take the recording with you.",
+  "category": "Audio",
+  "scene": "THE SOUND GARDEN",
+  "hint": "Play the keys \u00b7 A S D F G H J K on your keyboard",
+  "tip": "Try a mellow triangle with a slow attack. Every recording is a new version.",
+  "previewLabel": "Live oscillator preview",
+  "controls": [
+    {
+      "id": "wave",
+      "label": "Waveform",
+      "type": "select",
+      "value": "sine",
+      "options": [
+        {
+          "value": "sine",
+          "label": "Sine \u00b7 soft"
+        },
+        {
+          "value": "triangle",
+          "label": "Triangle \u00b7 warm"
+        },
+        {
+          "value": "saw",
+          "label": "Saw \u00b7 bright"
+        }
+      ]
+    },
+    {
+      "id": "frequency",
+      "label": "Root note",
+      "type": "number",
+      "value": 220,
+      "min": 110,
+      "max": 880,
+      "step": 1,
+      "integer": true,
+      "unit": "Hz",
+      "hint": ""
+    },
+    {
+      "id": "attack",
+      "label": "Fade in",
+      "type": "number",
+      "value": 0.08,
+      "min": 0.01,
+      "max": 0.8,
+      "step": 0.01,
+      "integer": false,
+      "unit": "s",
+      "hint": ""
+    },
+    {
+      "id": "brightness",
+      "label": "Brightness",
+      "type": "number",
+      "value": 0.65,
+      "min": 0.1,
+      "max": 1,
+      "step": 0.05,
+      "integer": false,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "duration",
+      "label": "Phrase length",
+      "type": "number",
+      "value": 3,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "integer": true,
+      "unit": "s",
+      "hint": ""
+    }
+  ],
+  "actions": [
+    {
+      "id": "render",
+      "label": "Record a phrase",
+      "description": ""
+    },
+    {
+      "id": "juce",
+      "label": "Build with JUCE",
+      "description": "Compile and render the same oscillator with native JUCE"
+    }
+  ],
+  "credit": "JUCE Agent Toolkit \u00b7 Daniel Raffel",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history.",
+  "theme": {
+    "accent": "#a75c39",
+    "tint": "#efe4d6",
+    "stage": "#28211e",
+    "stage-accent": "#f2bc88"
+  }
+}

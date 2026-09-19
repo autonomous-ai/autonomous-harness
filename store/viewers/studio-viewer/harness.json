@@ -1,0 +1,11 @@
+{
+  "spec": 1,
+  "kind": "viewer",
+  "id": "autonomous/studio-viewer",
+  "name": "Studio Viewer",
+  "category": "Creative tools",
+  "author": "OpenHarness contributors",
+  "description": "An interactive workbench for experiments, instruments, simulations, and creative tools. Keep every run, compare results, and take your work with you.",
+  "toolchain": { "setup": "setup.sh", "doctor": "doctor.sh" },
+  "viewer": { "command": "viewer.sh", "url": "http://127.0.0.1:${port}/" }
+}

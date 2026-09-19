@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Foam-Agent",
+    "url": "https://github.com/csml-rpi/Foam-Agent.git",
+    "commit": "9e3e253e76727036585ca6e88e6fc5a762cb62e0",
+    "directory": "upstream",
+    "sparse": [
+      "src",
+      ".claude",
+      "scripts",
+      "docker"
+    ]
+  }
+]

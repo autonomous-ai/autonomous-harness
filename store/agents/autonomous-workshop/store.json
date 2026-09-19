@@ -1,6 +1,7 @@
 {
   "upstream": "https://github.com/autonomous-ai/autonomous-workshop",
   "license": "MIT",
+  "tagline": "AI inventors that make new toys and games",
   "evaluation": [
     {
       "method": "tool",

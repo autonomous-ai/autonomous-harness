@@ -8,9 +8,9 @@ The starter, **Alpine Drift**, is a small playable snowboarding course. Orbit th
 Explore, then switch to Play: steer, jump, collect gates, reach the finish, and restart. Its
 geometry is procedural; opening and changing the starter needs no asset-service account.
 
-Use the desktop app on the machine running this harness. The current app loads viewer URLs
-directly; forwarding a viewer from a linked remote machine is a platform requirement still
-to implement. This limitation also applies to the other local web viewers.
+The macOS desktop app can show this viewer locally or from a linked remote machine. Remote viewing
+requires the forwarding-capable Harness CLI on both computers; older remote CLIs show update
+guidance. The viewer remains interactive, including Play and workspace build controls.
 
 ## Use
 

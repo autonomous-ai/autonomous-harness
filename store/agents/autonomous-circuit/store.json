@@ -1,6 +1,7 @@
 {
   "upstream": "https://github.com/autonomous-ai/autonomous-circuit",
   "license": "MIT",
+  "tagline": "Get a verified PCB and a fab packet you can order",
   "evaluation": [
     {
       "method": "tool",

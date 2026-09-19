@@ -2,6 +2,7 @@
   "homepage": "https://www.blender.org",
   "upstream": "https://projects.blender.org/blender/blender",
   "license": "MIT",
+  "tagline": "Free and open source 3D creation software",
   "evaluation": [
     {
       "method": "tool",

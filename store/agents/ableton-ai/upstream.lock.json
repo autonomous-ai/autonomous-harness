@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Ableton AI",
+    "url": "https://github.com/freekmurze/ableton-ai.git",
+    "commit": "2baa8b79c00f48d925b080f3719a7b892f64d86c",
+    "directory": "upstream",
+    "sparse": [
+      "src",
+      "skills",
+      "remote_script",
+      "rest_api"
+    ]
+  }
+]

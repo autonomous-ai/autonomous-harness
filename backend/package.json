@@ -19,6 +19,7 @@
     "start:local": "concurrently -k -n server,worker -c cyan,magenta \"node dist/server.js\" \"node dist/worker.js\"",
     "test": "NODE_ENV=test HARNESS_CREDENTIAL_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= vitest run",
     "test:watch": "vitest",
+    "test:sharing": "NODE_ENV=test HARNESS_CREDENTIAL_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= vitest run src/routes/harnessShares.test.ts src/lib/observerWs.test.ts --coverage --coverage.include=src/routes/harnessShares.ts --coverage.include=src/lib/observerWs.ts --coverage.thresholds.lines=100 --coverage.thresholds.statements=100 --coverage.thresholds.branches=100 --coverage.thresholds.functions=100",
     "postinstall": "prisma generate"
   },
   "dependencies": {

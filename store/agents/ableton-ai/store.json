@@ -1,0 +1,10 @@
+{
+  "homepage": "https://github.com/freekmurze/ableton-ai",
+  "upstream": "https://github.com/freekmurze/ableton-ai",
+  "license": "MIT; Ableton Live licensed separately",
+  "tagline": "Control Ableton Live from an AI assistant via MCP",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/ableton-ai/screenshots/studio.png",
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/ableton-ai/screenshots/narrow.png"
+  ]
+}

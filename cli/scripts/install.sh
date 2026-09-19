@@ -12,6 +12,7 @@
 #   curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | sh -s -- --host     # Desktop: host requirements only
 #   harness login
 #   harness start
+#   harness remote-password set   # so your other machines (and `harness remote`) can reach this one
 #
 # Downloads the self-contained CLI bundle from the public GCS manifest and installs a `harness` command.
 # Login and start are deliberately separate: login saves a native SSO session, while start launches the
@@ -666,13 +667,47 @@ if [ "$INSTALL_MODE" = "standalone" ]; then
   tmux -V >/dev/null 2>&1 || { echo "✗ tmux verification failed." >&2; exit 32; }
 fi
 
-# The explicit commands keep
-#    browser SSO and long-lived daemon lifecycle understandable and scriptable.
-echo ""
-echo "  harness installed."
-echo "  To connect this computer, run:"
-echo "      harness login"
-echo "      harness start"
+# The wordmark, as the sign the install is done. `printf '%s\n'` on purpose: the art holds
+# backslashes and a backtick, which `echo` eats or interprets depending on the shell behind `sh`.
+print_logo() {
+  printf '%s\n' \
+    '' \
+    '    _' \
+    '   | |__   __ _ _ __ _ __   ___  ___ ___' \
+    '   | '"'"'_ \ / _` | '"'"'__| '"'"'_ \ / _ \/ __/ __|' \
+    '   | | | | (_| | |  | | | |  __/\__ \__ \' \
+    '   |_| |_|\__,_|_|  |_| |_|\___||___/___/' \
+    ''
+}
+
+# The explicit commands keep browser SSO and the long-lived daemon lifecycle understandable and
+# scriptable: nothing here signs in or starts anything. Desktop mode is the app installing its own
+# CLI — the app takes the person through sign-in itself, so it gets the one line and not the guide.
+# One line of it: `harness version` prints the version alone today, and a notice it might add
+# tomorrow must not land inside this sentence.
+installed_version="$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)"
+if [ "$INSTALL_MODE" = "desktop" ]; then
+  echo ""
+  echo "  harness${installed_version:+ $installed_version} installed."
+else
+  print_logo
+  echo "  ✓ harness${installed_version:+ $installed_version} installed."
+  echo ""
+  echo "  Get started — three commands, in this order:"
+  echo ""
+  echo "      harness login                  # 1. sign in with your Autonomous account (opens a browser)"
+  echo "      harness start                  # 2. connect this computer as a machine (runs in the background)"
+  echo "      harness remote-password set    # 3. let your OTHER machines reach this one (asked once, kept)"
+  echo ""
+  echo "  Then, from a Harness terminal tile on any of your machines:"
+  echo ""
+  echo "      harness remote                 # pick a machine — the tile becomes a terminal on it"
+  echo ""
+  echo "  Useful:"
+  echo "      harness machines               # this account's machines and their ids"
+  echo "      harness status                 # is the daemon running, and which machine this is"
+  echo "      harness --help                 # everything else"
+fi
 
 # 6. Make `harness` usable by NAME. We already added ~/.local/bin to your rc for NEW terminals (step 4);
 #    a piped `curl … | sh` can't touch the CURRENT shell's PATH, so print the one line that fixes it here

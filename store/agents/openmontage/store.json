@@ -2,6 +2,7 @@
   "homepage": "https://github.com/calesthio/OpenMontage",
   "upstream": "https://github.com/calesthio/OpenMontage",
   "license": "AGPL-3.0",
+  "tagline": "Open-source agentic video production",
   "evaluation": [
     {
       "method": "tool",

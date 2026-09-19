@@ -45,7 +45,7 @@ class _Folders extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? permissionMode,
@@ -58,7 +58,7 @@ class _Folders extends AppNotifier {
     PaneSplitRequest? split,
     AgentCreationAttempt? attempt,
   }) async {
-    launches.add((machine: machineId, engine: engine, folder: folder));
+    launches.add((machine: machineId, engine: engine, folder: folder!));
     return null;
   }
 

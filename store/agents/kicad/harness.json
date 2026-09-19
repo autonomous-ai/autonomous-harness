@@ -1,0 +1,41 @@
+{
+  "spec": 1,
+  "id": "autonomous/kicad",
+  "name": "KiCad",
+  "category": "PCB",
+  "author": "KiCad",
+  "formerly": [
+    "autonomous/solder"
+  ],
+  "description": "Describe a board; get a real KiCad project \u2014 a wired schematic, DRC-checked copper, a prototype packet \u2014 with a live board view.",
+  "engine": "claude",
+  "workspace": {
+    "template": "upstream/harness/kicad/template",
+    "marker": "project.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "upstream/harness/kicad/AGENTS.md",
+    "skills": [
+      "upstream/harness/kicad/skills"
+    ],
+    "env": {
+      "KICAD_HARNESS_PYTHON": "${dsh}/upstream/harness/kicad/toolchain/python",
+      "CIRCUIT_PYTHON": "${dsh}/toolchain/python",
+      "KICAD_HARNESS_ROOT": "${dsh}/upstream",
+      "KICAD_HARNESS_BLOCKS": "${dsh}/upstream/packages/golden-blocks/blocks",
+      "CIRCUIT_TOOLCHAIN": "${dsh}/upstream/toolchain",
+      "CIRCUIT_SKILLS_DIR": "${workspace}/.claude/skills",
+      "DISABLE_AUTOUPDATER": "1"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}

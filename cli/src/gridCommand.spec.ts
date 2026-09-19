@@ -188,6 +188,9 @@ function fakeBackend(handlers: {
   exchange?: (body: any) => any
   resolveComputer?: (body: any) => any
   refresh?: (body: any) => { status: number; body: unknown }
+  /** `POST /api/grid/name` — the account's minted grid name. Absent = an older backend, which is
+   *  what every case that does not stub it is exercising (the route 404s and grid setup is skipped). */
+  gridName?: (body: any) => any
 }): Promise<{ server: Server; base: string }> {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
@@ -202,6 +205,7 @@ function fakeBackend(handlers: {
         if (req.url === '/api/auth/authorize-native' && handlers.authorizeNative) { send(handlers.authorizeNative(body)); return }
         if (req.url === '/api/auth/exchange' && handlers.exchange) { send(handlers.exchange(body)); return }
         if (req.url === '/api/machines/resolve-computer' && handlers.resolveComputer) { send(handlers.resolveComputer(body)); return }
+        if (req.url === '/api/grid/name' && handlers.gridName) { send(handlers.gridName(body)); return }
         if (req.url === '/api/auth/refresh' && handlers.refresh) {
           const answer = handlers.refresh(body)
           res.writeHead(answer.status, { 'content-type': 'application/json' })
@@ -289,6 +293,39 @@ describe('harness grid login — an already-signed-in computer', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('Signed in as a@b.test.')
     expect(readRecord(root).args).toEqual(['login', '--harness'])
+  }, 20_000)
+
+  it('also makes sure the account\'s grid exists, without changing its result line', async () => {
+    // Signing in and stopping is what this command used to do, and it left an account whose grid had
+    // never been created signed in to nothing — an empty model picker naming no cause. The second
+    // half now runs here too, and the fake records the LAST `grid` it ran: anything other than
+    // `login` is proof the ensure happened.
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await fakeBackend({
+      resolveComputer: () => ({ machine: { machineId: 'm_seeded' } }),
+      gridName: () => ({ gridName: 'someone-7f3a91c4' }),
+    })
+
+    const result = await run(root, ['grid', 'login', '--json'], base)
+
+    expect(result.status).toBe(0)
+    // The contract a client reads is untouched: the sign-in's outcome, and nothing about the ensure.
+    expect(ndjson(result.stdout)).toEqual([{ type: 'result', status: 'success', alreadySignedIn: true }])
+    expect(readRecord(root).args[0]).not.toBe('login')
+  }, 20_000)
+
+  it('leaves the grid alone when the backend mints no name — an older backend is not a failure', async () => {
+    const root = tempRoot()
+    seedSession(root)
+    const { base } = await signedInBackend() // no `/api/grid/name` route
+
+    const result = await run(root, ['grid', 'login', '--json'], base)
+
+    expect(result.status).toBe(0)
+    expect(ndjson(result.stdout)).toEqual([{ type: 'result', status: 'success', alreadySignedIn: true }])
+    // Nothing after the hand-off, so the sign-in is still the last thing that ran.
+    expect(readRecord(root).args).toEqual(['login', '--harness', '--json'])
   }, 20_000)
 
   it('carries the child\'s JSON answer out on the result line', async () => {

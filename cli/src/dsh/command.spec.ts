@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { env } from '../config/env.js'
-import { dshInstallDir, invalidateInstalledDsh, upsertInstalledRecord } from './installed.js'
+import { dshInstallDir, installedDsh, invalidateInstalledDsh, upsertInstalledRecord } from './installed.js'
 import type { DshInstallOptions } from './install.js'
 import { HARNESS_MONOREPO, resetBundledDshRegistry } from './registry.js'
 
@@ -102,8 +102,8 @@ describe('harness dsh', () => {
       expect(await dshCommand('list', [])).toBe(0)
       expect(out).toHaveLength(1)
       expect(out[0].split('\n')).toEqual([
-        `  ${'acme/pane'.padEnd(28)} ${'Thing'.padEnd(12)} ${'viewer'.padEnd(11)} tier 2  installed (linked) · ${dshInstallDir('acme/pane')}`,
-        `  ${'acme/thing'.padEnd(28)} ${'Thing'.padEnd(12)} ${'on claude'.padEnd(11)} tier 2  installed · ${dshInstallDir('acme/thing')}`,
+        `  ${'acme/pane'.padEnd(28)} ${'Thing'.padEnd(12)} ${'viewer'.padEnd(11)} tier 2  installed (linked) @ ${installedDsh('acme/pane')!.commit!.slice(0, 8)} · ${dshInstallDir('acme/pane')}`,
+        `  ${'acme/thing'.padEnd(28)} ${'Thing'.padEnd(12)} ${'on claude'.padEnd(11)} tier 2  installed @ ${installedDsh('acme/thing')!.commit!.slice(0, 8)} · ${dshInstallDir('acme/thing')}`,
         `  ${'acme/broken'.padEnd(28)} ${'?'.padEnd(12)} ${''.padEnd(11)} ${''.padEnd(6)}  BROKEN · ${join(root, 'gone')} is missing`,
         `  ${'autonomous/pane'.padEnd(28)} ${'Pane'.padEnd(12)} ${'viewer'.padEnd(11)} tier ?  available · ${HARNESS_MONOREPO}/tree/main/store/viewers/pane`,
         `  ${'autonomous/typst'.padEnd(28)} ${'Typst'.padEnd(12)} ${'on claude'.padEnd(11)} tier 2  available · ${HARNESS_MONOREPO}/tree/main/store/agents/typst`,
@@ -165,6 +165,22 @@ describe('harness dsh', () => {
         { source: '/Users/example/code/typst', ref: undefined, path: undefined, link: true },
       ])
     })
+  })
+
+  it('updates from the recorded source, reports the version, and rejects missing or invalid targets', async () => {
+    const repo = thing()
+    expect(await dshCommand('install', [repo])).toBe(0)
+    writeFileSync(join(repo, 'README.md'), 'new package version')
+    execFileSync('git', ['-C', repo, 'add', '-A'])
+    execFileSync('git', ['-C', repo, '-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'updated'])
+    expect(await dshCommand('update', ['acme/thing'])).toBe(0)
+    expect(out.at(-1)).toMatch(/acme\/thing is up to date @ [a-f0-9]{8}. Workspaces preserved./)
+    expect(await dshCommand('update', ['acme/missing'])).toBe(1)
+    expect(err.at(-1)).toContain('NOT_INSTALLED')
+    for (const args of [[], ['../../etc'], ['acme/thing', 'acme/other']]) {
+      expect(await dshCommand('update', args)).toBe(1)
+      expect(err.at(-1)).toContain('harness dsh update <id>')
+    }
   })
 
   describe('doctor', () => {

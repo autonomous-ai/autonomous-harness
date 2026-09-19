@@ -151,3 +151,27 @@ tile đó; daemon local khi đó báo focus của app rời máy này (`focus:nu
 target remote nếu Desktop công bố ở đây), và `turn.send` tới target đó vẫn trả `MACHINE_MISMATCH`.
 OS vẫn chịu trách nhiệm hiển thị rằng target remote chưa được hỗ trợ dispatch. Pairing, transport,
 credential và flow gửi task không đổi; CLI cũ không liệt kê `focus.step` trong capabilities của hello.
+
+### Cuộn terminal đang focus
+
+`scroll` là một lần báo ngón tay trên mặt kính của thiết bị đã pair, chuyển thẳng tới terminal mà
+Desktop đang mở trước mặt — đúng frame `dial_scroll` mà dial USB gửi, nên app xử lý hai bên như nhau:
+
+```json
+{"type":"scroll","requestId":"<uuid>","phase":"move","dy":-24}
+{"type":"scroll","requestId":"<uuid>","phase":"up","dy":-3,"velocity":-900}
+```
+
+Ở đây thiết bị là một touchpad: nó báo **quãng di chuyển**, không phải vị trí, vì nó không biết
+terminal cao bao nhiêu; terminal giữ scrollback và tự tính. Một vuốt gửi thành nhiều mảnh — `down`
+khi ngón tay chạm (cửa sổ dừng mọi quán tính đang chạy), các `move` mang `dy` pixel thiết bị đã đi
+kể từ lần báo trước (dương = xuống dưới mặt kính), và `up` khi nhấc tay, với `velocity` (px/s của
+thiết bị, cùng dấu với `dy`) trở thành cú fling. `dy` và `velocity` mặc định 0, phải là số nguyên
+trong ±4096 và ±100000. Mỗi `down` phải có `up`: vuốt không đóng sẽ giữ trạng thái kéo bên app cho
+tới `down` kế tiếp.
+
+Một vuốt là stream, không phải mutation: không `idempotencyKey`, không receipt, không lưu gì, và
+không có gì để retry — mất một `move` chỉ là cuộn ngắn hơn. Thành công trả `scroll_result` rỗng.
+Chỉ terminal Desktop đang focus mới cuộn; pane viewer thì không. Lỗi: `FOCUS_UNAVAILABLE` khi không
+có cửa sổ Desktop; `INVALID_REQUEST` khi phase sai, giá trị không phải số nguyên hoặc ngoài khoảng,
+hoặc có field lạ. CLI cũ không liệt kê `scroll` trong capabilities của hello.

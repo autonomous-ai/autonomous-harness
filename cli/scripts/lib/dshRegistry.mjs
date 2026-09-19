@@ -14,7 +14,7 @@ export function storeEntry(path, manifest, facts) {
   if (manifest.kind !== undefined) entry.kind = manifest.kind
   for (const key of ['name', 'category', 'author', 'description']) if (manifest[key] !== undefined) entry[key] = manifest[key]
   Object.assign(entry, { repo: HARNESS_MONOREPO, ref: 'main', path })
-  for (const key of ['homepage', 'upstream', 'license', 'screenshots', 'examples', 'evaluation']) if (facts[key] !== undefined) entry[key] = facts[key]
+  for (const key of ['homepage', 'upstream', 'license', 'tagline', 'screenshots', 'examples', 'evaluation']) if (facts[key] !== undefined) entry[key] = facts[key]
   if (manifest.engine !== undefined) entry.engine = manifest.engine
   if (typeof manifest.viewer?.use === 'string') entry.viewerUse = manifest.viewer.use
   entry.tier = manifest.viewer ? 2 : manifest.verdict ? 1 : 0

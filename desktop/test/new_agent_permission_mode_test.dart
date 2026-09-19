@@ -49,7 +49,7 @@ class _Notifier extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     bool bypassPermission = false,
     String? permissionMode,
     String? codexHome,

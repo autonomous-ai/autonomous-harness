@@ -34,6 +34,12 @@ describe('StoreExampleSchema: what a product page example may hold', () => {
     expect(StoreFactsSchema.safeParse({ examples: Array.from({ length: 9 }, () => ({ prompt: 'x' })) }).success).toBe(false)
     expect(StoreFactsSchema.parse({ examples: [{ prompt: 'x' }] })).toEqual({ examples: [{ prompt: 'x' }] })
   })
+
+  it('a tagline is one short line', () => {
+    expect(StoreFactsSchema.parse({ tagline: 'Advanced physics simulation' })).toEqual({ tagline: 'Advanced physics simulation' })
+    expect(StoreFactsSchema.safeParse({ tagline: '' }).success).toBe(false)
+    expect(StoreFactsSchema.safeParse({ tagline: 'x'.repeat(81) }).success).toBe(false)
+  })
 })
 
 describe('StoreEvaluationSchema: how a product page says a harness is judged', () => {
@@ -54,6 +60,7 @@ describe('storeEntry', () => {
     ['a verdict: tier 1', { spec: 1, id: 'autonomous/checked', name: 'Checked', engine: 'codex', verdict: '.harness/verdict.json' }, {}],
     ['a used viewer: tier 2 and its dependency', { spec: 1, id: 'autonomous/cad', name: 'CAD', category: 'CAD', author: 'Autonomous', description: 'd', engine: 'claude', viewer: { use: 'autonomous/cad-viewer' } }, { homepage: 'https://example.com', license: 'MIT' }],
     ['a viewer package: its kind and no engine', { spec: 1, kind: 'viewer', id: 'autonomous/pane', name: 'Pane', viewer: { command: 'v.sh', url: 'http://127.0.0.1:${port}/' } }, { upstream: 'https://example.com/up', screenshots: ['https://example.com/1.png'] }],
+    ['tagline: carried as written', { spec: 1, id: 'autonomous/sim', name: 'Sim', engine: 'claude' }, { tagline: 'Advanced physics simulation' }],
     ['examples: carried as written', { spec: 1, id: 'autonomous/lamp', name: 'Lamp', engine: 'claude', viewer: { use: 'autonomous/model-viewer' } }, { examples: [{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }], evaluation: [{ method: 'tool', by: 'glTF validator' }] }],
   ]
   for (const [what, manifest, facts] of cases) {
@@ -65,7 +72,8 @@ describe('storeEntry', () => {
   }
 
   it('says exactly what each case ships', () => {
-    const [bare, checked, cad, pane, lamp] = cases.map(([, manifest, facts]) => storeEntry('p', manifest, facts))
+    const [bare, checked, cad, pane, sim, lamp] = cases.map(([, manifest, facts]) => storeEntry('p', manifest, facts))
+    expect(sim.tagline).toBe('Advanced physics simulation')
     expect(lamp.examples).toEqual([{ prompt: 'A desk lamp.', image: 'https://example.com/lamp.jpg', caption: 'Lamp · glTF' }])
     expect(lamp.evaluation).toEqual([{ method: 'tool', by: 'glTF validator' }])
     expect(bare).toEqual({ id: 'autonomous/bare', name: 'Bare', repo: HARNESS_MONOREPO, ref: 'main', path: 'p', engine: 'claude', tier: 0, verified: true })

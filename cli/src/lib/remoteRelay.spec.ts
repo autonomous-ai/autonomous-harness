@@ -541,3 +541,77 @@ describe('RemoteRelayPool sendBinary backpressure handling', () => {
     expect(demoteP2p).not.toHaveBeenCalled()
   })
 })
+
+describe('RemoteRelayPool shares one upstream between every local client selected onto a machine', () => {
+  // `acquire` on an entry that already exists never dials: it attaches. So the pool is seeded with an
+  // entry the way a completed dial leaves one, and acquire/detach are driven from there.
+  function poolWithEntry() {
+    const pool = new RemoteRelayPool(
+      { accessToken: async () => 'unused' } as never,
+      'ws://unused',
+      { pub: new Uint8Array(), priv: new Uint8Array() } as never,
+      { pin: () => {}, get: () => null } as never,
+    )
+    const entry = fakeEntry({ attached: new Set(), sink: null, ws: { send: vi.fn(), close: vi.fn() }, viewers: { reset: vi.fn(), close: vi.fn() } }) as unknown as {
+      attached: Set<unknown>
+      sink: { sendFrame: (frame: unknown) => boolean; sendBinary: (frame: Uint8Array) => boolean } | null
+      onClosed: ((code: number, reason: string) => void) | null
+      lingerTimer: ReturnType<typeof setTimeout> | null
+      viewers: { reset: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
+    }
+    ;(pool as unknown as { entries: Map<string, unknown> }).entries.set('m1', entry)
+    return { pool, entry }
+  }
+  const sink = () => ({ sendFrame: vi.fn(() => true), sendBinary: vi.fn(() => true) })
+
+  it('a second client joins the first, both get every frame, and detaching one leaves the other on', async () => {
+    const { pool, entry } = poolWithEntry()
+    const desktop = sink()
+    const cli = sink()
+    const desktopClosed = vi.fn()
+    const cliClosed = vi.fn()
+    const a = await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, desktop, desktopClosed)
+    const b = await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, cli, cliClosed)
+    expect(desktop.sendFrame).toHaveBeenCalledWith({ type: 'connected', payload: { machineId: 'm1', e2ee: false } })
+    expect(cli.sendFrame).toHaveBeenCalledWith({ type: 'connected', payload: { machineId: 'm1', e2ee: false } })
+
+    // What the machine sends comes to both.
+    entry.sink!.sendFrame({ type: 'agent_created', payload: {} })
+    expect(desktop.sendFrame).toHaveBeenLastCalledWith({ type: 'agent_created', payload: {} })
+    expect(cli.sendFrame).toHaveBeenLastCalledWith({ type: 'agent_created', payload: {} })
+
+    // The CLI leaves: the desktop is still attached, still hears, and nothing lingers or resets.
+    b.detach()
+    expect(entry.attached.size).toBe(1)
+    expect(entry.lingerTimer).toBeNull()
+    expect(entry.viewers.reset).not.toHaveBeenCalled()
+    entry.sink!.sendFrame({ type: 'agent_deleted', payload: {} })
+    expect(desktop.sendFrame).toHaveBeenLastCalledWith({ type: 'agent_deleted', payload: {} })
+    expect(cli.sendFrame).not.toHaveBeenCalledWith({ type: 'agent_deleted', payload: {} })
+
+    // A close from upstream reaches the one still attached.
+    entry.onClosed!(1006, 'gone')
+    expect(desktopClosed).toHaveBeenCalledWith(1006, 'gone')
+    expect(cliClosed).not.toHaveBeenCalled()
+
+    // The last one leaving is what starts the linger.
+    a.detach()
+    expect(entry.attached.size).toBe(0)
+    expect(entry.sink).toBeNull()
+    expect(entry.lingerTimer).not.toBeNull()
+    expect(entry.viewers.reset).toHaveBeenCalled()
+    clearTimeout(entry.lingerTimer!)
+  })
+
+  it('a client whose socket refuses a frame is dropped; the rest keep receiving', async () => {
+    const { pool, entry } = poolWithEntry()
+    const live = sink()
+    const dead = { sendFrame: vi.fn(() => false), sendBinary: vi.fn(() => false) }
+    await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, live, vi.fn())
+    await pool.acquire('m1', 'env', { type: 'machine_select', payload: {} }, dead, vi.fn())
+    expect(entry.sink!.sendFrame({ type: 'x', payload: {} })).toBe(true)
+    expect(entry.attached.size).toBe(1)
+    expect(entry.sink!.sendBinary(new Uint8Array([1]))).toBe(true)
+    expect(live.sendBinary).toHaveBeenCalled()
+  })
+})

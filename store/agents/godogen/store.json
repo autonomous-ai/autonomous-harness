@@ -2,6 +2,7 @@
   "homepage": "https://github.com/htdt/godogen",
   "upstream": "https://github.com/htdt/godogen",
   "license": "MIT",
+  "tagline": "Autonomous game development",
   "evaluation": [
     {
       "method": "tool",

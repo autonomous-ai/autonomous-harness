@@ -114,7 +114,10 @@ class _StoreTabState extends State<StoreTab> {
   late _Shelf _shelf = widget.initialHarness == null
       ? _place.shelf
       : const _Discover();
-  late String? _selected = widget.initialHarness ?? _place.selected;
+  late String? _selected =
+      widget.initialHarness ??
+      widget.notifier.takePendingStoreHarness() ??
+      _place.selected;
   late final _search = TextEditingController(
     text: widget.initialHarness == null ? _place.query : '',
   );
@@ -183,6 +186,10 @@ class _StoreTabState extends State<StoreTab> {
   }
 
   void _onAppChanged() {
+    // A door asked for a harness page while this tab was already open: the
+    // constructor's read is too late for that, so the page turns here.
+    final pending = widget.notifier.takePendingStoreHarness();
+    if (pending != null && pending != _selected) _openPage(pending);
     final connecting = <MachineState>[];
     for (final machine in [?widget.notifier.localMachineState]) {
       final id = machine.machine.machineId;
@@ -317,10 +324,10 @@ class _StoreTabState extends State<StoreTab> {
       builder: (context) => const _BuildHarnessDialog(),
     );
     if (tool == null || !mounted) return;
-    await _openStoreAgent(
+    await openStoreAgent(
       context,
       widget.notifier,
-      builder,
+      builder.id,
       local.machine.machineId,
       prompt: 'Build a harness for $tool.',
     );
@@ -328,12 +335,19 @@ class _StoreTabState extends State<StoreTab> {
 
   void _takeAction(DshEntry entry) {
     final local = widget.notifier.localMachineState;
-    if (local == null || !_installedOnMachine(local, entry.id)) {
+    if (local == null ||
+        !_installedOnMachine(local, entry.id) ||
+        local.dsh[entry.id]?.hasUpdate == true) {
       _openPage(entry.id);
       return;
     }
     unawaited(
-      _openStoreAgent(context, widget.notifier, entry, local.machine.machineId),
+      openStoreAgent(
+        context,
+        widget.notifier,
+        entry.id,
+        local.machine.machineId,
+      ),
     );
   }
 
@@ -926,10 +940,16 @@ bool _canGetOnMachine(MachineState machine, DshEntry entry) {
       machine.dsh.runs[entry.id]?.inProgress != true;
 }
 
-Future<void> _openStoreAgent(
+/// Open a Store harness on [machineId] the way the Store's Open button does: a
+/// draft tab of its own, then New Agent with the harness already chosen.
+///
+/// Public because it is the ONE way a harness is opened from anywhere — the
+/// Store page, and the model picker's "Open Grid" — so the two cannot drift
+/// into two definitions of what opening a harness means.
+Future<void> openStoreAgent(
   BuildContext context,
   AppNotifier notifier,
-  DshEntry entry,
+  String harnessId,
   String machineId, {
   String? prompt,
 }) async {
@@ -941,7 +961,7 @@ Future<void> _openStoreAgent(
     notifier,
     machineId,
     source: 'store',
-    initialEngine: entry.id,
+    initialEngine: harnessId,
     initialPrompt: prompt,
     swarmId: target,
   );
@@ -1016,6 +1036,21 @@ class _ProductPageState extends State<_ProductPage> {
     if (failure != null) _say(failure);
   }
 
+  Future<void> _update(String machineId) async {
+    final local = widget.notifier.localMachineState;
+    if (local == null ||
+        local.machine.machineId != machineId ||
+        local.dsh[widget.entry.id]?.hasUpdate != true ||
+        !_busy.add(machineId)) {
+      return;
+    }
+    setState(() {});
+    final failure = await widget.notifier.updateDsh(machineId, widget.entry.id);
+    _busy.remove(machineId);
+    if (mounted) setState(() {});
+    if (failure != null) _say(failure);
+  }
+
   Future<void> _remove(String machineId, String machineName) async {
     if (widget.notifier.localMachineState?.machine.machineId != machineId) {
       return;
@@ -1049,10 +1084,10 @@ class _ProductPageState extends State<_ProductPage> {
     if (widget.notifier.localMachineState?.machine.machineId != machineId) {
       return;
     }
-    await _openStoreAgent(
+    await openStoreAgent(
       context,
       widget.notifier,
-      widget.entry,
+      widget.entry.id,
       machineId,
       prompt: prompt,
     );
@@ -1091,6 +1126,7 @@ class _ProductPageState extends State<_ProductPage> {
     final page = widget.store.reviews[_key];
     final local = widget.notifier.localMachineState;
     final localInstalled = _installedOnMachine(local, entry.id);
+    final hasUpdate = local?.dsh[entry.id]?.hasUpdate == true;
     final base = entry.engine.isNotEmpty
         ? entry.engine
         : (knownHarnessBase[entry.id] ?? '');
@@ -1122,7 +1158,8 @@ class _ProductPageState extends State<_ProductPage> {
     // A viewer package is never opened on its own: once it is here there is
     // nothing more to press, and Remove sits in the line beneath.
     final showAction =
-        local != null && !(entry.isViewerPackage && localInstalled);
+        local != null &&
+        (hasUpdate || !(entry.isViewerPackage && localInstalled));
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1273,7 +1310,9 @@ class _ProductPageState extends State<_ProductPage> {
                                   (!localInstalled &&
                                       !_canGetOnMachine(local, entry))
                               ? null
-                              : () => localInstalled
+                              : () => hasUpdate
+                                    ? _update(local.machine.machineId)
+                                    : localInstalled
                                     ? _open(local.machine.machineId)
                                     : _get(local.machine.machineId),
                           style: FilledButton.styleFrom(
@@ -1281,7 +1320,9 @@ class _ProductPageState extends State<_ProductPage> {
                             foregroundColor: grid.AppPalette.windowBg,
                             minimumSize: const Size(148, 50),
                             padding: const EdgeInsets.symmetric(horizontal: 30),
-                            textStyle: const TextStyle(
+                            textStyle: TextStyle(
+                              fontFamily: grid.AppFont.sans,
+                              fontFamilyFallback: grid.AppFont.sansFallback,
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
                             ),
@@ -1290,6 +1331,8 @@ class _ProductPageState extends State<_ProductPage> {
                           child: Text(
                             installing || busy
                                 ? 'Working…'
+                                : hasUpdate
+                                ? 'Update'
                                 : localInstalled
                                 ? 'Open'
                                 : failed
@@ -1298,6 +1341,25 @@ class _ProductPageState extends State<_ProductPage> {
                           ),
                         ),
                       ),
+                    if (hasUpdate) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        'Your projects and files are kept.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: grid.AppPalette.textSecondary,
+                        ),
+                      ),
+                      if (!entry.isViewerPackage)
+                        TextButton(
+                          key: const ValueKey('store-open-current'),
+                          onPressed: busy || installing
+                              ? null
+                              : () => _open(local!.machine.machineId),
+                          child: const Text('Open'),
+                        ),
+                    ],
                     const SizedBox(height: 14),
                     Center(
                       child: local == null
@@ -1473,10 +1535,12 @@ class _InstallLine extends StatelessWidget {
     } else if (run != null && run.failed) {
       status =
           run.log.where((line) => line.startsWith('miss')).lastOrNull ??
-          'Install failed';
+          (installed ? 'Update failed' : 'Install failed');
     } else if (installed) {
       status = row?.linked == true
           ? 'Installed · linked to a checkout'
+          : row?.hasUpdate == true
+          ? 'Update available'
           : 'Installed';
     } else if (state.needsLink) {
       // Why a machine cannot take this package right now, when it cannot. An
@@ -1524,6 +1588,13 @@ class _InstallLine extends StatelessWidget {
                 : grid.AppPalette.textSecondary,
           ),
         ),
+        if (installed && row?.installedCommit != null)
+          Tooltip(
+            message: row?.availableCommit == null
+                ? 'Installed version: ${row!.installedCommit}'
+                : 'Installed: ${row!.installedCommit}\nAvailable: ${row.availableCommit}',
+            child: Text(row.installedCommit!.substring(0, 8), style: faint),
+          ),
         if (installed && !installing && !busy) ...[
           Text('·', style: faint),
           _QuietLink(

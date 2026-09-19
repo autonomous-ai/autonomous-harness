@@ -246,6 +246,14 @@ describe('DaemonCableHost.listAgentsFlat across machines, and the tab the dial g
     expect(agents.map((a) => a.machineId)).toEqual(['mine', 'other', 'third'])
   })
 
+  it('never lists a terminal — a shell with nobody in it is not something the dial can drive', async () => {
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'term-1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'terminal' })
+    AGENTS.push({ agentId: 'local-1', registeredAt: 2, active: true, terminalAvailable: true, engine: 'claude' })
+    const host = new DaemonCableHost(wiring(), crossFleet({}, []))
+    expect((await settled(host)).map((a) => a.id)).toEqual(['local-1'])
+  })
+
   it('keeps a machine\'s agents when the backend cannot be asked', async () => {
     // The failure this exists for, measured on the real dial: `unknown` means the backend could not be
     // reached — MachineListCache.degrade() marks EVERY machine with it in one go — and reading it as
@@ -353,6 +361,41 @@ describe('DaemonCableHost.listAgentsFlat across machines, and the tab the dial g
     expect(host.describe('r9')).toEqual({ name: '', engine: '', machine: 'office-imac' })
     host.openAgent('r9')
     expect(opened).toHaveBeenCalledWith('other', 'r9')
+  })
+
+  it('forks a local agent through the daemon and opens the fork in the window', async () => {
+    AGENTS.length = 0
+    AGENTS.push({ agentId: 'a1', registeredAt: 1, active: true, terminalAvailable: true, engine: 'claude' })
+    const opened = vi.fn()
+    const forkAgent = vi.fn(async () => ({ ok: true as const, agentId: 'a1-fork' }))
+    const host = new DaemonCableHost(wiring({ opened, forkAgent }))
+    await settled(host)
+
+    expect(await host.forkAgent('a1')).toEqual({ ok: true, agentId: 'a1-fork' })
+    expect(forkAgent).toHaveBeenCalledWith('a1')
+    // The new agent lands in the window on its machine — before any list has named it. Through
+    // `forked` when the wiring has it (beside its source), else the plain `opened`.
+    expect(opened).toHaveBeenCalledWith('mine', 'a1-fork')
+    const forked = vi.fn()
+    const host2 = new DaemonCableHost(wiring({ opened, forked, forkAgent }))
+    await settled(host2)
+    await host2.forkAgent('a1')
+    expect(forked).toHaveBeenCalledWith('mine', 'a1-fork', 'a1')
+    expect(host.describe('a1-fork')).toMatchObject({ machine: 'MacbookPro.local' })
+  })
+
+  it('forks a remote agent on its own machine, and reports the far end\'s refusal', async () => {
+    AGENTS.length = 0
+    const opened = vi.fn()
+    const fleet = crossFleet({ other: [{ id: 'r1', name: 'api' }] })
+    fleet.forkAgent = vi.fn(async (_m: string, id: string) => { if (id === 'r1') return 'r1-fork'; throw new Error('r1 is in the middle of a turn') })
+    const host = new DaemonCableHost(wiring({ opened }), fleet)
+    await settled(host)
+
+    expect(await host.forkAgent('r1')).toEqual({ ok: true, agentId: 'r1-fork' })
+    expect(fleet.forkAgent).toHaveBeenCalledWith('other', 'r1')
+    expect(opened).toHaveBeenCalledWith('other', 'r1-fork')
+    expect(await host.forkAgent('ghost')).toMatchObject({ ok: false, error: 'AGENT_NOT_FOUND' })
   })
 
   it('describes an agent it has listed, for a card about one the dial does not hold', async () => {

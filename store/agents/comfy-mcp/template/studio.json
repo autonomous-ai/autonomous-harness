@@ -1,0 +1,10 @@
+{
+  "spec": 1,
+  "title": "Variation garden",
+  "parameters": {
+    "palette": "orchard",
+    "seed": 24,
+    "complexity": 6,
+    "variations": 4
+  }
+}

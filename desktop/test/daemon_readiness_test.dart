@@ -8,6 +8,7 @@ import 'package:harness/core/models.dart';
 import 'package:harness/state/app_state.dart';
 import 'package:harness/state/swarm_catalog.dart';
 import 'package:harness/ws/local_cli_discovery.dart';
+import 'package:harness/ws/ws_conn.dart';
 
 /// A daemon that answers whatever the test says, with the supervisor's callbacks captured so the
 /// test can fire "it became ready" itself.
@@ -19,6 +20,7 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
   int superviseCalls = 0;
   void Function(LocalCliEndpoint endpoint)? onReady;
   void Function(LocalCliEndpoint endpoint)? onSnapshot;
+  void Function(bool online)? onBackendOnline;
 
   @override
   Future<LocalCliProbe> ensureRunning({
@@ -42,10 +44,12 @@ class _ScriptedDiscovery extends LocalCliDiscovery {
     void Function()? onSignedOut,
     void Function(LocalCliEndpoint endpoint)? onReady,
     void Function(LocalCliEndpoint endpoint)? onSnapshot,
+    void Function(bool online)? onBackendOnline,
   }) {
     superviseCalls++;
     this.onReady = onReady;
     this.onSnapshot = onSnapshot;
+    this.onBackendOnline = onBackendOnline;
     return Timer(const Duration(days: 1), () {});
   }
 }
@@ -56,6 +60,28 @@ class _SignedInCli extends CliLogin {
 }
 
 /// Stops at the machine list: this test is about the daemon gate, not what comes after it.
+/// A socket that answers nothing: the load a connect triggers must not reach for a real pool.
+class _QuietConnection extends WsConn {
+  _QuietConnection()
+    : super(
+        wsBaseUrl: 'ws://fixture.invalid',
+        autonomousEnv: 'test',
+        machineId: 'm-local',
+        accessTokenProvider: (_, _) async => '',
+        onAuthFailure: (_) {},
+        onEvent: (_) {},
+        onStatus: (_) {},
+      );
+  @override
+  Future<void> waitUntilReady({required Duration timeout}) async {}
+  @override
+  Future<Map<String, dynamic>> request(
+    String type, {
+    Map<String, dynamic> payload = const {},
+    Duration timeout = const Duration(seconds: 20),
+  }) async => const {'agents': []};
+}
+
 class _Notifier extends AppNotifier {
   int refreshes = 0;
   _Notifier(LocalCliDiscovery discovery)
@@ -65,6 +91,7 @@ class _Notifier extends AppNotifier {
         configStore: null,
         localCliDiscovery: discovery,
         cliLogin: _SignedInCli(),
+        connectionForTest: (_) => _QuietConnection(),
       ) {
     // Already known, so the retry path does not go looking for it over the
     // network — this test is about the daemon gate, not the profile.
@@ -165,10 +192,10 @@ void main() {
     expect(notifier.refreshes, 0);
   });
 
-  test('a daemon that answers but is still connecting is reported as such, and supervised', () async {
+  test('a daemon that answers but is still scanning is reported as such, and supervised', () async {
     final discovery = _ScriptedDiscovery([
       const LocalCliProbe.notReady(
-        'not connected to the backend yet',
+        'still scanning for agents',
         version: '9.9.9',
       ),
     ]);
@@ -183,7 +210,7 @@ void main() {
           'message',
           allOf(
             contains('Harness is running (v9.9.9)'),
-            contains('not connected to the backend yet'),
+            contains('still scanning for agents'),
           ),
         ),
       ),
@@ -195,6 +222,39 @@ void main() {
       reason: 'the supervisor is what turns this into a recovery',
     );
   });
+
+  test(
+    'the socket that just connected restores a cleared local endpoint',
+    () async {
+      // A refresh during the daemon's restart cleared this row's endpoint; the socket then came back
+      // on its own retry. `connected` is the proof the endpoint is good — put it back, or the tiles
+      // stay "Offline" and `_canAttachPane` refuses them for good.
+      final discovery = _ScriptedDiscovery([LocalCliProbe.ready(_endpoint)]);
+      final notifier = _Notifier(discovery)..status = AppStatus.authenticated;
+      addTearDown(notifier.dispose);
+      await notifier.ensureCliDaemonReady();
+
+      const row = Machine(
+        machineId: 'm-local',
+        computerId: '0123456789abcdef0123456789abcdef',
+        authMode: MachineAuthMode.remote,
+        status: 'online',
+      );
+      notifier.machines = [row];
+      final state = MachineState(row)
+        ..localOnly = true
+        ..localEndpoint = null
+        ..connectionStatus = ConnectionStatus.connected;
+      notifier.machineStates['m-local'] = state;
+      expect(state.usesLocalTransport, isFalse);
+
+      notifier.onMachineConnectedForTest('m-local');
+
+      expect(state.usesLocalTransport, isTrue);
+      expect(state.localEndpoint, same(_endpoint));
+      expect(state.transportMode, MachineTransportMode.localPlaintext);
+    },
+  );
 
   test('a daemon nobody answers for is still "did not start"', () async {
     final discovery = _ScriptedDiscovery([
@@ -216,9 +276,47 @@ void main() {
     expect(discovery.superviseCalls, 0);
   });
 
+  test(
+    'a daemon with no backend is READY: this computer works over the loopback',
+    () async {
+      // The case this whole gate used to fail: a daemon up, tmux up, agents up, and no route to the
+      // backend. It sat on "Starting local service…" for 45s and then on an error strip — and every
+      // retry threw the same error. Offline is a fact the daemon reports, not a reason to wait.
+      final offline = LocalCliEndpoint(
+        computerId: _endpoint.computerId,
+        wsUri: _endpoint.wsUri,
+        protocolVersion: 1,
+        terminalProtocolVersion: 3,
+        machineId: 'm' * 32,
+        backendOnline: false,
+      );
+      // Two answers: offline at boot, online for the retry the reconnect triggers.
+      final discovery = _ScriptedDiscovery([
+        LocalCliProbe.ready(offline),
+        LocalCliProbe.ready(_endpoint),
+      ]);
+      final notifier = _Notifier(discovery)..status = AppStatus.authenticated;
+      addTearDown(notifier.dispose);
+
+      await notifier.ensureCliDaemonReady();
+
+      expect(notifier.backendOnline, isFalse);
+      expect(notifier.lastError, isNull);
+      expect(discovery.superviseCalls, 1);
+      expect(discovery.onBackendOnline, isNotNull);
+
+      // The backend comes back (the supervisor's 5s probe sees `connected:true`): the machines are
+      // fetched again without a click, and the profile too if it was never loaded.
+      discovery.onBackendOnline!(true);
+      await notifier.retryMachines();
+      expect(notifier.backendOnline, isTrue);
+      expect(notifier.refreshes, 1);
+    },
+  );
+
   test('the supervisor reporting ready after a not-ready boot retries the machines without a click', () async {
     final discovery = _ScriptedDiscovery([
-      const LocalCliProbe.notReady('not connected to the backend yet'),
+      const LocalCliProbe.notReady('still scanning for agents'),
       LocalCliProbe.ready(_endpoint),
     ]);
     final notifier = _Notifier(discovery)..status = AppStatus.authenticated;
@@ -226,10 +324,7 @@ void main() {
 
     // The boot path: the gate throws, the error strip shows, supervision is on.
     await notifier.retryMachines();
-    expect(
-      notifier.lastError,
-      contains('has not connected to the backend yet'),
-    );
+    expect(notifier.lastError, contains('still scanning for agents'));
     expect(notifier.lastErrorRetryable, isTrue);
     expect(notifier.refreshes, 0);
     expect(discovery.onReady, isNotNull);

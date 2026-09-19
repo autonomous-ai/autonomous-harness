@@ -18,6 +18,7 @@ import '../state/app_state.dart';
 import 'agent_drag.dart';
 import 'machine_actions.dart';
 import 'delete_agent_dialog.dart';
+import 'fork_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'rename_agent_dialog.dart';
 import 'account_footer.dart';
@@ -693,87 +694,93 @@ class _MachineNodeState extends State<_MachineNode> {
                         // row. The `+` is what the rail's big Create Agent button
                         // used to be: that button had to guess which machine you
                         // meant, and this one cannot be wrong about it.
-                        _CaptionActions(
-                          shown: _hovered || _menuOpen,
-                          onNewAgent: () => showNewAgentDialog(
-                            context,
-                            notifier,
-                            machine.machineId,
-                            source: 'machine_row',
-                          ),
-                          menu: MenuAnchor(
-                            controller: _machineMenu,
-                            onOpen: () => setState(() => _menuOpen = true),
-                            onClose: () => setState(() => _menuOpen = false),
-                            menuChildren: [
-                              // Where the empty state's refresh went. It used to hang off a status line
-                              // that only existed while a machine had no agents, so the one machine you
-                              // could not reload was a machine whose list had gone stale WITH agents in
-                              // it. A per-machine action belongs with the machine's other ones.
-                              AppMenuItem(
-                                icon: LucideIcons.refreshCw300,
-                                label: 'Reload agents',
-                                onPressed: () {
-                                  _machineMenu.close();
-                                  notifier.reloadMachineData(machine.machineId);
-                                },
-                              ),
-                              AppMenuItem(
-                                icon: LucideIcons.pencil300,
-                                label: 'Rename Machine',
-                                onPressed: () {
-                                  _machineMenu.close();
-                                  _showRenameDialog();
-                                },
-                              ),
-                              if (state.isLocalMachine) ...[
-                                const AppMenuDivider(),
+                        if (!machine.isShared)
+                          _CaptionActions(
+                            shown: _hovered || _menuOpen,
+                            onNewAgent: () => showNewAgentDialog(
+                              context,
+                              notifier,
+                              machine.machineId,
+                              source: 'machine_row',
+                            ),
+                            menu: MenuAnchor(
+                              controller: _machineMenu,
+                              onOpen: () => setState(() => _menuOpen = true),
+                              onClose: () => setState(() => _menuOpen = false),
+                              menuChildren: [
+                                // Where the empty state's refresh went. It used to hang off a status line
+                                // that only existed while a machine had no agents, so the one machine you
+                                // could not reload was a machine whose list had gone stale WITH agents in
+                                // it. A per-machine action belongs with the machine's other ones.
                                 AppMenuItem(
-                                  icon: LucideIcons.keyRound300,
-                                  label: 'Set remote password',
+                                  icon: LucideIcons.refreshCw300,
+                                  label: 'Reload agents',
                                   onPressed: () {
                                     _machineMenu.close();
-                                    unawaited(
-                                      showLinkMachineDialog(context, notifier),
-                                    );
-                                  },
-                                ),
-                              ],
-                              if (!state.isLocalMachine) ...[
-                                const AppMenuDivider(),
-                                AppMenuItem(
-                                  icon: LucideIcons.link2300,
-                                  label: 'Remote into this machine…',
-                                  onPressed: () {
-                                    _machineMenu.close();
-                                    notifier.selectMachineForSetup(
+                                    notifier.reloadMachineData(
                                       machine.machineId,
                                     );
                                   },
                                 ),
-                                const AppMenuDivider(),
                                 AppMenuItem(
-                                  icon: LucideIcons.trash2300,
-                                  label: 'Delete machine',
-                                  danger: true,
+                                  icon: LucideIcons.pencil300,
+                                  label: 'Rename Machine',
                                   onPressed: () {
                                     _machineMenu.close();
-                                    _confirmDeleteMachine();
+                                    _showRenameDialog();
                                   },
                                 ),
+                                if (state.isLocalMachine) ...[
+                                  const AppMenuDivider(),
+                                  AppMenuItem(
+                                    icon: LucideIcons.keyRound300,
+                                    label: 'Set remote password',
+                                    onPressed: () {
+                                      _machineMenu.close();
+                                      unawaited(
+                                        showLinkMachineDialog(
+                                          context,
+                                          notifier,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
+                                if (!state.isLocalMachine) ...[
+                                  const AppMenuDivider(),
+                                  AppMenuItem(
+                                    icon: LucideIcons.link2300,
+                                    label: 'Remote into this machine…',
+                                    onPressed: () {
+                                      _machineMenu.close();
+                                      notifier.selectMachineForSetup(
+                                        machine.machineId,
+                                      );
+                                    },
+                                  ),
+                                  const AppMenuDivider(),
+                                  AppMenuItem(
+                                    icon: LucideIcons.trash2300,
+                                    label: 'Delete machine',
+                                    danger: true,
+                                    onPressed: () {
+                                      _machineMenu.close();
+                                      _confirmDeleteMachine();
+                                    },
+                                  ),
+                                ],
                               ],
-                            ],
-                            builder: (context, controller, child) =>
-                                AppIconButton(
-                                  icon: LucideIcons.ellipsis300,
-                                  size: 16,
-                                  tooltip: 'Machine options',
-                                  onPressed: () => controller.isOpen
-                                      ? controller.close()
-                                      : controller.open(),
-                                ),
+                              builder: (context, controller, child) =>
+                                  AppIconButton(
+                                    icon: LucideIcons.ellipsis300,
+                                    size: 16,
+                                    tooltip: 'Machine options',
+                                    onPressed: () => controller.isOpen
+                                        ? controller.close()
+                                        : controller.open(),
+                                  ),
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -867,11 +874,12 @@ class _AgentTree extends StatelessWidget {
       // nobody finds who does not already know it. Put where a new row would actually appear, it needs no
       // discovering. It joins `rows` rather than being appended after the loop so the guide's trunk runs
       // down to it and closes there, exactly as it would on a real last agent.
-      _NewAgentRow(
-        notifier: notifier,
-        machineId: state.machine.machineId,
-        source: 'rail_tail',
-      ),
+      if (!state.machine.isShared)
+        _NewAgentRow(
+          notifier: notifier,
+          machineId: state.machine.machineId,
+          source: 'rail_tail',
+        ),
     ];
 
     return Column(
@@ -1024,10 +1032,20 @@ class _AgentRowState extends State<_AgentRow> {
     state.machine.machineId,
     agent.id,
     agent.name,
+    engine: agent.engine,
   );
 
   Future<void> _restartAgent() =>
       restartHarness(context, notifier, state.machine.machineId, agent.id);
+
+  Future<void> _forkAgent() => forkHarness(
+    context,
+    notifier,
+    state.machine.machineId,
+    agent.id,
+    agent.name,
+    engine: agent.engine,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -1048,6 +1066,7 @@ class _AgentRowState extends State<_AgentRow> {
     final offlineSelectable =
         state.nodeOnline == false && agent.terminalAvailable;
     final enabled =
+        (state.machine.isShared && agent.terminalAvailable) ||
         offlineSelectable ||
         // `connected` never arrives until the local CLI has finished terminating E2EE for this
         // machine (or confirmed none is needed, for its own) — no separate readiness check left.
@@ -1076,7 +1095,7 @@ class _AgentRowState extends State<_AgentRow> {
       // Right-click opens the SAME menu the ⋯ does. Two menus carrying the same
       // two actions in two different shapes is the drift this avoids; the only
       // thing lost is opening at the cursor rather than at the button.
-      onSecondaryTap: _agentMenu.open,
+      onSecondaryTap: state.machine.isShared ? null : _agentMenu.open,
       child: Padding(
         // 28px is where a nested row's box starts, which is what the guide's
         // arm is drawn to reach (trunk at 19, arm 7 long, stopping 2px short of
@@ -1118,7 +1137,9 @@ class _AgentRowState extends State<_AgentRow> {
             },
             // The same "Edit name" the row's own menu opens — a double click is
             // just the shorter way to it, and the place a hand reaches first.
-            onDoubleTap: _showRenameDialog,
+            onDoubleTap: notifier.stateOf(machineId)?.machine.isShared == true
+                ? null
+                : _showRenameDialog,
 
             // No tooltip on a row that works. "Claude engine" only repeated what
             // the mark beside it already says, and it followed the pointer down
@@ -1188,46 +1209,58 @@ class _AgentRowState extends State<_AgentRow> {
             // its own menu is open, where a button that vanished under the menu
             // it opened would leave the panel pointing at nothing.
             trailingAlwaysVisible: _menuOpen,
-            trailing: MenuAnchor(
-              controller: _agentMenu,
-              onOpen: () => setState(() => _menuOpen = true),
-              onClose: () => setState(() => _menuOpen = false),
-              menuChildren: [
-                AppMenuItem(
-                  icon: LucideIcons.pencil300,
-                  label: 'Edit name',
-                  onPressed: () {
-                    _agentMenu.close();
-                    _showRenameDialog();
-                  },
-                ),
-                const AppMenuDivider(),
-                AppMenuItem(
-                  icon: LucideIcons.refreshCw300,
-                  label: 'Restart Harness',
-                  onPressed: () {
-                    _agentMenu.close();
-                    _restartAgent();
-                  },
-                ),
-                const AppMenuDivider(),
-                AppMenuItem(
-                  icon: Icons.stop_rounded,
-                  label: 'Stop Harness',
-                  danger: true,
-                  onPressed: () {
-                    _agentMenu.close();
-                    _confirmDelete();
-                  },
-                ),
-              ],
-              builder: (context, controller, child) => AppIconButton(
-                icon: LucideIcons.ellipsis300,
-                size: 16,
-                onPressed: () =>
-                    controller.isOpen ? controller.close() : controller.open(),
-              ),
-            ),
+            trailing: notifier.stateOf(machineId)?.machine.isShared == true
+                ? const Icon(Icons.visibility_outlined, size: 14)
+                : MenuAnchor(
+                    controller: _agentMenu,
+                    onOpen: () => setState(() => _menuOpen = true),
+                    onClose: () => setState(() => _menuOpen = false),
+                    menuChildren: [
+                      AppMenuItem(
+                        icon: LucideIcons.pencil300,
+                        label: 'Edit name',
+                        onPressed: () {
+                          _agentMenu.close();
+                          _showRenameDialog();
+                        },
+                      ),
+                      const AppMenuDivider(),
+                      AppMenuItem(
+                        icon: LucideIcons.refreshCw300,
+                        label: 'Restart Harness',
+                        onPressed: () {
+                          _agentMenu.close();
+                          _restartAgent();
+                        },
+                      ),
+                      if (agent.canFork)
+                        AppMenuItem(
+                          icon: LucideIcons.gitFork300,
+                          label: 'Fork Harness',
+                          onPressed: () {
+                            _agentMenu.close();
+                            _forkAgent();
+                          },
+                        ),
+                      const AppMenuDivider(),
+                      AppMenuItem(
+                        icon: Icons.stop_rounded,
+                        label: 'Stop Harness',
+                        danger: true,
+                        onPressed: () {
+                          _agentMenu.close();
+                          _confirmDelete();
+                        },
+                      ),
+                    ],
+                    builder: (context, controller, child) => AppIconButton(
+                      icon: LucideIcons.ellipsis300,
+                      size: 16,
+                      onPressed: () => controller.isOpen
+                          ? controller.close()
+                          : controller.open(),
+                    ),
+                  ),
           ),
         ),
       ),

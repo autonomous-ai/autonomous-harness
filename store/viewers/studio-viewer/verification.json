@@ -1,0 +1,1164 @@
+{
+  "spec": 1,
+  "verifiedOn": "2026-09-18",
+  "sourceCommit": "c33ddd9582ea178fee1a70526961b88b16e66036",
+  "machine": {
+    "os": "macOS 26.6.2",
+    "architecture": "x86_64",
+    "chrome": "152.0.7977.83",
+    "webkit": "26.0 (Playwright 2248)",
+    "node": [
+      "26.7.0",
+      "22.23.2"
+    ],
+    "python": "3.11.15"
+  },
+  "acceptance": {
+    "chrome": [
+      {
+        "name": "juce-agent-toolkit",
+        "status": "passed",
+        "artifactCount": 1,
+        "engine": "Local DSP \u00b7 Python renderer",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "foam-agent",
+        "status": "passed",
+        "artifactCount": 2,
+        "engine": "Local D2Q9 lattice Boltzmann simulation",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "autoresearch-mlx",
+        "status": "passed",
+        "artifactCount": 3,
+        "engine": "CPU character model \u00b7 NumPy",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "ableton-ai",
+        "status": "passed",
+        "artifactCount": 3,
+        "engine": "Local MIDI + synthesized audio",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "dimos",
+        "status": "passed",
+        "artifactCount": 2,
+        "engine": "MuJoCo 3.3.7 \u00b7 simulated rover",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "simskill",
+        "status": "passed",
+        "artifactCount": 4,
+        "engine": "Eclipse SUMO sumo 1.27.1",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "bonsai-mcp",
+        "status": "passed",
+        "artifactCount": 3,
+        "engine": "IfcOpenShell 0.8.5 \u00b7 IFC4",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "comfy-mcp",
+        "status": "passed",
+        "artifactCount": 5,
+        "engine": "Local procedural SVG \u00b7 deterministic seeds",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      }
+    ],
+    "webkit": [
+      {
+        "name": "juce-agent-toolkit",
+        "status": "passed",
+        "artifactCount": 1,
+        "engine": "Local DSP \u00b7 Python renderer",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "foam-agent",
+        "status": "passed",
+        "artifactCount": 2,
+        "engine": "Local D2Q9 lattice Boltzmann simulation",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "autoresearch-mlx",
+        "status": "passed",
+        "artifactCount": 3,
+        "engine": "CPU character model \u00b7 NumPy",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "ableton-ai",
+        "status": "passed",
+        "artifactCount": 3,
+        "engine": "Local MIDI + synthesized audio",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "dimos",
+        "status": "passed",
+        "artifactCount": 2,
+        "engine": "MuJoCo 3.3.7 \u00b7 simulated rover",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "simskill",
+        "status": "passed",
+        "artifactCount": 4,
+        "engine": "Eclipse SUMO sumo 1.27.1",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "bonsai-mcp",
+        "status": "passed",
+        "artifactCount": 3,
+        "engine": "IfcOpenShell 0.8.5 \u00b7 IFC4",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      },
+      {
+        "name": "comfy-mcp",
+        "status": "passed",
+        "artifactCount": 5,
+        "engine": "Local procedural SVG \u00b7 deterministic seeds",
+        "workflows": [
+          "doctor",
+          "initialization",
+          "viewer",
+          "empty state",
+          "all controls",
+          "domain interactions",
+          "run",
+          "artifacts",
+          "download",
+          "history",
+          "pause",
+          "agent edit",
+          "stale draft protection",
+          "reload",
+          "narrow layout",
+          "reduced motion",
+          "malformed project recovery"
+        ]
+      }
+    ],
+    "harnessLifecycle": [
+      {
+        "name": "juce-agent-toolkit",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "foam-agent",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "autoresearch-mlx",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "ableton-ai",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "dimos",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "simskill",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "bonsai-mcp",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      },
+      {
+        "name": "comfy-mcp",
+        "checks": [
+          "install",
+          "setup",
+          "doctor",
+          "index",
+          "materialize",
+          "skill discovery",
+          "verdict",
+          "viewer launch",
+          "run",
+          "artifact downloads",
+          "stop",
+          "idempotent materialization",
+          "restore",
+          "remove"
+        ]
+      }
+    ],
+    "viewerRecovery": {
+      "status": "passed",
+      "checks": [
+        "empty state",
+        "module recovery",
+        "clean agent edit",
+        "text controls",
+        "canvas run",
+        "duplicate click",
+        "stale draft protection",
+        "history failure",
+        "failed run retention",
+        "cancel error",
+        "cancel run",
+        "retry",
+        "single refresh",
+        "page cleanup"
+      ]
+    },
+    "nativeResultRenderingFixtures": 3,
+    "pythonTests": 41,
+    "serverAndMusicTests": 16,
+    "existingRegressionTests": 249,
+    "nativeRendererExecutions": 9,
+    "cleanSparseInstall": {
+      "status": "passed",
+      "source": "https://github.com/autonomous-ai/openharness.git",
+      "ref": "c33ddd9582ea178fee1a70526961b88b16e66036",
+      "commit": "c33ddd9582ea178fee1a70526961b88b16e66036",
+      "package": "autonomous/ableton-ai",
+      "viewer": "autonomous/studio-viewer",
+      "checks": [
+        "sparse clone",
+        "locked dependencies",
+        "upstream fetch",
+        "viewer dependency install",
+        "doctor",
+        "materialize",
+        "viewer launch",
+        "real artifacts"
+      ]
+    }
+  },
+  "coverage": {
+    "serverAndMusic": {
+      "lines": {
+        "total": 215,
+        "covered": 215,
+        "skipped": 0,
+        "pct": 100
+      },
+      "statements": {
+        "total": 215,
+        "covered": 215,
+        "skipped": 0,
+        "pct": 100
+      },
+      "functions": {
+        "total": 17,
+        "covered": 17,
+        "skipped": 0,
+        "pct": 100
+      },
+      "branches": {
+        "total": 194,
+        "covered": 194,
+        "skipped": 0,
+        "pct": 100
+      },
+      "branchesTrue": {
+        "total": 0,
+        "covered": 0,
+        "skipped": 0,
+        "pct": 100
+      }
+    },
+    "browser": {
+      "total": {
+        "lines": {
+          "total": 307,
+          "covered": 307,
+          "skipped": 0,
+          "pct": 100
+        },
+        "statements": {
+          "total": 307,
+          "covered": 307,
+          "skipped": 0,
+          "pct": 100
+        },
+        "functions": {
+          "total": 68,
+          "covered": 68,
+          "skipped": 0,
+          "pct": 100
+        },
+        "branches": {
+          "total": 536,
+          "covered": 536,
+          "skipped": 0,
+          "pct": 100
+        },
+        "branchesTrue": {
+          "total": 0,
+          "covered": 0,
+          "skipped": 0,
+          "pct": "Unknown"
+        }
+      },
+      "files": {
+        "agents/ableton-ai/view.mjs": {
+          "lines": {
+            "total": 16,
+            "covered": 16,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 5,
+            "covered": 5,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 16,
+            "covered": 16,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 45,
+            "covered": 45,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/autoresearch-mlx/view.mjs": {
+          "lines": {
+            "total": 20,
+            "covered": 20,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 4,
+            "covered": 4,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 20,
+            "covered": 20,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 32,
+            "covered": 32,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/bonsai-mcp/view.mjs": {
+          "lines": {
+            "total": 35,
+            "covered": 35,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 7,
+            "covered": 7,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 35,
+            "covered": 35,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 65,
+            "covered": 65,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/comfy-mcp/view.mjs": {
+          "lines": {
+            "total": 11,
+            "covered": 11,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 4,
+            "covered": 4,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 11,
+            "covered": 11,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 43,
+            "covered": 43,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/dimos/view.mjs": {
+          "lines": {
+            "total": 25,
+            "covered": 25,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 4,
+            "covered": 4,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 25,
+            "covered": 25,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 31,
+            "covered": 31,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/foam-agent/view.mjs": {
+          "lines": {
+            "total": 38,
+            "covered": 38,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 4,
+            "covered": 4,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 38,
+            "covered": 38,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 52,
+            "covered": 52,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/juce-agent-toolkit/view.mjs": {
+          "lines": {
+            "total": 21,
+            "covered": 21,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 4,
+            "covered": 4,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 21,
+            "covered": 21,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 36,
+            "covered": 36,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "agents/simskill/view.mjs": {
+          "lines": {
+            "total": 26,
+            "covered": 26,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 5,
+            "covered": 5,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 26,
+            "covered": 26,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 40,
+            "covered": 40,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "viewers/studio-viewer/web/graphics.mjs": {
+          "lines": {
+            "total": 17,
+            "covered": 17,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 13,
+            "covered": 13,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 17,
+            "covered": 17,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 34,
+            "covered": 34,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "viewers/studio-viewer/web/music.mjs": {
+          "lines": {
+            "total": 19,
+            "covered": 19,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 1,
+            "covered": 1,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 19,
+            "covered": 19,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 13,
+            "covered": 13,
+            "skipped": 0,
+            "pct": 100
+          }
+        },
+        "viewers/studio-viewer/web/studio.mjs": {
+          "lines": {
+            "total": 79,
+            "covered": 79,
+            "skipped": 0,
+            "pct": 100
+          },
+          "functions": {
+            "total": 17,
+            "covered": 17,
+            "skipped": 0,
+            "pct": 100
+          },
+          "statements": {
+            "total": 79,
+            "covered": 79,
+            "skipped": 0,
+            "pct": 100
+          },
+          "branches": {
+            "total": 145,
+            "covered": 145,
+            "skipped": 0,
+            "pct": 100
+          }
+        }
+      }
+    },
+    "python": {
+      "statements": 690,
+      "coveredStatements": 690,
+      "branches": 216,
+      "coveredBranches": 216,
+      "components": {
+        "runtime": {
+          "covered_lines": 105,
+          "num_statements": 105,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 30,
+          "num_partial_branches": 0,
+          "covered_branches": 30,
+          "missing_branches": 0
+        },
+        "fetch": {
+          "covered_lines": 40,
+          "num_statements": 40,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 20,
+          "num_partial_branches": 0,
+          "covered_branches": 20,
+          "missing_branches": 0
+        },
+        "juce-agent-toolkit": {
+          "covered_lines": 62,
+          "num_statements": 62,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 16,
+          "num_partial_branches": 0,
+          "covered_branches": 16,
+          "missing_branches": 0
+        },
+        "foam-agent": {
+          "covered_lines": 62,
+          "num_statements": 62,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 20,
+          "num_partial_branches": 0,
+          "covered_branches": 20,
+          "missing_branches": 0
+        },
+        "autoresearch-mlx": {
+          "covered_lines": 78,
+          "num_statements": 78,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 26,
+          "num_partial_branches": 0,
+          "covered_branches": 26,
+          "missing_branches": 0
+        },
+        "ableton-ai": {
+          "covered_lines": 71,
+          "num_statements": 71,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 16,
+          "num_partial_branches": 0,
+          "covered_branches": 16,
+          "missing_branches": 0
+        },
+        "dimos": {
+          "covered_lines": 66,
+          "num_statements": 66,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 22,
+          "num_partial_branches": 0,
+          "covered_branches": 22,
+          "missing_branches": 0
+        },
+        "simskill": {
+          "covered_lines": 52,
+          "num_statements": 52,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 16,
+          "num_partial_branches": 0,
+          "covered_branches": 16,
+          "missing_branches": 0
+        },
+        "bonsai-mcp": {
+          "covered_lines": 71,
+          "num_statements": 71,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 16,
+          "num_partial_branches": 0,
+          "covered_branches": 16,
+          "missing_branches": 0
+        },
+        "comfy-mcp": {
+          "covered_lines": 83,
+          "num_statements": 83,
+          "percent_covered": 100.0,
+          "percent_covered_display": "100",
+          "missing_lines": 0,
+          "excluded_lines": 0,
+          "num_branches": 34,
+          "num_partial_branches": 0,
+          "covered_branches": 34,
+          "missing_branches": 0
+        }
+      }
+    },
+    "nativeCpp": {
+      "branches": {
+        "count": 28,
+        "covered": 28,
+        "notcovered": 0,
+        "percent": 100
+      },
+      "functions": {
+        "count": 3,
+        "covered": 3,
+        "percent": 100
+      },
+      "instantiations": {
+        "count": 3,
+        "covered": 3,
+        "percent": 100
+      },
+      "lines": {
+        "count": 45,
+        "covered": 45,
+        "percent": 100
+      },
+      "mcdc": {
+        "count": 0,
+        "covered": 0,
+        "notcovered": 0,
+        "percent": 0
+      },
+      "regions": {
+        "count": 38,
+        "covered": 38,
+        "notcovered": 0,
+        "percent": 100
+      }
+    }
+  },
+  "sourceSha256": {
+    "store/agents/ableton-ai/toolchain/workflow.py": "cc27e857d6383f19bf32476ef32d5f85fba938d74e6c1c7458eae3d492047dc2",
+    "store/agents/ableton-ai/view.mjs": "2a5339585acc72529bfaf53c3c3c60965d3af12dc1c6c932b10502b47f0a7464",
+    "store/agents/autoresearch-mlx/template/train.py": "f2481419e8ca352bad9f33cc6b0fa6350193f12e7119e1d6f533c2ef43c60f65",
+    "store/agents/autoresearch-mlx/toolchain/workflow.py": "3b484834203bc1eecb9252dfdf95e89dd5af0361d0d74978a5122c24a570f2fc",
+    "store/agents/autoresearch-mlx/view.mjs": "dbef7fc1f20b4c87a49637b8c945fadc4cbb2f1e8b61bdd957c0b2cf04d6e11e",
+    "store/agents/bonsai-mcp/toolchain/workflow.py": "b69782688226e29f4d28ea2a3bfef5598ce9b4d2e77eef793c8825d49ee0050e",
+    "store/agents/bonsai-mcp/view.mjs": "e600f7f6fd43377976750d2713d3281388b12a7f1e5b18c92d31b4a67201de8c",
+    "store/agents/comfy-mcp/toolchain/workflow.py": "2ea4978af1b8c54600328a9b53be665593d3bf1fb37caa73ce3766f64c171a0c",
+    "store/agents/comfy-mcp/view.mjs": "96dce5f7a1622603bb0f1591699070af8e24a593be3bc40ed61d9a5ff9457c53",
+    "store/agents/dimos/toolchain/workflow.py": "6d612618e338d33560edb7953958324ada023fa64f9e0793549339328f1abe68",
+    "store/agents/dimos/view.mjs": "c24a87c5c47f137b421641471c22e927e52c7de656153d67e34e5285d1afa3c5",
+    "store/agents/foam-agent/toolchain/workflow.py": "2d75fe2f2387077ba29b1c10b229c1d5efb051d778656ea771823e0e573c809a",
+    "store/agents/foam-agent/view.mjs": "5aef69579aa39031e4edb75dcc1e9c195b92612f69a6eaea0a214f547acdb000",
+    "store/agents/juce-agent-toolkit/template/Source/main.cpp": "c27536a2968006b44f5da976f09c6b5c67ffe64308362e263c926ac504aab5e2",
+    "store/agents/juce-agent-toolkit/toolchain/workflow.py": "b38a8dd32a82b27ffe069292b03b323173ff6d9363b37b9eed79085fa47940c8",
+    "store/agents/juce-agent-toolkit/view.mjs": "cd0844645c8d78cf0f79d1e0176900914d0a71429dfbfd8ce1e39317c75cf01f",
+    "store/agents/simskill/toolchain/workflow.py": "2ac8bef00bcb1bdfe0b3c47942c8d462260a2829051492cf4fbbbda00b60e4c3",
+    "store/agents/simskill/view.mjs": "44b66797d33ed961e589e97e28a15c1e20a6572b417307b0a7069c148aef2b04",
+    "store/tools/studio_fetch.py": "96e2e694b6e568bfb0e8aa6e73238bcea3983eacbcf4a59e87ed58c14964f2e4",
+    "store/tools/studio_runtime.py": "667d609a71bb1c7373efab697144c3038e8d51eb8cc9d9462bc27224f8e225b3",
+    "store/viewers/studio-viewer/server.mjs": "948aa802b1862242cce21374180eb7deaed180866974cf312196de60e0fec7d5",
+    "store/viewers/studio-viewer/web/graphics.mjs": "e87135857e0885975ca30d37cf1542716eb8206454f449acd21ad90c083a7f6d",
+    "store/viewers/studio-viewer/web/music.mjs": "60936965cf15b75558516d4e04720741b9f941153cf57fd33b42572b5cf7bf7a",
+    "store/viewers/studio-viewer/web/studio.mjs": "46a0a3dbb8af18bfaad10bdb4da405929df71180d88e9f3ad2f1d63e881b3b6d"
+  },
+  "scope": "Local Mac workflows. Browser native-result fixtures and isolated bridge responders are contract checks, not live external applications. Coverage includes the viewer host, all domain/browser modules, original Python workflows and shared helpers, and original C++ renderer. Upstream dependencies, Bash/CMake installers, and the rest of Harness are outside the instrumented denominator."
+}

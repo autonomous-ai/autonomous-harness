@@ -391,6 +391,9 @@ export const ENGINE_PROCESS_SIGNATURES: Readonly<Record<RegisteredSession['engin
     basenames: [/^copilot$/],
     entrypoints: [/@github[\/\\]copilot[\/\\](?:npm-loader\.js|index\.js|bin[\/\\]copilot)$/],
   },
+  // A terminal is a shell, and a shell is what every pane starts as — so nothing matches it, ever.
+  // Discovery walks PROCESS_ENGINES and never asks; this entry exists for the Record's sake.
+  terminal: { basenames: [], entrypoints: [] },
 }
 
 function heuristicEngineProcessMatchScore(
@@ -832,11 +835,21 @@ export function setPaneWindowStyle(pane: string, style: string): Promise<boolean
 }
 
 /** What tmux knows about a pane right now. See `agentCreateDiagnosis.ts` for why this is read. */
+/**
+ * The pane option an engine's launch wrapper sets when the engine exits and the pane falls back to
+ * a shell (engineLaunch.ts, `harness_engine`): the engine's exit status. Empty/absent while the
+ * wrapper is still running the engine — and for the whole life of the fallback shell after that,
+ * once something reads it, so `respawn` clears it before every new launch in the same pane.
+ */
+export const ENGINE_EXIT_PANE_OPTION = '@harness_engine_exit'
+
 export interface TmuxPaneState {
   dead: boolean
   /** Exit status once the process is gone; null while it is still running. */
   exitStatus: number | null
   command: string
+  /** The engine's exit status once its launch wrapper handed the pane to a shell; null before. */
+  engineExit: number | null
 }
 
 /**
@@ -847,18 +860,20 @@ export interface TmuxPaneState {
  */
 export function tmuxPaneState(pane: string): Promise<TmuxPaneState | null> {
   return new Promise((resolve) => {
-    const format = '#{pane_dead}|#{pane_dead_status}|#{pane_current_command}'
+    const format = `#{pane_dead}|#{pane_dead_status}|#{${ENGINE_EXIT_PANE_OPTION}}|#{pane_current_command}`
     execFile('tmux', ['display-message', '-p', '-t', pane, format], { timeout: 2_000 }, (err, stdout) => {
       if (err) { resolve(null); return }
       const fields = stdout.trim().split('|')
-      if (fields.length < 3) { resolve(null); return }
+      if (fields.length < 4) { resolve(null); return }
       const status = Number(fields[1])
+      const engineExit = Number(fields[2])
       resolve({
         dead: fields[0] === '1',
         exitStatus: fields[1] !== '' && Number.isSafeInteger(status) ? status : null,
+        engineExit: fields[2] !== '' && Number.isSafeInteger(engineExit) ? engineExit : null,
         // A command name cannot contain `|`, but rejoining costs nothing and keeps a surprising
         // one from silently truncating the field.
-        command: fields.slice(2).join('|'),
+        command: fields.slice(3).join('|'),
       })
     })
   })

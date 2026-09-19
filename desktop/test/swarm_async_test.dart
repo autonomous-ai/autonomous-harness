@@ -27,6 +27,7 @@ class _PendingConnection extends WsConn {
       );
   final reply = Completer<Map<String, dynamic>>();
   final calls = <String>[];
+  final payloads = <Map<String, dynamic>>[];
   @override
   Future<Map<String, dynamic>> request(
     String type, {
@@ -34,6 +35,7 @@ class _PendingConnection extends WsConn {
     Duration timeout = const Duration(seconds: 20),
   }) {
     calls.add(type);
+    payloads.add(payload);
     return reply.future;
   }
 
@@ -100,6 +102,23 @@ void main() {
       null,
       'Update the harness CLI on this machine to create a harness',
     ),
+    // Refused at the wire before any pane exists: a definite no, never
+    // "check status".
+    (
+      'PROMPT_TOO_LONG',
+      'prompt is longer than 2000 characters',
+      'This first task is too long for Test host. Shorten it and try again.',
+    ),
+    (
+      'INVALID_PROMPT',
+      'prompt must be a string',
+      'Create harness failed: prompt must be a string',
+    ),
+    (
+      'PROMPT_UNSUPPORTED',
+      null,
+      'This engine cannot be opened with a first message on Test host.',
+    ),
     (
       'SPAWN_FAILED',
       'The machine could not allocate an agent process.',
@@ -130,6 +149,44 @@ void main() {
       },
     );
   }
+
+  test('a first task travels on agent_create as given, and no task sends no '
+      'field', () async {
+    final connection = _PendingConnection();
+    final app = createApp(connectionForTest: (_) => connection);
+    addTearDown(app.dispose);
+    final withTask = app.createAgent(
+      'm',
+      engine: 'claude',
+      folder: '/work',
+      prompt: 'Fix the failing tests.\nThen push.',
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(connection.calls, ['agent_create']);
+    expect(
+      connection.payloads.single['prompt'],
+      'Fix the failing tests.\nThen push.',
+    );
+    connection.complete();
+    await withTask;
+
+    final bare = _PendingConnection();
+    final plain = createApp(connectionForTest: (_) => bare);
+    addTearDown(plain.dispose);
+    final withoutTask = plain.createAgent(
+      'm',
+      engine: 'codex',
+      folder: '/work',
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      bare.payloads.single.containsKey('prompt'),
+      isFalse,
+      reason: 'a machine that knows the field refuses it for some engines',
+    );
+    bare.complete();
+    await withoutTask;
+  });
 
   test(
     'an unconfirmed creation is not presented as a definite failure',

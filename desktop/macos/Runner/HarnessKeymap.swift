@@ -1,4 +1,5 @@
 import Cocoa
+import WebKit
 
 /// Canonical logical strokes match Dart's KeyStroke. No QWERTY letter table:
 /// AppKit translates the event through the current keyboard layout.
@@ -173,6 +174,14 @@ final class HarnessNativeKeymap {
     bindings[context]?.first(where: { $0.command == command })?.hint
   }
 
+  // WKWebView is a native responder, so it does not forward this app action
+  // through Flutter's keyboard dispatcher. Respect the resolved user binding,
+  // including remapping/unbinding, instead of hard-coding Command-P in AppKit.
+  func viewerOrchestratorCommand(_ stroke: HarnessKeyStroke) -> String? {
+    let command = match([stroke], context: "workspace").binding?.command
+    return command == "project.orchestrate" ? command : nil
+  }
+
   /// Only explicitly identified Harness rows change. AppKit's Edit, Window,
   /// Services and font-size commands retain their native ownership.
   func applyMenuKeys(to menu: NSMenu, context: String) {
@@ -202,6 +211,8 @@ final class HarnessKeymapMenu: NSMenu {
   static let actionPrefix = "harness.keymap."
   weak var ownerWindow: NSWindow?
   private var inputStrokes: Set<HarnessKeyStroke> = []
+  private var keymap: HarnessNativeKeymap?
+  var dispatchViewerCommand: ((String) -> Bool)?
 
   static func replacing(_ previous: NSMenu) -> HarnessKeymapMenu {
     let menu = HarnessKeymapMenu(title: previous.title)
@@ -217,6 +228,7 @@ final class HarnessKeymapMenu: NSMenu {
   }
 
   func update(_ map: HarnessNativeKeymap, window: NSWindow) {
+    keymap = map
     ownerWindow = window
     inputStrokes = Set(map.bindings.values.flatMap { $0.compactMap { $0.keys.first } })
   }
@@ -228,6 +240,19 @@ final class HarnessKeymapMenu: NSMenu {
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if let ownerWindow, (event.window ?? NSApp.keyWindow) === ownerWindow,
+       let stroke = HarnessKeyStroke.fromEvent(event),
+       let command = keymap?.viewerOrchestratorCommand(stroke) {
+      var responder = ownerWindow.firstResponder as? NSView
+      while let view = responder {
+        if view is WKWebView {
+          if event.isARepeat { return true }
+          if dispatchViewerCommand?(command) == true { return true }
+          break
+        }
+        responder = view.superview
+      }
+    }
     if defersToInput(event) { return false }
     return super.performKeyEquivalent(with: event)
   }

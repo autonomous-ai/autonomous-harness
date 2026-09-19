@@ -108,7 +108,12 @@ void main() {
           )
           .map((button) => (button.child! as Text).data)
           .toList();
-      expect(users, ['text-to-cad', 'Zeta arm']);
+      expect(users, ['View', 'text-to-cad', 'Zeta arm']);
+      await tester.tap(
+        find.byKey(const ValueKey('store-viewer-action:autonomous/cad-viewer')),
+      );
+      expect(opened, ['autonomous/cad-viewer']);
+      opened.clear();
       await tester.tap(
         find.byKey(
           const ValueKey(

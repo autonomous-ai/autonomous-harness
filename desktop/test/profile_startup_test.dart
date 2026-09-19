@@ -263,7 +263,48 @@ void main() {
       expect(app.machineStates['fixture']!.agents, hasLength(1));
       expect(app.daemonChecks, 2);
       await tester.pump(const Duration(seconds: 35));
+      // Invitation discovery continues after recovery without probing the daemon again.
+      // Its pending poll is coalesced across subsequent ticks.
+      expect(api.lists, hasLength(3));
+      api.lists.last.complete([_machine]);
+      await tester.pump();
+      expect(app.daemonChecks, 2);
+      disposeApp();
+    },
+  );
+
+  testWidgets(
+    'invitation discovery recovers from network failures without losing machines',
+    (tester) async {
+      final start = app.bootstrap();
+      await tester.pump();
+      api.profiles.single.complete(_profile('current'));
+      api.lists.single.complete([_machine]);
+      await tester.pump();
+      await start;
+
+      await tester.pump(const Duration(seconds: 15));
       expect(api.lists, hasLength(2));
+      api.lists.last.completeError(
+        ApiException('Backend unreachable', status: 502),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(app.machines.map((m) => m.machineId), ['fixture']);
+      expect(app.lastError, isNull);
+
+      await tester.pump(const Duration(seconds: 2));
+      expect(api.lists, hasLength(3));
+      // Discovery must not duplicate a recovery request that is still pending.
+      await tester.pump(const Duration(seconds: 30));
+      expect(api.lists, hasLength(3));
+      api.lists.last.complete([_machine]);
+      await tester.pump();
+      expect(app.machinesRefreshing, isFalse);
+      await tester.pump(const Duration(seconds: 15));
+      expect(api.lists, hasLength(4));
+      api.lists.last.complete([_machine]);
+      await tester.pump();
       disposeApp();
     },
   );

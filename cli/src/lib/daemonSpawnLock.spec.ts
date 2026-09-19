@@ -172,6 +172,24 @@ describe('daemon spawn lock', () => {
     expect(lock.describeSpawnLockFailure(new lock.SpawnLockBusyError(null, 'why'))).toBe('why')
   })
 
+  it('tells a person what Harness is still doing, without a pid or a lock in the sentence', async () => {
+    // The desktop's sign-in screen shows this verbatim: the technical line is for stderr.
+    const lock = await loadLock()
+    const busy = (purpose: 'start' | 'update' | 'handoff' | 'stop' | 'login') =>
+      new lock.SpawnLockBusyError({ pid: 4242, startMarker: '', token: 't', purpose, since: Date.now() })
+    expect(lock.describeSpawnLockBusyPlainly(busy('update'))).toBe('Harness is still updating on this computer. Try again in a moment.')
+    expect(lock.describeSpawnLockBusyPlainly(busy('login'))).toBe('Another sign-in is already in progress on this computer. Try again in a moment.')
+    for (const purpose of ['start', 'handoff', 'stop'] as const) {
+      const said = lock.describeSpawnLockBusyPlainly(busy(purpose))
+      expect(said).toMatch(/^Harness is still .* on this computer\. Try again in a moment\.$/)
+      expect(said).not.toMatch(/4242|lock|pid/)
+    }
+    expect(lock.describeSpawnLockBusyPlainly(new lock.SpawnLockBusyError(null))).toBe('Harness is busy on this computer. Try again in a moment.')
+    // Not a lock at all is not going to clear itself: no "try again", a terminal instead.
+    expect(lock.describeSpawnLockBusyPlainly(new lock.SpawnLockBusyError(null, 'not a lock this CLI made: /x — remove it by hand')))
+      .toBe('Harness cannot sign in on this computer right now. Run `harness login --force` in a terminal to see why.')
+  })
+
   it('serializes two real spawners racing for the lock', async () => {
     // Each child takes the lock, appends "<pid> in", sleeps, appends "<pid> out". Serialized, the
     // trace is in/out/in/out; a broken lock interleaves in/in.

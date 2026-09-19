@@ -140,6 +140,21 @@ gcs_cp() {
   if [ -n "$ct" ]; then args+=("--content-type=$ct"); fi
   gcloud "${args[@]}" "$src" "$dst"
 }
+
+# gcs_refuse_republish <gs://…> — a versioned artifact is IMMUTABLE once published: the CDN in front of
+# it caches for a year and serves the FIRST bytes it saw for that path. Re-uploading the same version
+# (a re-run of a failed release workflow, a second tag on the same version) leaves the manifest naming
+# bytes the CDN will never serve — every updater then fails its size/sha check with "Could not
+# download and verify". Measured on 1.1.56 (2026-09-18): three workflow runs, one path, two different
+# zips, self-update broken for every Mac. The fix is always a new version, never an overwrite.
+gcs_refuse_republish() {
+  local dst="$1"
+  if gcloud storage ls "$dst" >/dev/null 2>&1; then
+    echo "error: $dst already exists — versioned artifacts are immutable (the CDN keeps the first bytes)." >&2
+    echo "       Publish a NEW version instead of re-uploading this one (see RELEASE.md)." >&2
+    exit 1
+  fi
+}
 command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exit 1; }
 command -v flutter >/dev/null 2>&1 || { echo "error: flutter not found" >&2; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { echo "error: sha256sum not found" >&2; exit 1; }
@@ -236,6 +251,7 @@ echo ">> uploading release $VER ($SIZE bytes, sha256=$SHA)"
 echo "   dest: gs://${GCS_BUCKET}/${GCS_PATH}"
 # Immutable per-version path — see the CDN_ASSET_BASE_URL note near the top of this script. Long
 # max-age here is what actually lets the CDN cache it instead of hitting GCS on every install/update.
+gcs_refuse_republish "gs://${GCS_BUCKET}/${GCS_PATH}"
 gcs_cp "$OUTPUT" "gs://${GCS_BUCKET}/${GCS_PATH}" "public, max-age=31536000, immutable"
 
 echo ">> merging manifest: gs://${GCS_BUCKET}/${METADATA_PATH}  (${OTA_KEY})"

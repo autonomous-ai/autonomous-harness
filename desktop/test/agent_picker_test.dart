@@ -26,10 +26,12 @@ AgentChoice _agent(
   String label,
   String detail, {
   String? keywords,
+  String? creator,
 }) => AgentChoice(
   id: id,
   label: label,
   detail: detail,
+  creator: creator,
   keywords: keywords,
   description: '$label, described.',
   mark: (size) => SizedBox.square(dimension: size),
@@ -37,7 +39,13 @@ AgentChoice _agent(
 
 final _choices = [
   _agent('codex', 'Codex', 'Code · OpenAI'),
-  _agent('claude', 'Claude Code', 'Code · Anthropic'),
+  _agent(
+    'claude',
+    'Claude Code',
+    'Agentic coding in your terminal',
+    creator: 'Anthropic',
+    keywords: 'Code',
+  ),
   _agent('cursor', 'Cursor', 'Code · Anysphere'),
   _agent('hermes', 'Hermes', 'Code · Nous Research'),
   _agent('autonomous/marp', 'Marp', 'Slides · Autonomous', keywords: 'Media'),
@@ -152,6 +160,18 @@ void main() {
     await openAgentSearch(tester);
     expect(agentRows(tester), ['claude', 'autonomous/marp', 'codex']);
     expect(find.text('Keep agent'), findsOneWidget);
+    final claudeRow = find.byKey(const ValueKey('new-agent-agent-row-claude'));
+    expect(
+      find.descendant(of: claudeRow, matching: find.text('by Anthropic')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: claudeRow,
+        matching: find.text('Agentic coding in your terminal'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Claude Code, described.'), findsOneWidget);
 
     // The arrows move the highlight and the preview follows it.

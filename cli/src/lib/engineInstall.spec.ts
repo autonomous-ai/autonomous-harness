@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { ENGINES } from '../engines/types.js'
+import { PROCESS_ENGINES } from '../engines/types.js'
 import { ENGINE_INSTALL } from './engineInstall.js'
 import { buildEngineLaunchArgv } from './engineLaunch.js'
 
@@ -23,7 +23,7 @@ const OFFICIAL_COMMANDS = {
 
 describe('ENGINE_INSTALL', () => {
   it('has one first-party recipe for every supported engine', () => {
-    expect(Object.keys(ENGINE_INSTALL)).toEqual(ENGINES)
+    expect(Object.keys(ENGINE_INSTALL)).toEqual(PROCESS_ENGINES)
     expect(Object.fromEntries(
       Object.entries(ENGINE_INSTALL).map(([engine, recipe]) => [engine, recipe.command]),
     )).toEqual(OFFICIAL_COMMANDS)
@@ -40,7 +40,7 @@ describe('ENGINE_INSTALL', () => {
   })
 
   it('generates valid POSIX pane scripts for every recipe', () => {
-    for (const engine of ENGINES) {
+    for (const engine of PROCESS_ENGINES) {
       const script = buildEngineLaunchArgv(
         engine,
         { installIfMissing: ENGINE_INSTALL[engine] },

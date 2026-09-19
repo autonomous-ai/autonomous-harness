@@ -17,6 +17,9 @@ import { join } from 'node:path'
 
 process.env.ADAPTER_DATA_DIR = mkdtempSync(join(tmpdir(), 'adapter-test-data-'))
 process.env.ADAPTER_RUNTIME_DIR = mkdtempSync(join(tmpdir(), 'adapter-test-runtime-'))
+// Auth is stored outside ADAPTER_DATA_DIR in production. Never let a spec
+// discover, refresh, or replace the developer's real Harness account session.
+process.env.HARNESS_AUTH_DIR = join(process.env.ADAPTER_DATA_DIR, 'auth')
 process.env.DSH_DIR = join(process.env.ADAPTER_DATA_DIR, 'dsh')
 // The Store catalog is fetched from GitHub by dsh_list; a test must never depend on what that branch
 // holds today (a published catalog turned a fixture registry of two into the live shelf of 23).

@@ -1,0 +1,10 @@
+{
+  "homepage": "https://github.com/qiliuchn/SimSkill-V1",
+  "upstream": "https://github.com/qiliuchn/SimSkill-V1",
+  "license": "Apache-2.0; SUMO EPL-2.0 / GPL-2.0",
+  "tagline": "A lifelong-learning AI agent for mastering traffic simulation",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/simskill/screenshots/studio.png",
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/simskill/screenshots/narrow.png"
+  ]
+}

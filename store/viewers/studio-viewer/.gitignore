@@ -1,0 +1,4 @@
+node_modules/
+test-results/
+coverage/
+.nyc_output/

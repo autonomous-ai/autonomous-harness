@@ -87,6 +87,22 @@ describe('DshViewerManager', () => {
     expect(spawned).toHaveLength(1)
   })
 
+  it('forwards only a running viewer on the allocated loopback port', async () => {
+    setup()
+    expect(manager!.forwardingUrl('a1')).toBeNull()
+    await manager!.start('a1', dsh({ command: 'v', url: 'http://127.0.0.1:${port}/' }), '/ws')
+    expect(manager!.forwardingUrl('a1')).toBe('http://127.0.0.1:4790/')
+    await manager!.stop('a1')
+    expect(manager!.forwardingUrl('a1')).toBeNull()
+  })
+
+  it.each(['http://127.0.0.1:22/', 'http://example.com:${port}/', 'https://127.0.0.1:${port}/'])('does not forward a manifest URL outside its managed HTTP port: %s', async (url) => {
+    setup()
+    await manager!.start('a1', dsh({ command: 'v', url }), '/ws')
+    expect(manager!.url('a1')).not.toBeNull()
+    expect(manager!.forwardingUrl('a1')).toBeNull()
+  })
+
   it('republishes when the verdict names an artifact, and only when the URL changes', async () => {
     const { urls } = setup()
     await manager!.start('a1', dsh({ command: 'v', url: 'http://127.0.0.1:${port}/?file=${artifact}' }), '/ws')

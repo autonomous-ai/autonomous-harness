@@ -2,6 +2,7 @@
   "homepage": "https://typst.app",
   "upstream": "https://github.com/typst/typst",
   "license": "MIT",
+  "tagline": "Markup-based typesetting system",
   "evaluation": [
     {
       "method": "tool",

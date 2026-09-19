@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Bonsai MCP",
+    "url": "https://github.com/Show2Instruct/bonsai-mcp.git",
+    "commit": "12cf135f6985cd042a6205c163bdfacdca23de3a",
+    "directory": "upstream",
+    "sparse": [
+      "src",
+      "blender_addon",
+      "docs",
+      "scripts"
+    ]
+  }
+]

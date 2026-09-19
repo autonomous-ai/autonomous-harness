@@ -22,6 +22,7 @@ import {
 import { TmuxControlStream } from './tmuxStream.js'
 import {
   captureTmuxPane,
+  ENGINE_EXIT_PANE_OPTION,
   listPaneTitles,
   LSTART_MARKER_RE,
   resolvePaneEngineProcess,
@@ -164,7 +165,13 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
    * instead of taking the pane down with it. Whoever calls this owns turning it back off.
    */
   async respawn(runtime: TmuxRuntimeRef, request: TerminalRespawnRequest): Promise<TerminalActionResult> {
-    const args = ['set-option', '-w', '-t', runtime.paneId, 'remain-on-exit', 'on', ';', 'respawn-pane', '-k']
+    // The engine-exit marker is the pane's, and a respawned pane is a new launch: cleared here, in
+    // the same invocation, or the new engine would read as exited the moment it started.
+    const args = [
+      'set-option', '-w', '-t', runtime.paneId, 'remain-on-exit', 'on', ';',
+      'set-option', '-p', '-t', runtime.paneId, ENGINE_EXIT_PANE_OPTION, '', ';',
+      'respawn-pane', '-k',
+    ]
     if (request.cwd) args.push('-c', request.cwd)
     for (const [key, value] of Object.entries(request.env ?? {})) args.push('-e', `${key}=${value}`)
     args.push('-t', runtime.paneId, ...request.command)
@@ -385,8 +392,9 @@ export class TmuxBackend implements TerminalBackend<TmuxRuntimeRef> {
     expected: TerminalProcessExpectation,
     size: TerminalStreamSize,
     sink: TerminalStreamSink,
+    readOnly?: boolean,
   ): Promise<TerminalReadResult<TerminalStreamHandle<TmuxRuntimeRef>>> {
     void expected
-    return TmuxControlStream.open(runtime.paneId, size, sink)
+    return TmuxControlStream.open(runtime.paneId, size, sink, readOnly)
   }
 }

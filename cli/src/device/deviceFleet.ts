@@ -4,6 +4,7 @@
 // The split is deliberate and load-bearing. The LIST costs an HTTP read and works signed-in-but-offline;
 // the LANE costs a cloud socket and only exists while the user is actually looking at another machine. A
 // dial parked on the local machine — which is where it sits most of the time — holds no socket at all.
+import { isTerminalEngine } from '../engines/types.js'
 import { FleetError, type FleetEvent, type FleetMachine, type MachineFleet } from '../cable/machineFleet.js'
 import type { CableAgent } from '../cable/cableSession.js'
 import type { RecentTurn } from '../cable/cableHost.js'
@@ -162,7 +163,11 @@ export class DeviceFleet implements MachineFleet {
   async listAgents(machineId: string): Promise<CableAgent[]> {
     const res = await this.rpc(machineId, 'agents_list', {})
     const raw = Array.isArray(res.agents) ? res.agents : []
-    return raw.map(toCableAgent).filter((a) => a.id)
+    // This asks the far daemon as an ordinary client, so its answer is the app's list, terminals
+    // included — and the dial drives agents only, the same rule its own machine's list keeps
+    // (`deviceAgentRow`, `cableHost.localAgents`). A far daemon too old to know the engine sends
+    // none, which is the same thing.
+    return raw.map(toCableAgent).filter((a) => a.id && !isTerminalEngine(a.engine))
   }
 
   /**
@@ -230,6 +235,14 @@ export class DeviceFleet implements MachineFleet {
     const selectedModel = `runtime-v1:${agentId}:claude:${model}@${effort || 'auto'}`
     void this.rpc(machineId, 'agent_update', { agentId, selectedModel })
       .catch((err) => this.opts.log(`device: agent_update failed (${(err as Error).message})`))
+  }
+
+  async forkAgent(machineId: string, agentId: string): Promise<string> {
+    const res = await this.rpc(machineId, 'agent_fork', { agentId })
+    const agent = res.agent as { id?: unknown } | undefined
+    if (typeof res.error === 'string') throw new Error(typeof res.detail === 'string' ? res.detail : res.error)
+    if (typeof agent?.id !== 'string' || !agent.id) throw new Error('the machine answered without an agent')
+    return agent.id
   }
 
   async listModels(machineId: string, agentId: string): Promise<string[]> {

@@ -140,6 +140,17 @@ void main() {
       expect(status.autonomousEnv, 'prod');
     });
 
+    test('reads the CLI\'s offline flag: signed in, backend out of reach', () {
+      final status = CliAuthStatus.fromJson({
+        'loggedIn': true,
+        'offline': true,
+        'machineId': 'm_123',
+      });
+      expect(status.loggedIn, isTrue);
+      expect(status.offline, isTrue);
+      expect(CliAuthStatus.fromJson({'loggedIn': true}).offline, isFalse);
+    });
+
     test('parses a logged-out payload with no other fields', () {
       final status = CliAuthStatus.fromJson({'loggedIn': false});
       expect(status.loggedIn, isFalse);

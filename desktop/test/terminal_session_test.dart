@@ -12,8 +12,10 @@ void main() {
   late List<({String type, Map<String, dynamic> payload})> sent;
   late List<TerminalBinaryFrame> binarySent;
   late TerminalSession session;
+  DateTime? controlledNow;
 
   setUp(() {
+    controlledNow = null;
     sent = [];
     binarySent = [];
     session = TerminalSession(
@@ -21,6 +23,7 @@ void main() {
       agentId: 'agent-1',
       agentName: 'backend-api',
       engineId: 'codex',
+      now: () => controlledNow ?? DateTime.now(),
       send: (type, payload) async {
         sent.add((type: type, payload: Map<String, dynamic>.from(payload)));
         return true;
@@ -281,6 +284,9 @@ void main() {
   test(
     'terminal input batches, preserves Enter boundary and is never retried',
     () async {
+      // Keep all typed characters inside the 4 ms logical batching window,
+      // even when a loaded CI host takes longer to schedule the test itself.
+      controlledNow = DateTime(2026, 9, 18);
       await ready();
       await session.handleBinary(
         output(0, utf8.encode(r'prompt> '), keyframe: true, cols: 80, rows: 24),

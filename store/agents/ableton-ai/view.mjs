@@ -1,0 +1,16 @@
+import {canvas,grid,round,words,circle,toolbar,badge,label,tone} from '/graphics.mjs';
+import {groove} from '/music.mjs';
+export function mount(stage,api){
+  let p=api.getParameters(),playing=false,step=0,interval,selected=new Set(),recording=new Audio(),result;
+  label(stage,'Sixteen steps. Endless little possibilities.');badge(stage,'LOCAL SYNTH');
+  const screen=canvas(stage,(ctx,w,h,t)=>{grid(ctx,w,h);const gap=8,left=24,cell=(w-2*left-7*gap)/8,top=h*.28,rowh=55;for(let i=0;i<16;i++){const x=left+i%8*(cell+gap),y=top+Math.floor(i/8)*(rowh+12),on=selected.has(i);round(ctx,x,y,cell,rowh,8,on?'#e8af7c':'#ffffff09',step===i&&playing?'#fff2d8':'#ffffff15');if(on)circle(ctx,x+cell/2,y+18,3,'#30231e');words(ctx,String(i+1).padStart(2,'0'),x+8,y+rowh-10,on?'#57402e':'#7e6d63',10);}words(ctx,`${p.tempo} BPM`,24,h*.18,'#f2bc88',25);words(ctx,p.scale.toUpperCase(),w-105,h*.18,'#a59285',10);if(playing){const x=24+(t%1)*(w-48);lineProgress(ctx,x,h-95);}},api.signal);
+  function lineProgress(ctx,x,y){ctx.fillStyle='#f2bc8840';ctx.fillRect(24,y,x-24,2);}
+  screen.element.setAttribute('aria-label','Sixteen-step sequencer; click a step to toggle it');screen.element.tabIndex=0;
+  const toggle=i=>{if(selected.has(i))selected.delete(i);else selected.add(i);api.setParameter('pattern',Array.from({length:16},(_,j)=>selected.has(j)?'1':'0').join(''));api.announce(`Step ${i+1} ${selected.has(i)?'on':'off'}`);};
+  screen.element.addEventListener('click',e=>{const box=screen.element.getBoundingClientRect(),x=e.clientX-box.left,y=e.clientY-box.top,cell=(box.width-48-56)/8;const col=Math.floor((x-24)/(cell+8)),row=Math.floor((y-box.height*.28)/67);if(col>=0&&col<8&&row>=0&&row<2)toggle(row*8+col);});
+  screen.element.addEventListener('keydown',e=>{if(e.key==='ArrowRight'){step=(step+1)%16;api.announce(`Step ${step+1}`);e.preventDefault();}if(e.key==='ArrowLeft'){step=(step+15)%16;api.announce(`Step ${step+1}`);e.preventDefault();}if(e.key===' '||e.key==='Enter'){toggle(step);e.preventDefault();}});
+  function tick(){if(!playing)return;const note=groove(p).find(n=>n.step===step);if(note)tone(440*2**((note.note-69)/12),note.length*60/p.tempo+.15,'sine',note.velocity/127*.32).catch(()=>api.announce('Audio is unavailable. Download the WAV.'));step=(step+1)%16;interval=setTimeout(tick,60000/p.tempo/4*(1+(step%2?p.swing:-p.swing)));}
+  const bar=toolbar(stage,[['Play loop',b=>{playing=!playing;b.textContent=playing?'Pause loop':'Play loop';b.setAttribute('aria-pressed',String(playing));if(playing)tick();else clearTimeout(interval);}],['New variation',()=>{api.setParameter('pattern','');api.setParameter('seed',p.seed%32+1);}],['Play WAV',async()=>{const file=result?.artifacts.find(a=>a.path.endsWith('.wav'));if(!file){api.announce('Keep a loop first.');return;}recording.src=api.artifactURL(file.path);await recording.play().catch(()=>api.announce('Download the WAV to listen.'));}]]);
+  api.signal.addEventListener('abort',()=>{clearTimeout(interval);recording.pause();});
+  return {update(params,r,motion){p=params;result=r;selected=new Set(groove(p).map(n=>n.step));screen.motion(motion);if(!motion&&playing){playing=false;clearTimeout(interval);bar.firstChild.textContent='Play loop';bar.firstChild.setAttribute('aria-pressed','false');}}};
+}

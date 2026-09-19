@@ -1,0 +1,5 @@
+# The wrapped project, fetched by toolchain/setup.sh — never source here.
+upstream/
+upstream.partial/
+# The board pipeline's Python, made by toolchain/setup.sh.
+.venv/

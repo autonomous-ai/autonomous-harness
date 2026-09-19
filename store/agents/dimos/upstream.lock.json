@@ -1,0 +1,15 @@
+[
+  {
+    "name": "DimOS",
+    "url": "https://github.com/dimensionalOS/dimos.git",
+    "commit": "7da08fb303d354e72cd09cd7e0236fa515675665",
+    "directory": "upstream",
+    "sparse": [
+      "dimos",
+      "docs",
+      "scripts",
+      ".agents",
+      "native"
+    ]
+  }
+]

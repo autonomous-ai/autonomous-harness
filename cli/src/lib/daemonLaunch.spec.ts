@@ -41,7 +41,8 @@ describe('connectFailure', () => {
     expect(connectFailure('Unexpected server response: 409', 1)).toMatchObject({ busy: true })
     expect(connectFailure('Unexpected server response: 404', 1)).toMatchObject({ fatal: true, deauth: false })
     expect(connectFailure('Unexpected server response: 502', 1)).toMatchObject({ fatal: false })
-    expect(connectFailure('getaddrinfo ENOTFOUND x', 1)).toMatchObject({ fatal: true })
+    // Offline is not a misconfiguration: the daemon stays up and serves the loopback until DNS is back.
+    expect(connectFailure('getaddrinfo ENOTFOUND x', 1)).toMatchObject({ fatal: false })
     expect(connectFailure('connect ECONNREFUSED', 1)).toMatchObject({ fatal: false })
   })
 })

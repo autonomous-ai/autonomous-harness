@@ -66,6 +66,18 @@ Install the companion CLI's npm dependencies first; ffmpeg must be on PATH.
 The smoke test does not use a real account or remote machine. It verifies the OS
 launch URI; playback in the native viewer is a separate manual check.
 
+## Viewers on linked machines
+
+Open a harness on a linked machine and its viewer appears beside the terminal. The local CLI
+forwards it through the existing encrypted machine connection, including interactive controls,
+streaming updates and WebSockets. Both computers need a forwarding-capable Harness CLI. An older
+remote CLI shows update guidance in the viewer pane; reconnect after updating it.
+
+The local viewer endpoint is private to the machine connection and closes on disconnect or
+revocation. This feature uses your existing machine access; it does not create a public share link.
+Embedded viewers remain macOS-only. See the
+[remote viewer plan](../docs/plans/2026-09-17-004-remote-viewers.md) for compatibility and tests.
+
 ## Local Codex profiles
 
 New Agent → Codex discovers local profiles when the Harness CLI advertises

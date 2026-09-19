@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/models.dart';
 import '../theme/app_theme.dart';
@@ -30,6 +30,12 @@ class EngineIdentity {
   /// One sentence for the store card: what it is, whose it is.
   final String? blurb;
 
+  /// A few words in the project's own terms, from its website or repository
+  /// — "Advanced physics simulation" — under the name in the agent search.
+  /// For a harness, the catalog's `tagline` wins; this is the build's words
+  /// for a machine whose CLI does not send one.
+  final String? tagline;
+
   const EngineIdentity({
     required this.id,
     required this.label,
@@ -39,11 +45,15 @@ class EngineIdentity {
     this.creator,
     this.homepage,
     this.blurb,
+    this.tagline,
   });
 
   /// "Code · OpenAI", "CAD · Jake Fitzgerald" — the tile's second line.
   String? get detail {
-    final parts = [category, creator].whereType<String>().where((s) => s.isNotEmpty);
+    final parts = [
+      category,
+      creator,
+    ].whereType<String>().where((s) => s.isNotEmpty);
     return parts.isEmpty ? null : parts.join(' · ');
   }
 }
@@ -53,6 +63,7 @@ const _engines = <String, EngineIdentity>{
     id: 'claude',
     label: 'Claude',
     category: 'Code',
+    tagline: 'Work with Claude directly in your codebase',
     creator: 'Anthropic',
     color: Color(0xffcc7c5e),
     homepage: 'https://claude.com/product/claude-code',
@@ -62,6 +73,7 @@ const _engines = <String, EngineIdentity>{
     id: 'codex',
     label: 'Codex',
     category: 'Code',
+    tagline: 'Coding agent that runs in your terminal',
     creator: 'OpenAI',
     color: Color(0xff64d2ff),
     asset: 'assets/engine-icons/codex.png',
@@ -72,6 +84,7 @@ const _engines = <String, EngineIdentity>{
     id: 'cursor',
     label: 'Cursor',
     category: 'Code',
+    tagline: 'Ship code with agents, right from your terminal',
     creator: 'Anysphere',
     color: Color(0xffc6ff72),
     asset: 'assets/engine-icons/cursor.png',
@@ -82,6 +95,7 @@ const _engines = <String, EngineIdentity>{
     id: 'opencode',
     label: 'OpenCode',
     category: 'Code',
+    tagline: 'Open source AI coding agent',
     creator: 'Anomaly',
     color: Color(0xfff1ecec),
     asset: 'assets/engine-icons/opencode.png',
@@ -92,6 +106,7 @@ const _engines = <String, EngineIdentity>{
     id: 'pi',
     label: 'Pi',
     category: 'Code',
+    tagline: 'Terminal-based coding agent',
     creator: 'pi.dev',
     color: Colors.white,
     asset: 'assets/engine-icons/pi.png',
@@ -102,16 +117,19 @@ const _engines = <String, EngineIdentity>{
     id: 'hermes',
     label: 'Hermes',
     category: 'Code',
+    tagline: 'Open-source AI agent that grows with you',
     creator: 'Nous Research',
     color: Color(0xff9b8cff),
     asset: 'assets/engine-icons/hermes.png',
     homepage: 'https://github.com/NousResearch/hermes-agent',
-    blurb: "Nous Research's open agent with memory and skills, in the terminal.",
+    blurb:
+        "Nous Research's open agent with memory and skills, in the terminal.",
   ),
   'commandcode': EngineIdentity(
     id: 'commandcode',
     label: 'Command Code',
     category: 'Code',
+    tagline: 'Coding agent built for open models',
     creator: 'Command Code',
     color: Color(0xfff5f5f5),
     asset: 'assets/engine-icons/commandcode.png',
@@ -121,6 +139,7 @@ const _engines = <String, EngineIdentity>{
     id: 'devin',
     label: 'Devin',
     category: 'Code',
+    tagline: 'AI software engineer',
     creator: 'Cognition',
     color: Color(0xff8fb8ff),
     asset: 'assets/engine-icons/devin.png',
@@ -131,6 +150,7 @@ const _engines = <String, EngineIdentity>{
     id: 'muse',
     label: 'Muse',
     category: 'Code',
+    tagline: 'Coding agent for complex coding workstreams',
     creator: 'Meta',
     color: Color(0xff0082fb),
     asset: 'assets/engine-icons/muse.png',
@@ -140,6 +160,7 @@ const _engines = <String, EngineIdentity>{
     id: 'amp',
     label: 'Amp',
     category: 'Code',
+    tagline: 'Coding agent and dev environment',
     creator: 'Sourcegraph',
     color: Color(0xfff34e3f),
     asset: 'assets/engine-icons/amp.png',
@@ -150,6 +171,7 @@ const _engines = <String, EngineIdentity>{
     id: 'kilo',
     label: 'Kilo',
     category: 'Code',
+    tagline: 'Open source AI coding agent in IDE, CLI and cloud',
     creator: 'Kilo Code',
     color: Color(0xfff8f676),
     asset: 'assets/engine-icons/kilo.png',
@@ -160,6 +182,7 @@ const _engines = <String, EngineIdentity>{
     id: 'grok',
     label: 'Grok',
     category: 'Code',
+    tagline: 'Coding agent that runs right from your terminal',
     creator: 'xAI',
     color: Colors.white,
     asset: 'assets/engine-icons/grok.png',
@@ -170,6 +193,7 @@ const _engines = <String, EngineIdentity>{
     id: 'copilot',
     label: 'Copilot',
     category: 'Code',
+    tagline: 'Run a GitHub-native agent in your terminal',
     creator: 'GitHub',
     color: Color(0xff8957e5),
     asset: 'assets/engine-icons/copilot.png',
@@ -180,6 +204,7 @@ const _engines = <String, EngineIdentity>{
     id: 'agy',
     label: 'Antigravity',
     category: 'Code',
+    tagline: 'Next-gen agent platform',
     creator: 'Google',
     color: Color(0xff3287fb),
     asset: 'assets/engine-icons/agy.png',
@@ -201,14 +226,40 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/autonomous-circuit',
     label: 'Autonomous Circuit',
     category: 'PCB',
+    tagline: 'Get a verified PCB and a fab packet you can order',
     creator: 'Autonomous',
     color: Color(0xffd98a4a),
     asset: 'assets/engine-icons/autonomous-circuit.png',
+  ),
+  // KiCad is Autonomous Circuit's second wrapper (its KiCad-native pipeline,
+  // #91, renamed): it changes nothing of KiCad, so — as Blender, Typst and Marp
+  // do — it carries the wrapped project's name and mark. The icon is KiCad's
+  // own application icon (icon_kicad.svg in its source tree) rendered at 256 px.
+  'autonomous/kicad': EngineIdentity(
+    id: 'autonomous/kicad',
+    label: 'KiCad',
+    category: 'PCB',
+    tagline: 'A real KiCad project: wired schematic, DRC-checked copper, a prototype packet',
+    creator: 'KiCad',
+    color: Color(0xffff6d00),
+    asset: 'assets/engine-icons/kicad.png',
+  ),
+  // Grid's own mark — the bolt from the Grid app's icon (autonomous-grid-app,
+  // branding/app_icon.svg); ours, like Circuit's and Workshop's.
+  'autonomous/autonomous-grid': EngineIdentity(
+    id: 'autonomous/autonomous-grid',
+    label: 'Grid',
+    category: 'Compute',
+    tagline: 'Deploy open-weight models across your machines and watch the fleet live',
+    creator: 'Autonomous',
+    color: Color(0xfff5a623),
+    asset: 'assets/engine-icons/autonomous-grid.png',
   ),
   'autonomous/autonomous-workshop': EngineIdentity(
     id: 'autonomous/autonomous-workshop',
     label: 'Autonomous Workshop',
     category: 'CAD',
+    tagline: 'AI inventors that make new toys and games',
     creator: 'Autonomous',
     color: Color(0xff5a52d8),
     asset: 'assets/engine-icons/autonomous-workshop.png',
@@ -217,6 +268,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/marp',
     label: 'Marp',
     category: 'Slides',
+    tagline: 'Create beautiful slide decks using Markdown',
     creator: 'Yuki Hattori',
     color: Color(0xff218cdb),
     asset: 'assets/engine-icons/marp.png',
@@ -225,6 +277,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/text-to-cad',
     label: 'text-to-cad',
     category: 'CAD',
+    tagline: 'Library of agent skills for CAD, CAE and CAM',
     creator: 'Jake Fitzgerald',
     color: Color(0xff3aa0e0),
     asset: 'assets/engine-icons/text-to-cad.png',
@@ -235,6 +288,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/typst',
     label: 'Typst',
     category: 'Documents',
+    tagline: 'Markup-based typesetting system',
     creator: 'Typst GmbH',
     color: Color(0xff239dad),
     asset: 'assets/engine-icons/typst.png',
@@ -243,6 +297,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/manim',
     label: 'Manim',
     category: 'Math animation',
+    tagline: 'Python library for creating mathematical animations',
     creator: 'Manim Community',
     color: Color(0xffe0a458),
     asset: 'assets/engine-icons/manim.png',
@@ -251,6 +306,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/excalidraw',
     label: 'Excalidraw',
     category: 'Diagrams',
+    tagline: 'Collaborative whiteboarding made easy',
     creator: 'Excalidraw',
     color: Color(0xff6965db),
     asset: 'assets/engine-icons/excalidraw.png',
@@ -259,6 +315,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/marimo',
     label: 'marimo',
     category: 'Notebooks',
+    tagline: 'Next-generation Python notebook',
     creator: 'marimo',
     color: Color(0xff1c7c54),
     asset: 'assets/engine-icons/marimo.png',
@@ -267,6 +324,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/remotion',
     label: 'Remotion',
     category: 'Video',
+    tagline: 'Make videos programmatically',
     creator: 'Remotion',
     color: Color(0xff0b84f3),
     asset: 'assets/engine-icons/remotion.png',
@@ -275,6 +333,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/blender',
     label: 'Blender',
     category: '3D',
+    tagline: 'Free and open source 3D creation software',
     creator: 'Blender Foundation',
     color: Color(0xffe87d0d),
     asset: 'assets/engine-icons/blender.png',
@@ -283,6 +342,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/mujoco',
     label: 'MuJoCo',
     category: 'Simulation',
+    tagline: 'Advanced physics simulation',
     creator: 'Google DeepMind',
     color: Color(0xff1b2a6b),
     asset: 'assets/engine-icons/mujoco.png',
@@ -291,6 +351,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/phaser',
     label: 'Phaser',
     category: 'Games',
+    tagline: 'Open source HTML5 game framework',
     creator: 'Phaser Studio',
     color: Color(0xff2a5bd7),
     asset: 'assets/engine-icons/phaser.png',
@@ -299,6 +360,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/strudel',
     label: 'Strudel',
     category: 'Music',
+    tagline: 'Music live coding environment for the browser',
     creator: 'Strudel',
     color: Color(0xffe0577b),
     asset: 'assets/engine-icons/strudel.png',
@@ -307,6 +369,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/rdkit',
     label: 'RDKit',
     category: 'Chemistry',
+    tagline: 'Open-source cheminformatics software',
     creator: 'RDKit',
     color: Color(0xff1d7bb8),
     asset: 'assets/engine-icons/rdkit.png',
@@ -315,6 +378,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/yosys',
     label: 'Yosys',
     category: 'Chips',
+    tagline: 'Framework for Verilog RTL synthesis',
     creator: 'YosysHQ',
     color: Color(0xff2f7d5b),
     asset: 'assets/engine-icons/yosys.png',
@@ -323,6 +387,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/circuitjs',
     label: 'CircuitJS',
     category: 'Circuits',
+    tagline: 'Electronic circuit simulator in the browser',
     creator: 'Paul Falstad',
     color: Color(0xff50fa78),
     asset: 'assets/engine-icons/circuitjs.png',
@@ -333,6 +398,7 @@ const _harnesses = <String, EngineIdentity>{
     id: 'autonomous/openmontage',
     label: 'OpenMontage',
     category: 'Video',
+    tagline: 'Open-source agentic video production',
     creator: 'calesthio',
     color: Color(0xffe8894a),
     asset: 'assets/engine-icons/openmontage.png',
@@ -356,6 +422,40 @@ const _harnesses = <String, EngineIdentity>{
     color: Color(0xff90ff50),
     asset: 'assets/engine-icons/harness-builder.png',
   ),
+  // Of the eight studios of 2026-09-18, three wear their project's own mark —
+  // Comfy's `assets/logo.svg`, Dimensional's favicon, Bonsai's desktop icon
+  // from IfcOpenShell. The other five (Ableton AI, autoresearch-mlx,
+  // Foam-Agent, JUCE Agent Toolkit, SimSkill) publish no logo of their own,
+  // and the marks they sit beside (Ableton, JUCE, OpenFOAM, SUMO) are other
+  // companies' trademarks — so, like Godogen, they are not here and draw their
+  // initial; their words come from the Store's catalog.
+  'autonomous/comfy-mcp': EngineIdentity(
+    id: 'autonomous/comfy-mcp',
+    label: 'Comfy MCP',
+    category: 'Generative media',
+    tagline: 'Local MCP server for ComfyUI — run ComfyUI from AI agents',
+    creator: 'Comfy Org',
+    color: Color(0xffe5ff3d),
+    asset: 'assets/engine-icons/comfy-mcp.png',
+  ),
+  'autonomous/dimos': EngineIdentity(
+    id: 'autonomous/dimos',
+    label: 'DimOS',
+    category: 'Robotics',
+    tagline: 'The agentic operating system for physical space',
+    creator: 'Dimensional',
+    color: Color(0xffb0e1f0),
+    asset: 'assets/engine-icons/dimos.png',
+  ),
+  'autonomous/bonsai-mcp': EngineIdentity(
+    id: 'autonomous/bonsai-mcp',
+    label: 'Bonsai MCP',
+    category: 'Architecture',
+    tagline: 'MCP server for a live Blender + Bonsai (BlenderBIM) session',
+    creator: 'Show2Instruct',
+    color: Color(0xff8c6f5e),
+    asset: 'assets/engine-icons/bonsai-mcp.png',
+  ),
 };
 
 /// The base engine each first-party harness runs on, so the Create dialog can
@@ -363,6 +463,8 @@ const _harnesses = <String, EngineIdentity>{
 /// has answered `dsh_list`. The daemon's catalog is authoritative when present.
 const knownHarnessBase = <String, String>{
   'autonomous/autonomous-circuit': 'claude',
+  'autonomous/kicad': 'claude',
+  'autonomous/autonomous-grid': 'codex',
   'autonomous/autonomous-workshop': 'codex',
   'autonomous/marp': 'claude',
   'autonomous/text-to-cad': 'claude',
@@ -381,7 +483,39 @@ const knownHarnessBase = <String, String>{
   'autonomous/openmontage': 'claude',
   'autonomous/harness-builder': 'claude',
   'autonomous/vega-lite': 'claude',
+  'autonomous/comfy-mcp': 'codex',
+  'autonomous/dimos': 'codex',
+  'autonomous/bonsai-mcp': 'codex',
 };
+
+/// The daemon's engine id for a plain shell in a pane (⌘⇧T, New Terminal — and
+/// the last row of New Harness's agent list, as [terminalIdentity]).
+///
+/// Deliberately NOT in [_engines]: [allEngines] is what `engines_probe` asks a
+/// machine about and what the Store shelves as an engine, and a terminal is
+/// neither installable nor absent — every machine has a shell. New Harness
+/// lists it on its own, after the agents. It still has a face, because a tile
+/// shows one, and the daemon swaps the tile's engine for whatever gets typed
+/// into it, so the face must come and go through the same [engineIdentity]
+/// every other mark reads.
+const String kTerminalEngine = 'terminal';
+
+const EngineIdentity _terminal = EngineIdentity(
+  id: kTerminalEngine,
+  label: 'Terminal',
+  category: 'Shell',
+  tagline: 'Your shell, in a tile',
+  blurb:
+      'A plain shell on the machine, in a tile beside your agents: no engine, '
+      'no first task, nothing to install.',
+  color: Color(0xffa8b0b8),
+);
+
+/// The terminal's face, for the one list that offers it: New Harness.
+EngineIdentity get terminalIdentity => _terminal;
+
+/// Whether [engine] is the shell rather than an agent.
+bool isTerminalEngine(String? engine) => engine == kTerminalEngine;
 
 /// All known engines, in declaration order — for the New Agent engine picker.
 List<EngineIdentity> get allEngines => _engines.values.toList(growable: false);
@@ -396,7 +530,10 @@ bool isHarnessId(String? id) => id != null && id.contains('/');
 
 EngineIdentity engineIdentity(String? engine, {String? displayName}) {
   final id = engine?.trim().toLowerCase() ?? '';
-  final known = _engines[id] ?? _harnesses[id];
+  final known =
+      _engines[id] ??
+      _harnesses[id] ??
+      (id == kTerminalEngine ? _terminal : null);
   if (known != null) return known;
   final raw = displayName?.trim().isNotEmpty == true
       ? displayName!.trim()
@@ -469,6 +606,13 @@ class EngineMark extends StatelessWidget {
             key: const ValueKey('engine-icon-claude'),
             size: Size.square(size),
             painter: _ClaudeMarkPainter(identity.color),
+          )
+        : identity.id == kTerminalEngine
+        ? Icon(
+            LucideIcons.terminal,
+            key: const ValueKey('engine-icon-terminal'),
+            size: size,
+            color: identity.color,
           )
         : _InitialMark(
             key: ValueKey('engine-fallback-${identity.id}'),

@@ -76,7 +76,7 @@ class _FirstUseApp extends AppNotifier {
   Future<String?> createAgent(
     String machineId, {
     required String engine,
-    required String folder,
+    required String? folder,
     ProjectFolderRequest? projectFolder,
     bool bypassPermission = false,
     String? permissionMode,
@@ -92,7 +92,7 @@ class _FirstUseApp extends AppNotifier {
     launches.add((
       machine: machineId,
       engine: engine,
-      folder: folder,
+      folder: folder!,
       bypass: bypassPermission,
     ));
     if (creation != null) {
@@ -160,8 +160,9 @@ void main() {
       await tester.pumpAndSettle();
       Future<void> tabTo(FocusNode node, {bool back = false}) async {
         if (back) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        // Include the optional help buttons in the dialog's tab order.
-        for (var i = 0; i < 20 && !node.hasPrimaryFocus; i++) {
+        // Include the optional help buttons and the task field in the
+        // dialog's tab order.
+        for (var i = 0; i < 30 && !node.hasPrimaryFocus; i++) {
           await tester.sendKeyEvent(LogicalKeyboardKey.tab);
           await tester.pump();
         }

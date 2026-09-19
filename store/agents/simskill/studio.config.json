@@ -1,0 +1,68 @@
+{
+  "title": "City lab",
+  "description": "Make a little city flow better. Change the lights, watch the streets, and measure what happens.",
+  "category": "Simulation",
+  "scene": "THE NEIGHBOURHOOD EXPERIMENT",
+  "hint": "Follow a car \u00b7 switch the signal plan \u00b7 replay the rush",
+  "tip": "Compare two light timings with the same demand and seed. A quieter animation is not proof of a faster trip.",
+  "previewLabel": "Street illustration \u00b7 run SUMO to measure",
+  "controls": [
+    {
+      "id": "demand",
+      "label": "Traffic demand",
+      "type": "number",
+      "value": 360,
+      "min": 120,
+      "max": 900,
+      "step": 60,
+      "integer": true,
+      "unit": "vehicles/hour/approach",
+      "hint": ""
+    },
+    {
+      "id": "green",
+      "label": "East\u2013west green",
+      "type": "number",
+      "value": 30,
+      "min": 10,
+      "max": 70,
+      "step": 5,
+      "integer": true,
+      "unit": "s",
+      "hint": ""
+    },
+    {
+      "id": "duration",
+      "label": "Rush-hour sample",
+      "type": "number",
+      "value": 240,
+      "min": 120,
+      "max": 480,
+      "step": 60,
+      "integer": true,
+      "unit": "s",
+      "hint": ""
+    },
+    {
+      "id": "seed",
+      "label": "Traffic seed",
+      "type": "number",
+      "value": 11,
+      "min": 1,
+      "max": 99,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    }
+  ],
+  "actions": [
+    {
+      "id": "simulate",
+      "label": "Wake up the city",
+      "description": ""
+    }
+  ],
+  "credit": "SimSkill \u00b7 Qiliu Chen and contributors",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history."
+}

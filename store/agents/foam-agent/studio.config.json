@@ -1,0 +1,99 @@
+{
+  "title": "Wind tunnel",
+  "description": "Give the wind something to move around. Explore shapes, trace the currents, and compare your experiments.",
+  "category": "Simulation",
+  "scene": "A LITTLE ROOM FOR AIR",
+  "hint": "Click the flow field to seed a tracer \u00b7 compare shapes",
+  "tip": "A round nose and a narrow tail change the wake. Try a shape, then keep the same wind for the next run.",
+  "previewLabel": "Flow illustration \u00b7 run to simulate",
+  "controls": [
+    {
+      "id": "shape",
+      "label": "Shape",
+      "type": "select",
+      "value": "circle",
+      "options": [
+        {
+          "value": "circle",
+          "label": "Pebble"
+        },
+        {
+          "value": "ellipse",
+          "label": "Airfoil study"
+        },
+        {
+          "value": "square",
+          "label": "Square block"
+        }
+      ]
+    },
+    {
+      "id": "speed",
+      "label": "Wind speed",
+      "type": "number",
+      "value": 4,
+      "min": 2,
+      "max": 8,
+      "step": 1,
+      "integer": true,
+      "unit": "lattice units \u00d7 100",
+      "hint": ""
+    },
+    {
+      "id": "radius",
+      "label": "Body size",
+      "type": "number",
+      "value": 7,
+      "min": 4,
+      "max": 10,
+      "step": 1,
+      "integer": true,
+      "unit": "cells",
+      "hint": ""
+    },
+    {
+      "id": "viscosity",
+      "label": "Viscosity",
+      "type": "number",
+      "value": 0.08,
+      "min": 0.04,
+      "max": 0.16,
+      "step": 0.01,
+      "integer": false,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "steps",
+      "label": "Simulation steps",
+      "type": "number",
+      "value": 320,
+      "min": 80,
+      "max": 800,
+      "step": 40,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    }
+  ],
+  "actions": [
+    {
+      "id": "simulate",
+      "label": "Release the wind",
+      "description": ""
+    },
+    {
+      "id": "openfoam",
+      "label": "Run OpenFOAM cavity",
+      "description": "Run the supplied Foundation OpenFOAM v10 benchmark when installed"
+    }
+  ],
+  "credit": "Foam-Agent \u00b7 Foam-Agent team",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history.",
+  "theme": {
+    "accent": "#3d7289",
+    "tint": "#e0e9ea",
+    "stage": "#152830",
+    "stage-accent": "#95d9dd"
+  }
+}

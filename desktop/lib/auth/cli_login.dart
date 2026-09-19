@@ -7,12 +7,17 @@ import 'sign_in_client.dart';
 
 class CliAuthStatus {
   final bool loggedIn;
+
+  /// Signed in, but the CLI could not refresh the token just now (no network, SSO down). Still
+  /// [loggedIn]: the session is on disk and the daemon runs on it; only the backend is out of reach.
+  final bool offline;
   final String? computerId;
   final String? machineId;
   final String? autonomousEnv;
 
   const CliAuthStatus({
     required this.loggedIn,
+    this.offline = false,
     this.computerId,
     this.machineId,
     this.autonomousEnv,
@@ -20,6 +25,7 @@ class CliAuthStatus {
 
   factory CliAuthStatus.fromJson(Map<String, dynamic> json) => CliAuthStatus(
     loggedIn: json['loggedIn'] == true,
+    offline: json['offline'] == true,
     computerId: json['computerId'] as String?,
     machineId: json['machineId'] as String?,
     autonomousEnv: json['autonomousEnv'] as String?,

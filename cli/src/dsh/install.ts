@@ -22,6 +22,7 @@ import { PACKAGE_PATH_RE, type DshRegistryEntry } from './registry.js'
 import { catalogEntry, refreshDshRegistry } from './catalog.js'
 import { resolveDshCommand } from './materialize.js'
 import { runDshCommand } from './shell.js'
+import { lockDsh, dshBusy } from './lock.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -81,9 +82,9 @@ export function resolveInstallSource(
   return { source: idOrSource }
 }
 
-async function gitHead(dir: string): Promise<string | null> {
+async function gitHead(dir: string, revision = 'HEAD'): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD'], { timeout: 10_000 })
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'rev-parse', revision], { timeout: 10_000 })
     return stdout.trim() || null
   } catch {
     return null
@@ -114,12 +115,12 @@ function linkInstall(source: string): { ok: true; realDir: string; manifest: Dsh
   return { ok: true, realDir, manifest: manifest.manifest }
 }
 
-async function cloneInstall(
+export async function cloneInstall(
   source: string,
   ref: string | undefined,
   path: string | undefined,
   onLine: ((line: string) => void) | undefined,
-): Promise<{ ok: true; tmpDir: string; manifest: DshManifest; commit: string | null } | { ok: false; error: string; detail: string }> {
+): Promise<{ ok: true; tmpDir: string; manifest: DshManifest; commit: string | null; revision: string | null } | { ok: false; error: string; detail: string }> {
   const root = dshRootDir()
   mkdirSync(root, { recursive: true, mode: 0o700 })
   const tmpDir = join(root, `.tmp-${randomUUID()}`)
@@ -129,12 +130,14 @@ async function cloneInstall(
   }
   if (path !== undefined && !PACKAGE_PATH_RE.test(path)) return fail('INVALID_SOURCE', `${path} is not a folder inside the repo`)
   let commit: string | null
+  let revision: string | null
   if (path === undefined) {
     // `--progress` because stderr is not a tty here and git would otherwise stay silent until the end;
     // streamed, not collected, so "Receiving objects: 39%" reaches the dialog while it is true.
     const clone = await cloneRepo(source, ref, tmpDir, false, onLine)
     if (!clone.ok) return fail('CLONE_FAILED', clone.detail)
     commit = await gitHead(tmpDir)
+    revision = await gitHead(tmpDir, 'HEAD^{tree}')
   } else {
     // A package that is ONE FOLDER of a bigger repo — the built-in shelf is `store/*/*` of the Harness
     // monorepo, whose other folders are the app, the CLI and the backend. A blob-less, sparse clone
@@ -151,12 +154,13 @@ async function cloneInstall(
     try { isFolder = lstatSync(folder).isDirectory() } catch { isFolder = false }
     if (!isFolder) return fail('CLONE_FAILED', `${source}${ref ? ` at ${ref}` : ''} has no folder ${path}`, repoDir)
     commit = await gitHead(repoDir)
+    revision = await gitHead(repoDir, `HEAD:${path}`)
     renameSync(folder, tmpDir)
     rmSync(repoDir, { recursive: true, force: true })
   }
   const manifest = readDshManifest(tmpDir)
   if (!manifest.ok) return fail('INVALID_MANIFEST', manifest.error)
-  return { ok: true, tmpDir, manifest: manifest.manifest, commit }
+  return { ok: true, tmpDir, manifest: manifest.manifest, commit, revision }
 }
 
 /** How long one git command may take: a clone of a large repository over a slow link, not a hang. */
@@ -266,41 +270,61 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
   let dir: string
   let commit: string | null = null
   let realDir: string
+  let revision: string | null = null
+  let unlock: (() => void) | null = null
+  let staged: string | null = null
 
-  progress({ id: null, phase: 'clone', detail: opts.link ? `linking ${opts.source}` : `cloning ${opts.source}${opts.path ? ` · ${opts.path}` : ''}` })
-  if (opts.link) {
-    const linked = linkInstall(opts.source)
-    if (!linked.ok) { progress({ id: null, phase: 'failed', detail: linked.detail }); return linked }
-    manifest = linked.manifest
-    if (opts.expectedId && manifest.id !== opts.expectedId) return wrongId(manifest.id)
-    realDir = linked.realDir
-    dir = placeAt(manifest.id, { linkTo: realDir })
-    commit = await gitHead(realDir)
-  } else {
-    const cloned = await cloneInstall(opts.source, opts.ref, opts.path, opts.onLine)
-    if (!cloned.ok) { progress({ id: null, phase: 'failed', detail: cloned.detail }); return cloned }
-    manifest = cloned.manifest
-    if (opts.expectedId && manifest.id !== opts.expectedId) {
-      rmSync(cloned.tmpDir, { recursive: true, force: true })
-      return wrongId(manifest.id)
+  try {
+    progress({ id: null, phase: 'clone', detail: opts.link ? `linking ${opts.source}` : `cloning ${opts.source}${opts.path ? ` · ${opts.path}` : ''}` })
+    if (opts.link) {
+      const linked = linkInstall(opts.source)
+      if (!linked.ok) { progress({ id: null, phase: 'failed', detail: linked.detail }); return linked }
+      manifest = linked.manifest
+      if (opts.expectedId && manifest.id !== opts.expectedId) return wrongId(manifest.id)
+      unlock = lockDsh(manifest.id)
+      if (!unlock) return dshBusy(manifest.id)
+      realDir = linked.realDir
+      dir = placeAt(manifest.id, { linkTo: realDir })
+      commit = await gitHead(realDir)
+    } else {
+      const cloned = await cloneInstall(opts.source, opts.ref, opts.path, opts.onLine)
+      if (!cloned.ok) { progress({ id: null, phase: 'failed', detail: cloned.detail }); return cloned }
+      staged = cloned.tmpDir
+      manifest = cloned.manifest
+      if (opts.expectedId && manifest.id !== opts.expectedId) {
+        rmSync(cloned.tmpDir, { recursive: true, force: true })
+        return wrongId(manifest.id)
+      }
+      unlock = lockDsh(manifest.id)
+      if (!unlock) return dshBusy(manifest.id)
+      commit = cloned.commit
+      revision = cloned.revision
+      dir = placeAt(manifest.id, { tmpDir: cloned.tmpDir })
+      realDir = realpathSync(dir)
     }
-    commit = cloned.commit
-    dir = placeAt(manifest.id, { tmpDir: cloned.tmpDir })
-    realDir = realpathSync(dir)
-  }
 
-  const record: InstalledDshRecord = {
-    id: manifest.id,
-    dir,
-    source: opts.link ? resolve(opts.source) : opts.source,
-    ref: opts.ref ?? null,
-    ...(opts.link || !opts.path ? {} : { path: opts.path }),
-    commit,
-    linked: opts.link === true,
-    installedAt: Date.now(),
+    const record: InstalledDshRecord = {
+      id: manifest.id,
+      dir,
+      source: opts.link || existsSync(opts.source) ? resolve(opts.source) : opts.source,
+      ref: opts.ref ?? null,
+      ...(opts.link || !opts.path ? {} : { path: opts.path }),
+      commit,
+      revision,
+      linked: opts.link === true,
+      installedAt: Date.now(),
+    }
+    return await finishInstall({ ...record, manifest, realDir }, opts, true)
+  } finally {
+    if (staged) rmSync(staged, { recursive: true, force: true })
+    unlock?.()
   }
-  // Exactly what was just read and placed; resolving the record from disk again would read it twice.
-  const resolved: InstalledDsh = { ...record, manifest, realDir }
+}
+
+/** Run at the permanent path: venvs and generated launchers often embed it. */
+export async function finishInstall(resolved: InstalledDsh, opts: DshInstallOptions, recordDoctorFailure: boolean): Promise<DshInstallResult> {
+  const { manifest, realDir } = resolved
+  const progress = (p: DshInstallProgress): void => opts.onProgress?.(p)
 
   const setupLines: string[] = []
   if (manifest.toolchain?.setup) {
@@ -352,11 +376,20 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
     }
   }
 
+  if (!recordDoctorFailure && uses && installedDsh(uses)?.manifest.kind !== 'viewer') {
+    const detail = `viewer ${uses} is not available; the previous package will be kept`
+    progress({ id: manifest.id, phase: 'failed', detail })
+    return { ok: false, error: 'VIEWER_UNAVAILABLE', detail }
+  }
+
   progress({ id: manifest.id, phase: 'doctor' })
   const doctor = await runDshDoctor(resolved, opts.onLine)
   // Recorded even when the doctor complains: the user can fix the machine and run the doctor again
   // without re-cloning. The desktop reads the doctor's answer, not the index, before a create.
-  upsertInstalledRecord(record)
+  if (doctor.ok || recordDoctorFailure) {
+    const { manifest: _manifest, realDir: _realDir, ...record } = resolved
+    upsertInstalledRecord(record)
+  }
   if (!doctor.ok) {
     const detail = `doctor failed · ${doctor.lines.filter((line) => line.startsWith('miss')).join(' · ') || doctor.lines.slice(-3).join(' · ')}`.slice(0, 2000)
     progress({ id: manifest.id, phase: 'failed', detail })
@@ -369,18 +402,22 @@ export async function installDsh(opts: DshInstallOptions): Promise<DshInstallRes
 export function removeDsh(id: string): { ok: true } | { ok: false; error: string; detail: string } {
   const record = readInstalledIndex().find((row) => row.id === id)
   if (!record) return { ok: false, error: 'NOT_INSTALLED', detail: `${id} is not installed` }
+  const unlock = lockDsh(id)
+  if (!unlock) return dshBusy(id)
   try {
-    // A linked install is a symlink: remove the link, never the checkout it points at.
-    let isLink = false
-    try { isLink = lstatSync(record.dir).isSymbolicLink() } catch { isLink = false }
-    if (isLink) rmSync(record.dir, { force: true })
-    else if (existsSync(record.dir)) rmSync(record.dir, { recursive: true, force: true })
-  } catch (error) {
-    // rmSync throws only system errors (EACCES, EBUSY).
-    return { ok: false, error: 'REMOVE_FAILED', detail: (error as Error).message }
-  }
-  removeInstalledRecord(id)
-  return { ok: true }
+    try {
+      // A linked install is a symlink: remove the link, never the checkout it points at.
+      let isLink = false
+      try { isLink = lstatSync(record.dir).isSymbolicLink() } catch { isLink = false }
+      if (isLink) rmSync(record.dir, { force: true })
+      else if (existsSync(record.dir)) rmSync(record.dir, { recursive: true, force: true })
+    } catch (error) {
+      // rmSync throws only system errors (EACCES, EBUSY).
+      return { ok: false, error: 'REMOVE_FAILED', detail: (error as Error).message }
+    }
+    removeInstalledRecord(id)
+    return { ok: true }
+  } finally { unlock() }
 }
 
 export { installedDsh }

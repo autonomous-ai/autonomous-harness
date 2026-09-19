@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/comfy-mcp",
+  "name": "Comfy MCP",
+  "category": "Generative media",
+  "author": "Comfy Org",
+  "description": "Follow a visual thread. Explore a family of forms, collect your favourites, and keep the recipe with every image.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "studio.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "STUDIO_TOOLCHAIN": "${dsh}/toolchain",
+      "STUDIO_PYTHON": "${dsh}/.venv/bin/python",
+      "STUDIO_UPSTREAM": "${dsh}/upstream"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/studio-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

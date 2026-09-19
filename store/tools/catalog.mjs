@@ -10,14 +10,15 @@ import { readDshRegistry } from '../../cli/scripts/lib/dshRegistry.mjs';
 const MONOREPO='https://github.com/autonomous-ai/openharness';
 const ID=/^[a-z0-9][a-z0-9-]{0,63}\/[a-z0-9][a-z0-9-]{0,63}$/;
 const PACKAGE_PATH=/^(?!\/)(?!.*\/$)(?!.*\/\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9._\-/]+$/;
-const LIMITS={id:160,name:40,description:300,category:24,author:80,repo:2048,ref:200,path:512,homepage:2048,upstream:2048,license:40,viewerUse:160};
+const LIMITS={id:160,name:40,description:300,category:24,author:80,repo:2048,ref:200,path:512,homepage:2048,upstream:2048,license:40,tagline:80,viewerUse:160};
 
-export function createStoreCatalog(storeDir, ref) {
+export function createStoreCatalog(storeDir, ref, {revisionFor}={}) {
   if (!/^[a-f0-9]{40}$/i.test(ref)) throw new Error('Publish from a complete git commit SHA');
   const entries=readDshRegistry(storeDir,{strict:true}).sort((a,b)=>a.id.localeCompare(b.id));
   const byId=new Map();
   for (const entry of entries) {
     for(const [key,max]of Object.entries(LIMITS))if(entry[key]!==undefined&&(typeof entry[key]!=='string'||entry[key].length>max||/[\x00-\x1f\x7f]/.test(entry[key])))throw new Error(`${entry.id}: invalid ${key}`);
+    if(entry.tagline!==undefined&&!entry.tagline.trim())throw new Error(`${entry.id}: invalid tagline`);
     if(!ID.test(entry.id)||!entry.name||!entry.repo||byId.has(entry.id))throw new Error(`Invalid or duplicate catalog identity: ${entry.id}`);
     if(entry.kind!==undefined&&!['agent','viewer'].includes(entry.kind))throw new Error(`${entry.id}: invalid kind`);
     if(entry.kind!=='viewer'&&(typeof entry.engine!=='string'||!entry.engine))throw new Error(`${entry.id}: missing engine`);
@@ -32,7 +33,8 @@ export function createStoreCatalog(storeDir, ref) {
     if(entry.screenshots!==undefined){if(!Array.isArray(entry.screenshots)||entry.screenshots.length>8)throw new Error(`${entry.id}: invalid screenshots`);for(const shot of entry.screenshots){if(typeof shot!=='string'||shot.length>2048)throw new Error(`${entry.id}: invalid screenshot`);new URL(shot);}}
     const builtIn=entry.repo.replace(/\.git$/,'')===MONOREPO&&entry.path===`store/${entry.kind==='viewer'?'viewers':'agents'}/${entry.id.slice('autonomous/'.length)}`&&entry.id.startsWith('autonomous/');
     if(entry.id.startsWith('autonomous/')&&!builtIn)throw new Error(`${entry.id}: autonomous IDs belong to built-in packages`);
-    if(builtIn)entry.ref=ref;
+    if(builtIn){entry.ref=ref;const revision=revisionFor?.(entry.path);if(revision!==undefined)entry.revision=revision;}
+    if(entry.revision!==undefined&&!/^[a-f0-9]{40}$/i.test(entry.revision))throw new Error(`${entry.id}: invalid package revision`);
     entry.verified=builtIn;
     byId.set(entry.id,entry);
   }
@@ -66,7 +68,7 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const args=process.argv.slice(2),value=flag=>args[args.indexOf(flag)+1];
   const storeDir=resolve(args.includes('--store')?value('--store'):fileURLToPath(new URL('..',import.meta.url)));
   const ref=args.includes('--ref')?value('--ref'):execFileSync('git',['-C',storeDir,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
-  const catalog=createStoreCatalog(storeDir,ref);
+  const catalog=createStoreCatalog(storeDir,ref,{revisionFor:path=>execFileSync('git',['-C',storeDir,'rev-parse',`${ref}:${path}`],{encoding:'utf8'}).trim()});
   if(args.includes('--output'))writeFileSync(value('--output'),JSON.stringify(catalog,null,2)+'\n');
   if(args.includes('--publish'))console.log(await publishStoreCatalog(catalog,{token:process.env.GITHUB_TOKEN,repository:process.env.GITHUB_REPOSITORY||'autonomous-ai/openharness'}));
   else console.log(`Catalog valid: ${catalog.entries.length} packages at ${ref}`);

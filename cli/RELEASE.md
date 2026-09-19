@@ -21,35 +21,28 @@ touches are git and a public HTTPS read of the manifest. See [`../docs/cicd.md`]
 what the release workflow itself does, step by step.
 
 **Why the version comes from two places.** `cli/scripts/release-cli.sh` takes the highest of the last
-git tag and the version published under the `cli` key of `harness/cli/metadata.json`. Publishing by
-hand (`make upload-cli`, below) bumps from the manifest and tags nothing, so the two can drift — a
-maintainer who runs it, or a scratch publish that slipped, leaves the manifest ahead of the last tag.
-Bumping from tags alone there would produce a version LOWER than what's already served — every daemon
-refuses it (`shouldUpdate` / `semverGt` in `src/lib/selfUpdate.ts`) while the release still reports
-success.
+git tag and the version published under the `cli` key of `harness/cli/metadata.json`. The two can
+drift — a scratch publish that slipped, or a manifest edited by hand, leaves the manifest ahead of the
+last tag. Bumping from tags alone there would produce a version LOWER than what's already served —
+every daemon refuses it (`shouldUpdate` / `semverGt` in `src/lib/selfUpdate.ts`) while the release
+still reports success.
 
 Unlike `autonomous-harness-desktop`'s `make release`, there is no `--minor` flag: `shouldUpdate` is a
 plain "strictly newer" check with no major/minor-triggers-a-forced-update concept, so every release
 just needs to outrank what's live.
 
 `package.json`'s `version` field is never touched by this script; the published version is baked into
-the bundle via `ADAPTER_VERSION` at build time (see `make upload-cli` below).
+the bundle via `ADAPTER_VERSION` at build time (see "The publishing step" below).
 
-## Publishing by hand
+## The publishing step
 
-`cli/scripts/upload-cli.sh` is the publishing step. CI invokes it with the version taken from the tag;
-it's also reachable directly when CI cannot be:
+`cli/scripts/upload-cli.sh` is the publishing step, and CI is its only caller: `release.yml` runs it
+with the version taken from the tag. There is deliberately no `make` target for it — publishing from a
+laptop created no git tag and bumped from the remote manifest, so the repo stopped reflecting what was
+served, and a stale local tag then broke the next `make release-cli` at `git fetch --tags`. If CI is
+down, fix CI; a version with no tag is worse than a late one.
 
-```bash
-make upload-cli                    # auto-bump (0.1.2 -> 0.1.3; 0.1.99 -> 0.2.1)
-make upload-cli ARGS="0.2.0"       # explicit version
-make upload-cli ARGS="--no-bump"   # rebuild and re-upload the current version
-make upload-cli ARGS="--no-build"  # upload the existing dist/ artifact as-is
-```
-
-**This creates no git tag.** It bumps from the remote manifest, so the repo stops reflecting what's
-published. Prefer `make release-cli`; if you do publish by hand, cut a `make release-cli` afterwards to bring
-the tag back in line.
+What the script does, for reading the workflow:
 
 1. Reads the current version from the live manifest (falling back to `package.json` if the manifest is
    unreadable), then bumps or takes the version it was given.

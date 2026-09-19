@@ -68,6 +68,9 @@ final harnessCommands = <HarnessCommand>[
     action: ShortcutAction.closeSwarm,
     nativeAction: 'closeActive',
   ),
+  // The live table binds no chord to it any more (⌘⇧T is New Terminal), so
+  // `keys` comes back empty: a palette and menu command a person may give a
+  // key of their own in keybindings.jsonc.
   const HarnessCommand(
     'swarm.reopen',
     'Reopen last closed harness',
@@ -285,6 +288,13 @@ final harnessCommands = <HarnessCommand>[
     nativeAction: 'newAgent',
   ),
   const HarnessCommand(
+    'terminal.new',
+    'New Terminal',
+    ShortcutGroup.actions,
+    action: ShortcutAction.newTerminal,
+    nativeAction: 'newTerminal',
+  ),
+  const HarnessCommand(
     'machines.manage',
     'Open Machines Manager',
     ShortcutGroup.actions,
@@ -314,6 +324,12 @@ final harnessCommands = <HarnessCommand>[
     'Boss mode: route a task',
     ShortcutGroup.actions,
     action: ShortcutAction.routeTask,
+  ),
+  const HarnessCommand(
+    'project.orchestrate',
+    'Create with the orchestrator',
+    ShortcutGroup.actions,
+    action: ShortcutAction.orchestrate,
   ),
   const HarnessCommand(
     'app.settings',

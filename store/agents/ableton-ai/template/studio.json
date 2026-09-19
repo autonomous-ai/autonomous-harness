@@ -1,0 +1,12 @@
+{
+  "spec": 1,
+  "title": "Loop room",
+  "parameters": {
+    "tempo": 96,
+    "scale": "minor",
+    "density": 6,
+    "seed": 3,
+    "swing": 0,
+    "pattern": ""
+  }
+}

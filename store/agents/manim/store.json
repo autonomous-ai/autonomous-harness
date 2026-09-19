@@ -2,6 +2,7 @@
   "homepage": "https://www.manim.community",
   "upstream": "https://github.com/ManimCommunity/manim",
   "license": "MIT",
+  "tagline": "Python library for creating mathematical animations",
   "evaluation": [
     {
       "method": "tool",

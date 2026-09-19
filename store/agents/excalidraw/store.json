@@ -2,6 +2,7 @@
   "homepage": "https://excalidraw.com",
   "upstream": "https://github.com/excalidraw/excalidraw",
   "license": "MIT",
+  "tagline": "Collaborative whiteboarding made easy",
   "evaluation": [
     {
       "method": "tool",

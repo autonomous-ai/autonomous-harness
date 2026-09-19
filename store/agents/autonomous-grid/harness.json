@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/autonomous-grid",
+  "name": "Grid",
+  "category": "Compute",
+  "author": "Autonomous",
+  "description": "Talk to your fleet. Deploy open-weight models, find the right machine for each workload, and watch your Grid come alive with a live map of engines, models, memory, temperature and performance.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "grid-fleet.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "GRID_CLI": "${dsh}/toolchain/grid.sh",
+      "GRID_FLEET": "${dsh}/toolchain/fleet",
+      "GRID_NO_UPDATE_CHECK": "1"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "./viewer.sh",
+    "url": "http://127.0.0.1:${port}/"
+  },
+  "verdict": ".harness/verdict.json"
+}

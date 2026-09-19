@@ -19,7 +19,7 @@ describe('dshListRows', () => {
     {
       id: 'autonomous/typst', name: 'Typst', category: 'Documents', author: 'Autonomous', description: 'Typeset.', engine: 'claude',
       repo: HARNESS_MONOREPO, ref: 'main', path: 'store/agents/typst', tier: 2, verified: true, viewerUse: 'autonomous/doc-viewer',
-      homepage: 'https://typst.example.com', upstream: 'https://example.com/typst', license: 'MIT', screenshots: ['https://example.com/1.png'],
+      homepage: 'https://typst.example.com', upstream: 'https://example.com/typst', license: 'MIT', tagline: 'Typesetting for the rest of us', screenshots: ['https://example.com/1.png'],
       examples: [{ prompt: 'A spec sheet for an M3 standoff.', image: 'https://example.com/spec.jpg', caption: 'Spec sheet · PDF' }],
       evaluation: [{ method: 'tool', by: 'Typst compiler' }, { method: 'checks', by: 'brief: pages, fonts' }],
     },
@@ -35,26 +35,28 @@ describe('dshListRows', () => {
     expect(rows).toEqual([
       {
         id: 'autonomous/typst', kind: 'agent', name: 'Typst (local)', description: null, category: null, author: null, engine: 'claude',
+        installedCommit: null, availableCommit: null, updateAvailable: false,
         installed: true, linked: true, viewer: true, viewerUse: 'autonomous/doc-viewer', tier: 2,
         verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/agents/typst`, homepage: 'https://typst.example.com',
-        upstream: 'https://example.com/typst', license: 'MIT', screenshots: ['https://example.com/1.png'],
+        upstream: 'https://example.com/typst', license: 'MIT', tagline: 'Typesetting for the rest of us', screenshots: ['https://example.com/1.png'],
         examples: [{ prompt: 'A spec sheet for an M3 standoff.', image: 'https://example.com/spec.jpg', caption: 'Spec sheet · PDF' }],
         evaluation: [{ method: 'tool', by: 'Typst compiler' }, { method: 'checks', by: 'brief: pages, fonts' }],
       },
       {
         id: 'acme/private', kind: 'viewer', name: 'Private', description: null, category: null, author: null, engine: null,
+        installedCommit: null, availableCommit: null, updateAvailable: false,
         installed: true, linked: false, viewer: true, viewerUse: null, tier: 2,
-        verified: false, repo: null, homepage: null, upstream: null, license: null, screenshots: [], examples: [], evaluation: [],
+        verified: false, repo: null, homepage: null, upstream: null, license: null, tagline: null, screenshots: [], examples: [], evaluation: [],
       },
       {
         id: 'autonomous/doc-viewer', kind: 'viewer', name: 'Doc Viewer', description: null, category: null, author: null, engine: null,
         installed: false, linked: false, viewer: true, viewerUse: null, tier: 2,
-        verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/viewers/doc-viewer`, homepage: null, upstream: null, license: null, screenshots: [], examples: [], evaluation: [],
+        verified: true, repo: `${HARNESS_MONOREPO}/tree/main/store/viewers/doc-viewer`, homepage: null, upstream: null, license: null, tagline: null, screenshots: [], examples: [], evaluation: [],
       },
       {
         id: 'acme/bare', kind: 'agent', name: 'Bare', description: null, category: null, author: null, engine: 'codex',
         installed: false, linked: false, viewer: false, viewerUse: null, tier: 0,
-        verified: false, repo: 'https://example.com/bare.git', homepage: null, upstream: null, license: null, screenshots: [], examples: [], evaluation: [],
+        verified: false, repo: 'https://example.com/bare.git', homepage: null, upstream: null, license: null, tagline: null, screenshots: [], examples: [], evaluation: [],
       },
     ])
   })

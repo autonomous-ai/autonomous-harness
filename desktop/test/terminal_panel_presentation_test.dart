@@ -164,13 +164,14 @@ void main() {
         expect(find.byTooltip('Stop Harness').hitTestable(), findsNothing);
         expect(
           find.descendant(of: controls, matching: find.byType(IconButton)),
-          findsNWidgets(local ? 4 : 5),
+          findsNWidgets(local ? 5 : 6),
         );
         final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
         await mouse.addPointer(location: tester.getCenter(title));
         await tester.pump(const Duration(milliseconds: 120));
         expect(tester.widget<AnimatedOpacity>(details).opacity, 0);
         expect(find.byTooltip('Stop Harness').hitTestable(), findsOneWidget);
+        expect(find.byTooltip('Share harness').hitTestable(), findsOneWidget);
         expect(tester.getRect(title), titleBounds);
         expect(
           tester.widget<TerminalView>(find.byType(TerminalView)),

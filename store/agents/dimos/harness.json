@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/dimos",
+  "name": "DimOS",
+  "category": "Robotics",
+  "author": "Dimensional",
+  "description": "Send a little rover on a small adventure. Pick a destination, watch it find a way, and replay the journey.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "studio.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "STUDIO_TOOLCHAIN": "${dsh}/toolchain",
+      "STUDIO_PYTHON": "${dsh}/.venv/bin/python",
+      "STUDIO_UPSTREAM": "${dsh}/upstream"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/studio-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

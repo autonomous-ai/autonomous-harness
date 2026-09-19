@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Grid · Your AI fleet</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main id="grid-app">
+    <section class="workspace">
+      <div class="main-column">
+        <div class="view-toolbar">
+          <div class="segmented" aria-label="Fleet view"><button id="topology-button" type="button" aria-pressed="true">Topology</button><button id="rack-button" type="button" aria-pressed="false">Rack</button></div>
+          <div class="toolbar-selects"><div class="menu"><button type="button" class="menu-button" id="grid-select" aria-haspopup="listbox" aria-expanded="false"><span class="menu-kicker">Grid</span><span class="menu-value" id="grid-value">Choose your grid</span><span class="menu-chevron" aria-hidden="true">▾</span></button><div class="menu-list" id="grid-list" role="listbox" aria-label="Grid" hidden></div></div><div class="menu"><button type="button" class="menu-button" id="metric" aria-haspopup="listbox" aria-expanded="false"><span class="menu-kicker">Show</span><span class="menu-value" id="metric-value">Decode speed</span><span class="menu-chevron" aria-hidden="true">▾</span></button><div class="menu-list" id="metric-list" role="listbox" aria-label="Show" hidden></div></div></div>
+        </div>
+        <div class="topology" id="topology">
+          <canvas id="connections" aria-hidden="true"></canvas>
+          <div class="map-heading"><span class="eyebrow">YOUR COMPUTE, CONNECTED</span><span class="map-subtitle" id="map-subtitle">Every machine has a place.</span></div>
+          <div class="node-layer" id="nodes" aria-label="Grid engines"></div>
+          <button class="hub" id="hub" type="button" aria-label="Inspect your grid"><span class="hub-kicker">THE NETWORK</span><span class="hub-name">your grid</span><span class="hub-status" id="hub-status">connecting</span></button>
+          <div class="map-empty" id="map-empty" hidden><span class="empty-orbit" aria-hidden="true">◎</span><h1>Your fleet starts here.</h1><p id="empty-message">Ask the Grid agent to discover this machine and connect your first model.</p></div>
+          <div class="map-controls"><span id="map-legend">Links show Grid membership</span><button type="button" id="motion" aria-pressed="false">Pause motion</button></div>
+        </div>
+        <section class="rack scrolls" id="rack" aria-label="Engine rack" hidden></section>
+        <div class="fleet-totals">
+          <div><span class="total-label">ENGINES ONLINE</span><strong id="total-engines">—</strong><span id="total-known"></span></div>
+          <div><span class="total-label">MODELS SERVING</span><strong id="total-models">—</strong><span>across your grid</span></div>
+          <div><span class="total-label">REQUESTS</span><strong id="total-requests">—</strong><span id="requests-window">waiting for a measurement</span></div>
+        </div>
+        <section class="activity"><div class="section-heading"><h2>Activity</h2><span id="observed">Waiting for Grid</span></div><div id="activity-list" aria-live="polite"><div class="quiet">Listening for your fleet.</div></div></section>
+      </div>
+      <aside class="inspector scrolls" id="inspector" aria-label="Fleet details"></aside>
+    </section>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </main>
+</body>
+</html>

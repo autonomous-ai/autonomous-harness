@@ -1,0 +1,2 @@
+# Test instrumentation only; keep it outside the production package environments.
+coverage==7.10.7

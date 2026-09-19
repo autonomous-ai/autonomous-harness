@@ -1,0 +1,27 @@
+[
+  {
+    "name": "SimSkill",
+    "url": "https://github.com/qiliuchn/SimSkill-V1.git",
+    "commit": "10113c1e6ba28b57b48a38a7c25ee113b49ab4e6",
+    "directory": "upstream",
+    "sparse": [
+      ".claude/skills/procedural-memory/create-single-intersection",
+      ".claude/skills/procedural-memory/run-simulation",
+      ".claude/skills/procedural-memory/analyze-simulation-outputs",
+      "semantic-memory"
+    ]
+  },
+  {
+    "name": "Eclipse SUMO",
+    "url": "https://github.com/eclipse-sumo/sumo.git",
+    "commit": "7717f2379d9e314a0c81c5cec748444de06a2a91",
+    "directory": "sumo-src",
+    "sparse": [
+      "src",
+      "build_config",
+      "tools/build_config",
+      "tools/sumolib",
+      "data"
+    ]
+  }
+]

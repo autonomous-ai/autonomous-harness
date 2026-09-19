@@ -2,6 +2,7 @@
   "homepage": "https://www.falstad.com/circuit/",
   "upstream": "https://github.com/pfalstad/circuitjs1",
   "license": "MIT",
+  "tagline": "Electronic circuit simulator in the browser",
   "evaluation": [
     {
       "method": "tool",

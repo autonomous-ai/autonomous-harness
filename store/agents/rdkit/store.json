@@ -2,6 +2,7 @@
   "homepage": "https://www.rdkit.org",
   "upstream": "https://github.com/rdkit/rdkit",
   "license": "MIT",
+  "tagline": "Open-source cheminformatics software",
   "evaluation": [
     {
       "method": "tool",

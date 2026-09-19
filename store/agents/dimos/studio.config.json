@@ -1,0 +1,77 @@
+{
+  "title": "Mission control",
+  "description": "Send a little rover on a small adventure. Pick a destination, watch it find a way, and replay the journey.",
+  "category": "Robotics",
+  "scene": "SMALL ROBOT, BIG CURIOSITY",
+  "hint": "Click the map to choose a destination \u00b7 run and replay",
+  "tip": "The rover plans around walls before moving. A goal inside a wall gives a useful failure, not a pretend success.",
+  "previewLabel": "Mission preview \u00b7 simulation only",
+  "controls": [
+    {
+      "id": "goal_x",
+      "label": "Destination east",
+      "type": "number",
+      "value": 8,
+      "min": 1,
+      "max": 9,
+      "step": 0.5,
+      "integer": false,
+      "unit": "m",
+      "hint": ""
+    },
+    {
+      "id": "goal_y",
+      "label": "Destination north",
+      "type": "number",
+      "value": 7,
+      "min": 1,
+      "max": 9,
+      "step": 0.5,
+      "integer": false,
+      "unit": "m",
+      "hint": ""
+    },
+    {
+      "id": "speed",
+      "label": "Travel speed",
+      "type": "number",
+      "value": 0.8,
+      "min": 0.4,
+      "max": 1.4,
+      "step": 0.1,
+      "integer": false,
+      "unit": "m/s",
+      "hint": ""
+    },
+    {
+      "id": "layout",
+      "label": "Place",
+      "type": "select",
+      "value": "office",
+      "options": [
+        {
+          "value": "office",
+          "label": "The small office"
+        },
+        {
+          "value": "gallery",
+          "label": "The sculpture gallery"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "simulate",
+      "label": "Send the rover",
+      "description": ""
+    },
+    {
+      "id": "dimos",
+      "label": "Read DimOS status",
+      "description": "Read the local DimOS daemon status without commanding hardware"
+    }
+  ],
+  "credit": "DimOS \u00b7 Dimensional",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history."
+}

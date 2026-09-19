@@ -2,6 +2,7 @@
   "homepage": "https://yosyshq.net",
   "upstream": "https://github.com/YosysHQ/yosys",
   "license": "MIT",
+  "tagline": "Framework for Verilog RTL synthesis",
   "evaluation": [
     {
       "method": "tool",

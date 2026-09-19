@@ -22,6 +22,7 @@ class NewAgentProjectPicker extends StatefulWidget {
     required this.tileSize,
     required this.onSelected,
     required this.onBrowse,
+    this.terminal = false,
     this.initialFolder,
     this.locked = false,
   });
@@ -31,6 +32,11 @@ class NewAgentProjectPicker extends StatefulWidget {
   final FocusNode focusNode;
   final Size tileSize;
   final bool locked;
+
+  /// The choice is for a terminal, not an agent: the first tile is the home
+  /// folder (a shell opens there, nothing is prepared), and there is no Git
+  /// tile — a terminal does not clone.
+  final bool terminal;
   final void Function(String? folder, GitHubRepository? repository) onSelected;
   final Future<String?> Function() onBrowse;
 
@@ -209,8 +215,11 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
               key: const Key('new-agent-folder-newProject'),
               size: widget.tileSize,
               focusNode: widget.focusNode,
-              label: 'New project',
-              leading: const Icon(LucideIcons.folderPlus, size: 22),
+              label: widget.terminal ? 'Home' : 'New project',
+              leading: Icon(
+                widget.terminal ? LucideIcons.house : LucideIcons.folderPlus,
+                size: 22,
+              ),
               selected: _source == _ProjectSource.newProject,
               onPressed: widget.locked
                   ? null
@@ -228,15 +237,16 @@ class _NewAgentProjectPickerState extends State<NewAgentProjectPicker> {
               selected: _source == _ProjectSource.local,
               onPressed: widget.locked || _browsing ? null : _browse,
             ),
-            AppChoiceTile(
-              key: const Key('new-agent-project-git'),
-              size: widget.tileSize,
-              label: 'Git',
-              detail: _repository?.name,
-              leading: const Icon(LucideIcons.gitBranch, size: 22),
-              selected: _source == _ProjectSource.git,
-              onPressed: widget.locked ? null : _git,
-            ),
+            if (!widget.terminal)
+              AppChoiceTile(
+                key: const Key('new-agent-project-git'),
+                size: widget.tileSize,
+                label: 'Git',
+                detail: _repository?.name,
+                leading: const Icon(LucideIcons.gitBranch, size: 22),
+                selected: _source == _ProjectSource.git,
+                onPressed: widget.locked ? null : _git,
+              ),
             Semantics(
               selected: selectedRecent,
               inMutuallyExclusiveGroup: true,

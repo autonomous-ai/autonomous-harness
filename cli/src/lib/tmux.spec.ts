@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { ENGINES } from '../engines/types.js'
+import { PROCESS_ENGINES } from '../engines/types.js'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import {
   ambiguousAgentProcess,
@@ -168,7 +168,7 @@ describe('tmux process primitives', () => {
     expect(engineProcessMatchScore(row, 'claude', commands)).toBe(0)
   })
 
-  it.each(ENGINES)('recognises a renamed native %s image from installed file identity', (engine) => {
+  it.each(PROCESS_ENGINES)('recognises a renamed native %s image from installed file identity', (engine) => {
     const key = `native-${engine}`
     const commands: AgentCommandOwnershipSnapshot = {
       ...ownership(),

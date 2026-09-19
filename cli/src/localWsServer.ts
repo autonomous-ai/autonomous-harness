@@ -1,3 +1,4 @@
+import { SharingEndedError, type HarnessShareRelay } from './sharing/relay.js'
 import { randomUUID } from 'node:crypto'
 import type { AppSwarms } from './cable/cableSession.js'
 import type http from 'node:http'
@@ -39,6 +40,7 @@ export interface LocalWsServerOptions {
   /** Serves a `machine_select` for any OTHER machine this signed-in user owns, by relaying to
    *  backend's `/api/web-ws` — see lib/remoteRelay.ts. Omit to keep today's own-machine-only behavior. */
   relayPool?: RemoteRelayPool
+  shareRelay?: HarnessShareRelay
   autonomousEnv?: string
   /** The desktop app opened an agent's terminal — which agent, and on which machine. Lets the dial follow
    *  the window, so the two screens stay one desk. */
@@ -260,6 +262,18 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
             close(4403, 'machine mismatch')
             return
           }
+          if (typeof payload.shareId === 'string') {
+            if (!options.shareRelay) { close(4403, 'Sharing is unavailable'); return }
+            try {
+              relay = await options.shareRelay.acquire(requestedMachineId, payload.shareId, sink, close)
+              if (ws.readyState !== WebSocket.OPEN) { relay.detach(); return }
+              selected = true
+            } catch (error) {
+              close(error instanceof SharingEndedError ? 4403 : 1013,
+                error instanceof Error ? error.message.slice(0, 120) : 'Sharing unavailable')
+            }
+            return
+          }
           if (requestedMachineId === options.machineId) {
             if (!options.backend.registerLocalClient(connId, sink)) {
               close(1011, 'local registration failed')
@@ -291,9 +305,12 @@ export function attachLocalWsServer(server: http.Server, options: LocalWsServerO
           // its pooled entry is suspect (most commonly the relayed machine's own Harness process
           // restarted, dropping its E2EE session without the transport itself ever closing). Drop it
           // so this select dials fresh instead of handing back the same dead session again.
-          if (payload?.forceReconnect === true) options.relayPool.invalidate(requestedMachineId)
+          if (payload?.forceReconnect === true && payload?.relayIsolation !== true) options.relayPool.invalidate(requestedMachineId)
           try {
-            relay = await options.relayPool.acquire(requestedMachineId, options.autonomousEnv, frame, sink, close)
+            relay = payload?.relayIsolation === true
+              ? await options.relayPool.acquireIsolated(requestedMachineId, options.autonomousEnv, frame, sink, close)
+              : await options.relayPool.acquire(requestedMachineId, options.autonomousEnv, frame, sink, close)
+            if (ws.readyState !== WebSocket.OPEN) { relay.detach(); return }
             selected = true
           } catch (err) {
             const noPeerLink = err instanceof RelayConnectError && err.message === 'NO_PEER_LINK'

@@ -1,0 +1,10 @@
+{
+  "spec": 1,
+  "title": "Mission control",
+  "parameters": {
+    "goal_x": 8,
+    "goal_y": 7,
+    "speed": 0.8,
+    "layout": "office"
+  }
+}

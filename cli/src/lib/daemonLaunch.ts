@@ -75,7 +75,11 @@ export function connectFailure(tail: string, port: number): ConnectFailure | nul
     const deauth = code === 401 || code === 403
     return { detail: `backend returned HTTP ${code}`, fatal: deauth || code === 404, deauth }
   }
-  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/.test(tail)) return { detail: 'host not found (DNS)', fatal: true }
+  // DNS failing is the ordinary shape of "this computer is offline" (no resolver, captive portal,
+  // airplane mode) — not a misconfiguration. Fatal here used to SIGTERM a daemon that was serving its
+  // agents perfectly well over the loopback, and the desktop app then had nothing to attach to. Left
+  // running, it keeps retrying on its own backoff and connects the moment the network is back.
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/.test(tail)) return { detail: 'host not found (DNS)', fatal: false }
   if (/certificate|CERT_|self-signed/i.test(tail)) return { detail: 'TLS certificate error', fatal: true }
   if (/ECONNREFUSED/.test(tail)) return { detail: 'connection refused', fatal: false } // backend not up yet → retry
   // A 1006 close with no HTTP code — generic "couldn't reach it right now"; transient.

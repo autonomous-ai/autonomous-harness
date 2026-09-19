@@ -1,0 +1,23 @@
+[
+  {
+    "name": "JUCE Agent Toolkit",
+    "url": "https://github.com/danielraffel/juce-agent-toolkit.git",
+    "commit": "9089b719f7378eba28dd078cdfb8b6e1c062bf13",
+    "directory": "upstream",
+    "sparse": [
+      "skills",
+      "shared"
+    ]
+  },
+  {
+    "name": "JUCE",
+    "url": "https://github.com/juce-framework/JUCE.git",
+    "commit": "72782788ce18c2d4d760b28e0921d6ffc6431102",
+    "directory": "juce",
+    "sparse": [
+      "modules",
+      "extras/Build",
+      "examples/CMake"
+    ]
+  }
+]

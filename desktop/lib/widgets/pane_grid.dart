@@ -1,3 +1,5 @@
+import '../sharing/shared_harness_panel.dart';
+
 import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -26,6 +28,7 @@ import 'agent_drag.dart';
 import 'harness_join_guide_screen.dart';
 import 'new_agent_dialog.dart';
 import 'delete_agent_dialog.dart';
+import 'fork_agent_dialog.dart';
 import 'restart_agent_action.dart';
 import 'terminal_panel.dart';
 import 'web_pane_panel.dart';
@@ -1266,6 +1269,20 @@ class _PaneContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final machine = notifier.stateOf(pane.machineId);
     void close() => notifier.closePane(pane.id);
+    if (pane.sharedHarness case final grant?) {
+      return SharedHarnessPanel(
+        key: ValueKey('shared-pane-${pane.id}'),
+        notifier: notifier,
+        pane: pane,
+        grant: grant,
+        visible: visible,
+        onClose: close,
+        hasAccess:
+            machine?.machine.sharedHarnesses.any((s) => s.id == grant.id) ==
+            true,
+      );
+    }
+
     // A harness's viewer: the one tile that is not a terminal and not about a
     // machine. Decided first, before anything below reads `agentId` — which a
     // viewer keeps null on purpose (see TerminalPane.ownerAgentId).
@@ -1315,6 +1332,20 @@ class _PaneContent extends StatelessWidget {
     // Availability changes the header and input permission, never the renderer's
     // ancestry. Retained output, selection, scroll and Find stay in this view.
     if (session != null) {
+      // A software renderer (notably WSLg's llvmpipe) cannot keep up when
+      // every visible terminal schedules a full text layout for every output
+      // chunk. Keep the active tile realtime and coalesce background output
+      // only once the grid has three terminal panes. The buffer remains live,
+      // so the next paint contains every intervening chunk.
+      final terminalPaneCount = notifier.panes
+          .where((candidate) => candidate.session != null)
+          .length;
+      final throttleBackgroundOutput =
+          swarmMode &&
+          visible &&
+          !notifier.isPaneFocused(pane.id) &&
+          notifier.zoomedPaneId == null &&
+          terminalPaneCount >= 3;
       final TerminalNotice? notice;
       if (machine == null) {
         notice = (
@@ -1367,6 +1398,9 @@ class _PaneContent extends StatelessWidget {
             notifier.zoomedPaneId,
           ),
           focused: visible && notifier.isPaneFocused(pane.id),
+          outputRepaintInterval: throttleBackgroundOutput
+              ? const Duration(milliseconds: 80)
+              : null,
           focusRequest: notifier.isPaneFocused(pane.id)
               ? notifier.paneFocusRequest
               : 0,
@@ -1381,6 +1415,16 @@ class _PaneContent extends StatelessWidget {
               ? null
               : () =>
                     restartHarness(context, notifier, pane.machineId, agent.id),
+          onFork: agent == null || offline || needsLink || !agent.canFork
+              ? null
+              : () => forkHarness(
+                  context,
+                  notifier,
+                  pane.machineId,
+                  agent.id,
+                  agent.name,
+                  engine: agent.engine,
+                ),
           // The same confirmation the rail's row menu opens. Only for an
           // agent the machine still lists — a pane whose agent is already
           // gone has nothing to end.
@@ -1392,6 +1436,7 @@ class _PaneContent extends StatelessWidget {
                   pane.machineId,
                   agent.id,
                   agent.name,
+                  engine: agent.engine,
                 ),
           zoomed: notifier.zoomedPaneId == pane.id,
           onToggleZoom:
@@ -2176,8 +2221,11 @@ String viewerPaneName(Agent? owner, Iterable<DshEntry> catalog) {
   final used = entry?.viewerUse;
   if (used != null) {
     final viewer = catalog.where((e) => e.id == used).firstOrNull;
-    if (viewer != null && viewer.name.trim().isNotEmpty) return viewer.name.trim();
+    if (viewer != null && viewer.name.trim().isNotEmpty)
+      return viewer.name.trim();
   }
   final harness = owner.dshName ?? entry?.name;
-  return harness == null || harness.trim().isEmpty ? 'Viewer' : '${harness.trim()} Viewer';
+  return harness == null || harness.trim().isEmpty
+      ? 'Viewer'
+      : '${harness.trim()} Viewer';
 }

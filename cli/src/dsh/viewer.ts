@@ -20,6 +20,7 @@ import { installedDsh, type InstalledDsh } from './installed.js'
 import { isViewerPackage } from './manifest.js'
 import { resolveDshCommand } from './materialize.js'
 import { isShellNoise, killProcessGroup, spawnDshCommand } from './shell.js'
+import { viewerTarget } from '../lib/viewerWire.js'
 
 /** The viewer that will actually run for a harness: its own, or the package it points at. */
 export interface ResolvedViewer {
@@ -156,6 +157,13 @@ export class DshViewerManager {
 
   url(agentId: string): string | null {
     return this.states.get(agentId)?.url ?? null
+  }
+
+  /** Forward only the port this manager allocated to this running viewer. */
+  forwardingUrl(agentId: string): string | null {
+    const state = this.states.get(agentId)
+    const target = viewerTarget(state?.url)
+    return state?.child && target && Number(target.port) === state.port ? state.url : null
   }
 
   /** Idempotent: the same agent, DSH and workspace keep their running viewer. */

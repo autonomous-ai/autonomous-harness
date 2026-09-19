@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/simskill",
+  "name": "SimSkill",
+  "category": "Simulation",
+  "author": "Qiliu Chen and contributors",
+  "description": "Make a little city flow better. Change the lights, watch the streets, and measure what happens.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "studio.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "STUDIO_TOOLCHAIN": "${dsh}/toolchain",
+      "STUDIO_PYTHON": "${dsh}/.venv/bin/python",
+      "STUDIO_UPSTREAM": "${dsh}/upstream"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/studio-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

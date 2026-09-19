@@ -1,0 +1,87 @@
+{
+  "title": "Variation garden",
+  "description": "Follow a visual thread. Explore a family of forms, collect your favourites, and keep the recipe with every image.",
+  "category": "Generative media",
+  "scene": "SOMETHING NEW IS GROWING",
+  "hint": "Choose an image to inspect it \u00b7 every variation keeps its seed",
+  "tip": "A fixed seed makes a useful comparison. The local starter is procedural; connect ComfyUI for model-based work.",
+  "previewLabel": "Procedural study \u00b7 no model needed",
+  "controls": [
+    {
+      "id": "palette",
+      "label": "Palette",
+      "type": "select",
+      "value": "orchard",
+      "options": [
+        {
+          "value": "orchard",
+          "label": "Orchard \u00b7 warm green"
+        },
+        {
+          "value": "dusk",
+          "label": "Dusk \u00b7 violet blue"
+        },
+        {
+          "value": "citrus",
+          "label": "Citrus \u00b7 coral gold"
+        }
+      ]
+    },
+    {
+      "id": "seed",
+      "label": "Seed",
+      "type": "number",
+      "value": 24,
+      "min": 1,
+      "max": 1000,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "complexity",
+      "label": "Petals",
+      "type": "number",
+      "value": 6,
+      "min": 3,
+      "max": 12,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "variations",
+      "label": "Variations",
+      "type": "number",
+      "value": 4,
+      "min": 2,
+      "max": 6,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    }
+  ],
+  "actions": [
+    {
+      "id": "generate",
+      "label": "Grow variations",
+      "description": ""
+    },
+    {
+      "id": "comfy",
+      "label": "Run ComfyUI workflow",
+      "description": "Run workspace workflow.json against local ComfyUI on port 8188"
+    }
+  ],
+  "credit": "Comfy MCP \u00b7 Comfy Org",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history.",
+  "theme": {
+    "accent": "#896390",
+    "tint": "#ece1ed",
+    "stage": "#272032",
+    "stage-accent": "#dcc2ec"
+  }
+}

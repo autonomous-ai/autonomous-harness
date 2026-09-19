@@ -16,7 +16,9 @@ import 'swarm_state_test.dart' show createApp;
 
 Map<String, dynamic> _frame(
   String id, {
+  bool terminalAvailable = true,
   String? viewerUrl,
+  String? viewerError,
   String? viewerName,
   Map<String, dynamic>? verdict,
 }) => {
@@ -26,20 +28,24 @@ Map<String, dynamic> _frame(
   'dsh': 'autonomous/autonomous-circuit',
   'dshName': 'Autonomous Circuit',
   'viewerUrl': ?viewerUrl,
+  'viewerError': ?viewerError,
   'viewerName': ?viewerName,
   'verdict': ?verdict,
   'terminal': {
-    'available': true,
-    'runtimes': [
-      {'backend': 'tmux', 'paneId': '%1'},
-    ],
+    'available': terminalAvailable,
+    if (terminalAvailable)
+      'runtimes': [
+        {'backend': 'tmux', 'paneId': '%1'},
+      ],
   },
 };
 
 Future<void> _synced(
   AppNotifier app,
   String id, {
+  bool terminalAvailable = true,
   String? viewerUrl,
+  String? viewerError,
   String? viewerName,
   Map<String, dynamic>? verdict,
 }) => app.handleEventForTest('m', {
@@ -47,7 +53,9 @@ Future<void> _synced(
   'payload': {
     'agent': _frame(
       id,
+      terminalAvailable: terminalAvailable,
       viewerUrl: viewerUrl,
+      viewerError: viewerError,
       viewerName: viewerName,
       verdict: verdict,
     ),
@@ -58,6 +66,75 @@ List<TerminalPane> _viewers(AppNotifier app) =>
     app.panes.where((pane) => pane.isWeb).toList();
 
 void main() {
+  test('a transient terminal-unavailable sync retains the terminal pane until deletion', () async {
+    final app = createApp();
+    addTearDown(app.dispose);
+    final pane = app.adoptSessionForTest(
+      terminal('a0', <TerminalBinaryFrame>[]),
+    );
+
+    await _synced(app, 'a0', terminalAvailable: false);
+
+    expect(app.panes, [pane]);
+    expect(
+      app
+          .stateOf('m')!
+          .agents
+          .firstWhere((agent) => agent.id == 'a0')
+          .terminalAvailable,
+      isFalse,
+    );
+
+    await _synced(app, 'a0');
+    expect(app.panes, [pane]);
+    expect(
+      app
+          .stateOf('m')!
+          .agents
+          .firstWhere((agent) => agent.id == 'a0')
+          .terminalAvailable,
+      isTrue,
+    );
+
+    await app.handleEventForTest('m', {
+      'type': 'agent_deleted',
+      'agentId': 'a0',
+      'payload': {'agentId': 'a0'},
+    });
+    expect(app.panes, isEmpty);
+  });
+
+  testWidgets(
+    'remote viewer update guidance can be dismissed and recovers to a forwarded URL',
+    (tester) async {
+      final app = createApp();
+      addTearDown(app.dispose);
+      app.stateOf('m')!.nodeOnline = true;
+      app.adoptSessionForTest(terminal('a0', <TerminalBinaryFrame>[]));
+      await mount(tester, app);
+      const error = 'Update Harness on the remote machine to show its viewer.';
+      await _synced(app, 'a0', viewerError: error);
+      await tester.pump();
+      expect(find.text(error), findsOneWidget);
+      expect(_viewers(app).single.url, isNull);
+      await app.closePane(_viewers(app).single.id);
+      await _synced(app, 'a0', viewerError: error);
+      expect(_viewers(app), isEmpty);
+      await app.toggleViewerPane('m', 'a0');
+      expect(_viewers(app).single.viewerError, error);
+      await _synced(
+        app,
+        'a0',
+        viewerUrl: 'http://127.0.0.1:4180/__harness_viewer/token?path=%2F',
+      );
+      await tester.pump();
+      expect(find.text(error), findsNothing);
+      expect(_viewers(app).single.viewerError, isNull);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test('a viewer opens to the left of its agent and follows the URL', () async {
     final app = createApp();
     addTearDown(app.dispose);

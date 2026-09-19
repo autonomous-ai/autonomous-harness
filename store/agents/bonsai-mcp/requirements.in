@@ -1,0 +1,3 @@
+ifcopenshell==0.8.5
+numpy==2.3.5
+pydantic==2.12.5

@@ -1,0 +1,11 @@
+{
+  "spec": 1,
+  "title": "Wind tunnel",
+  "parameters": {
+    "shape": "circle",
+    "speed": 4,
+    "radius": 7,
+    "viscosity": 0.08,
+    "steps": 320
+  }
+}

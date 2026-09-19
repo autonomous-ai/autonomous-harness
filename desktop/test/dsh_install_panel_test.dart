@@ -80,7 +80,9 @@ void main() {
   testWidgets('a run nobody has heard from yet is fetching', (tester) async {
     await _show(tester, DshInstallRun('autonomous/marp'));
     expect(find.text('Installing Marp on Studio'), findsOneWidget);
-    expect(find.text('0:00'), findsOneWidget);
+    // A loaded test host can spend seconds between construction and first
+    // paint. Assert the clock format, not sub-second wall-clock scheduling.
+    expect(find.textContaining(RegExp(r'^\d+:\d{2}$')), findsOneWidget);
     expect(_markOf(tester, 'Fetch Marp'), _Mark.active);
     expect(find.text('Fetching…'), findsOneWidget);
     expect(_markOf(tester, 'Set up the toolchain'), _Mark.pending);

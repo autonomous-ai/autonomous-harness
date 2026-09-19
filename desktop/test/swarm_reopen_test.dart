@@ -7,6 +7,7 @@ import 'package:harness/auth/auth_session.dart';
 import 'package:harness/auth/cli_login.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/state/app_state.dart';
+import 'package:harness/shortcuts/keymap_commands.dart';
 import 'package:harness/state/pane_preset.dart';
 import 'package:harness/terminal/terminal_session.dart';
 
@@ -182,20 +183,26 @@ void main() {
     },
   );
 
-  testWidgets('Cmd-Shift-T restores the last closed swarm from the welcome', (
-    tester,
-  ) async {
-    final app = createApp();
-    await app.addAgentToSwarm('m', 'a0');
-    app.renameSwarm(app.activeSwarmId, 'My work');
-    await mount(tester, app);
-    await chord(tester, LogicalKeyboardKey.keyW);
-    expect(app.panes, isEmpty);
-    await chord(tester, LogicalKeyboardKey.keyT, shift: true);
-    expect(app.activeSwarm.name, 'My work');
-    expect(app.panes.single.agentId, 'a0');
-    expect(app.canReopenClosedSwarm, isFalse);
-    await tester.pumpWidget(const SizedBox());
-    app.dispose();
-  });
+  testWidgets(
+    'Cmd-Shift-T is New Terminal now, not reopen; reopen stays a command with no default chord',
+    (tester) async {
+      final app = createApp();
+      await app.addAgentToSwarm('m', 'a0');
+      app.renameSwarm(app.activeSwarmId, 'My work');
+      await mount(tester, app);
+      await chord(tester, LogicalKeyboardKey.keyW);
+      expect(app.panes, isEmpty);
+      await chord(tester, LogicalKeyboardKey.keyT, shift: true);
+      expect(app.panes, isEmpty);
+      expect(app.canReopenClosedSwarm, isTrue);
+      expect(harnessCommandById['swarm.reopen']!.keys, isEmpty);
+      expect(harnessCommandById['terminal.new']!.keys, ['cmd+shift+t']);
+      app.reopenClosedSwarm();
+      expect(app.activeSwarm.name, 'My work');
+      expect(app.panes.single.agentId, 'a0');
+      expect(app.canReopenClosedSwarm, isFalse);
+      await tester.pumpWidget(const SizedBox());
+      app.dispose();
+    },
+  );
 }

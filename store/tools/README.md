@@ -28,3 +28,18 @@ A package installs alone, so each one carries a copy (`toolchain/runtimes.sh` in
 node store/tools/sync-runtimes.mjs           # rewrite every copy
 node store/tools/sync-runtimes.mjs --check   # exit 1 on a copy that drifted or a package missing one
 ```
+
+## Specialist studio runtime copies
+
+`studio_runtime.py` validates project controls, runs one named action, verifies its artifacts,
+and writes immutable results plus the Harness verdict. `studio_fetch.py` fetches reviewed
+commit pins without overwriting local source changes. Every specialist package carries its
+own copy for sparse installs. After editing the canonical files, run:
+
+```sh
+node store/tools/sync-studios.mjs
+node store/tools/sync-studios.mjs --check
+```
+
+The shared [Studio Viewer test guide](../viewers/studio-viewer/TESTING.md) covers the runtime,
+pin fetching, domain workflows, browser controls, and actual Harness lifecycle.

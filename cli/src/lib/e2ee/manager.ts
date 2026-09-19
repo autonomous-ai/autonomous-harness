@@ -109,6 +109,8 @@ export interface E2eeManagerDeps {
   isConnectionAvailable?: (connId: string) => boolean
   onIdentityPaired?: (connId: string, identityPub: string) => void
   onIdentityRevoked?: (identityPub: string) => void
+  /** Release connection-scoped resources on revoke, eviction, replacement and disconnect. */
+  onSessionDropped?: (connId: string) => void
 }
 
 export class E2eeManager {
@@ -157,7 +159,7 @@ export class E2eeManager {
   deviceConnected(): boolean { return [...this.sessions.values()].some((s) => s.role === 'device') }
   dropSessionsByRole(role: C.PairRole, preserve: (connId: string) => boolean = () => false): void {
     for (const [connId, s] of [...this.sessions.entries()]) {
-      if (s.role === role && !preserve(connId)) this.sessions.delete(connId)
+      if (s.role === role && !preserve(connId)) this.dropSession(connId)
     }
   }
 
@@ -236,7 +238,7 @@ export class E2eeManager {
     const count = this.store.count()
     // Device cleanup first: it needs the live session to seal a pair.revoke frame before deny drops it.
     for (const paired of this.store.list()) { try { this.deps.onIdentityRevoked?.(paired.identityPub) } catch { /* Continue revoking every stored identity. */ } }
-    for (const s of [...this.sessions.entries()]) { this.deny(s[0]); this.sessions.delete(s[0]) }
+    for (const s of [...this.sessions.entries()]) { this.deny(s[0]); this.dropSession(s[0]) }
     this.store.clear()
     this.rotateGroupKey()
     return { count }
@@ -254,7 +256,7 @@ export class E2eeManager {
   }
   private denyAndDropSessionsFor(identityPubB64: string): void {
     for (const [connId, s] of [...this.sessions.entries()]) {
-      if (s.webIdentityPub === identityPubB64) { this.deny(connId); this.sessions.delete(connId) }
+      if (s.webIdentityPub === identityPubB64) { this.deny(connId); this.dropSession(connId) }
     }
   }
   /** New group key + epoch; re-deliver to the REMAINING (still-paired) sessions so a revoked browser
@@ -718,6 +720,7 @@ export class E2eeManager {
       return true
     }
     this.evictIfFull()
+    this.dropSession(connId)
     this.sessions.set(connId, {
       webIdentityPub: identityPub,
       role,
@@ -734,7 +737,7 @@ export class E2eeManager {
     const enc = C.aeadSeal(keys.s2c, 0, C.utf8('e2e-welcome'), C.utf8(JSON.stringify({
       groupKey: C.b64e(this.groupKey),
       epoch: this.epoch,
-      features: { terminalP2p: 1 },
+      features: { terminalP2p: 1, viewerForwarding: 1 },
     })))
     this.deps.sendTo(connId, {
       type: 'e2e_welcome',
@@ -751,7 +754,10 @@ export class E2eeManager {
   /** Drop a session when its web connection closes (called from backendSocket on down close is n/a —
    *  connections are relayed; sessions are pruned by LRU + overwrite-on-new-hello). Also cleans up any
    *  in-progress password-PAKE attempt on this connId — the joiner may have disconnected mid-round. */
-  dropSession(connId: string): void { this.sessions.delete(connId); this.clearPwSlot(connId) }
+  dropSession(connId: string): void {
+    if (this.sessions.delete(connId)) this.deps.onSessionDropped?.(connId)
+    this.clearPwSlot(connId)
+  }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
@@ -779,7 +785,7 @@ export class E2eeManager {
   private evictIfFull(): void {
     if (this.sessions.size < MAX_SESSIONS) return
     const oldest = this.sessions.keys().next().value
-    if (oldest) this.sessions.delete(oldest)
+    if (oldest) this.dropSession(oldest)
   }
 }
 

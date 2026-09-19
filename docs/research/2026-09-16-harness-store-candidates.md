@@ -2,9 +2,24 @@
 
 Research date: September 16, 2026 (America/New_York).
 
-**Status: Implementation started.** [Game Studio / Godogen](../../store/agents/godogen/README.md) and [Film Director / OpenMontage](../../store/agents/openmontage/README.md) are implemented, with shared interactive viewers and reproducible browser checks. The other eight candidates remain research-backed backlog items. The research assessments below describe the original investigation; the package READMEs and testing notes record what has since been verified.
+**Status: all ten shortlist entries now have packages.** [Game Studio / Godogen](../../store/agents/godogen/README.md) and [Film Director / OpenMontage](../../store/agents/openmontage/README.md) were built first. The remaining eight now have independently installable packages, local starter workflows, interactive Studio Viewer panes, pinned upstream sources, and explicit native-integration boundaries. The user selected **this Mac and local simulations** for acceptance. See [verification and coverage](../../store/viewers/studio-viewer/TESTING.md).
 
-To resume: refresh the chosen upstream's maintenance status, license, and dependencies; pin a commit; reproduce its proposed demonstration in isolation; then package the verified workflow for Harness. The experience names below describe product ideas. Package names and upstream credit should follow the [Store conventions](../../store/README.md).
+| Added package | Local experience | Verified local engine/output |
+| --- | --- | --- |
+| [JUCE Agent Toolkit](../../store/agents/juce-agent-toolkit/README.md) | Instrument maker | DSP and native JUCE offline WAV rendering |
+| [Foam-Agent](../../store/agents/foam-agent/README.md) | Wind tunnel | D2Q9 flow simulation and measured fields |
+| [autoresearch-mlx](../../store/agents/autoresearch-mlx/README.md) | Research notebook | CPU character model, saved checkpoint, independent holdout evaluation |
+| [Ableton AI](../../store/agents/ableton-ai/README.md) | Loop room | Seeded MIDI, WAV, and matching browser audition |
+| [DimOS](../../store/agents/dimos/README.md) | Mission control | A* route planning and actual MuJoCo rover dynamics |
+| [SimSkill](../../store/agents/simskill/README.md) | City lab | Native SUMO traffic simulation and recorded vehicle playback |
+| [Bonsai MCP](../../store/agents/bonsai-mcp/README.md) | House of ideas | Real IFC4 authoring, tessellation, and quantity read-back |
+| [Comfy MCP](../../store/agents/comfy-mcp/README.md) | Variation garden | Reproducible procedural SVG studies and recipes |
+
+The research assessments below preserve the original investigation and proposed demonstrations.
+The local starters do not claim every ambitious demo below has been reproduced. Live Ableton,
+OpenFOAM, Blender/Bonsai, full DimOS perception/hardware, Apple Silicon MLX, and diffusion-model
+ComfyUI runs have separate requirements. Package READMEs and integration notes identify the
+shipped actions and what was actually exercised.
 
 ## Recommendation
 
@@ -18,7 +33,7 @@ The current Store already has Blender, MuJoCo, Phaser, Remotion, Strudel, RDKit,
 
 I examined the current Store manifests, searched public projects and maker demonstrations, then retrieved metadata, READMEs, licenses, and selected implementation files directly from 13 relevant GitHub repositories. I also inspected Godogen's demo briefs and OpenMontage's Backlot screenshot and viewer documentation.
 
-The original September 16 research was a source and product assessment; it did **not** install the packages, generate a game or film, run benchmarks, or operate hardware. Subsequent implementation checks for Godogen and OpenMontage are documented in their packages. Public examples are upstream demonstrations, not independently reproduced results. Every proposed demo below is a Harness product idea; it is not a claim that the exact prompt already succeeds upstream.
+The original September 16 research was a source and product assessment; it did **not** install the packages, generate a game or film, run benchmarks, or operate hardware. Subsequent implementation checks are documented in each package and the shared viewers’ testing notes. Public examples are upstream demonstrations, not independently reproduced results. Every proposed demo below is a Harness product idea; it is not a claim that the exact prompt already succeeds upstream.
 
 ## Ranked shortlist
 

@@ -135,6 +135,7 @@ a duplicate may return any retained receipt state. Supported operations:
 | `focus.ensure` | none | Same snapshot as `focus.get`; enable-time first-agent fallback acknowledged by Desktop |
 | `focus.get` | none | `focus:null\|{machineId,agentId,name?},focusRevision` |
 | `focus.step` | `direction:"next"\|"previous",idempotencyKey,focusRevision` | Same snapshot as `focus.get`, after Desktop acknowledged the new agent — see *Stepping focus* |
+| `scroll` | `phase:"down"\|"move"\|"up",dy?,velocity?` | none — see *Scrolling the focused terminal* |
 | `agents.list` | none | `machineId,agents:[{machineId,agentId,name,engine,state,recap?}]` — `recap` is the agent's newest turn headline (≤200 chars, the same string `recap` returns as `turns[0].recap`); absent until a turn has been summarised |
 | `status` | `machineId,agentId` | `machineId,agentId,state,openQuestion:null\|{requestId,questions}` |
 | `recap` | `machineId,agentId,n?` (default 3, integer 1–5) | `machineId,agentId,turns:[{kind,text,recap?,fullText?}]` |
@@ -308,3 +309,27 @@ the window can show one; the local daemon then reports the app's focus leaving t
 to that target still returns `MACHINE_MISMATCH`. The OS remains responsible for showing that a
 remote target is not supported for dispatch. Pairing, transport, credentials and task dispatch are
 untouched; older CLIs do not list `focus.step` in hello capabilities.
+
+### Scrolling the focused terminal
+
+`scroll` is one report of a finger on the paired device's glass, forwarded to the terminal Desktop
+has in front — the same `dial_scroll` frame the USB dial sends, so the app treats both alike:
+
+```json
+{"type":"scroll","requestId":"<uuid>","phase":"move","dy":-24}
+{"type":"scroll","requestId":"<uuid>","phase":"up","dy":-3,"velocity":-900}
+```
+
+The device is a touchpad here: it reports **movement**, not a position, because it cannot know how
+tall the terminal is; the terminal owns the scrollback and does the arithmetic. A stroke is sent in
+pieces — `down` when the finger lands (the window stops any coasting), `move`s carrying `dy` device
+pixels travelled since the last report (positive = down the glass), and `up` when it lifts, whose
+`velocity` (device px/s, signed like `dy`) becomes the fling. `dy` and `velocity` default to 0 and
+must be integers within ±4096 and ±100000. Send `up` for every `down`: a stroke that never closes
+holds a drag open on the app side until the next `down`.
+
+A stroke is a stream, not a mutation: there is no `idempotencyKey`, no receipt, nothing retained, and
+nothing to retry — a lost `move` is a shorter scroll. Success is an empty `scroll_result`. Only the
+terminal Desktop has focused scrolls; a viewer pane does not. Errors: `FOCUS_UNAVAILABLE` when no
+Desktop window is connected; `INVALID_REQUEST` for a bad phase, a non-integer or out-of-range value,
+or any other field. Older CLIs do not list `scroll` in hello capabilities.

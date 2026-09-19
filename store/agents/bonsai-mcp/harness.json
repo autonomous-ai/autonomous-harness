@@ -1,0 +1,33 @@
+{
+  "spec": 1,
+  "id": "autonomous/bonsai-mcp",
+  "name": "Bonsai MCP",
+  "category": "Architecture",
+  "author": "Show2Instruct",
+  "description": "Make room for a new idea. Shape a small building, inspect its spaces, and open the real IFC model anywhere.",
+  "engine": "codex",
+  "workspace": {
+    "template": "template",
+    "marker": "studio.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "STUDIO_TOOLCHAIN": "${dsh}/toolchain",
+      "STUDIO_PYTHON": "${dsh}/.venv/bin/python",
+      "STUDIO_UPSTREAM": "${dsh}/upstream"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/studio-viewer"
+  },
+  "verdict": ".harness/verdict.json"
+}

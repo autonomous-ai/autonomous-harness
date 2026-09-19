@@ -1,0 +1,11 @@
+{
+  "spec": 1,
+  "title": "Instrument maker",
+  "parameters": {
+    "wave": "sine",
+    "frequency": 220,
+    "attack": 0.08,
+    "brightness": 0.65,
+    "duration": 3
+  }
+}

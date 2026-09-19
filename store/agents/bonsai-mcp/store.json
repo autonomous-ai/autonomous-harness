@@ -1,0 +1,10 @@
+{
+  "homepage": "https://github.com/Show2Instruct/bonsai-mcp",
+  "upstream": "https://github.com/Show2Instruct/bonsai-mcp",
+  "license": "MIT; IfcOpenShell LGPL-3.0",
+  "tagline": "MCP server for a live Blender + Bonsai (BlenderBIM) session",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/bonsai-mcp/screenshots/studio.png",
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/c33ddd9582ea178fee1a70526961b88b16e66036/store/agents/bonsai-mcp/screenshots/narrow.png"
+  ]
+}

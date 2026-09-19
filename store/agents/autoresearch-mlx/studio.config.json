@@ -1,0 +1,79 @@
+{
+  "title": "Research notebook",
+  "description": "Follow a small idea through a real experiment. Train, compare, and see what the evidence says.",
+  "category": "Science",
+  "scene": "ONE GOOD QUESTION AT A TIME",
+  "hint": "Hover the learning curve \u00b7 compare recent experiments",
+  "tip": "Change one thing at a time. The held-out text stays fixed so the comparison means something.",
+  "previewLabel": "Run an experiment to measure loss",
+  "controls": [
+    {
+      "id": "learning_rate",
+      "label": "Learning rate",
+      "type": "number",
+      "value": 0.5,
+      "min": 0.05,
+      "max": 1.5,
+      "step": 0.05,
+      "integer": false,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "steps",
+      "label": "Training steps",
+      "type": "number",
+      "value": 120,
+      "min": 20,
+      "max": 300,
+      "step": 20,
+      "integer": false,
+      "unit": "",
+      "hint": ""
+    },
+    {
+      "id": "context",
+      "label": "Context length",
+      "type": "number",
+      "value": 1,
+      "min": 1,
+      "max": 3,
+      "step": 1,
+      "integer": true,
+      "unit": "characters",
+      "hint": ""
+    },
+    {
+      "id": "seed",
+      "label": "Random seed",
+      "type": "number",
+      "value": 7,
+      "min": 1,
+      "max": 99,
+      "step": 1,
+      "integer": true,
+      "unit": "",
+      "hint": ""
+    }
+  ],
+  "actions": [
+    {
+      "id": "train",
+      "label": "Try an experiment",
+      "description": ""
+    },
+    {
+      "id": "mlx",
+      "label": "Run MLX experiment",
+      "description": "Run upstream train.py on an Apple Silicon machine after data preparation"
+    }
+  ],
+  "credit": "autoresearch-mlx \u00b7 Trevin creator; Andrej Karpathy",
+  "empty": "Adjust the controls, then make your first exploration. Every successful run stays in the history.",
+  "theme": {
+    "accent": "#3d7289",
+    "tint": "#e0e9ea",
+    "stage": "#152830",
+    "stage-accent": "#95d9dd"
+  }
+}

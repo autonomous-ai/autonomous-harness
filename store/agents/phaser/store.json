@@ -2,6 +2,7 @@
   "homepage": "https://phaser.io",
   "upstream": "https://github.com/phaserjs/phaser",
   "license": "MIT",
+  "tagline": "Open source HTML5 game framework",
   "evaluation": [
     {
       "method": "tool",

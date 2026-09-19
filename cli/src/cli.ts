@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { mutateDsh } from './dsh/service.js'
+import { HarnessShareOwner } from './sharing/owner.js'
+import { HarnessGrantStore } from './sharing/grants.js'
+import { HarnessShareRelay, type SharedMachineReference } from './sharing/relay.js'
+import { SharedViewerPool } from './sharing/viewer.js'
 import { fingerprint as e2eeCoreFingerprint, b64d as e2eeCoreDecode } from './lib/e2ee/core.js'
 import { AutonomousDeviceDirect } from './lib/autonomous-device/direct.js'
 /**
@@ -41,12 +46,11 @@ import { DeviceFleet } from './device/deviceFleet.js'
 import { registry, projectDisplayName, type RegisteredSession } from './lib/registry.js'
 import { engineSessionTitle } from './lib/sessionTitle.js'
 import { installAmpPlugin, installCodexHooks, installCommandCodeHooks, installCursorHooks, installDevinHooks, installGrokHooks, installAgyHooks, installCopilotHooks, installHermesHooks, installKiloPlugin, installOpencodePlugin, installPiExtension, installSessionHooks } from './lib/hooks.js'
-import { installOpencodeHarnessComputeSkill } from './lib/harnessComputeSkill.js'
-import { PID_FILE, daemonPort, isAlive, readPid } from './lib/daemonState.js'
+import { PID_FILE, daemonPort, isAlive, isDaemonRunning, readPid } from './lib/daemonState.js'
 import {
   BIND_WAIT_MS, connectFailure, defaultLaunchDeps, removePidFileIf, waitForBind, waitForReady,
 } from './lib/daemonLaunch.js'
-import { SpawnLockBusyError, describeSpawnLockFailure, describeSpawnLockOwner, withSpawnLock } from './lib/daemonSpawnLock.js'
+import { SpawnLockBusyError, describeSpawnLockBusyPlainly, describeSpawnLockFailure, describeSpawnLockOwner, withSpawnLock } from './lib/daemonSpawnLock.js'
 import { stopDaemonProcess } from './lib/daemonStop.js'
 import { ensureTmuxOnPath, requireTmuxAvailable } from './lib/tmuxOnPath.js'
 import { flashCommand } from './lib/flash.js'
@@ -54,13 +58,17 @@ import { readOrMintComputerId } from './lib/computerIdentity.js'
 import { renderLoginSuccessHtml } from './lib/loginPage.js'
 import { AuthSessionError, AuthSessionManager, clearAuthSession, readAuthSession, writeAuthSession, type AuthSession } from './lib/authSession.js'
 import { handOffToGrid } from './lib/gridHandoff.js'
-import { ensureGridInstalled } from './lib/gridInstall.js'
-import { ensureHarnessGrid } from './lib/gridEnsure.js'
+import { ensureGridInstalled, type GridInstallResult } from './lib/gridInstall.js'
+import { ensureHarnessGrid, type EnsureStatus } from './lib/gridEnsure.js'
 import { passThroughToGridLogout } from './lib/gridLogout.js'
 import { clearGridMcpUrlCache } from './lib/gridMcpUrl.js'
 import { warnIfGridSignInRemains } from './lib/gridCredentials.js'
-import { ENGINE_CLI_COMMANDS, ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
-import type { AgentEngine } from './engines/types.js'
+import { reconcileGridAttach, gridNamesLocal, createGridAttachRunner } from './lib/gridAttach.js'
+import { signedInGridEmail, resetGridDeriveMemo } from './lib/gridDerive.js'
+import { forgetGridModels } from './lib/gridModels.js'
+import { gridAvailable } from './lib/gridExec.js'
+import { ENGINE_CLI_COMMANDS, ENGINES, PROCESS_ENGINES, engineBin, enginePathOverride } from './lib/engineBin.js'
+import { isTerminalEngine, type AgentEngine } from './engines/types.js'
 import { engineInstallRecipe } from './lib/engineInstall.js'
 import { buildEngineCommandArgv, buildEngineLaunchArgv, commandAvailableInInteractiveShell, namedAgentArgs } from './lib/engineLaunch.js'
 import { buildGridEngineLaunch, describeGridLaunch, gridConflictingEnvToClear, gridEnvVarNames, type GridLaunchMachine, type GridWebSearchStatus } from './lib/gridLaunch.js'
@@ -74,14 +82,16 @@ import { claudeContinuation, findLiveSession } from './lib/sessionRepair.js'
 import { TmuxBackend } from './lib/tmuxBackend.js'
 import { DEFAULT_HOST_THEME, loadHostTheme, saveHostTheme, type HostTheme } from './lib/hostTheme.js'
 import { createAndRegisterPane } from './lib/createAgentPane.js'
+import { forkName, planFork } from './lib/forkAgent.js'
 import { restoreAgents } from './lib/restoreAgents.js'
 import { buildLaunchOverrides, validateLaunchOverrides, type LaunchOverrides, type LaunchOverridesDeps, type LaunchOverridesResult, type LaunchSource } from './lib/launchOverrides.js'
 import { prepareCodexResume } from './engines/codex/portableHistory.js'
 import { buildHarnessSessionLabel } from './lib/harnessSessionLabel.js'
+import { listTmuxPanes } from './lib/tmuxAgentDiscovery.js'
 import { installedDsh } from './dsh/installed.js'
 import { dshVerdictPath, dshViewerName } from './dsh/manifest.js'
-import { catalogEntry, refreshDshRegistry } from './dsh/catalog.js'
-import { installDsh, resolveInstallSource, removeDsh } from './dsh/install.js'
+import { catalogEntry } from './dsh/catalog.js'
+import { removeDsh } from './dsh/install.js'
 import { preTrustClaudeProject, preTrustCodexProject } from './lib/claudeTrust.js'
 import { materializeWorkspace } from './dsh/materialize.js'
 import { dshLaunch } from './dsh/launch.js'
@@ -110,6 +120,7 @@ import { TerminalStreamManager } from './lib/terminalStreamManager.js'
 import { terminalRouteKey, terminalRuntimeLabel } from './lib/terminalRuntime.js'
 import { TerminalAgentReconciler } from './lib/terminalAgentReconciler.js'
 import { processRows, type DiscoveredTerminalAgent } from './lib/terminalAgentDiscovery.js'
+import { remoteCommand } from './remoteCommand.js'
 import {
   terminalActionNotStarted,
   type HookTerminalHint,
@@ -147,7 +158,7 @@ import { MachinePeerStore } from './lib/e2ee/machinePeers.js'
 import { connectWithPassword } from './lib/e2ee/relayClient.js'
 import {
   startSelfUpdater, restore as restoreUpdate, confirm as confirmUpdate,
-  fetchManifest, downloadVerified, canary, stage, semverGt, shouldAutoUpdate, isLocalDevBuild,
+  fetchManifest, downloadVerified, canary, stage, semverGt, isLocalDevBuild,
   type Poller, type UpdateEntry,
 } from './lib/selfUpdate.js'
 import { managedNodePath } from './lib/nodeRuntime.js'
@@ -194,7 +205,6 @@ import { RuntimeProfileManager, parseRuntimeProfile } from './lib/runtimeProfile
 import { RuntimeProfileController, inspectRuntimePane } from './lib/runtimeProfileController.js'
 import { deviceErrorText } from './lib/deviceErrors.js'
 import { correlateAgentEvent, turnHeartbeatFrame } from './lib/agentEvent.js'
-
 // Before ANY child is spawned: on Linux an absent locale makes tmux and ps mangle their output,
 // which silently costs the daemon every pane it would have discovered. See lib/childLocale.ts.
 ensureUtf8Locale()
@@ -224,6 +234,10 @@ const COMPUTER_ID_FILE = env.ADAPTER_COMPUTER_ID_FILE
 // The machine's display name, mirrored from the backend (`machine_meta` on connect + web renames) by the
 // daemon so the separate `harness status` process can print it. Absent = unnamed machine.
 const MACHINE_NAME_FILE = join(env.ADAPTER_DATA_DIR, 'machine-name')
+/** The name a new terminal tile greets with: the machine's display name the backend gave it, else the host's. */
+function terminalHintMachineName(): string {
+  try { return readFileSync(MACHINE_NAME_FILE, 'utf-8').trim() || hostname() } catch { return hostname() }
+}
 
 // The dial's session, held at module scope for the same reason `backendRef` is: shutdown() is defined
 // before the wiring that creates it, and the port has to be released on the way out.
@@ -270,9 +284,22 @@ const DEVIN_DB = join(env.DEVIN_HOME, 'sessions.db')
 // reported by the daemon in words rather than by the app as a timeout.
 const PROXY_BACKEND_TIMEOUT_MS = 20_000
 
-// How long `harness start` waits for the background daemon to report "[backend] connected" before
-// declaring an error. A healthy backend connects in well under this; a timeout ⇒ unreachable.
-const CONNECT_WAIT_MS = 10_000
+/** Bounds the `POST /api/grid/name` inside the daemon-start grid reconcile, so a stalled control-plane
+ *  connection cannot hold it open. */
+const GRID_MINT_TIMEOUT_MS = 10_000
+/** How long the grid RPCs will gate on a grid-attach attempt before answering without it, whether or
+ *  not it has settled — the ceiling that keeps a stuck attempt from degrading every grid RPC for the
+ *  daemon's whole life (`gridReadyProbe`). */
+const GRID_ATTACH_CEILING_MS = 30_000
+/** How many grid-attach attempts one daemon makes before giving up until its next start. A machine
+ *  still unattached after this many reachable moments has a problem that retrying will not fix, and
+ *  each attempt past that is a grid sign-in — and a token rotation — bought for nothing. */
+const GRID_ATTACH_MAX_ATTEMPTS = 5
+/** The soonest one attempt may follow another. Retries are driven by backend reconnects, and waking
+ *  a laptop, changing network or toggling a VPN produces several within seconds; without this floor
+ *  one moment of ordinary churn spent the whole allowance above and the feature went quiet for the
+ *  daemon's life. Requests inside the window are deferred to its end, not dropped. */
+const GRID_ATTACH_MIN_INTERVAL_MS = 60_000
 
 /** Between session-binding attempts for a process whose engine store is not resolvable yet. */
 const REPAIR_RETRY_MS = 60_000
@@ -288,7 +315,7 @@ function usage(exitCode = 0): never {
 
 Agents — after "harness start", run the vendor CLI directly inside tmux. Harness discovers supported
 top-level processes automatically; it does not launch them or change their permission flags:
-${ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')}
+${PROCESS_ENGINES.map((engine) => `  ${ENGINE_CLI_COMMANDS[engine]}`).join('\n')}
 A launcher that hands the pane to one of these works the same — "ori claude" is a Claude Code agent.
 
 Machine:
@@ -308,6 +335,7 @@ Machine:
   harness logs export          zip the last 7 days of logs (app, CLI, dial, daemon) to the Desktop
   harness machines             list the machines on this account (this computer's is marked)
   harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
+  harness remote               from a Harness terminal tile: open a terminal on another of your machines and move this tile to it
   harness version              print the installed version (v${VERSION})
   harness update [--force]     update to the latest build now (it also self-updates in the background;
                                neither touches a local install-cli.sh build without --force)
@@ -393,18 +421,25 @@ function setupBrowserLink(machineId: string, token: string): string {
   return u.toString()
 }
 
-/** One control-plane call, returning the backend's `data` envelope; throws on a non-2xx / bad body. */
+/** One control-plane call, returning the backend's `data` envelope; throws on a non-2xx / bad body.
+ *  `signal` lets a caller bound the request — a bare `fetch` that accepts the TCP handshake and then
+ *  never answers would otherwise await forever. */
 async function requestJson<T>(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   body?: unknown,
   headers: Record<string, string> = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   // A GET/DELETE with no body must not carry a content-type — some proxies reject that pairing.
+  // Always bounded: a caller that passes no signal gets the proxy's own bound, so a black-holed
+  // backend (packets dropped, never refused) is an error in 20s and not a process that never exits —
+  // `harness start` used to hang here, and the desktop app, waiting on that start, hung with it.
   const res = await fetch(`${backendHttpBase()}${path}`, {
     method,
     headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: signal ?? AbortSignal.timeout(PROXY_BACKEND_TIMEOUT_MS),
   })
   const json = (await res.json().catch(() => ({}))) as { success?: boolean; data?: T; error?: { message?: string } }
   if (!res.ok || json.success === false) {
@@ -414,8 +449,8 @@ async function requestJson<T>(
 }
 
 /** POST JSON to the backend and return its `data` envelope; throws on a non-2xx / bad body. */
-async function postJson<T>(path: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
-  return requestJson<T>('POST', path, body, headers)
+async function postJson<T>(path: string, body: unknown, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
+  return requestJson<T>('POST', path, body, headers, signal)
 }
 
 /**
@@ -435,7 +470,7 @@ async function controlPlaneAuth(): Promise<{ session: AuthSession; headers: Reco
 }
 
 /** Resolve the canonical machine for the durable computer id without ever using a machine API key. */
-async function resolveComputerMachine(): Promise<AuthSession> {
+async function resolveComputerMachine(signal?: AbortSignal): Promise<AuthSession> {
   const current = readAuthSession()
   if (!current) throw new Error('Not signed in. Run `harness login`.')
   const auth = new AuthSessionManager(backendHttpBase())
@@ -449,7 +484,7 @@ async function resolveComputerMachine(): Promise<AuthSession> {
   }, {
     authorization: `Bearer ${accessToken}`,
     'x-autonomous-env': current.autonomousEnv,
-  })
+  }, signal)
   const machineId = result.machine?.machineId
   if (!machineId) throw new Error('Backend did not return a machine id for this computer')
   // Refresh can atomically replace the session while this request is in flight. Always merge the
@@ -476,14 +511,22 @@ async function authStatusCommand(json: boolean): Promise<void> {
   }
   const auth = new AuthSessionManager(backendHttpBase())
   let loggedIn = true
+  let offline = false
   try {
     await auth.accessToken()
   } catch (err) {
-    loggedIn = !(err instanceof AuthSessionError)
+    // Only a session the SSO service will never renew (or none at all) is "not signed in". A refresh
+    // that could not be SERVED right now — no network, service down — is a signed-in computer that is
+    // offline, and says so; it used to read as signed out and send the desktop app to a login screen
+    // that could not have succeeded either. Same split proxyBackend makes (401 vs 502).
+    if (err instanceof AuthSessionError && err.code === 'UNAVAILABLE') offline = true
+    else loggedIn = !(err instanceof AuthSessionError)
   }
   const latest = readAuthSession()
+  const signedIn = loggedIn && latest !== null
   const payload = {
-    loggedIn: loggedIn && latest !== null,
+    loggedIn: signedIn,
+    ...(signedIn && offline ? { offline: true } : {}),
     computerId: latest?.computerId,
     machineId: latest?.machineId,
     autonomousEnv: latest?.autonomousEnv,
@@ -521,13 +564,20 @@ type SignInOutcome =
  *
  * Returns what happened, so `--json` callers can carry it on their own result line.
  */
-async function attachGridToSignIn(token: string, json: boolean): Promise<Record<string, unknown>> {
+async function attachGridToSignIn(
+  token: string,
+  json: boolean,
+  installing: Promise<GridInstallResult> = ensureGridInstalled(),
+): Promise<Record<string, unknown>> {
   const note = (line: string): void => { if (!json) console.error(`  · ${line}`) }
   // A machine with no `grid` gets one first, from grid's own installer — the sign-in that follows
   // is what makes it useful, and "install the grid CLI yourself" was the sentence every fresh
   // machine used to stop at. Best-effort: a failed install is a note, and the hand-off below then
-  // reports the missing binary exactly as before.
-  const install = await ensureGridInstalled()
+  // reports the missing binary exactly as before. A forced sign-in starts the install before it
+  // takes the daemon spawn lock and hands the promise in (see loginCommand): the installer is
+  // account-agnostic and can run for minutes, and neither the browser wait nor a start queued on
+  // that lock should be spent on it.
+  const install = await installing
   if (install.status === 'installed') note(install.message)
   else if (install.status !== 'present') note(install.message)
   const handoff = await handOffToGrid(token, { json: true })
@@ -535,22 +585,41 @@ async function attachGridToSignIn(token: string, json: boolean): Promise<Record<
     note(handoff.message)
     return { grid: { signedIn: false, code: handoff.code } }
   }
-  // The name is the backend's to mint and remember — this CLI holds neither the account's email nor
-  // its id (see backend/src/routes/grid.ts). A backend without the route is simply an older backend:
-  // no grid is ensured, nothing fails, and the next sign-in after it ships picks this up.
+  const { status, name } = await ensureAccountGrid(note)
+  return { grid: { signedIn: true, ensured: status, ...(name ? { name } : {}) } }
+}
+
+/**
+ * The account's private grid exists — its name minted or read, then the grid itself created if it is
+ * not there yet.
+ *
+ * The second half of attaching a machine to grid, and the half `harness grid login` used to skip:
+ * that command signed in and stopped, so an account whose grid had never been created was left
+ * signed in to nothing, with an empty model picker and no way to tell why. Shared from here so the
+ * sign-in's grid half and the explicit command cannot drift apart again.
+ *
+ * **The name is the backend's to mint and remember** — this CLI holds neither the account's email
+ * nor its id (see `backend/src/routes/grid.ts`). A backend without the route is simply an older
+ * backend: no grid is ensured, nothing fails, and the next sign-in after it ships picks this up.
+ *
+ * Best-effort throughout: every failure is a note through `note` and nothing more.
+ */
+async function ensureAccountGrid(note: (line: string) => void): Promise<{ status: EnsureStatus; name: string | null }> {
   let gridName: string | null = null
   try {
     const { headers } = await controlPlaneAuth()
-    gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers)).gridName ?? null
+    // Bounded like the daemon's own mint (reconcileGridAttach): a forced sign-in runs this under the
+    // daemon spawn lock, and a stalled control-plane connection must not hold that lock open.
+    gridName = (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers, AbortSignal.timeout(GRID_MINT_TIMEOUT_MS))).gridName ?? null
   } catch (err) {
     note(`Could not read this account's grid name (${(err as Error).message}); skipping grid setup.`)
-    return { grid: { signedIn: true, ensured: 'skipped' } }
+    return { status: 'skipped', name: null }
   }
-  if (!gridName) return { grid: { signedIn: true, ensured: 'skipped' } }
+  if (!gridName) return { status: 'skipped', name: null }
   const ensured = await ensureHarnessGrid(gridName)
   if (ensured.status === 'failed' || ensured.status === 'skipped') note(ensured.message)
   else if (ensured.status === 'created') note(`Created your private grid '${gridName}'.`)
-  return { grid: { signedIn: true, ensured: ensured.status, name: gridName } }
+  return { status: ensured.status, name: gridName }
 }
 
 async function loginCommand(
@@ -561,13 +630,13 @@ async function loginCommand(
 ): Promise<SignInOutcome> {
   if (foreground) throw new Error('`harness login` does not run the adapter. Use `harness start -f`.')
   const emit = (line: Record<string, unknown>): void => { if (json) console.log(JSON.stringify(line)) }
-  const succeed = async (alreadySignedIn: boolean): Promise<SignInOutcome> => {
+  const succeed = async (alreadySignedIn: boolean, installing?: Promise<GridInstallResult>): Promise<SignInOutcome> => {
     // `chained` is `harness grid login`, which runs the hand-off itself and reports it as its own
     // result — doing it here too would sign in to the grid twice and print two answers for one act.
     let grid: Record<string, unknown> = {}
     if (!opts.chained) {
       try {
-        grid = await attachGridToSignIn(await new AuthSessionManager(backendHttpBase()).accessToken(), json)
+        grid = await attachGridToSignIn(await new AuthSessionManager(backendHttpBase()).accessToken(), json, installing)
       } catch {
         // The harness session is already saved and valid; a grid step that throws is still only a
         // grid step. Never let it turn a completed sign-in into a failure.
@@ -600,9 +669,60 @@ async function loginCommand(
     }
     return await succeed(true)
   }
+  if (!force) return await browserSignIn(json, emit, () => succeed(false))
   // A forced login may intentionally switch SSO accounts. The old daemon must not keep streaming
-  // under its existing socket while this process replaces the durable session.
-  if (force) await stopDaemonProcess()
+  // under its existing socket while this process replaces the durable session — and no NEW daemon
+  // may come up on the old session in the meantime. The desktop app re-runs `harness start` whenever
+  // the control port goes quiet, which it does the moment the old daemon is stopped, and that start
+  // reads whatever session is on disk: for as long as the browser is open, the old account's. The
+  // daemon it spawned came up on the old account and stayed — the `harness start` this command
+  // recommends afterwards found it "already running" — so the whole switch, from the stop until the
+  // new session (and its grid hand-off) is on disk, holds the daemon spawn lock: a start that lands
+  // meanwhile waits its turn and then reads the new session.
+  //
+  // The grid CLI install is the one long thing in there that needs no account, so it starts NOW —
+  // before the lock, before the old daemon is stopped — and runs under the browser wait; `succeed`
+  // awaits only what is left of it. The handler keeps a failed download from being an unhandled
+  // rejection while nobody is waiting on it: the sign-in reads the outcome later, as a note.
+  const installing = opts.chained ? undefined : ensureGridInstalled()
+  installing?.catch(() => { /* reported where it is awaited */ })
+  try {
+    return await withSpawnLock('login', async () => {
+      await stopDaemonProcess()
+      return await browserSignIn(json, emit, () => succeed(false, installing))
+    }, {
+      onWaiting: (owner) => console.error(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
+    })
+  } catch (err) {
+    if (!(err instanceof SpawnLockBusyError)) throw err
+    // A holder that outlived the wait is not something a sign-in can override the way `stop` does:
+    // signing in AROUND it is the race above. Say so and stop. The person gets what Harness is still
+    // doing and what to do — the desktop shows `message` as is — and the pid and the lock go to
+    // stderr, where a developer reads them (the desktop keeps that stream in its log).
+    const message = describeSpawnLockBusyPlainly(err)
+    const detail = `the daemon spawn lock is ${describeSpawnLockFailure(err)}`
+    if (json) {
+      emit({ type: 'result', status: 'error', code: 'DAEMON_BUSY', message })
+      console.error(`  ${detail}`)
+    } else {
+      console.error(`\n  ✗ ${message}\n    (${detail})\n`)
+    }
+    process.exitCode = 1
+    return { signedIn: false }
+  }
+}
+
+/**
+ * The browser half of a sign-in: a loopback callback server, the SSO page, the code exchange, and
+ * the new session — machine id included — on disk. Under --json every failure is a result line and
+ * an exit code (`emit`); on the human path it is thrown. `succeed` finishes the job once the
+ * session is on disk.
+ */
+async function browserSignIn(
+  json: boolean,
+  emit: (line: Record<string, unknown>) => void,
+  succeed: () => Promise<SignInOutcome>,
+): Promise<SignInOutcome> {
   const callback = createServer()
   await new Promise<void>((resolve, reject) => {
     callback.once('error', reject)
@@ -691,7 +811,7 @@ async function loginCommand(
       if (json) { emit({ type: 'result', status: 'error', code: 'BACKEND_ERROR', message: (err as Error).message }); process.exitCode = 1; return { signedIn: false } }
       throw err
     }
-    return await succeed(false)
+    return await succeed()
   } finally {
     await new Promise<void>((resolve) => callback.close(() => resolve()))
   }
@@ -737,6 +857,14 @@ async function gridLoginCommand(force: boolean, json: boolean): Promise<void> {
   }
   const handoff = await handOffToGrid(token, { json })
   if (handoff.code !== 'OK') { fail(handoff.code, handoff.message, handoff.exitCode, gridSaid(handoff)); return }
+  // The sign-in on its own leaves an account whose grid was never created signed in to nothing —
+  // this command used to stop here, and the empty model picker that followed named no cause. Same
+  // second half the harness sign-in does, and best-effort in the same way.
+  //
+  // Deliberately NOT on the result line: that line is this command's pinned contract (the sign-in's
+  // outcome and what `grid` itself said), and a client driving it reads exactly those keys. A person
+  // on the human path gets the notes on stderr, where every other note from this command goes.
+  await ensureAccountGrid((line) => { if (!json) console.error(`  · ${line}`) })
   if (!json) return
   // The same key `harness login --json` uses, present only when it is true, so a client driving the
   // two reads one contract rather than two — the harness sign-in's own line is worded exactly so.
@@ -864,44 +992,44 @@ function openInBrowser(url: string): void {
 
 /** Start the adapter from a saved SSO session. Missing credentials never open a browser implicitly. */
 async function startCommand(foreground: boolean, repair: boolean = false): Promise<void> {
-  if (!readAuthSession()) {
+  const session = readAuthSession()
+  if (!session) {
     console.error('\n  ✗ Not signed in. Run: harness login\n')
     process.exit(1)
   }
-  // Update-before-connect: pull the newest bundle so a machine always reconnects on the latest build.
-  // Staging swaps ~/.harness/cli/cli.js, and the daemon start spawns below (`node cli.js __run`)
-  // executes those fresh bytes. Skipped in the foreground (THIS process becomes the long-lived daemon
-  // and self-updates on its own) and on a dev/repo build; never blocks start if the check fails.
-  // Run alongside resolveComputerMachine() rather than before it — the two touch disjoint resources
-  // (bundle files vs. the auth-session file/a machine-resolve POST), so there is nothing to serialize.
-  //
-  // Under the spawn lock from the staging onwards: the running daemon's own updater swaps the same
-  // cli.js/.prev, and two writers there can leave `.prev` holding the NEW bytes — which is what a
-  // later rollback would then "restore". The lock is re-entrant, so `launch` below just joins it.
+  // The session file is the ONLY thing `start` needs. It used to pull the newest bundle and resolve
+  // this computer's machine against the backend before launching — so a computer that could not reach
+  // the backend could not start its daemon at all (a black-holed link hung here forever, and the
+  // desktop app, which spawns this command when the port is silent, hung on "Starting local service…"
+  // with it). Both now belong to the daemon: it updates itself on its own tick (startSelfUpdater) and
+  // it dials, retries and serves the cached machine list until the backend answers. `harness update`
+  // remains for an update on demand.
   if (!foreground) {
-    // A daemon that is already up is left ALONE — bundle included. Staging is for the daemon this
-    // command is about to spawn; a live one updates itself (and hands off under the spawn lock). The
-    // desktop app re-runs `harness start` whenever its 400ms probe misreads a busy daemon as down, and
-    // staging on each of those swapped cli.js/notify.mjs under the running process and dropped its
-    // `.prev` — so the daemon's own updater later wrote `.prev` from the NEW bytes, and a rollback
-    // "restored" the very build that had just failed. `spawnDaemon` repeats this check under the
-    // lock, for the daemon that comes up while we are waiting our turn.
+    // A daemon that is already up is left ALONE. The desktop app re-runs `harness start` whenever its
+    // 400ms probe misreads a busy daemon as down; `spawnDaemon` repeats this check under the lock, for
+    // the daemon that comes up while we are waiting our turn.
     const running = readPid()
     if (running && isAlive(running)) {
-      // `--repair` still does its provisioning here: it touches the managed runtimes, never the
-      // bundle, and the live daemon picks a grid laid down now up on its next resolve (see
-      // repairManagedRuntimes). Without this, a new pin could only be followed by a restart.
-      if (repair) await repairManagedRuntimes(false)
-      console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
-      console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
-      process.exit(0)
+      // Left alone only when it serves THIS sign-in. A daemon on another account — what a forced
+      // login left behind whenever a start landed while its browser was open — is stopped here and
+      // started over on the session that is on disk: "already running" is exactly what kept it
+      // there, with `auth status` naming the new machine and the socket serving the old one. Asked
+      // of the daemon itself; one that cannot answer (still booting, mid-update) is trusted as before.
+      const serving = (await runningDaemonStatus())?.machineId
+      if (!serving || !session.machineId || serving === session.machineId) {
+        // `--repair` still does its provisioning here: it touches the managed runtimes, never the
+        // bundle, and the live daemon picks a grid laid down now up on its next resolve (see
+        // repairManagedRuntimes). Without this, a new pin could only be followed by a restart.
+        if (repair) await repairManagedRuntimes(false)
+        console.log(`machine already running (pid ${running}) — it auto-reconnects.`)
+        console.log('  check: harness status   ·   stop: harness stop   ·   update now: harness update')
+        process.exit(0)
+      }
+      console.log(`machine running (pid ${running}) as another account — restarting it on this sign-in`)
+      await stopDaemonProcess()
     }
     await withSpawnLock('start', async () => {
-      const [v] = await Promise.all([
-        stageLatestBundle((m) => console.log(m)),
-        resolveComputerMachine(),
-      ])
-      if (v) console.log(`  ✓ updated to v${v} — connecting on the new build`)
+      await resolveMachineIfUnknown(session)
       await launch(foreground, repair)
     }, {
       onWaiting: (owner) => console.log(`  the daemon is ${describeSpawnLockOwner(owner)} — waiting for it to finish…`),
@@ -913,9 +1041,26 @@ async function startCommand(foreground: boolean, repair: boolean = false): Promi
     })
     return
   }
-  await resolveComputerMachine()
+  await resolveMachineIfUnknown(session)
   await launch(foreground, repair)
 }
+
+/**
+ * The one backend round trip `start` may still make, and only when the session has no machine id —
+ * a file written by a build that predates login resolving it. Bounded, and never fatal: the daemon
+ * runs on the computer id meanwhile (runForeground `session.machineId ?? session.computerId`; the
+ * adapter dial omits the `&machine=` claim for a non-machine id and the backend pairs by `?computer=`),
+ * and the next login or online start writes the id. A session that already has one costs nothing here.
+ */
+async function resolveMachineIfUnknown(session: AuthSession): Promise<void> {
+  if (session.machineId) return
+  try {
+    await resolveComputerMachine(AbortSignal.timeout(RESOLVE_ON_START_TIMEOUT_MS))
+  } catch (err) {
+    console.log(`  (machine id not resolved yet — ${err instanceof Error ? err.message : String(err)}; starting on the computer id, resolved on the next login or online start)`)
+  }
+}
+const RESOLVE_ON_START_TIMEOUT_MS = 10_000
 
 /** Download + sha256-verify + canary the manifest's cli.js/notify.mjs, then atomically swap them into
  *  the installed CLI dir (dropping the .prev backups on success). The freshly-written cli.js is what the
@@ -928,24 +1073,6 @@ async function downloadCanaryStage(entry: UpdateEntry, dir: string, log: (m: str
   stage(dir, cliBuf, notifyBuf)
   confirmUpdate(dir) // canary passed + bytes already verified ⇒ drop the .prev backups
   return true
-}
-
-/** Fetch the manifest and, if a strictly-newer build exists, stage it (see downloadCanaryStage). Returns
- *  the staged version, or null when nothing was staged — already current, a local, dev/repo or
- *  update-disabled build, or ANY fetch/verify/canary failure (all swallowed: an update hiccup must
- *  never block `start`). See {@link shouldAutoUpdate} for why a local build is left alone. */
-async function stageLatestBundle(log: (m: string) => void): Promise<string | null> {
-  if (SCRIPT_PATH.endsWith('.ts') || env.ADAPTER_UPDATE_DISABLE) return null // dev/repo run never touches the installed bundle
-  const dir = resolve(env.ADAPTER_CLI_DIR)
-  try {
-    const entry = await fetchManifest(env.ADAPTER_UPDATE_URL, env.ADAPTER_UPDATE_KEY)
-    if (!entry || !shouldAutoUpdate(entry.version, VERSION)) return null
-    log(`▸ newer build available — updating v${VERSION} → v${entry.version}…`)
-    return (await downloadCanaryStage(entry, dir, log)) ? entry.version : null
-  } catch (e) {
-    log(`  (update check skipped: ${e instanceof Error ? e.message : String(e)})`)
-    return null
-  }
 }
 
 /** `harness update` — force the self-update NOW instead of waiting for the daemon's
@@ -1111,11 +1238,13 @@ async function runForeground(session: AuthSession): Promise<void> {
 
   // The managed grid follows its pin on EVERY daemon start — this one, and the restart a self-update
   // ends in — not only on `--repair`: the pin is expected to move, and a machine installed last month
-  // has to notice. Not awaited: a download must never hold the control port back, and every grid
+  // has to notice. Not awaited here: a download must never hold the control port back, and every grid
   // call resolves the binary afresh (`gridBinaryPath`), so whatever lands is picked up as it lands.
   // Best-effort by construction — it returns rather than throws — and the fatal guard above is the
-  // net under the promise itself.
-  void ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
+  // net under the promise itself. The promise is kept so the grid reconcile below can wait for the
+  // pinned binary before it hands a token over.
+  const managedGridReady = ensureManagedGrid((m) => console.log(`[grid-runtime] ${m}`))
+  void managedGridReady
 
   registry.load()
   // Persisted locators are hints until this process has observed their terminal root and PID/start marker.
@@ -1415,6 +1544,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   // server may fall back to a free port if env.PORT is taken, and the hooks must point at the real one.
 
   const syncSession = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
+    // A terminal is not the dial's business (see `deviceAgentRow`): it is never upserted there, and
+    // the one time it must be REMOVED from there — the engine it adopted has exited — the caller
+    // sends that `agent_deleted` itself, because this row is still very much alive for the app.
+    if (isTerminalEngine(s.engine)) opts = { ...opts, device: false }
     if (!registry.terminalAvailable(s.agentId)) {
       backendRef?.send({ type: 'agent_deleted', payload: { agentId: s.agentId } })
       if (opts.device !== false) backendRef?.sendCommander({ type: 'agent_deleted', payload: { agentId: s.agentId } })
@@ -1429,6 +1562,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       .catch((err) => console.error('[cli] announceSession failed:', err instanceof Error ? err.message : err))
   }
   const announceRename = (s: RegisteredSession, opts: { device?: boolean } = {}): void => {
+    if (isTerminalEngine(s.engine)) opts = { ...opts, device: false }
     const name = projectDisplayName(s)
     backendRef?.send({ type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } })
     if (opts.device !== false) backendRef?.sendCommander({ type: 'agent_renamed', payload: { agentId: s.agentId, name, engine: s.engine } })
@@ -1479,6 +1613,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   const dshViewers = new DshViewerManager({
     onUrl: (agentId, url) => {
       dshFrameFor(agentId).viewerUrl = url
+      backendRef?.viewerForwarder.refresh(agentId)
       syncCompanion(agentId)
     },
     log: (line) => console.log(line),
@@ -1539,6 +1674,9 @@ async function runForeground(session: AuthSession): Promise<void> {
   let appVoiceFocus: { machineId: string; agentId: string; connId: string } | undefined
   let backendRef: BackendSocket | undefined
   let fullReconcile: (announceDevice?: boolean) => Promise<void> = async () => {}
+  /** Assigned below, once the grid reconcile exists. A backend (re)connect is the signal that the
+   *  control plane is reachable again, which is precisely what an earlier attempt may have lacked. */
+  let onBackendConnected: () => void = () => {}
 
   const auth = new AuthSessionManager(backendHttpBase())
   const backend = new BackendSocket(session.machineId ?? session.computerId, auth, (connected) => {
@@ -1548,8 +1686,68 @@ async function runForeground(session: AuthSession): Promise<void> {
     void fullReconcile(true).catch((err) => {
       console.error('[runtime-profile] connect reconcile failed:', err instanceof Error ? err.message : err)
     })
+    onBackendConnected()
   }, computerId())
   backendRef = backend
+  backend.viewerTargetProvider = (agentId) => dshViewers.forwardingUrl(agentId)
+
+  // Bring this machine's grid sign-in into line with its harness sign-in, in the background.
+  // This is what makes a machine that signed in to the harness BEFORE grid existed usable after an
+  // update: it has the `grid` binary now (above), but no grid credentials and no grid to point at
+  // until something signs it in — and the login *event* that used to do that never fires again for
+  // an already-signed-in account. Reconciling on daemon start (the path every update takes) removes
+  // the `harness logout` / `harness login` a person would otherwise have to run by hand.
+  //
+  // Best-effort and non-blocking: it awaits the managed grid, mints/reads the account's name, and
+  // signs in + creates the grid only when the machine is not already there. The RPCs that need the
+  // name wait briefly for it through `gridReadyProbe`.
+  //
+  // ⚠️ Retried on backend RECONNECT, not just at start, and this is not belt-and-braces: the daemon
+  // OUTLIVES the desktop app (it must keep running after the window closes), and `harness start`
+  // against a live daemon returns without starting a new one. So "start" can be days ago, and a
+  // single attempt that lost to a control plane which was not reachable yet — the ordinary shape of
+  // a daemon coming up with the network — would leave the account with no grid until the next real
+  // restart. A connect is the evidence the control plane is reachable, so it is when to try again.
+  // How long the RPCs gate on an attempt, and how many attempts there are, live in the runner —
+  // `lib/gridAttach.ts`, beside the reconcile itself, so the coordination has a unit test rather
+  // than only a comment. Everything below is the daemon-shaped half: what one attempt actually does.
+  const gridAttach = createGridAttachRunner({
+    maxAttempts: GRID_ATTACH_MAX_ATTEMPTS,
+    minIntervalMs: GRID_ATTACH_MIN_INTERVAL_MS,
+    ceilingMs: GRID_ATTACH_CEILING_MS,
+    log: (line) => console.log(`[grid-attach] ${line}`),
+    attempt: () => reconcileGridAttach({
+      managedGridReady,
+      gridAvailable: () => gridAvailable(),
+      // The backend mints and remembers the name; this CLI holds neither the account's email nor its
+      // id. An older backend (no route) answers nothing, which the reconcile treats as "no grid yet".
+      // Bounded so a stalled control-plane connection cannot hold the attempt open indefinitely.
+      mintName: async () => {
+        const { headers } = await controlPlaneAuth()
+        return (await postJson<{ gridName?: string }>('/api/grid/name', {}, headers, AbortSignal.timeout(GRID_MINT_TIMEOUT_MS))).gridName ?? null
+      },
+      accessToken: () => new AuthSessionManager(backendHttpBase()).accessToken(),
+      signedInEmail: () => signedInGridEmail(),
+      gridNames: () => gridNamesLocal(),
+      handoff: (token) => handOffToGrid(token, { json: true }),
+      ensure: (name) => ensureHarnessGrid(name),
+      onName: (name) => {
+        // Answer the picker with this account's grid at once, and drop the memos a stale or absent
+        // sign-in may have filled — the model list, the derived name, and the web-tools URL.
+        backend.setHarnessGridName(name)
+        forgetGridModels()
+        resetGridDeriveMemo()
+        clearGridMcpUrlCache()
+      },
+      log: (line) => console.log(`[grid-attach] ${line}`),
+    }),
+  })
+
+  // While an attempt is running AND within its ceiling, the RPCs that need the grid name wait
+  // briefly on it; otherwise they read the name directly.
+  backend.gridReadyProbe = () => gridAttach.probe()
+  onBackendConnected = () => gridAttach.run()
+  gridAttach.run()
 
   /**
    * Is ANY device surface watching this machine?
@@ -1964,7 +2162,10 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
   const input = new SessionInputController({
     getSession: (id) => registry.resolve(id),
-    onDelivery: (event) => autonomousDeviceService?.delivery(event),
+    onDelivery: (event) => {
+      autonomousDeviceService?.delivery(event)
+      backend.orchestratorDelivery(event)
+    },
     validateRuntime: validateTerminal,
     inject: submitTerminalAction,
     sendKey: keyTerminalAction,
@@ -2215,55 +2416,12 @@ async function runForeground(session: AuthSession): Promise<void> {
   backend.runtimeProfileProvider = (session) => runtimeProfiles.selectedModel(session)
   backend.dshFrameProvider = dshFrameContext
   backend.onDshRemove = (id) => removeDsh(id)
-  backend.onDshInstall = async ({ id, url, ref }, progress) => {
-    const catalog = new Map((await refreshDshRegistry(!!id && !catalogEntry(id))).map(entry => [entry.id, entry]))
-    if (id && !catalog.has(id)) return { ok: false, error: 'INVALID_DSH', detail: `${id} is not in this machine's Store catalog` }
-    const resolved = id ? resolveInstallSource(id) : url ? { source: url, ref } : null
-    if (!resolved) return { ok: false, error: 'INVALID_DSH', detail: `${id ?? url} is not a known harness` }
-    // NARRATE THE LINES, NOT ONLY THE PHASES. A toolchain setup is minutes of npm and uv output, and
-    // a dialog that says "Setting up…" for all of it looks hung; the line the command is on is what
-    // says it is alive and what it is doing. Throttled: a setup can print hundreds of lines a second
-    // (`Updating files: 39%…` arrives as carriage returns on ONE line), and the window redraws on
-    // each push. The doctor's own ok/miss/warn lines go out at once — they are the ones a person
-    // reads, and there are seven of them.
-    let last: import('./dsh/install.js').DshInstallProgress | null = null
-    let pendingLine: string | null = null
-    let timer: NodeJS.Timeout | null = null
-    const flushLine = (): void => {
-      timer = null
-      if (last && pendingLine !== null && last.phase !== 'done' && last.phase !== 'failed') progress({ ...last, line: pendingLine })
-      pendingLine = null
-    }
-    const result = await installDsh({
-      source: resolved.source,
-      expectedId: id,
-      registry: dependencyId => catalog.get(dependencyId),
-      ref: ref ?? resolved.ref,
-      path: 'path' in resolved ? resolved.path : undefined,
-      onProgress: (p) => {
-        if (timer) { clearTimeout(timer); timer = null }
-        pendingLine = null
-        last = p
-        progress(p)
-      },
-      onLine: (raw) => {
-        console.log(`[dsh] install · ${raw}`)
-        // The last carriage-return segment is the line as a terminal would show it.
-        const line = raw.split('\r').filter((s) => s.trim()).pop()?.trim() ?? ''
-        if (!line) return
-        pendingLine = line.slice(0, 200)
-        if (/^(ok|miss|warn)\s/.test(line)) { if (timer) clearTimeout(timer); flushLine(); return }
-        if (!timer) timer = setTimeout(flushLine, 300)
-      },
-    })
-    if (timer) { clearTimeout(timer); timer = null }
-    if (!result.ok) {
-      console.warn(`[dsh] install of ${id ?? url} failed · ${result.error} · ${result.detail}`)
-      return { ok: false, error: result.error, detail: result.detail }
-    }
-    console.log(`[dsh] installed ${result.installed.id} at ${result.installed.dir}`)
-    return { ok: true, id: result.installed.id }
-  }
+  // `harness remote` names the tile it was typed in by its tmux pane; the registry knows whose it is.
+  backend.onTerminalHandoff = (tmuxPane) => registry.advertised()
+    .find((session) => session.tmuxPane === tmuxPane
+      || session.runtimes.some((runtime) => runtime.backend === 'tmux' && runtime.paneId === tmuxPane))?.agentId ?? null
+  backend.onDshInstall = (input, progress) => mutateDsh(input, progress)
+  backend.onDshUpdate = (id, progress) => mutateDsh({ id, update: true }, progress)
   backend.onAgentRename = (session, name) => { void terminals.setTitle(session, name) }
   backend.onRuntimeProfileUpdate = (sessionId, selectedModel) => runtimeController.setProfile(sessionId, selectedModel)
   runtimeProfiles.onChanged = (sessionId) => {
@@ -2458,7 +2616,20 @@ async function runForeground(session: AuthSession): Promise<void> {
   }
 
 
+  /**
+   * Forks whose engine session has not reported in yet, agentId → the SOURCE's sessionId. A fork's tile
+   * should open with the source's last recap on it, the way its pane opens with the source's transcript
+   * — but the mirror keys by session, and the fork's session id is the engine's to name, minutes later
+   * over a hook. Settled the moment it binds, below.
+   */
+  const pendingForkInherit = new Map<string, string>()
+
   const handleRegistered = async (entry: RegisteredSession, meta: RegisteredMeta): Promise<void> => {
+    const forkSource = pendingForkInherit.get(entry.agentId)
+    if (forkSource && entry.sessionId) {
+      pendingForkInherit.delete(entry.agentId)
+      mirror.inheritSummary(forkSource, entry.sessionId)
+    }
     if (meta.rebound) {
       registry.inheritName(meta.rebound, entry.sessionId)
       mirror.inheritSummary(meta.rebound, entry.sessionId)
@@ -2715,12 +2886,22 @@ async function runForeground(session: AuthSession): Promise<void> {
       const gridMoved = observed.grid !== undefined
         && !sameGridAssignment(current.grid ?? null, observed.grid)
       const wasLaunching = current.launch?.state !== undefined && current.launch.state !== 'ready'
+      // Somebody typed an engine into a terminal. The row becomes that engine's agent — same id,
+      // same pane — and from here on is handled exactly like one the app launched: bound by its
+      // hooks, watched for turns, listed on the dial. `adopted` makes the announce below
+      // unconditional, since the engine changing is the one fact the app must not miss.
+      const adopted = isTerminalEngine(current.engine) && !isTerminalEngine(observed.engine)
+        ? registry.adoptEngine(current.agentId, observed.engine, observed.processIdentity)
+        : null
+      if (adopted) console.log(`[discovery] ${sid(current.agentId)} terminal → ${observed.engine} · ${observed.primaryRuntimeKey}`)
       registry.updateRuntimes(current.agentId, observed.runtimes, observed.primaryRuntimeKey)
       registry.updateProcessIdentity(current.agentId, observed.processIdentity, observed.gateway, observed.grid)
       // The live argv is the truth about the bypass flag, and this is the one place every running
       // agent passes through — so a row written before the flag was persisted at all (or by a build
       // that did not yet) learns it here, before any pane recreation ever needs it.
-      registry.setBypassPermission(current.agentId, bypassPermissionActive(current.engine, observed.args))
+      // `observed.engine`, not `current.engine`: for a terminal that just adopted one, the row's
+      // engine was `terminal` a line ago, which has no bypass flag and would read every launch as "no".
+      registry.setBypassPermission(current.agentId, bypassPermissionActive(observed.engine, observed.args))
       // Same idea for a Codex profile: a row that never learned which CODEX_HOME its process runs
       // under learns it from the process, before the hook path validates a transcript against it.
       // Fill-only — a profile the row already knows is never re-derived.
@@ -2732,7 +2913,7 @@ async function runForeground(session: AuthSession): Promise<void> {
       if (withDsh?.dsh) attachDsh(withDsh)
       if (wasLaunching) registry.setLaunch(current.agentId, { state: 'ready' })
       await bindObservedAgent(observed)
-      if (wasDormant || wasLaunching) {
+      if (wasDormant || wasLaunching || adopted) {
         const active = registry.byAgent(current.agentId)
         if (!active) return
         if (active.sessionId && !await attachSession(active)) {
@@ -2755,13 +2936,31 @@ async function runForeground(session: AuthSession): Promise<void> {
     },
     onDormant: (agent, reason) => {
       if (!agent.active) return
-      registry.setActive(agent.agentId, false)
       invalidateTerminalControl(agent.agentId)
       input.forget(agent.agentId)
       if (agent.sessionId) {
         questionWatcher.stop(agent.sessionId)
         stopHeartbeat(agent.sessionId)
       }
+      // The engine has exited and its pane is a shell at its prompt (every launch runs the engine
+      // inside the pane's shell — engineLaunch.ts `harness_engine` — and so does a terminal somebody
+      // typed it into): the row becomes a terminal — live, not dormant — and the dial, which only
+      // ever knew it as an agent, is told it is gone. The app gets the same row with its engine
+      // now `terminal` and draws it as one. Not while the launch is still `starting`: a pane with
+      // no engine process yet is an install in progress, not an exit, and releasing it would wipe
+      // the grid/profile/DSH the launch is about to use. Not for a pane that is dead either — that
+      // one is on its way to `onRemoved`.
+      if (agent.launch?.state !== 'starting') {
+        const released = registry.releaseEngine(agent.agentId)
+        if (released) {
+          syncRecapPool()
+          console.log(`[discovery] ${sid(agent.agentId)} ${agent.engine} → terminal · ${reason}`)
+          announceSession(released, { device: false })
+          backendRef?.sendCommander({ type: 'agent_deleted', payload: { agentId: agent.agentId } })
+          return
+        }
+      }
+      registry.setActive(agent.agentId, false)
       console.log(`[discovery] ${sid(agent.agentId)} dormant · ${reason}`)
       announceSession(agent)
     },
@@ -2841,6 +3040,27 @@ async function runForeground(session: AuthSession): Promise<void> {
   // Built HERE rather than beside the cable stack that also uses it (further down), because the hook
   // server starts long before that point and agent restore can sit between the two. A cache bound late
   // is a cache that is still null exactly when a cold boot during an outage needs it most.
+  const sharingIdentity = new E2eeStore()
+  sharingIdentity.init()
+  const sharedViewers = new SharedViewerPool((agentId) => {
+    const agent = registry.resolve(agentId)
+    return agent ? backend.dshFrameProvider?.(agent)?.viewerUrl ?? null : null
+  })
+  backend.harnessSharing = new HarnessShareOwner({
+    machineId: () => backend.machineId,
+    identity: sharingIdentity.getIdentity(),
+    grants: new HarnessGrantStore(join(env.ADAPTER_DATA_DIR, 'harness-shares.json')),
+    terminals, resolveAgent: (id) => registry.resolve(id),
+    send: (id, type, payload) => backend.sendObserver(id, type, payload),
+    publish: (method, path, body) => proxyBackend(method, path, body),
+    watchViewer: (id, send) => sharedViewers.watch(id, send),
+  })
+  const shareRelay = new HarnessShareRelay(auth, env.BACKEND_WS_URL, env.AUTONOMOUS_ENV, async () => {
+    const result = await proxyBackend('GET', '/api/harness-shares')
+    if (result.status !== 200) throw new Error('Shared harnesses are temporarily unavailable.')
+    return ((result.body as { data?: { machines?: SharedMachineReference[] } }).data?.machines ?? [])
+  })
+
   const machineListCache = new MachineListCache(
     () => proxyBackend('GET', '/api/machines'),
     computerId,
@@ -3257,6 +3477,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     onMachineRename: (machineId, name) => proxyBackend('PATCH', `/api/machines/${encodeURIComponent(machineId)}`, { name }),
     onMachineDelete: (machineId) => proxyBackend('DELETE', `/api/machines/${encodeURIComponent(machineId)}`),
     onAuthMe: () => proxyBackend('GET', '/api/auth/me'),
+    onSharedHarnesses: () => proxyBackend('GET', '/api/harness-shares'),
     onStore: (method, path, body) => proxyBackend(method, path, body),
   })
   // Claim the pid file for OURSELVES, and only now that the control port is bound. It used to be
@@ -3295,6 +3516,7 @@ async function runForeground(session: AuthSession): Promise<void> {
   })
 
   const localWsServer = attachLocalWsServer(hookServer, {
+    shareRelay,
     // The window and the dial are one desk: opening an agent in the app brings the dial to it, switching
     // the dial's machine first when the app moved to another one.
     onAppFocusState: (machineId, agentId, connId, expectedRevision) => {
@@ -3502,9 +3724,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     installCodexHooks(hookPort)
     installCursorHooks(hookPort)
     installOpencodePlugin(hookPort)
-    installOpencodeHarnessComputeSkill()
-    // The `grid` CLI the Harness Compute skill shells out to, for a machine that signed in before
-    // this existed or whose sign-in could not fetch it. In the background: a download must not hold
+    // The `grid` CLI the Grid harness shells out to, for a machine that signed in before this
+    // existed or whose sign-in could not fetch it. In the background: a download must not hold
     // the daemon's own start, and nothing here waits on it.
     void ensureGridInstalled().then((result) => {
       if (result.status !== 'present') console.log(`[grid] ${result.message}`)
@@ -3722,6 +3943,12 @@ async function runForeground(session: AuthSession): Promise<void> {
       // and a pane that outlived the daemon in a session discovery no longer lists still has its
       // engine, which a second pane resuming the same session would collide with.
       liveProcess: (entry, runtime) => resolvePaneEngineProcess(runtime.paneId, entry.engine),
+      livePane: async (runtime) => {
+        const inventory = await listTmuxPanes()
+        // Only a harness pane counts (the inventory is already that whitelist): a new tmux server
+        // hands out `%N` from zero again, and a stale id can name somebody's own shell.
+        return inventory.ok && inventory.panes.some((pane) => pane.tmuxPane === runtime.paneId)
+      },
       buildLaunch: async (entry, opts) => {
         // Mirrors `agent_create`: the same grid env/argv (and the same vendor variables cleared), or
         // the same Codex profile with its hooks installed; the install check runs inside the pane's
@@ -3916,6 +4143,73 @@ async function runForeground(session: AuthSession): Promise<void> {
    * pass can miss it — retry `triggerHint` a few times with backoff before giving up.
    */
 
+  /**
+   * Watch a pane this daemon just opened until its engine process shows up (ready), dies (failed), or
+   * ten minutes pass. Shared by create and fork: the two open panes the same way and wait the same way.
+   */
+  const watchNewPane = async (engine: AgentEngine, pending: RegisteredSession, spawned: { runtime: TmuxRuntimeRef }, command: string[], installIfMissing: ReturnType<typeof engineInstallRecipe> | undefined): Promise<void> => {
+    const budgetMs = 10 * 60_000
+    const startedAt = Date.now()
+    let delayMs = 50
+    try {
+      while (Date.now() - startedAt < budgetMs) {
+        if (!registry.byAgent(pending.agentId)) return
+        const processIdentity = await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
+        if (processIdentity) {
+          registry.updateProcessIdentity(pending.agentId, processIdentity)
+          const ready = registry.setLaunch(pending.agentId, { state: 'ready' })
+          await clearPaneRemainOnExit(spawned.runtime.paneId)
+          if (ready) announceSession(ready)
+          void agentReconciler.triggerHint(spawned.runtime, engine).catch((error) => {
+            console.warn(`[agent] background bind failed · ${engine} · ${error instanceof Error ? error.message : error}`)
+          })
+          console.log(`[agent] create ready · ${engine} · agent ${pending.agentId} · ${Date.now() - startedAt}ms`)
+          return
+        }
+        const paneState = await tmuxPaneState(spawned.runtime.paneId)
+        if (!paneState) {
+          registry.setTerminalAvailable(pending.agentId, false)
+          announceSession(pending)
+          return
+        }
+        if (paneState.dead) {
+          const installed = await commandAvailableInInteractiveShell(command[0], undefined, installIfMissing)
+          const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
+          const detail = installed
+            ? `${engine} exited before its engine process became ready. See the terminal output for details.`
+            : `${engine} is not installed, or its automatic install failed. See the terminal output for details.`
+          const failed = registry.setLaunch(pending.agentId, { state: 'failed', error, detail })
+          if (failed) announceSession(failed)
+          console.warn(`[agent] create failed · ${engine} · ${detail}`)
+          return
+        }
+        // The engine started and was gone again before it was ever seen (a flag it refused, a
+        // config it could not read): its wrapper has handed the pane to a shell with the engine's
+        // own words on screen. That pane is a terminal, and the row says so — the person reads
+        // the error where it was printed and types the command again, rather than being handed a
+        // "Start failed" tile they cannot type into.
+        if (paneState.engineExit !== null) {
+          await clearPaneRemainOnExit(spawned.runtime.paneId)
+          const released = registry.releaseEngine(pending.agentId)
+          if (released) announceSession(released)
+          console.warn(`[agent] create · ${engine} exited (${paneState.engineExit}) before ready · agent ${pending.agentId} kept as a terminal`)
+          return
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, delayMs)
+          timer.unref?.()
+        })
+        delayMs = Math.min(delayMs * 2, 750)
+      }
+      const detail = `${engine} did not expose an engine process within 10 minutes. The terminal remains available.`
+      const failed = registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT', detail })
+      if (failed) announceSession(failed)
+      console.warn(`[agent] create timed out · ${engine} · agent ${pending.agentId}`)
+    } catch (error) {
+      console.warn(`[agent] create watch failed · ${engine} · ${error instanceof Error ? error.message : error}`)
+    }
+  }
+
   backend.onCreateAgent = async ({ engine, cwd, bypassPermission, permissionMode, grid, codexHome, dsh, prompt, name, agent }) => {
     if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
     try {
@@ -4028,7 +4322,7 @@ async function runForeground(session: AuthSession): Promise<void> {
     const extraArgs = [...(gridLaunch?.args ?? []), ...dshArgs, ...(agent ? namedAgentArgs(engine, agent) : [])]
     // The first prompt is a launch option only — never part of `extraArgs`, which the registry row
     // carries into a relaunch (engineLaunch.ts, `firstPrompt`).
-    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}) }
+    const launchOptions = { bypassPermission, ...(permissionMode ? { permissionMode } : {}), extraArgs: extraArgs.length ? extraArgs : undefined, installIfMissing, clearEnv, cwd, harnessNode: dsh ? true : undefined, ...(prompt ? { firstPrompt: prompt } : {}), terminalHint: { machineName: terminalHintMachineName() } }
     const command = buildEngineCommandArgv(engine, launchOptions)
     const argv = buildEngineLaunchArgv(engine, launchOptions)
     // A tmux route is enough to stream its screen. Register it before looking for a process so both
@@ -4061,62 +4355,116 @@ async function runForeground(session: AuthSession): Promise<void> {
     })
     if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
     const { spawned, pending } = result
+    // A terminal is ready the moment its pane is: there is no engine process to wait for, and the
+    // shell exiting is the person closing it — so `remain-on-exit` comes off now, and the pane going
+    // away is what removes the row (reconciler `onRemoved`), exactly as for an engine that quit.
+    if (isTerminalEngine(engine)) {
+      await clearPaneRemainOnExit(spawned.runtime.paneId)
+      const ready = registry.setLaunch(pending.agentId, { state: 'ready' }) ?? pending
+      announceSession(ready)
+      console.log(`[agent] create terminal open · agent ${pending.agentId}`)
+      return { ok: true, session: ready }
+    }
     announceSession(pending)
     if (pending.dsh) attachDsh(pending)
 
-    const watchCreatedPane = async (): Promise<void> => {
-      const budgetMs = 10 * 60_000
-      const startedAt = Date.now()
-      let delayMs = 50
-      try {
-        while (Date.now() - startedAt < budgetMs) {
-          if (!registry.byAgent(pending.agentId)) return
-          const processIdentity = await resolvePaneEngineProcess(spawned.runtime.paneId, engine)
-          if (processIdentity) {
-            registry.updateProcessIdentity(pending.agentId, processIdentity)
-            const ready = registry.setLaunch(pending.agentId, { state: 'ready' })
-            await clearPaneRemainOnExit(spawned.runtime.paneId)
-            if (ready) announceSession(ready)
-            void agentReconciler.triggerHint(spawned.runtime, engine).catch((error) => {
-              console.warn(`[agent] background bind failed · ${engine} · ${error instanceof Error ? error.message : error}`)
-            })
-            console.log(`[agent] create ready · ${engine} · agent ${pending.agentId} · ${Date.now() - startedAt}ms`)
-            return
-          }
-          const paneState = await tmuxPaneState(spawned.runtime.paneId)
-          if (!paneState) {
-            registry.setTerminalAvailable(pending.agentId, false)
-            announceSession(pending)
-            return
-          }
-          if (paneState.dead) {
-            const installed = await commandAvailableInInteractiveShell(command[0], undefined, installIfMissing)
-            const error = installed ? 'ENGINE_DID_NOT_START' : 'ENGINE_NOT_INSTALLED'
-            const detail = installed
-              ? `${engine} exited before its engine process became ready. See the terminal output for details.`
-              : `${engine} is not installed, or its automatic install failed. See the terminal output for details.`
-            const failed = registry.setLaunch(pending.agentId, { state: 'failed', error, detail })
-            if (failed) announceSession(failed)
-            console.warn(`[agent] create failed · ${engine} · ${detail}`)
-            return
-          }
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, delayMs)
-            timer.unref?.()
-          })
-          delayMs = Math.min(delayMs * 2, 750)
-        }
-        const detail = `${engine} did not expose an engine process within 10 minutes. The terminal remains available.`
-        const failed = registry.setLaunch(pending.agentId, { state: 'failed', error: 'START_TIMEOUT', detail })
-        if (failed) announceSession(failed)
-        console.warn(`[agent] create timed out · ${engine} · agent ${pending.agentId}`)
-      } catch (error) {
-        console.warn(`[agent] create watch failed · ${engine} · ${error instanceof Error ? error.message : error}`)
-      }
-    }
-    void watchCreatedPane()
+    void watchNewPane(engine, pending, spawned, command, installIfMissing)
     console.log(`[agent] create pane open · ${engine} · agent ${pending.agentId}`)
     return { ok: true, session: pending }
+  }
+
+  /**
+   * Fork an agent (`agent_fork`): open a NEW pane whose engine starts with everything the source's
+   * session has — `claude --resume <id> --fork-session`, `codex fork <id>` — or, for an engine that
+   * cannot fork but takes a first prompt, a handoff message composed from what this daemon remembers
+   * of the source (lib/forkAgent.ts). Same folder, same harness, same permission mode, same named
+   * agent; a grid agent is refused rather than half-copied. The source is not touched — it is not even
+   * paused — which is why it has to be IDLE: a fork taken mid-turn is a transcript cut in half.
+   */
+  backend.onForkAgent = async ({ agentId, name, prompt }) => {
+    if (!tmuxBackend) return { ok: false, error: 'TMUX_UNAVAILABLE' }
+    const source = registry.byAgent(agentId)
+    if (!source) return { ok: false, error: 'AGENT_NOT_FOUND' }
+    const sourceName = projectDisplayName(source)
+    if (!source.cwd) return { ok: false, error: 'CWD_NOT_FOUND', detail: `${sourceName} has no working folder on record.` }
+    try {
+      if (!statSync(source.cwd).isDirectory()) return { ok: false, error: 'CWD_NOT_FOUND' }
+    } catch {
+      return { ok: false, error: 'CWD_NOT_FOUND' }
+    }
+    if (source.gridLaunch || source.grid) {
+      return { ok: false, error: 'FORK_ON_GRID_UNSUPPORTED', detail: `${sourceName} runs on a grid; forking a grid agent is not supported.` }
+    }
+    if (source.sessionId && mirror.isBusy(source.sessionId)) {
+      return { ok: false, error: 'AGENT_BUSY', detail: `${sourceName} is in the middle of a turn. Wait for it to finish, then fork.` }
+    }
+    const engine = source.engine
+    const memory = {
+      asks: source.sessionId ? mirror.recentAsks(source.sessionId) : [],
+      recaps: source.sessionId ? mirror.recent(source.sessionId, 5).map((t) => t.recap || t.text) : [],
+      lastAnswer: source.sessionId ? mirror.lastFullText(source.sessionId) : undefined,
+    }
+    const plan = planFork({ engine, sessionId: source.sessionId, name: sourceName, cwd: source.cwd }, memory, prompt)
+    if (!plan.ok) return { ok: false, error: plan.error, detail: plan.detail }
+
+    // The harness the source was created as: its env and argv, not a second materialisation — the
+    // folder already holds the template, AGENTS.md and skill links the source got.
+    let dshEnv: Record<string, string> | undefined
+    let dshArgs: string[] = []
+    let dshLabel: string | undefined
+    if (source.dsh) {
+      const installed = installedDsh(source.dsh)
+      if (!installed) return { ok: false, error: 'INVALID_DSH', detail: `${source.dsh} is no longer installed on this machine` }
+      const launch = dshLaunch(installed, source.cwd)
+      dshEnv = launch.env
+      dshArgs = launch.args
+      dshLabel = installed.manifest.name
+    }
+    const label = buildHarnessSessionLabel(engine)
+    const installIfMissing = enginePathOverride(engine) ? undefined : engineInstallRecipe(engine)
+    const extraArgs = [...dshArgs, ...(source.agent ? namedAgentArgs(engine, source.agent) : [])]
+    const firstPrompt = plan.level === 'native' ? (prompt ?? undefined) : plan.firstPrompt
+    const launchOptions = {
+      bypassPermission: source.bypassPermission ?? false,
+      ...(source.permissionMode ? { permissionMode: source.permissionMode } : {}),
+      extraArgs: extraArgs.length ? extraArgs : undefined,
+      installIfMissing,
+      cwd: source.cwd,
+      harnessNode: source.dsh ? true : undefined,
+      ...(plan.level === 'native' ? { forkSessionId: plan.forkSessionId } : {}),
+      ...(firstPrompt ? { firstPrompt } : {}),
+    }
+    const command = buildEngineCommandArgv(engine, launchOptions)
+    const argv = buildEngineLaunchArgv(engine, launchOptions)
+    const result = await createAndRegisterPane({
+      tmuxBackend,
+      registry,
+      engine,
+      cwd: source.cwd,
+      sessionLabel: label,
+      argv,
+      env: mergedLaunchEnv(source.codexHome ? { CODEX_HOME: source.codexHome } : undefined, dshEnv),
+      grid: null,
+      gridLaunchRecord: null,
+      codexHome: source.codexHome ?? null,
+      dsh: source.dsh ?? null,
+      agent: source.agent ?? null,
+      bypassPermission: source.bypassPermission ?? false,
+      permissionMode: source.permissionMode ?? null,
+      defaultName: name ?? forkName(sourceName),
+      label: dshLabel,
+      forkedFrom: { agentId: source.agentId, name: sourceName },
+    })
+    if (!result.ok) return { ok: false, error: result.error, detail: result.detail }
+    const { spawned, pending } = result
+    // The new tile starts with the source's last recap on it, the way a native fork's pane starts with
+    // the source's transcript: memory in both places, not one. Settled when the engine names its session.
+    if (source.sessionId) pendingForkInherit.set(pending.agentId, source.sessionId)
+    announceSession(pending)
+    if (pending.dsh) attachDsh(pending)
+    void watchNewPane(engine, pending, spawned, command, installIfMissing)
+    console.log(`[agent] fork pane open · ${engine} · ${plan.level} · ${source.agentId} → ${pending.agentId}`)
+    return { ok: true, session: pending, level: plan.level }
   }
 
   /**
@@ -4418,6 +4766,22 @@ async function runForeground(session: AuthSession): Promise<void> {
     }
     forgetSession(sessionId, { force: true })
     if (!s) return
+    // Stopping is closing the pane. Every pane is a shell with the engine inside it now, so signalling
+    // the engine alone would leave a shell running in a pane nobody can see any more — a leak, and
+    // for a bare terminal there is no engine pid to signal at all. The engine's own termination
+    // below stays as the belt to this: a pane kill that does not land must not leave a live engine
+    // the UI already calls gone.
+    if (tmuxBackend) {
+      const runtimes = s.runtimes.filter((runtime): runtime is TmuxRuntimeRef => runtime.backend === 'tmux')
+      void Promise.all(runtimes.map((runtime) => tmuxBackend.kill(runtime))).then(() => {
+        console.log(`[delete] ${sid(sessionId)} ${s.engine} · pane closed`)
+        if (isTerminalEngine(s.engine)) clearDeleted(sessionId)
+        void agentReconciler.trigger()
+      }).catch((err) => {
+        console.error('[delete] terminal pane close failed:', err instanceof Error ? err.message : err)
+      })
+      if (isTerminalEngine(s.engine)) return
+    }
     void terminateDeletedAgent(s, {
       checkRuntime: checkPidRuntime,
       kill: (pid, signal) => process.kill(pid, signal),
@@ -4455,11 +4819,34 @@ async function runForeground(session: AuthSession): Promise<void> {
     const session = registry.resolve(agentId)
     if (!session) return { ok: false, error: 'AGENT_NOT_FOUND' }
     if (!session.tmuxPane || !tmuxBackend) return { ok: false, error: 'RESTART_UNSUPPORTED_BACKEND' }
-    if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
     const pane = session.tmuxPane
     const engine = session.engine
     const runtime: TmuxRuntimeRef = { backend: 'tmux', paneId: pane }
     const routeKey = terminalRouteKey(runtime)
+    // Restarting a terminal is a fresh shell in the same pane — `respawn-pane -k` over whatever the
+    // old one was doing. There is no engine to wait for and no session to resume, so none of the
+    // process-swap choreography below applies. A terminal that ADOPTED an engine restarts the
+    // engine, like any agent: the tile said Restart about the engine it shows.
+    if (isTerminalEngine(engine)) {
+      agentReconciler.holdRoute(routeKey)
+      try {
+        const respawned = await tmuxBackend.respawn(runtime, {
+          command: buildEngineLaunchArgv(engine, session.cwd ? { cwd: session.cwd } : {}),
+          cwd: homedir(),
+        })
+        if (respawned.state !== 'succeeded') return { ok: false, error: 'RESTART_FAILED', detail: respawned.reason }
+        await clearPaneRemainOnExit(pane)
+        registry.setActive(session.agentId, true)
+        const refreshed = registry.byAgent(session.agentId)
+        if (!refreshed) return { ok: false, error: 'RESTART_FAILED', detail: 'agent vanished from the registry mid-restart' }
+        announceSession(refreshed)
+        console.log(`[restart] ${sid(session.agentId)} terminal · fresh shell`)
+        return { ok: true, session: refreshed, resumed: false }
+      } finally {
+        agentReconciler.releaseRoute(routeKey)
+      }
+    }
+    if (!session.processIdentity) return { ok: false, error: 'NO_ACTIVE_PROCESS' }
 
     // The replacement is launched WITH what the original was: its grid's env and argv (a bare
     // respawn would inherit the tmux session's variables but never the codex `-c …` / pi `--model`
@@ -4518,7 +4905,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     console.log(`[msg] ${sid(sessionId)} recv · engine=${engine} · bytes=${Buffer.byteLength(adapted, 'utf8')}`)
     input.submit(record?.agentId ?? sessionId, adapted, deliveryId)
   }
-  backend.onMessage = (id, content) => submitAgent(id, content)
+  backend.onMessage = (id, content, deliveryId) => submitAgent(id, content, deliveryId)
+  backend.onCancelOrchestratorMessage = id => input.cancelDelivery(id)
 
   // Keep the log file under its cap. This daemon writes it through an inherited stdout fd, so a size
   // check on a timer is the only place that can see it grow — `prepareLogFile` at spawn time alone
@@ -4573,6 +4961,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     ;(hookServer as unknown as { closeAllConnections?: () => void }).closeAllConnections?.()
     // Release the fixed hook port before the child binds. Process-owned agents stay in the persisted
     // registry and are revalidated by the new daemon's first discovery passes.
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -4715,6 +5105,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     for (const r of devinReaders.values()) r.stop()
     await cursorDiscovery.stop()
     await watcher.stop()
+    shareRelay.close()
+    sharedViewers.stop()
     await localWsServer.close()
     hookServer.close()
     shutdownSummaryPool()
@@ -4833,6 +5225,13 @@ async function runForeground(session: AuthSession): Promise<void> {
     // at another computer entirely.
     // A notification tap, which asks for a tile of its OWN — see CableHost.openAgent.
     opened: (machineId, agentId) => backend.sendLocal({ type: 'dial_open', payload: { machineId, agentId } }),
+    forked: (machineId, agentId, sourceAgentId) => backend.sendLocal({ type: 'dial_forked', payload: { machineId, agentId, sourceAgentId } }),
+    // The dial's Fork: the same path the window's `agent_fork` takes, then `forked` above lands on it.
+    forkAgent: async (agentId) => {
+      if (!backend.onForkAgent) return { ok: false, error: 'UNSUPPORTED' }
+      const result = await backend.onForkAgent({ agentId, name: null, prompt: null })
+      return result.ok ? { ok: true, agentId: result.session.agentId } : { ok: false, error: result.error, detail: result.detail }
+    },
     // No `edge`. It used to ride along for an agent the window had no tile for, naming which end of the
     // desk to replace; the carousel now only walks tiles that exist, so every focus is about one of them.
     focused: (machineId, agentId) =>
@@ -4866,6 +5265,8 @@ async function runForeground(session: AuthSession): Promise<void> {
     // The dial's own carousel tick, borrowed: ring order and wrap from the cable host, `dial_focus` to
     // the window, `app_focus` back. Without a window the forward is a no-op, so say so up front.
     stepFocus: (direction, currentAgentId) => backend.hasLocalClient() ? cableHost.stepFocus(direction, currentAgentId) : Promise.resolve('no_app'),
+    // The dial's touchpad stroke, borrowed the same way: `dial_scroll` to the window's focused terminal.
+    scroll: (phase, dy, velocity) => { if (!backend.hasLocalClient()) return false; cableHost.scrolled(phase, dy, velocity); return true },
     agents: () => registry.advertised().map(s => ({ agentId: s.agentId, name: projectDisplayName(s), engine: s.engine,
       state: turnStartedAt.has(s.sessionId) ? 'running' : 'idle' })),
     submit: submitAgent,
@@ -4965,18 +5366,25 @@ async function runForeground(session: AuthSession): Promise<void> {
  * by `version v0.0.20`). Every other row here is a fact about the daemon (pid, sessions, dashboard); this
  * makes the version one too. Falls back to the local constant when the daemon cannot be reached, which is
  * exactly the case where the printing process IS the only build there is.
+ *
+ * `machineId` is the machine the daemon's backend socket is serving — fixed for its lifetime, so it is
+ * the one fact that tells a daemon on THIS sign-in from one left over from the previous account (see
+ * startCommand). Null when the daemon does not say.
  */
-async function runningDaemonStatus(): Promise<{ version: string; sessions: number } | null> {
+async function runningDaemonStatus(): Promise<{ version: string; sessions: number; machineId: string | null; connected: boolean } | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${daemonPort()}/api/status`, {
       signal: AbortSignal.timeout(1_500),
     })
     if (!res.ok) return null
     const body: unknown = await res.json()
-    const status = body as { version?: unknown; sessions?: unknown } | null
+    const status = body as { version?: unknown; sessions?: unknown; machineId?: unknown; connected?: unknown } | null
     const version = typeof status?.version === 'string' && status.version ? status.version : VERSION
     const sessions = Array.isArray(status?.sessions) ? status.sessions.length : 0
-    return { version, sessions }
+    const machineId = typeof status?.machineId === 'string' && status.machineId ? status.machineId : null
+    // Missing on a daemon too old to report it — read as connected, as the desktop app does.
+    const connected = status?.connected !== false
+    return { version, sessions, machineId, connected }
   } catch {
     return null
   }
@@ -4994,7 +5402,7 @@ function printInfoBlock(opts: {
   const row = (k: string, v: string): string => `   ${k.padEnd(10)} ${v}`
   const rule = '  ' + '─'.repeat(37)
   console.log('')
-  console.log('  machine · remote machine connected')
+  console.log('  machine · remote machine')
   console.log(rule)
   console.log(row('status', opts.status))
   // Display name mirrored from the backend by the daemon (machine_meta) — only shown when named.
@@ -5113,64 +5521,14 @@ async function spawnDaemon(session: AuthSession, runtimeNode: string | null): Pr
     process.exit(1)
   }
 
-  const ready = await waitForReady(logOffset, CONNECT_WAIT_MS, launchDeps)
-
-  // DEAUTH (401/403): the saved credential is no longer valid — this computer was removed from the machine
-  // (or the token is stale). Wipe it, stop the daemon, and signal the caller to ask for a fresh token.
-  if (ready.state === 'deauth') {
-    try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    removePidFileIf(child.pid)
-    clearAuthSession()
-    return
-  }
-
-  // BUSY (409): one machine per machine — this machine is already connected from another computer. The
-  // credential is valid, just in use elsewhere, so KEEP the token; stop the daemon and inform (not a
-  // failure, not a retry loop). The user stops the other machine first, then runs `harness start` here.
-  if (ready.state === 'busy') {
-    try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    removePidFileIf(child.pid)
-    console.log('\n  ℹ This machine is already connected from another computer.')
-    console.log('    Only one machine per machine — stop the adapter on that machine first,')
-    console.log('    then run `harness start` here again.')
-    process.exit(0)
-  }
-
-  // FATAL misconfig (wrong route → 404, DNS, TLS): retrying is pointless → kill the daemon and say what
-  // to fix. (Not 401/403 — those are handled as deauth above.)
-  if (ready.state === 'fatal') {
-    try { if (child.pid) process.kill(child.pid, 'SIGTERM') } catch { /* ignore */ }
-    removePidFileIf(child.pid)
-    // A hook-port clash isn't a backend problem — it's a duplicate/leftover adapter. Report it as such.
-    if (ready.detail?.startsWith('hook port')) {
-      console.error(`\n✗ ${ready.detail}`)
-      console.error(`  logs   ${tildify(LOG_FILE)}`)
-    } else {
-      console.error(`\n✗ Could not connect to the backend: ${ready.detail}`)
-      console.error(`  backend   ${env.BACKEND_WS_URL}`)
-      console.error(`  logs      ${tildify(LOG_FILE)}`)
-      console.error('  If this computer was removed from your machine, run: harness login')
-    }
-    process.exit(1)
-  }
-
-  // Not connected YET, but transient (backend deploying / 5xx / slow / not up). The daemon is alive and
-  // retries with backoff — it will connect on its own — so leave it running and say so plainly (never a
-  // meaningless one-shot "connecting…"). The user runs `harness start` once, not on a babysitting loop.
-  if (ready.state === 'unreachable') {
-    // Lead with the RUNNING state (+ pid), not the error — the daemon IS started and self-retrying, so
-    // seeing a pid / "harness stop" later isn't a surprise. This is not a failure; it reconnects itself.
-    console.log(`\n● adapter started · running in the background · pid ${child.pid}`)
-    console.log(`  Not connected yet — ${ready.detail}. It keeps retrying and connects on its own`)
-    console.log('  when the backend is reachable — no need to re-run.')
-    console.log(`  backend  ${env.BACKEND_WS_URL}`)
-    console.log(`  status   harness status   ·   stop   harness stop   ·   logs  ${tildify(LOG_FILE)}`)
-    process.exit(0) // daemon stays alive
-  }
-
+  // Bound is started. What the daemon does next — dial the backend, retry on its own backoff, sign
+  // itself out on a 401, step aside on a 409 — is its own business and is logged by it; this command
+  // used to sit here for up to ten seconds watching the log for "[backend] connected", and a computer
+  // with no route to the backend paid all ten before hearing that its daemon was fine. `harness
+  // status` says whether the link is up; the desktop app reads the same fact off `/api/status`.
   const daemonStatus = await runningDaemonStatus()
   printInfoBlock({
-    status: '● connected',
+    status: '● started · connecting to the backend in the background',
     pid: child.pid ?? 0,
     machineId: session.machineId,
     sessions: daemonStatus?.sessions ?? 0,
@@ -5632,6 +5990,36 @@ async function linkConnectCommand(machineId: string | undefined, stdin: boolean,
   process.exit(0)
 }
 
+/**
+ * The link itself, as `harness link connect` and `harness remote` both do it: this computer's SSO
+ * token and identity, the remote password proved against THAT machine, and its peer pinned here.
+ */
+async function linkMachineWithPassword(machineId: string, password: string, displayName?: string): Promise<{ ok: true; fingerprint: string } | { ok: false; error: string; message: string }> {
+  const session = readAuthSession()
+  if (!session) return { ok: false, error: 'NOT_SIGNED_IN', message: 'Not signed in. Run: harness login' }
+  const auth = new AuthSessionManager(backendHttpBase())
+  let accessToken: string
+  try {
+    accessToken = await auth.accessToken()
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, error: 'AUTH_FAILED', message: `Could not refresh this computer's SSO session (${detail}). Run: harness login` }
+  }
+  const store = new E2eeStore()
+  store.init()
+  const result = await connectWithPassword({
+    targetMachineId: machineId,
+    password,
+    selfIdentity: store.getIdentity(),
+    accessToken,
+    backendWsBase: env.BACKEND_WS_URL.replace(/\/$/, ''),
+    autonomousEnv: session.autonomousEnv,
+  })
+  if (!result.ok) return { ok: false, error: result.error, message: humanizeLinkError(result.error, displayName || machineId, result.retryAt) }
+  new MachinePeerStore().pin(machineId, b64e(result.peerPub), 'harness link', Date.now())
+  return { ok: true, fingerprint: result.fingerprint }
+}
+
 /** `harness link list` — machines this one has linked (CLI-to-CLI/machine-node trust, not browsers). */
 async function linkListCommand(): Promise<void> {
   const peers = new MachinePeerStore().list()
@@ -5795,7 +6183,15 @@ async function status(): Promise<void> {
   const daemonStatus = alive ? await runningDaemonStatus() : null
   if (!alive) registry.load()
   printInfoBlock({
-    status: alive ? '● running' : '○ stopped',
+    // The backend link is the daemon's own business, so `status` is where it is read — `start` no
+    // longer waits to see it, and a daemon with no backend is still serving every local agent.
+    status: !alive
+      ? '○ stopped'
+      : daemonStatus == null
+        ? '● running · not answering yet'
+        : daemonStatus.connected
+          ? '● running · backend connected'
+          : '● running · backend offline — retrying in the background',
     pid: pid ?? 0,
     machineId: session.machineId,
     sessions: daemonStatus?.sessions ?? 0,
@@ -5836,6 +6232,8 @@ async function logsExportCommand(json: boolean): Promise<void> {
   process.exit(0)
 }
 
+import { orchestratorCommand } from './orchestrator/command.js'
+
 // ── arg parse ──────────────────────────────────────────────────────────────────────────────────
 const [, , cmd, ...rest] = process.argv
 const flags = rest.filter((a) => a.startsWith('-'))
@@ -5863,6 +6261,9 @@ const onError = (err: unknown): never => {
 }
 
 switch (cmd) {
+  case 'orchestrator':
+    orchestratorCommand(rest).then(code => { process.exitCode = code }).catch(onError)
+    break
   case 'login':
     loginCommand(foreground, flags.includes('--force'), flags.includes('--json')).catch(onError)
     break
@@ -5914,6 +6315,29 @@ switch (cmd) {
     dshCommand(args[0], args[0] === undefined ? rest : withoutFirst(rest, args[0]))
       .then((code) => { process.exitCode = code })
       .catch(onError)
+    break
+  case 'remote':
+    remoteCommand({
+      tmuxPane: process.env.TMUX_PANE,
+      localMachineId: readAuthSession()?.machineId ?? null,
+      port: daemonPort(),
+      daemonRunning: isDaemonRunning,
+      listMachines: async () => {
+        const { session, headers } = await controlPlaneAuth()
+        return (await fetchMachines(headers)).map((machine) => ({
+          machineId: machine.machineId,
+          label: machineLabel(machine),
+          status: machine.status || 'unknown',
+          current: machine.machineId === session.machineId,
+        }))
+      },
+      isLinked: (machineId) => new MachinePeerStore().get(machineId) !== null,
+      link: (machineId, password) => linkMachineWithPassword(machineId, password),
+      promptPassword,
+      input: process.stdin,
+      output: process.stdout,
+      error: (line) => console.error(line),
+    }).then((code) => { process.exitCode = code }).catch(onError)
     break
   case 'machines':
     if (!args[0]) machinesListCommand(flags.includes('--json')).catch(onError)

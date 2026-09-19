@@ -1,0 +1,11 @@
+{
+  "spec": 1,
+  "title": "House of ideas",
+  "parameters": {
+    "width": 10,
+    "depth": 8,
+    "storeys": 2,
+    "height": 3,
+    "use": "studio"
+  }
+}

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+. "$here/toolchain/runtimes.sh"
+harness_node 22
+exec node "$here/toolchain/fleet.mjs" "$@"

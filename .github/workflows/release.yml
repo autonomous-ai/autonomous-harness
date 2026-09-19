@@ -27,7 +27,8 @@ name: Release
 #
 # cli/scripts/upload-cli.sh is used EXACTLY as it is, with no flag this file invented: GCS_BUCKET,
 # METADATA_PATH and OTA_KEY are env overrides it already supports. The script is the production
-# release path — `make upload-cli` runs the same bytes from a laptop — and CI adapts to it.
+# release path, and this workflow is its only caller: there is no `make` target that runs it from a
+# laptop, so every published CLI version has the tag that names it.
 #
 # The TAG is the version. CI never auto-bumps: left to itself the script reads the current version
 # out of the remote manifest and adds one, so what publishes would depend on when the job ran.

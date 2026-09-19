@@ -1,0 +1,4 @@
+{
+  "1": { "class_type": "EmptyImage", "inputs": { "width": 512, "height": 512, "batch_size": 1, "color": 12640216 } },
+  "2": { "class_type": "SaveImage", "inputs": { "images": ["1", 0], "filename_prefix": "Harness/local-workflow-check" } }
+}

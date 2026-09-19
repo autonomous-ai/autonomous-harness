@@ -185,6 +185,30 @@ void main() {
     app.dispose();
   });
 
+  test('a creation receipt opens its exact agent instead of an older matching-engine pane', () async {
+    final connection = _Connection();
+    final app = createApp(connectionForTest: (_) => connection);
+    addTearDown(app.dispose);
+    final stale = app.adoptSessionForTest(
+      terminal('stale-codex', <TerminalBinaryFrame>[]),
+    );
+
+    final creating = app.createAgent('m', engine: 'codex', folder: '/work');
+    final request = connection.calls.single;
+    request.reply.complete({
+      'creationId': request.creationId,
+      'state': 'created',
+      'agent': {'id': 'fresh-codex', 'name': 'Fresh Codex', 'engine': 'codex'},
+    });
+
+    expect(await creating, isNull);
+    expect(app.panes.map((pane) => pane.agentId), [
+      'stale-codex',
+      'fresh-codex',
+    ]);
+    expect(app.panes.first, same(stale));
+  });
+
   for (final entry in ['Open', 'Split right', 'Split down']) {
     testWidgets(
       'New from $entry preserves its destination without stacking search',

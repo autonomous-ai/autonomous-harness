@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Comfy MCP",
+    "url": "https://github.com/Comfy-Org/comfy-mcp.git",
+    "commit": "d067bf7dc44b497d88f20c9cd227c64f2ac3e2af",
+    "directory": "upstream",
+    "sparse": [
+      "src"
+    ]
+  }
+]
