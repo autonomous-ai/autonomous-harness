@@ -1,0 +1,151 @@
+{
+  "title": "Jev Firehose",
+  "desk": "Lumen Lane, a made-up online lamp shop. Every message is synthetic.",
+  "noise": 0.2,
+  "threshold": 0.55,
+  "targetAccuracy": 0.95,
+  "ratePerSec": 40,
+  "concurrency": 8,
+  "batch": 2000,
+  "llmSecondsPerItem": 2,
+  "spamRate": 0.07,
+  "seed": 7,
+  "teams": [
+    {
+      "id": "billing",
+      "description": "Payment: card charged, invoice, refund, receipt, price, tax, discount voucher.",
+      "weight": 1.5,
+      "phrases": [
+        "my card was charged twice for the same payment",
+        "the invoice shows the wrong price and no tax",
+        "the refund for my payment has not reached my card",
+        "please send a receipt and an invoice for my last payment",
+        "the discount voucher did not lower the price at payment",
+        "I need an invoice with our tax number and the full price",
+        "a refund was promised but my card was charged again",
+        "you charged my card before the payment was confirmed",
+        "the receipt lists a price and tax I never agreed to",
+        "can I get a refund of the tax on this invoice"
+      ]
+    },
+    {
+      "id": "shipping",
+      "description": "Delivery: parcel, courier, tracking, late, lost, package, shipping address, customs.",
+      "weight": 1.4,
+      "phrases": [
+        "the tracking has not moved and the parcel is late",
+        "the courier marked the delivery done but no package arrived",
+        "I need to fix the shipping address before the courier collects the parcel",
+        "my parcel is stuck in customs with no tracking update",
+        "the delivery is many days late and the courier will not answer",
+        "the package was left at the wrong address by the courier",
+        "can you send the tracking number for my late parcel",
+        "the courier lost the package during delivery",
+        "shipping to my address shows a very late delivery",
+        "customs asked me to pay before delivery of the parcel"
+      ]
+    },
+    {
+      "id": "returns",
+      "description": "Returns: exchange, damaged or broken lamp, faulty item, replacement, warranty claim, return label.",
+      "weight": 1.1,
+      "phrases": [
+        "the lamp arrived broken and I want a replacement",
+        "how do I return an item that is damaged",
+        "I would like to exchange this faulty lamp for a new one",
+        "the shade is damaged, is that covered by a warranty claim",
+        "please start a warranty claim for the broken switch",
+        "I posted the item, when does the exchange or replacement go out",
+        "the replacement lamp was also damaged on arrival",
+        "can I return a faulty lamp after thirty days",
+        "my warranty claim was refused and the lamp is still broken",
+        "I need a return label for a damaged item"
+      ]
+    },
+    {
+      "id": "account",
+      "description": "Account access: login, password reset, email, locked profile, security code, delete my data.",
+      "weight": 1.0,
+      "phrases": [
+        "I cannot login, the password reset email never comes",
+        "my account is locked after the security code failed",
+        "please update the email and password on my profile",
+        "the password reset says expired when I login",
+        "I want you to delete my data and close the account",
+        "login keeps asking for a security code I do not get",
+        "someone took over the email on my account and it is locked",
+        "how do I get access to my profile after a password reset",
+        "the security code never arrives when I login to my account",
+        "reset my password, I no longer have access to the old email"
+      ]
+    },
+    {
+      "id": "technical",
+      "description": "Website or app bug: page error, crash, slow loading, button, browser.",
+      "weight": 0.9,
+      "phrases": [
+        "the app shows a crash report when I open the cart page",
+        "the website shows an error on every page",
+        "the checkout button does nothing in my browser, looks like a bug",
+        "the app is slow and stuck on loading forever",
+        "there is a bug, the search page is blank in the app",
+        "the app froze and then a crash error came up",
+        "your website is very slow, loading a page takes ages",
+        "error 500 when I press the save button on the website",
+        "the app will not open after the update, only a crash and an error",
+        "images are not loading in any browser on your website"
+      ]
+    },
+    {
+      "id": "orders",
+      "description": "Order change: cancel, size, colour, quantity, stock, confirmation, dispatch date.",
+      "weight": 0.9,
+      "phrases": [
+        "please cancel my order, I picked the wrong colour",
+        "can I change the quantity on the order I placed",
+        "I never got an order confirmation or a dispatch date",
+        "the size I want is out of stock, can I change my order",
+        "change the size on my order to the large one",
+        "please cancel half the quantity on my order",
+        "is the brass colour back in stock, I want to order it",
+        "my order confirmation shows the wrong quantity",
+        "can you raise the quantity before dispatch of the order",
+        "please change the colour on order 4417 to black"
+      ]
+    },
+    {
+      "id": "club",
+      "description": "Bulb club membership: subscription plan, renewal, upgrade, downgrade, pause, monthly box, trial.",
+      "weight": 0.7,
+      "phrases": [
+        "I want to pause my club subscription for two months",
+        "the renewal went through but I asked to stop the plan and the membership",
+        "how do I upgrade my plan to the bigger monthly box",
+        "my trial ended and the membership renewal came without notice",
+        "please downgrade my subscription to the small plan",
+        "when is the next renewal of my club membership",
+        "the monthly box did not include the trial bulb",
+        "I want to upgrade my subscription before the next renewal",
+        "can I pause the monthly box while I travel",
+        "end my membership when the trial plan is over"
+      ]
+    },
+    {
+      "id": "trade",
+      "description": "Trade and wholesale: bulk quote, reseller, business partner, supplier catalogue, showroom, project.",
+      "weight": 0.5,
+      "phrases": [
+        "we are a reseller and need a bulk quote for forty fittings",
+        "can you send the wholesale catalogue for our showroom",
+        "I run a hotel project and need a trade quote",
+        "do you have trade terms for a business partner",
+        "we would like to become a reseller and wholesale partner in our region",
+        "our business needs a supplier for a large project",
+        "please quote a bulk deal for a cafe project",
+        "is there a wholesale rate for a showroom or a reseller",
+        "who handles trade partner and wholesale terms",
+        "send the supplier catalogue with bulk rates"
+      ]
+    }
+  ]
+}
