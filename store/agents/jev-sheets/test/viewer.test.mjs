@@ -410,3 +410,19 @@ test('a source file must stay inside the workspace, and JSONL works too', async 
   assert.deepEqual(got.rows[0], { text: 'Refund me now', id_: 'T1', plan: 'pro' })
   assert.equal(got.info.textColumn, 'body')
 })
+
+test('answers.csv holds the sheet as it stands, with proper CSV quoting', async () => {
+  const v = await fresh({ rows: [{ text: 'Refund me now, I was charged twice', plan: 'pro' }, { text: 'She said "thanks", all good' }], columns: ['Urgent?', 'Team: billing = payments | tech = bugs'], demo: false }, { autostart: false })
+  try {
+    await v.ctl('drain')
+    const r = await v.ctl('export')
+    assert.equal(r.file, 'answers.csv'); assert.equal(r.rows, 2)
+    const csv = readFileSync(join(v.ws, 'answers.csv'), 'utf8').trim().split('\n')
+    assert.equal(csv.length, 3)
+    assert.match(csv[0], /^row,.*plan,Urgent,Urgent confidence,Team,Team confidence$/)
+    assert.match(csv[1], /^1,"Refund me now, I was charged twice",pro,(yes|no),0\.\d\d,(billing|tech),0\.\d\d$/)
+    assert.match(csv[2], /^2,"She said ""thanks"", all good",,/)
+    const verdict = JSON.parse(readFileSync(join(v.ws, '.harness/verdict.json'), 'utf8'))
+    assert.equal(verdict.answersFile, 'answers.csv')
+  } finally { await v.viewer.close() }
+})

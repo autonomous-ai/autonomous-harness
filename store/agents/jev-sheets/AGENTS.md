@@ -79,6 +79,14 @@ Look at the file before you write questions: read its header and a few rows, the
 about what is really in it. Never copy the person's data into your replies beyond what you need,
 and never send it anywhere else.
 
+## The answers file
+
+The viewer keeps `answers.csv` in the workspace current: every row, its plain fields, and for each
+Jev column the answer and its confidence (demo columns are left out). Read it to do the next thing
+the person asks: "which twenty should I call first", "how many furious billing tickets", "show me
+the ones Jev was unsure about". Do not edit it. The viewer rewrites it about once a second while
+cells land, and when the pane's columns change.
+
 ## The header grammar
 
 | Header | Type |

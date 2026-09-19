@@ -12,7 +12,7 @@ import { serveViewer, writeVerdict, watchConfig, mulberry32, clean } from './kit
 import { parseHeader, normalizeSheet, columnKey, judge, confidenceOf, levelOf, describeColumn, LIMITS } from './grammar.mjs'
 import { sheetMock } from './mock.mjs'
 import { loadSource } from './source.mjs'
-import { watch as watchFile } from 'node:fs'
+import { watch as watchFile, writeFileSync, renameSync } from 'node:fs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const MARKER = 'sheet.json'
@@ -225,7 +225,7 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
     return {
       ready: !configError && full,
       summary: clean(configError ? `sheet.json needs a fix: ${configError}` : `${sheet.title}: ${stats.rows} rows x ${stats.columns} Jev columns, ${stats.cellsFilled}/${stats.cellsTotal} cells, ${stats.flagged} under ${reviewBelow}${accLine ? `. Right: ${accLine}` : ''}`).slice(0, 200),
-      findings, artifact: MARKER,
+      findings, artifact: MARKER, answersFile: ANSWERS,
       phases: [
         { id: 'load', name: 'Sheet loaded', state: configError ? 'failed' : 'done' },
         { id: 'fill', name: 'Cells filled', state: full ? 'done' : stats.cellsTotal ? 'active' : 'pending' },
@@ -239,8 +239,37 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
     if (col.type === 'choice') return String(a.choice)
     return col.levels[levelOf(col, a)]
   }
+  // ---- the answers file ------------------------------------------------------------------------
+  // The point of asking is to use the answers: answers.csv in the workspace always holds the sheet
+  // as it stands (demo columns left out), so the person or the chat agent can sort, filter or share it.
+  const ANSWERS = 'answers.csv'
+  const csvCell = (v) => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
+  function answersCsv() {
+    const cols = columns.filter((c) => c.source !== 'demo')
+    const metaKeys = [...new Set(rows.flatMap((r) => Object.keys(r.meta ?? {})))].slice(0, 24)
+    const lines = [['row', sheet.textLabel || 'text', ...metaKeys, ...cols.flatMap((c) => [c.name, `${c.name} confidence`])].map(csvCell).join(',')]
+    rows.forEach((r, i) => {
+      const out = [i + 1, r.text, ...metaKeys.map((k) => r.meta?.[k])]
+      for (const c of cols) {
+        const cell = cellOf(r.id, c.id)
+        if (!cell) { out.push('', ''); continue }
+        const a = cell.answer
+        out.push(c.type === 'noul' ? (a.noul >= 0.5 ? 'yes' : 'no') : c.type === 'choice' ? a.choice : c.levels[levelOf(c, a)], Number(cell.conf).toFixed(2))
+      }
+      lines.push(out.map(csvCell).join(','))
+    })
+    return lines.join('\n') + '\n'
+  }
+  let answersTimer = null
+  function saveAnswers() {
+    clearTimeout(answersTimer); answersTimer = null
+    if (stopped || !rows.length) return
+    try { const f = join(workspace, ANSWERS); writeFileSync(f + '.tmp', answersCsv()); renameSync(f + '.tmp', f) } catch { /* workspace gone */ }
+  }
+  const answersSoon = () => { if (!answersTimer) answersTimer = setTimeout(saveAnswers, 1000) }
+
   function saveVerdict() { clearTimeout(verdictTimer); verdictTimer = null; if (stopped) return; try { writeVerdict(workspace, verdict()) } catch { /* workspace gone */ } }
-  const verdictSoon = () => { if (!verdictTimer) verdictTimer = setTimeout(saveVerdict, 250) }
+  const verdictSoon = () => { if (!verdictTimer) verdictTimer = setTimeout(saveVerdict, 250); answersSoon() }
 
   // ---- asking Jev: one call per row, every missing column as a parallel question ---------------
   function nextRow() {
@@ -509,6 +538,7 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
       case 'demo': ghost.enabled = !!body.on; ghost.pausedUntil = 0; ghost.nextAt = Date.now() + 1200; if (!ghost.enabled && ghost.phase === 'typing') ghost.phase = 'idle'; pushGhost(); return { demo: ghost.enabled }
       case 'ghost': return ghostCycle()
       case 'inspect': return inspect(String(body.row ?? ''), String(body.col ?? ''))
+      case 'export': saveAnswers(); return { file: ANSWERS, rows: rows.length }
       default: return { ok: false, error: `unknown command "${cmd}"` }
     }
   }
@@ -528,7 +558,7 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
   return {
     url: server.url,
     async close() {
-      sourceWatcher?.close(); clearTimeout(sourceTimer)
+      sourceWatcher?.close(); clearTimeout(sourceTimer); saveAnswers(); clearTimeout(answersTimer)
       stopped = true
       clearInterval(ghostTimer); clearTimeout(patchTimer); clearTimeout(verdictTimer); clearTimeout(retryTimer)
       watcher.close()
