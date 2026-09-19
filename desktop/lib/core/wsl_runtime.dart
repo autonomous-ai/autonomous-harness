@@ -205,6 +205,9 @@ class WslRuntime {
   /// two code units, so the pair can only be plain text and must not be
   /// re-decoded into mojibake.
   static bool _looksUtf16LeString(String s) {
+    // Production has already decoded the byte stream. Non-Latin-1 code units
+    // cannot be a byte-mapped string from the injected compatibility seam.
+    if (s.codeUnits.any((unit) => unit > 0xff)) return false;
     return Utf16LeProbeDecoder.looksUtf16Le(
       latin1.encode(s),
       bomIsDecisive: false,

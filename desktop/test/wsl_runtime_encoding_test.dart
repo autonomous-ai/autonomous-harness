@@ -136,6 +136,23 @@ void main() {
       return runtime.listDistros();
     }
 
+    test('preserves already-decoded Unicode distribution names', () async {
+      expect(await distrosFrom('Ubuntu-任\r\n日本語\r\n'), ['Ubuntu-任', '日本語']);
+    });
+
+    test('decodes Unicode names through the owned process pipeline', () async {
+      const inventory = 'Ubuntu-任\r\n日本語\r\n';
+      final bytes = <int>[
+        0xff, 0xfe,
+        for (final unit in inventory.codeUnits) ...[unit & 0xff, unit >> 8],
+      ];
+      final runtime = WslRuntime(
+        startProcess: (executable, arguments, {environment}) async =>
+            _ProbeProcess(bytes),
+      );
+      expect(await runtime.listDistros(), ['Ubuntu-任', '日本語']);
+    });
+
     test('never double-decodes plain text that merely starts with a BOM-shaped pair', () async {
       // A distro name beginning with U+00FF U+00FE reached the seam as PLAIN
       // text; the old BOM short-circuit sniffed it as wide and re-decoded it
@@ -161,4 +178,23 @@ class _CollectingSink implements Sink<String> {
   void add(String data) => out.add(data);
   @override
   void close() {}
+}
+
+class _ProbeProcess implements Process {
+  _ProbeProcess(this.bytes);
+  final List<int> bytes;
+  @override
+  Stream<List<int>> get stdout => Stream.fromIterable([
+    bytes.sublist(0, 5), bytes.sublist(5),
+  ]);
+  @override
+  Stream<List<int>> get stderr => const Stream.empty();
+  @override
+  Future<int> get exitCode async => 0;
+  @override
+  int get pid => 4242;
+  @override
+  IOSink get stdin => throw UnimplementedError();
+  @override
+  bool kill([ProcessSignal signal = ProcessSignal.sigterm]) => true;
 }
