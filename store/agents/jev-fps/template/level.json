@@ -1,0 +1,31 @@
+{
+  "title": "Jev FPS",
+  "description": "Jev is the marine. It reads the fight as text about nine times a second and decides where to turn, how to move and when to fire.",
+  "map": [
+    "########################",
+    "#P.....#.......%.......#",
+    "#......#.......%...D...#",
+    "#..##..#..###..%%%..%%%#",
+    "#..##.....#A#..........#",
+    "#.........###....M.....#",
+    "####..#..........####..#",
+    "#.....#..%%..%%..#.....#",
+    "#..M..#..%....%..#..A..#",
+    "#.....#..%....%........#",
+    "#..####..%%..%%..####..#",
+    "#......................#",
+    "#..D.......==.......D..#",
+    "#..........==..........#",
+    "#......A..........M....#",
+    "########################"
+  ],
+  "tickMs": 110,
+  "demons": 4,
+  "demonSpeed": 1.2,
+  "demonHealth": 60,
+  "demonDamage": 9,
+  "kills": 12,
+  "ammo": 60,
+  "seed": 7,
+  "style": "Stay alive. Face the nearest demon, fire only when it is in your crosshair, keep your distance, and fetch a medkit when your health is low."
+}
