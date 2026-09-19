@@ -1,0 +1,10 @@
+{
+  "title": "Jev Slalom",
+  "description": "Jev is the racer — carve a slalom line and thread every gate.",
+  "instrument": "SLALOM",
+  "tickMs": 160,
+  "speed": 2.2,
+  "gates": 18,
+  "valleyWidth": 18,
+  "style": "You are skiing the slalom. A line of gates sweeps toward you as you descend — steer left and right to thread each gap, lining up early and committing as each gate arrives. Clip a gate or hit the wall and you fall. Clean, decisive turns win the run."
+}

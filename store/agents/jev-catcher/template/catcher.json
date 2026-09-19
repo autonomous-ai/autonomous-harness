@@ -1,0 +1,11 @@
+{
+  "title": "Jev Catcher",
+  "description": "Jev is the fielder — slide the glove and catch every pop fly.",
+  "instrument": "CATCHER",
+  "tickMs": 140,
+  "fallTicks": 10,
+  "gloveReach": 1.6,
+  "fieldWidth": 24,
+  "balls": 14,
+  "style": "You are the fielder. A ball pops up and falls to a spot on the line — slide the glove to be right under it when it lands. Get there in time and it is an out; miss and it drops. Be decisive, read the landing spot early."
+}

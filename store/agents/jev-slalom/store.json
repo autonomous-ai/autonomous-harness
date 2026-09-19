@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev skis the slalom, threading each gate as it sweeps by, live",
+  "examples": [
+    {
+      "prompt": "Set Jev Slalom up as a hard run — push the descent speed up near the limit. Give Jev a decisive line-up-early style, then watch it read the next gate every tick, carve the valley, thread every gate (or clip one and fall when the speed gets too hot).",
+      "caption": "Jev's Run — a fast decision model carving a slalom line and threading each gate on every tick"
+    }
+  ]
+}

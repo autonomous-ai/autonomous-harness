@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Browser</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Browser</h1><span class="sub">a made-up travel site · Jev picks every click</span></div>
+    <div class="stats">
+      <div class="stat"><label>Bookings</label><span id="s-tasks">0</span></div>
+      <div class="stat"><label>Exactly right</label><span id="s-ok">—</span></div>
+      <div class="stat"><label>Steps each</label><span id="s-steps">—</span></div>
+      <div class="stat"><label>Lost clicks</label><span id="s-mis">0</span></div>
+      <div class="stat big"><label>Seconds each</label><span id="s-secs">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
+    </div>
+  </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <div class="task panel">
+        <div class="task-row">
+          <span class="pill" id="taskNo">TASK 1/4</span>
+          <span id="goal" class="goal"></span>
+        </div>
+        <div class="task-meters">
+          <span><b id="m-time">0.0</b> s</span><span><b id="m-steps">0</b> steps</span><span><b id="m-cost">$0</b></span>
+          <span id="m-note" class="note"></span>
+        </div>
+      </div>
+      <div class="window" id="window">
+        <div class="chrome">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="tab"><span class="fav"></span><span id="tabTitle">SkyHop</span></span>
+          <span class="url"><span class="lock">●</span><span id="url">https://skyhop.example/</span></span>
+        </div>
+        <div class="viewport" id="viewport">
+          <div class="page" id="page"></div>
+          <div class="cursor" id="cursor"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M4 2l15 9-7 1.6L9.6 20z" fill="#fff" stroke="#0b0d14" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+          <div class="stamp hidden" id="stamp"></div>
+        </div>
+      </div>
+      <div class="toolbar panel">
+        <label class="slider">Distraction <input id="distraction" type="range" min="0" max="1" step="0.05" value="0.25"> <b id="distractionVal">0.25</b></label>
+        <label class="slider">Step <input id="stepMs" type="range" min="60" max="900" step="10" value="170"> <b id="stepMsVal">170</b> ms</label>
+        <button id="popup">Throw a pop-up</button>
+        <button id="nextTask">Next task</button>
+        <button id="heat" class="on">Show Jev's mind</button>
+        <span class="hint">The page is live: <b>click anything on it yourself</b> and Jev has to deal with what you did.</span>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">What Jev reads</div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          Jev never sees the screen. Each step the page is written out as the text above, and Jev
+          picks <b>one element out of the list</b>, a new list every step, plus two yes/no reads, in one
+          call. Clicking an input fills it with the right value from the task.<br><br>
+          <b>Distraction</b> adds cookie walls, pop-ups, decoy buttons and <b>layout shifts</b> that land
+          between reading the page and clicking it, so a click can hit the wrong thing. Every
+          booking is checked against the task. The site and the flights are made up.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Bookings</div>
+        <ul id="feed"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

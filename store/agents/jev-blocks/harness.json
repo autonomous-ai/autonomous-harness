@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-blocks",
+  "name": "Jev Blocks",
+  "category": "Games",
+  "author": "Autonomous",
+  "description": "A falling-blocks puzzle played live by Jev, TypeSafe's System One model. One call per piece picks a placement from every legal one, with a probability for each, drawn on the board. The piece keeps falling while Jev thinks. Raise gravity and find where it breaks. A synthetic demo.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "blocks.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

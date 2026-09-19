@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev FPS</title>
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev FPS</h1><span class="sub">synthetic arena · Jev decides every move</span></div>
+    <div class="stats">
+      <div class="stat"><label>Wave</label><span id="s-wave">1</span></div>
+      <div class="stat"><label>Kills</label><span id="s-kills">0</span></div>
+      <div class="stat"><label>Deaths</label><span id="s-deaths">0</span></div>
+      <div class="stat"><label>Best wave</label><span id="s-best">1</span></div>
+      <div class="stat"><label>On target</label><span id="s-acc">—</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+    </div>
+    <div class="controls">
+      <button id="sound" class="ghost" title="Sound is off until you click">Sound off</button>
+      <button id="pause">Pause</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
+    </div>
+  </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" tabindex="0" aria-label="First-person view of the arena"></canvas>
+      </div>
+      <div class="toolbar panel">
+        <div class="tools" role="group" aria-label="What a click on the map does">
+          <span class="lab">Click the map to</span>
+          <button data-tool="spawn" class="on">Spawn a demon</button>
+          <button data-tool="medkit">Drop a medkit</button>
+          <button data-tool="ammo">Drop ammo</button>
+        </div>
+        <button id="swarm">Swarm +5</button>
+        <label class="slider">Demon speed <input id="speed" type="range" min="0.4" max="5" step="0.1" value="1.2"> <b id="speedVal">1.2</b></label>
+        <span class="hint">Grab the controls any time: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>←</kbd><kbd>→</kbd> turn · <kbd>Space</kbd> fire. Let go and Jev takes over.</span>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">What Jev reads <span class="right pill" id="driver">JEV</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          Jev never sees pixels. About nine times a second the marine's situation is written as the
+          text above, and Jev answers <b>four typed questions in one call</b>: where to <b>turn</b>, how
+          to <b>move</b>, whether to <b>fire</b>, and how big the <b>threat</b> is. The keys lit on screen
+          are Jev's answers, filled by their probability.<br><br>
+          Each cleared wave adds a demon and makes them faster, until Jev's decision rate is not
+          enough. Edit <code>level.json</code> to redraw the map or change the pace. The arena and
+          the demons are made up. The decision loop is the demo.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Fight log</div>
+        <ul id="feed"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "title": "Jev Compactor",
+  "description": "A made-up coding-agent session in a made-up repo. Jev judges every tool result and compacts the context in one pass.",
+  "repo": "harbor-pay",
+  "seed": 7,
+  "budget": 200000,
+  "target": 0.4,
+  "trimTo": 400,
+  "distraction": 0.12,
+  "recallTarget": 0.9,
+  "eventsPerSec": 4,
+  "noise": 0.45,
+  "focus": 0.5,
+  "taskEvery": 200,
+  "summaryTokens": 1500,
+  "mix": { "user": 1, "assistant": 2, "Read": 7, "Grep": 3, "Bash": 6, "Edit": 3, "WebFetch": 2 },
+  "currentTask": "refunds",
+  "tasks": [
+    { "id": "refunds", "title": "Fix refund rounding in the ledger", "vocabulary": ["refund", "ledger", "rounding", "cents", "reversal", "chargeback", "currency", "decimal", "balance", "payout"] },
+    { "id": "webhooks", "title": "Retry failed webhook deliveries", "vocabulary": ["webhook", "delivery", "retry", "backoff", "signature", "endpoint", "queue", "deadletter", "idempotency", "timeout"] },
+    { "id": "sessions", "title": "Rotate login sessions safely", "vocabulary": ["session", "rotate", "expiry", "cookie", "login", "oauth", "scope", "revoke", "credential", "passkey"] },
+    { "id": "search", "title": "Speed up invoice search", "vocabulary": ["invoice", "search", "index", "query", "pagination", "filter", "cursor", "latency", "cache", "ranking"] }
+  ]
+}

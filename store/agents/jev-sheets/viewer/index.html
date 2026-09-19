@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jev Sheets</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/base.css">
+  <link rel="stylesheet" href="/studio.css">
+  <script src="/jev-hud.js" defer></script>
+  <script type="module" src="/studio.js"></script>
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>Jev Sheets</h1>
+      <span class="sub" id="sheetTitle">loading the sheet</span>
+      <span class="pill warn" id="synthPill" title="Every name, message and truth label in this sheet is made up.">synthetic data</span>
+    </div>
+    <div class="stats big">
+      <div class="stat"><label>rows</label><span id="sRows">0</span></div>
+      <div class="stat"><label>Jev columns</label><span id="sCols">0</span></div>
+      <div class="stat"><label>cells filled</label><span><b id="sCells">0</b><i id="sCellsOf"></i></span></div>
+      <div class="stat" id="rateStat"><label>cells / s</label><span id="sRate">0</span></div>
+      <div class="stat"><label>cost so far</label><span id="sCost">$0</span></div>
+      <div class="stat" id="flagStat"><label>for review</label><span id="sFlag">0</span></div>
+    </div>
+    <div class="controls">
+      <button id="demoBtn" title="The ghost typist adds a column every 20 seconds or so while nobody is playing. Anything you do pauses it for a minute."><span class="gdot"></span>demo <b id="demoState">on</b></button>
+      <button id="resetBtn" title="Drop everything done in the pane and judge the sheet again from sheet.json">reset</button>
+    </div>
+  </header>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <div id="toolbar">
+        <div id="addBox" class="addbox">
+          <span class="plus">+</span>
+          <input id="addInput" type="text" autocomplete="off" spellcheck="false" maxlength="20000" placeholder="Add a column: type a question for every row, then press Enter">
+          <span id="ghostTag" class="demo-tag hidden">demo · ghost typist</span>
+          <kbd id="enterKey">Enter</kbd>
+        </div>
+        <button id="reviewOnlyBtn" title="Show only the rows with a cell under the review line">needs review only <b id="reviewOnlyN">0</b></button>
+        <div class="reviewbox" title="Cells where Jev's confidence is under this line get a ? flag">
+          <label for="reviewRange">review below <b id="reviewVal">0.65</b></label>
+          <div class="histwrap"><canvas id="hist"></canvas><input id="reviewRange" type="range" min="0" max="1" step="0.01" value="0.65"></div>
+        </div>
+      </div>
+      <div id="hint" class="hint"></div>
+      <div class="grid-wrap">
+        <div id="grid" class="grid">
+          <div id="ghead" class="ghead"></div>
+          <div id="gbody" class="gbody"></div>
+        </div>
+        <div id="empty" class="empty hidden"></div>
+      </div>
+    </section>
+    <aside id="rail">
+      <section class="panel" id="inspector">
+        <div class="panel-title">Cell inspector <span class="right" id="inspTag"></span></div>
+        <div id="inspBody" class="insp-empty">Click any cell to see what Jev was asked and its full answer.</div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">How it works</div>
+        <div class="how">
+          A header is a <b>question</b>. Jev answers it for every row: one call per row, all columns at once, each answer with a probability.
+          <div class="grammar">
+            <button class="gex" data-ex="Urgent?"><code>Urgent?</code><span>ends with ? → yes / no</span></button>
+            <button class="gex" data-ex="Team: billing | tech | sales"><code>Team: billing | tech | sales</code><span>a | b → choice. Add meaning: <i>billing = invoices</i></span></button>
+            <button class="gex" data-ex="Anger: calm &lt; annoyed &lt; furious"><code>Anger: calm &lt; annoyed &lt; furious</code><span>low &lt; high → score, 2 to 10 levels</span></button>
+            <button class="gex" data-ex="Urgency"><code>Urgency</code><span>one word → score low &lt; medium &lt; high</span></button>
+          </div>
+          Cells fade when Jev is less sure. <b class="qmark">?</b> marks a cell under the review line. A <b class="redc">red corner</b> means the answer differs from the made-up truth label.
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-title">Try a header <span class="right dim">click to add</span></div>
+        <div id="chips" class="chips"></div>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>

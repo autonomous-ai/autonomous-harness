@@ -1,0 +1,13 @@
+{
+  "title": "Jev in Blue",
+  "description": "A tune Jev composes live. Edit tempo, moods, chords or the scales and watch the music change.",
+  "tempo": 96,
+  "beatsPerBar": 4,
+  "swing": 0.2,
+  "scale": ["C4", "D4", "E4", "G4", "A4"],
+  "bassScale": ["C2", "G2", "A2", "F2"],
+  "chords": ["Cmaj7", "Am7", "Fmaj7", "G7"],
+  "moods": ["brooding", "hopeful", "driving"],
+  "leadNotes": 8,
+  "volume": 0.6
+}

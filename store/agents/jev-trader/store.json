@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev runs a paper-trading desk you can watch trade live",
+  "examples": [
+    {
+      "prompt": "Set Jev Trader as a momentum desk on a volatile synthetic instrument — high volatility, a trend-following style. Watch whether it buys the upswings and cuts the downswings, and keep it honest on paper.",
+      "caption": "Jev's Desk — a decision model trading a synthetic market, tick by tick"
+    }
+  ]
+}

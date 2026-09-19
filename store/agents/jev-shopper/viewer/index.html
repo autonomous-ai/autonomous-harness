@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Shopper</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Shopper</h1></div>
+    <div class="stats">
+      <div class="stat"><label>Ticks</label><span id="ticks">0</span></div>
+      <div class="stat"><label>Best buy</label><span id="pick">—</span></div>
+      <div class="stat"><label>Sure</label><span id="sure">—</span></div>
+      <div class="stat"><label>Cash</label><span id="cash">100</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="tick">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <main>
+    <section id="stage">
+      <div class="panel">
+        <div class="panel-title">The shop window</div>
+        <div id="shelf"></div>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Jev, the buyer</div>
+        <div class="how">
+          Each product streams a live price. On every tick Jev reads the whole window and calls
+          <b>the best buy now</b> — the one whose price is still falling hardest — and says how sure
+          it is. When it's sure enough, it spends on paper.<br><br>
+          Edit <code>shopper.json</code>: tune <code>vol</code> to wobble the prices faster (harder
+          calls), or rewrite <code>products</code> for a new shop window.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Decisions</div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

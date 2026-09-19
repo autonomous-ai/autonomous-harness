@@ -1,0 +1,15 @@
+{
+  "title": "Jev Pong",
+  "description": "Jev is the paddle \u2014 keep the rally alive as the ball speeds up.",
+  "instrument": "PONG",
+  "courtW": 200,
+  "courtH": 120,
+  "paddleH": 26,
+  "ballR": 3,
+  "speed": 6,
+  "maxSpeed": 3,
+  "stepMs": 60,
+  "style": "Keep the rally alive. Track the ball, predict where it will cross your wall, and get the paddle there in time. Be decisive.",
+  "accel": 0.5,
+  "topSpeed": 14
+}

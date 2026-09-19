@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Pong</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Pong</h1></div>
+    <div class="stats">
+      <div class="stat"><label>Rally</label><span id="rally">0</span></div>
+      <div class="stat"><label>Best</label><span id="best">0</span></div>
+      <div class="stat"><label>Misses</label><span id="misses">0</span></div>
+      <div class="stat"><label>Move</label><span id="move">HOLD</span></div>
+      <div class="stat"><label>Speed</label><span id="speed">6</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="tick">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <main>
+    <section id="stage">
+      <div class="panel balancer">
+        <canvas id="court"></canvas>
+        <div id="gauge">watching…</div>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Jev, the paddle</div>
+        <div class="how">
+          Jev defends the left wall. Every tick it reads the ball and moves the paddle to predict
+          where it crosses. The ball <b>speeds up with every return</b> — so a long rally is a
+          losing battle, and the faster Jev is chased, the sooner it drops one.<br><br>
+          Edit <code>pong.json</code> on the right: raise <code>speed</code> to start Jev behind,
+          or turn it down to watch a long streak before the rally outruns it.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Decision log</div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

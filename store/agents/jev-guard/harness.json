@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-guard",
+  "name": "Jev Guard",
+  "category": "Dev Tools",
+  "author": "Autonomous",
+  "description": "Jev — TypeSafe's System One model — is your code reviewer. You fix a tiny broken module and Jev's guard judges every edit live: how close to the goal, how risky, how much it trusts it. Watch a decision model referee your own coding as you work.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "goal.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json", ".js"]
+  },
+  "verdict": ".harness/verdict.json"
+}

@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-shopper",
+  "name": "Jev Shopper",
+  "category": "Shopping",
+  "author": "Autonomous",
+  "description": "A live price-watching demo. A small shop window streams prices; Jev — TypeSafe's System One model — reads the stream each tick and calls the best buy, showing how sure it is and spending on paper when the signal is strong. Turn up the volatility and watch Jev's calls start to flip.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "shopper.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

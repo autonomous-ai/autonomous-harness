@@ -1,0 +1,17 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev triages thousands of made-up inbox messages live: fast, cheap, measured",
+  "examples": [
+    {
+      "prompt": "Turn the desk into player support for a made-up game studio. Write 8 teams with sharp descriptions and at least 6 phrases each. Then find the lowest threshold that keeps auto-routing above 95% right at noise 0.3, and tell me how many messages it escalates.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-firehose/triage-wall.jpg",
+      "caption": "A new desk designed by the agent, with a measured threshold"
+    },
+    {
+      "prompt": "Make it hard. Set noise to 0.7 and tell me what happens to accuracy and escalations, which two teams get mixed up most, and which threshold you would pick.",
+      "caption": "Turn the noise dial and read the trade-off on synthetic data"
+    }
+  ]
+}

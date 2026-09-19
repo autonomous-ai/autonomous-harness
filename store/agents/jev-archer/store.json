@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev takes aim at a sliding target, planting every arrow in the bullseye, live",
+  "examples": [
+    {
+      "prompt": "Set Jev Archer up for a hard range — speed the target up so it slides faster than Jev's aim can correct. Give Jev a lead-the-motion aiming style, then watch it read the target every tick, nudge the aim to track, and release arrow after arrow into (or past) the bullseye.",
+      "caption": "Jev's Day on the Range — a fast decision model tracking the sliding target and planting the bullseye on each shot"
+    }
+  ]
+}

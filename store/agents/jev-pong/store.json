@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev is the paddle — a rally that speeds up and outruns it",
+  "examples": [
+    {
+      "prompt": "Set Jev Pong up as a tense rally — a mid-size court at speed 6 with a gentle accel so the ball builds up over a few returns. Give Jev a decisive style line, then watch it hold the streak until the rally outruns the paddle.",
+      "caption": "Jev's Rally — a fast decision model chasing a ball that speeds up with every return"
+    }
+  ]
+}

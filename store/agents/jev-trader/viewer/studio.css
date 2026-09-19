@@ -1,0 +1,68 @@
+:root {
+  --bg: #0a0b10; --panel: #12141c; --panel2: #171a24;
+  --ink: #e8eaf2; --dim: #8a90a6; --line: #262a38;
+  --accent: #c084fc; --cyan: #5eead4; --amber: #fbbf24; --rose: #fb7185; --ok: #34d399;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: radial-gradient(1200px 800px at 70% -10%, #171a2b 0%, var(--bg) 55%);
+  color: var(--ink); font: 14px/1.45 var(--mono);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#topbar {
+  display: flex; align-items: center; gap: 20px; padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(23,26,36,.9), rgba(18,20,28,.6));
+  backdrop-filter: blur(6px); flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font-size: 16px; font-weight: 700; letter-spacing: .5px; margin: 0; }
+.brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+#title { color: var(--accent); font-size: 15px; font-weight: 700; }
+.stats { display: flex; gap: 20px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; }
+.stat label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+.stat span { font-size: 15px; font-weight: 700; }
+#equity { color: var(--cyan); }
+#return { color: var(--amber); }
+#price { color: var(--ink); }
+.controls { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+button {
+  font: 600 12px var(--mono); padding: 7px 13px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel2); color: var(--ink); cursor: pointer; transition: all .15s;
+}
+button:hover { border-color: var(--accent); color: #fff; }
+button.primary { background: linear-gradient(135deg, #7c3aed, #a855f7); border-color: transparent; color: #fff; }
+button.primary:hover { filter: brightness(1.1); }
+
+main { flex: 1; display: flex; min-height: 0; }
+#stage { flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 18px 20px; overflow-y: auto; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 10px; }
+#chart { width: 100%; height: 320px; background: #0d0f16; border: 1px solid #1c2030; border-radius: 8px; }
+#tape { display: flex; align-items: center; gap: 12px; font-size: 14px; min-height: 32px; flex-wrap: wrap; }
+#tape .pulse { width: 14px; height: 14px; border-radius: 50%; background: var(--dim); flex: none; }
+#tape.buy .pulse { background: var(--ok); box-shadow: 0 0 12px var(--ok); }
+#tape.sell .pulse { background: var(--rose); box-shadow: 0 0 12px var(--rose); }
+#tape .bar { display: inline-flex; gap: 16px; font-size: 13px; }
+#tape .bar b.trade { font-size: 13px; } #tape .trade.buy { color: var(--ok); } #tape .trade.sell { color: var(--rose); } #tape .trade.hold { color: var(--dim); }
+#tape .bar .eq { color: var(--cyan); } #tape .bar .conf { color: var(--dim); }
+
+#rail {
+  width: 340px; flex: none; border-left: 1px solid var(--line); padding: 16px;
+  display: flex; flex-direction: column; gap: 16px; overflow-y: auto; background: rgba(18,20,28,.5);
+}
+#log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+#log li { font-size: 12px; color: var(--dim); display: flex; gap: 8px; align-items: baseline; }
+#log li .d { color: var(--accent); }
+#log li .act.buy { color: var(--ok); font-weight: 700; } #log li .act.sell { color: var(--rose); font-weight: 700; } #log li .act.hold { color: var(--dim); }
+#log li .pr { color: var(--ink); }
+#last { font-size: 14px; color: var(--dim); }
+#last b.trade { font-size: 16px; } #last b.buy { color: var(--ok); } #last b.sell { color: var(--rose); } #last b.hold { color: var(--dim); }
+
+@media (max-width: 860px) {
+  main { flex-direction: column; }
+  #rail { width: 100%; border-left: none; border-top: 1px solid var(--line); }
+}

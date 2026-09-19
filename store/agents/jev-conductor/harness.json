@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-conductor",
+  "name": "Jev Conductor",
+  "category": "Music",
+  "author": "Autonomous",
+  "description": "Jev — TypeSafe's System One model — is the composer. It improvises a live piece bar by bar: chords, bass and melody in real time, played through the Web Audio API. Edit moods, tempo, scales and chords while it's playing and the music changes.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "piece.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

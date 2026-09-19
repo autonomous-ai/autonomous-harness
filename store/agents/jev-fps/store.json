@@ -1,0 +1,18 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev plays a first-person shooter live: turn, move and fire, nine times a second",
+  "examples": [
+    {
+      "prompt": "Build me a tight maze level with a boss room in the middle and three demon spawns in the corners. Start the demons slow, then find the demon speed where Jev stops clearing wave 3.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-fps/firefight.jpg",
+      "caption": "Jev fights through a hand-drawn ASCII map while its keys light up with each decision's probability"
+    },
+    {
+      "prompt": "Make it brutal: 8 demons at once, fast, in one big open room with no cover. Tell Jev to keep its back to a wall. How many waves does it survive?",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-fps/pillar-hall.jpg",
+      "caption": "A stress test for a decision model: more demons, more speed, the same nine decisions a second"
+    }
+  ]
+}

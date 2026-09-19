@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jev Launcher</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/studio.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="dot"></span><h1>Jev Launcher</h1></div>
+  <div id="title"></div>
+  <div class="controls">
+    <button id="clear">Clear</button>
+    <button id="demo" class="primary">Play the demo</button>
+  </div>
+</header>
+
+<main>
+  <section id="stage">
+    <div class="palette">
+      <div class="input-row">
+        <span class="prompt">❯</span>
+        <input id="query" type="text" placeholder="type to launch…" autocomplete="off" spellcheck="false" />
+        <span id="seq"></span>
+      </div>
+      <div id="results"></div>
+      <div class="hint">Every keystroke, Jev re-ranks the palette. <b>Enter</b> fires the top match.</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Jev's pick over the last keystrokes</div>
+      <canvas id="chart"></canvas>
+    </div>
+  </section>
+
+  <aside id="rail">
+    <div class="panel">
+      <div class="panel-title">Live ranking</div>
+      <div id="ranking"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Launched</div>
+      <div id="launched"></div>
+    </div>
+  </aside>
+</main>
+
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

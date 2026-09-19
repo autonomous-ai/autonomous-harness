@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-firehose",
+  "name": "Jev Firehose",
+  "category": "AI",
+  "author": "Autonomous",
+  "description": "A live map-reduce demo on made-up data. Thousands of synthetic inbox messages stream in, and Jev, TypeSafe's System One model, triages each one in a single call with five parallel questions. Unsure ones go to an escalate lane. Speed, cost, count and measured accuracy climb as you watch.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "firehose.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

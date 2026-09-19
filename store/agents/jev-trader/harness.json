@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-trader",
+  "name": "Jev Trader",
+  "category": "Finance",
+  "author": "Autonomous",
+  "description": "Jev — TypeSafe's System One model — runs a paper-trading desk on a synthetic market. It reads the price tape and its own P&L, then decides buy, hold or sell, tick by tick. Watch the equity curve move as a decision model trades. Reshape instrument, volatility and style while it runs.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "market.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

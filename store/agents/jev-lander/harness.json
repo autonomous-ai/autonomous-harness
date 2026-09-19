@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-lander",
+  "name": "Jev Lander",
+  "category": "Science",
+  "author": "Autonomous",
+  "description": "A live landing demo. A booster falls out of the sky under gravity; Jev — TypeSafe's System One model — is the flight computer, reading altitude, vertical speed and fuel every tick and setting a throttle to bring it down soft. Crank the gravity up and watch the touchdowns start to crash.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "lander.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

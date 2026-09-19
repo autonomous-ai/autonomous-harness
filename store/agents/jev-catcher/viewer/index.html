@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Catcher</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1>Jev Catcher</h1></div>
+    <div class="stats">
+      <div class="stat"><label>Ball</label><span id="ball">—</span></div>
+      <div class="stat"><label>Slide</label><span id="move">—</span></div>
+      <div class="stat"><label>Fall</label><span id="fall">—</span></div>
+      <div class="stat"><label>Caught</label><span id="caught">0</span></div>
+      <div class="stat"><label>Drops</label><span id="drops">0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause">Pause</button>
+      <button id="tick">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <main>
+    <section id="stage">
+      <div class="panel panel-stage">
+        <div class="panel-title">The outfield</div>
+        <div id="field">
+          <canvas id="scene"></canvas>
+          <div id="banner" class="hidden"></div>
+        </div>
+      </div>
+    </section>
+    <aside id="rail">
+      <div class="panel">
+        <div class="panel-title">Jev, the fielder</div>
+        <div class="how">
+          Jev is guarding the outfield. A ball pops up and falls to a spot on the line, and every
+          tick it reads the landing spot and the glove's position and slides <code>LEFT</code> /
+          <code>RIGHT</code> (or commits fast) to be under it when it lands. Miss and it drops.<br><br>
+          Edit <code>catcher.json</code>: crank <code>fallTicks</code> down and the balls come too
+          fast for Jev to chase, and the drops pile up; shrink <code>gloveReach</code> and Jev has
+          to read the spot exactly.
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Session log</div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

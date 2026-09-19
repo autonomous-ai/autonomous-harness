@@ -1,0 +1,11 @@
+{
+  "title": "Jev Archer",
+  "description": "Jev is the archer — track the sliding target and plant every arrow in the bullseye.",
+  "instrument": "ARCHER",
+  "tickMs": 150,
+  "speed": 0.6,
+  "bullHalf": 1.0,
+  "targetWidth": 24,
+  "shots": 16,
+  "style": "You are the archer. A target slides across the line — read its position and nudge your aim to track it, then release. Land the arrow in the bullseye to score; miss and it flies by. Keep your aim glued to the moving target."
+}

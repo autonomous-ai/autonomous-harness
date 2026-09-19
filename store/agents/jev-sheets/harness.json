@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-sheets",
+  "name": "Jev Sheets",
+  "category": "Productivity",
+  "author": "Autonomous",
+  "description": "A live spreadsheet where a column header is a question. Type \"Urgent?\" and Jev, TypeSafe's System One model, answers it for every row: one call per row, all columns at once, each cell shaded by confidence and flagged for review when unsure. Made-up data. Runs offline on a mock.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "sheet.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

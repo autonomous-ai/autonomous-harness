@@ -1,0 +1,17 @@
+{
+  "title": "Jev Browser",
+  "description": "Jev books flights on a made-up travel site, one click at a time.",
+  "site": "SkyHop",
+  "stepMs": 170,
+  "distraction": 0.25,
+  "flights": 7,
+  "maxSteps": 45,
+  "seed": 11,
+  "style": "Finish the task in as few actions as you can. Fill every field the task gives you, choose exactly the flight it asks for, refuse every extra, and close anything that gets in the way.",
+  "tasks": [
+    { "from": "SFO", "to": "JFK", "day": "Friday", "pick": "cheapest", "nonstop": true, "name": "Ada Park", "email": "ada@example.com", "bags": 1 },
+    { "from": "SEA", "to": "AUS", "day": "Monday", "pick": "earliest", "nonstop": false, "name": "Omar Reyes", "email": "omar@example.com", "bags": 0 },
+    { "from": "BOS", "to": "LAX", "day": "Sunday", "pick": "cheapest", "nonstop": false, "name": "Mei Tanaka", "email": "mei@example.com", "bags": 2 },
+    { "from": "DEN", "to": "MIA", "day": "Wednesday", "pick": "latest", "nonstop": true, "name": "Lena Okafor", "email": "lena@example.com", "bags": 1 }
+  ]
+}

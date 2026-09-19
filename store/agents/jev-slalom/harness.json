@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-slalom",
+  "name": "Jev Slalom",
+  "category": "Sports",
+  "author": "Autonomous",
+  "description": "A live skiing demo. Jev — TypeSafe's System One model — is the racer, carving a slalom line as the gates sweep toward it, steering left and right to thread each gap. Crank the descent speed up and Jev's aim starts to wobble and it clips a gate and falls.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "slalom.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}

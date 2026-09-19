@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Jev guards the outfield, sliding to catch each pop fly as it falls, live",
+  "examples": [
+    {
+      "prompt": "Set Jev Catcher up for a hard session — speed the pop flies up so they drop faster than Jev can chase. Give Jev a burst-to-the-spot fielding style, then watch it read the landing spot every tick, slide the glove across the grass, and catch (or drop) each ball as it falls.",
+      "caption": "Jev's Day at the Field — a fast decision model sliding the glove to catch every pop fly on each tick"
+    }
+  ]
+}

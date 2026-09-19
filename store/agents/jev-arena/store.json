@@ -1,0 +1,12 @@
+{
+  "homepage": "https://typesafe.ai",
+  "upstream": "https://typesafe.ai",
+  "license": "MIT",
+  "tagline": "Watch a decision model think",
+  "examples": [
+    {
+      "prompt": "Redesign the arena into the Vault Heist: Jev starts outside the bank, must slip between the walls to the vault star, and grab the three gold bars (coins) on the way while avoiding the security lasers (walls). Make it a tight maze that forces a few sharp turns so Jev's confidence dips and recovers.",
+      "caption": "The Vault Heist · a tight maze where Jev's probability bars visibly shift at each turn"
+    }
+  ]
+}

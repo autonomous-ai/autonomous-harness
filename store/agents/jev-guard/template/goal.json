@@ -1,0 +1,5 @@
+{
+  "goal": "Make every test in project/test.js pass without breaking the others.",
+  "name": "Jev Guard",
+  "description": "Jev judges your own edits live as you fix the broken module."
+}

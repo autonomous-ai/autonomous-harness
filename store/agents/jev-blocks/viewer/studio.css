@@ -1,0 +1,71 @@
+/* studio.css — Jev Blocks. Loads after base.css. */
+:root { --accent: #c084fc; --accent2: #7e22ce; }
+
+#topbar { gap: 26px; padding: 9px 18px; }
+.stats { gap: 26px; }
+.stat { min-width: 66px; }
+.stat span { font-size: 21px; line-height: 1.15; letter-spacing: -.2px; }
+.stat.hot span { color: var(--accent); text-shadow: 0 0 18px color-mix(in srgb, var(--accent) 45%, transparent); }
+.brand .sub { white-space: nowrap; }
+
+#stage { gap: 10px; padding: 12px 14px; overflow: hidden; }
+.canvas-wrap { min-height: 300px; background: #04050a; cursor: default; }
+.canvas-wrap.hot { cursor: pointer; }
+
+#deck {
+  flex: none; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) auto; column-gap: 22px; row-gap: 6px; align-items: end;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px 9px;
+}
+.dial { min-width: 0; }
+.dial label { display: flex; align-items: baseline; gap: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); white-space: nowrap; }
+.dial label b { font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: 0; min-width: 3.2ch; text-align: right; }
+.dial label i { font-style: normal; text-transform: none; letter-spacing: 0; color: var(--faint); font-size: 11px; }
+.dial label .pill { margin-left: 4px; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); cursor: pointer; }
+.dial input[type=range] { width: 100%; margin: 5px 0 1px; height: 18px; }
+.dial .ticks { display: flex; justify-content: space-between; font-size: 10px; color: var(--faint); white-space: nowrap; gap: 8px; }
+.dial .ticks b { color: var(--warn); font-weight: 600; }
+.buttons { display: flex; gap: 8px; align-items: center; padding-bottom: 4px; }
+.buttons button { white-space: nowrap; }
+#garbage { border-color: color-mix(in srgb, var(--bad) 55%, transparent); color: var(--bad); }
+#garbage:hover { background: color-mix(in srgb, var(--bad) 14%, var(--panel2)); border-color: var(--bad); }
+.hint { grid-column: 1 / -1; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint b { color: var(--ink); font-weight: 600; }
+
+#rail { gap: 12px; }
+#how summary { cursor: pointer; list-style: none; margin-bottom: 0; user-select: none; white-space: nowrap; }
+#how summary .gist { min-width: 0; flex: 0 1 auto; }
+#how summary::-webkit-details-marker { display: none; }
+#how summary::after { content: '+'; margin-left: auto; color: var(--faint); font-size: 13px; }
+#how .gist { text-transform: none; letter-spacing: 0; color: var(--faint); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#how[open] .gist { display: none; }
+#how[open] summary { margin-bottom: 9px; }
+#how[open] summary::after { content: '–'; }
+#how .how { font-size: 12px; line-height: 1.5; }
+.panel.grow { flex: 1; min-height: 150px; display: flex; flex-direction: column; }
+#log { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; font-size: 11.5px; line-height: 1.5; }
+#log li { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px dashed rgba(255,255,255,.04); color: var(--dim); }
+#log li .n { flex: none; width: 34px; text-align: right; color: var(--faint); font-variant-numeric: tabular-nums; }
+#log li.ok { color: var(--ink); }
+#log li.four { color: var(--cyan); font-weight: 700; }
+#log li.level { color: var(--accent); }
+#log li.warn { color: var(--warn); }
+#log li.bad { color: var(--bad); font-weight: 700; }
+#log li.you { color: var(--blue); }
+#log li.game { color: var(--ok); }
+#log li.fresh { animation: fresh .6s ease-out; }
+@keyframes fresh { from { background: color-mix(in srgb, var(--accent) 22%, transparent); } to { background: transparent; } }
+
+@media (max-width: 1180px) {
+  #topbar { gap: 16px; }
+  .stats { gap: 16px; }
+  .stat { min-width: 58px; }
+  .stat span { font-size: 18px; }
+  .brand .sub { display: none; }
+  #deck { column-gap: 14px; }
+  .dial .ticks .wide { display: none; }
+  #rail { width: 310px; }
+}
+@media (max-width: 900px) {
+  #deck { grid-template-columns: 1fr; }
+  .hint { white-space: normal; }
+}

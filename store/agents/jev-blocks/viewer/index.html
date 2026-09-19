@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Blocks</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/base.css">
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <div id="topbar">
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Blocks</h1><span class="sub">falling-blocks puzzle · synthetic game</span></div>
+    <div class="stats">
+      <div class="stat"><label>Lines</label><span id="sLines">0</span></div>
+      <div class="stat"><label>Lines / min</label><span id="sLpm">—</span></div>
+      <div class="stat hot"><label>Decisions / s</label><span id="sDps">—</span></div>
+      <div class="stat hot"><label>Cost so far</label><span id="sCost">$0</span></div>
+      <div class="stat"><label>Pieces</label><span id="sPieces">0</span></div>
+      <div class="stat"><label>Best</label><span id="sBest">0</span></div>
+    </div>
+    <div class="controls">
+      <button id="pause" title="Space">Pause</button>
+      <button id="step" title="S — one decision at a time, so you can read Jev's mind">Step</button>
+      <button class="primary" id="reset">Reset</button>
+    </div>
+  </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
+  <main>
+    <section id="stage">
+      <div class="canvas-wrap" id="wrap"><canvas id="scene"></canvas></div>
+      <div id="deck">
+        <div class="dial">
+          <label for="gravity">Gravity <b id="gravityVal">2.0</b><i>rows/s</i> <span id="pinTag" class="pill hidden">pinned</span></label>
+          <input id="gravity" type="range" min="0" max="1000" value="0" step="1">
+          <div class="ticks"><span>slow</span><span>Jev's limit now: <b id="kneeVal">46</b></span><span>brutal</span></div>
+        </div>
+        <div class="dial">
+          <label for="think">Think time <b id="thinkVal">110</b><i>ms per decision</i></label>
+          <input id="think" type="range" min="0" max="1000" value="0" step="1">
+          <div class="ticks"><span>30</span><span class="wide">what a slower model would cost</span><span>1000</span></div>
+        </div>
+        <div class="buttons">
+          <button id="garbage" title="G — push a garbage row up from the floor">Drop garbage</button>
+          <button id="mind" class="on" title="M — show every placement Jev weighed">Mind</button>
+          <button id="slow" title="Quarter speed, so you can watch the decision land">Slow-mo</button>
+        </div>
+        <div class="hint">Click a <b>column</b> to drop a junk block · click a <b>next piece</b> to change it · <b>Step</b> to read Jev's mind</div>
+      </div>
+    </section>
+    <aside id="rail">
+      <details class="panel" id="how" open>
+        <summary class="panel-title">How it works <span class="gist">one call per piece · the limit is time</span></summary>
+        <div class="how">
+          One call per piece. Jev gets <b>every legal placement</b> and answers <code>place</code>,
+          <code>danger</code> and <code>go_for_four</code> at once. The ghosts on the board are its
+          probabilities.
+          <b>The limit is time:</b> the piece keeps falling while Jev thinks and while it is moved,
+          one step at a time. Nothing is random. The game is made up.
+        </div>
+      </details>
+      <div class="panel grow">
+        <div class="panel-title">Game log <span class="right" id="logMeta"></span></div>
+        <ul id="log"></ul>
+      </div>
+    </aside>
+  </main>
+<script src="/studio.js" defer></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>

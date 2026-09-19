@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jev Duel</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/studio.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand"><span class="dot"></span><h1>Jev Duel</h1></div>
+  <div id="title"></div>
+  <div id="meta"></div>
+  <div class="controls">
+    <button id="play" class="primary">Play</button>
+    <button id="pause">Pause</button>
+    <button id="step">Step</button>
+    <button id="reset">Reset</button>
+  </div>
+</header>
+
+<main>
+  <section id="stage">
+    <div id="scoreboard">
+      <div class="side o" id="scoreO"></div>
+      <div id="turn">Jev vs Jev</div>
+      <div class="side x" id="scoreX"></div>
+    </div>
+    <div id="boardwrap"><div id="board"></div></div>
+  </section>
+
+  <aside id="rail">
+    <div class="panel">
+      <div class="panel-title">Referee</div>
+      <div id="ref-focus"></div>
+      <ol id="ref-log"></ol>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Move history</div>
+      <ol id="log"></ol>
+    </div>
+  </aside>
+</main>
+
+<script src="/studio.js"></script>
+<script src="/jev-hud.js" defer></script>
+</body>
+</html>
