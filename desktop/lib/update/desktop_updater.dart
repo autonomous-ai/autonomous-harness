@@ -147,6 +147,7 @@ class DesktopUpdater {
   final bool _releaseMode;
   final bool _enabled;
   final bool _isLinux;
+  final bool _isWindows;
   final String _architecture;
 
   DesktopUpdater({
@@ -164,6 +165,7 @@ class DesktopUpdater {
     // (a single downloaded file, no unpacking) from any host, since that branch needs no extra
     // tooling beyond the standard library, unlike ditto/plutil on macOS.
     bool? isLinux,
+    bool? isWindows,
     // Defaults to the running CPU (`arm64`/`x64`): which Linux artifact to fetch, and whether the
     // Apple Silicon macOS build is on offer. Tests override it to exercise every key from any host.
     String? architecture,
@@ -179,6 +181,7 @@ class DesktopUpdater {
        _metadataUrlForInstance = metadataUrl ?? _metadataUrl,
        _releaseMode = releaseMode ?? kReleaseMode,
        _isLinux = isLinux ?? Platform.isLinux,
+       _isWindows = isWindows ?? Platform.isWindows,
        _architecture = architecture ?? _currentArchitecture();
 
   /// The manifest entries this build may install, most preferred first — [_newestEntry] takes the
@@ -199,7 +202,9 @@ class DesktopUpdater {
   /// bundle for a downloaded release build and relaunching, see [applyStaged]) makes no sense for a
   /// local dev build and would silently clobber it mid-session.
   Future<UpdateInfo?> checkOnce({String? currentVersion}) async {
-    if (!_enabled || !_releaseMode) return null;
+    // Windows previews are replaced manually as a desktop + CLI pair. Never
+    // offer the macOS manifest entry just because this host is not Linux.
+    if (!_enabled || !_releaseMode || _isWindows) return null;
     try {
       final running = currentVersion ?? await runningAppVersion();
       final response = await _dio.get<Map<String, dynamic>>(

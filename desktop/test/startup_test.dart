@@ -162,6 +162,8 @@ void main() {
         {'terminal_theme'},
       ]);
       expect(appearanceStorage.requests, [
+        // The appearance batch reads the start-background preference too;
+        // the POSIX baseline predates that key.
         {
           'app_ui_font_family',
           'app_ui_font_size',

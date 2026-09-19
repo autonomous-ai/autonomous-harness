@@ -2,6 +2,9 @@
 
 **The open-source software and hardware platform for domain-specific harnesses.**
 
+> **Windows 11 preview:** a native Windows desktop can host the CLI and agent
+> terminals in WSL2. See [setup, build instructions, and limitations](desktop/WINDOWS_QUICKSTART.md).
+
 Run Claude Code, Codex, and every other coding agent in persistent terminals on all your machines. Give
 them a **domain-specific harness (DSH)** and they design circuit boards, model 3D parts, simulate
 robots, and build games in a live viewer. Keep them on your desk with the open-hardware

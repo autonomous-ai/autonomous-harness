@@ -6,11 +6,15 @@ import { PROCESS_ENGINES } from '../engines/types.js'
 import type { AgentCommandOwnershipSnapshot } from './engineBin.js'
 import {
   ambiguousAgentProcess,
+  argvTokens,
   bypassPermissionActive,
   engineProcessMatch,
   engineProcessMatchScore,
+  faithfulArgsFromCmdline,
   LSTART_MARKER_RE,
   parseProcessRow,
+  quoteArgvElement,
+  repairInteropRowFromCmdline,
   resumeSessionId,
   sendLiteralToTmux,
   sendToTmux,
@@ -134,6 +138,271 @@ describe('tmux process primitives', () => {
     expect(engineProcessMatchScore({ executable: 'devin', args: 'devin' }, 'devin')).toBe(3)
     expect(engineProcessMatchScore({ executable: 'muse-bin-0.1.0-R708.1', args: 'muse-bin-0.1.0-R708.1' }, 'muse')).toBe(3)
     expect(engineProcessMatchScore({ executable: '/Users/demo/.grok/bin/grok', args: 'grok' }, 'grok')).toBe(3)
+  })
+
+  /**
+   * WSL interop: an engine resolved from a distro pane through `command -v` can be a WINDOWS binary
+   * relayed by `/init` — live on Windows 11 + Ubuntu: `comm=node.exe`,
+   * `args="/init \0 C:\...\node.exe \0 node.exe \0 C:\...\@openai\codex\bin\codex.js"` (node's
+   * process.title rewrite duplicates the interpreter after the script path). The matcher used to see
+   * `node.exe` + entrypoint `/init` and score 0, so the TUI ran fine while the launch stayed "failed"
+   * and the terminal refused input. processRows() rewrites the row from /proc cmdline; the interpreter
+   * regex now accepts `.exe`. These pins hold the two halves apart — an unchanged `ps args` row with
+   * `/init` first must NOT be rewritten (no /proc evidence to back it), the repaired row must score.
+   */
+  it('scores a WSL-interop engine relayed through /init', () => {
+    const psRow = parseProcessRow(
+      ' 1037  1036 node.exe Thu Sep 17 08:20:11 2026 /init C:\\Program Files\\nodejs\\node.exe node.exe'
+        + ' C:\\Users\\mcspd\\AppData\\Roaming\\npm/node_modules/@openai/codex/bin/codex.js')
+    // parseProcessRow alone cannot expose the engine: interpreter is `node.exe`, entrypoint `/init`.
+    expect(engineProcessMatchScore(psRow!, 'codex')).toBe(0)
+
+    // processRows() swaps in the /proc cmdline argv (leading /init dropped, duplicate node.exe
+    // title-rewrite token removed, space-bearing paths double-quoted) — the same shape
+    // engineProcessMatch is scored on here.
+    const repairedArgs = '"C:\\Program Files\\nodejs\\node.exe"'
+      + ' C:\\Users\\mcspd\\AppData\\Roaming\\npm/node_modules/@openai/codex/bin/codex.js'
+    expect(engineProcessMatchScore({ executable: 'node.exe', args: repairedArgs }, 'codex')).toBe(2)
+  })
+
+  /**
+   * The extraction itself, pinned host-independently (review finding P1): the
+   * critical path runs INSIDE WSL/Linux — `path.basename` there would not
+   * split the `C:\...` backslashes, the duplicate `node.exe` would survive as
+   * the apparent entrypoint, and the row scores 0 again. Runs on any host.
+   */
+  it('repairInteropRowFromCmdline unwraps /init and quotes spaced Windows paths', () => {
+    const fixed = repairInteropRowFromCmdline(
+      [
+        '/init',
+        'C:\\Program Files\\nodejs\\node.exe',
+        'node.exe',
+        'C:\\Program Files\\nodejs\\node_modules\\@openai\\codex\\bin\\codex.js',
+      ].join('\0'),
+      'node.exe',
+    )
+    expect(fixed.executable).toBe('node.exe')
+    // Backslashes inside quoted tokens are doubled (review cycle-4 P2): argvTokens() collapses
+    // `\\` unconditionally, so quoting must double EVERY backslash for the round trip to be
+    // token-faithful — `C:\Program Files\...` serializes as `"C:\\Program Files\\..."`.
+    expect(fixed.args).toBe(
+      '"C:\\\\Program Files\\\\nodejs\\\\node.exe" "C:\\\\Program Files\\\\nodejs\\\\node_modules\\\\@openai\\\\codex\\\\bin\\\\codex.js"',
+    )
+    // The duplicate bare `node.exe` (node's process.title rewrite) is dropped:
+    // `node.exe` appears once as executable inside nodejs/, and a second time
+    // only as part of `node_modules` in the entrypoint path. Splitting on the
+    // full `nodejs\\node.exe` token shows exactly one interpreter occurrence.
+    expect((fixed.args ?? '').split('nodejs\\\\node.exe').length - 1).toBe(1)
+    // And the repaired row still reaches the engine entrypoint.
+    expect(
+      engineProcessMatchScore(
+        { executable: fixed.executable!, args: fixed.args! },
+        'codex',
+      ),
+    ).toBe(2)
+  })
+
+  it('repairInteropRowFromCmdline leaves non-interop rows alone', () => {
+    expect(repairInteropRowFromCmdline('bash\0-l\0', 'bash')).toEqual({})
+    expect(repairInteropRowFromCmdline('', null)).toEqual({})
+    expect(repairInteropRowFromCmdline('/init\0', 'init')).toEqual({})
+  })
+
+  /**
+   * The interop repair itself, pinned host-independently because it once shipped a P1 that only
+   * Linux-host tests could have caught: `path.basename` on Linux does not split `\\`, so the
+   * interpreter-title dedup never fired for the real `C:\…\node.exe` argv inside WSL and the
+   * entrypoint walk stopped on the bare duplicate.
+   */
+  describe('repairInteropRowFromCmdline', () => {
+    const NUL = String.fromCharCode(0)
+
+    const windowsArgv = '/init\0C:\\Program Files\\nodejs\\node.exe\0node.exe'
+      + '\0C:\\Users\\mcspd\\AppData\\Roaming\\npm/node_modules/@openai/codex/bin/codex.js'
+
+    it('drops the interpreter-title duplicate behind a WINDOWS interpreter path', () => {
+      expect(repairInteropRowFromCmdline(windowsArgv, 'node.exe')).toEqual({
+        args: '"C:\\\\Program Files\\\\nodejs\\\\node.exe"'
+          + ' C:\\Users\\mcspd\\AppData\\Roaming\\npm/node_modules/@openai/codex/bin/codex.js',
+        executable: 'node.exe',
+      })
+    })
+
+    it('double-quotes space-bearing tokens so argvTokens() re-splits them as one', () => {
+      expect(repairInteropRowFromCmdline(
+        '/init\0C:\\Program Files\\nodejs\\node.exe\0C:\\Program Files\\my engine\\cli.js\0--flag',
+        null,
+      )).toEqual({
+        // Quoted tokens carry doubled backslashes (review cycle-4 P2 round-trip rule).
+        args: '"C:\\\\Program Files\\\\nodejs\\\\node.exe" "C:\\\\Program Files\\\\my engine\\\\cli.js" --flag',
+        executable: 'node.exe',
+      })
+    })
+
+    it('prefers a real comm name over the relayed interpreter basename', () => {
+      expect(repairInteropRowFromCmdline(['/init', '/home/demo/.local/bin/claude'].join(NUL), 'claude'))
+        .toEqual({ args: '/home/demo/.local/bin/claude', executable: 'claude' })
+      // Review cycle-3 P2: `comm` naming the RELAY (`init`/`/init`) ties the cmdline to nothing —
+      // a native docker-init row can carry it too — so it never qualifies a rewrite on its own.
+      expect(repairInteropRowFromCmdline(['/init', '/home/demo/.local/bin/claude'].join(NUL), '/init'))
+        .toEqual({})
+      expect(repairInteropRowFromCmdline(['/init', '/home/demo/.local/bin/claude'].join(NUL), 'init'))
+        .toEqual({})
+    })
+
+    /**
+     * Review cycle-3 P2: `comm` is 15-byte capped on Linux, so it may qualify as a TRUNCATION of
+     * the relayed basename — but only a strict one: comm shorter than the basename AND a prefix of
+     * it AND exactly 15 bytes. An arbitrary short prefix like `co` over `codex` establishes
+     * nothing about interop and must leave the row untouched.
+     */
+    it('qualifies comm only as an exact name or a 15-byte truncation of the basename', () => {
+      // Arbitrary prefix: not a truncation, no qualification.
+      expect(repairInteropRowFromCmdline(['/init', '/usr/local/bin/codex', '--version'].join(NUL), 'co')).toEqual({})
+      // Genuine 15-byte truncation (measured shape on Ubuntu 24.04) qualifies.
+      expect(repairInteropRowFromCmdline(
+        ['/init', '/opt/a-very-long-engine-name-binary', '--version'].join(NUL),
+        'a-very-long-eng',
+      )).toEqual({ args: '/opt/a-very-long-engine-name-binary --version', executable: 'a-very-long-eng' })
+      // A comm SHORTER than 15 bytes that merely prefixes the basename is not evidence of
+      // truncation — it could be any unrelated short name.
+      expect(repairInteropRowFromCmdline(['/init', '/usr/local/bin/codex', '--version'].join(NUL), 'cod')).toEqual({})
+    })
+
+    /**
+     * Review cycle-2 P2: an exact `/init` argv[0] alone must not qualify a row as a WSL-interop
+     * relay. On a native Linux host `/init` is a real program (docker-init) whose cmdline can name
+     * any child — rewriting it made `engineProcessMatch` report Codex (score 3) for
+     * `/init\0/usr/local/bin/codex\0--version`, so a genuine Linux relay could be selected as the
+     * engine instead of its child. Windows-argv evidence (drive-letter path, `.exe`) or a
+     * Windows-binary comm is required before the rewrite fires.
+     */
+    it('leaves native Linux /init rows untouched even when they name an engine child', () => {
+      const nativeInit = ['/init', '/usr/local/bin/codex', '--version'].join('\0')
+      expect(repairInteropRowFromCmdline(nativeInit, 'docker-init')).toEqual({})
+      expect(repairInteropRowFromCmdline(nativeInit, 'bash')).toEqual({})
+      expect(repairInteropRowFromCmdline(nativeInit, null)).toEqual({})
+      // WSL-interop evidence present -> the rewrite fires even for a POSIX-looking program path:
+      // comm naming the relayed program's own basename ties cmdline to the process. An UNRELATED
+      // comm (node.exe over a codex path) is exactly the spoof shape and stays untouched unless
+      // the argv itself is Windows-shaped.
+      expect(repairInteropRowFromCmdline(nativeInit, 'codex')).toEqual({
+        args: '/usr/local/bin/codex --version',
+        executable: 'codex',
+      })
+      expect(repairInteropRowFromCmdline(nativeInit, 'node.exe')).toEqual({})
+      // Review cycle-4 P2: a `.exe`-shaped CHILD path must not outweigh contradictory comm
+      // evidence either — a native Linux init wrapper around a `.exe`-named binary is exactly
+      // this shape, and rewriting it made engineProcessMatch score 3 for the wrapper's child.
+      expect(repairInteropRowFromCmdline(
+        ['/init', '/usr/local/bin/opencode.exe', '--version'].join(NUL),
+        'docker-init',
+      )).toEqual({})
+      // The same argv with NO comm (or a relay-neutral comm) still qualifies on argv shape alone.
+      expect(repairInteropRowFromCmdline(
+        ['/init', '/usr/local/bin/opencode.exe', '--version'].join(NUL),
+        null,
+      )).toEqual({ args: '/usr/local/bin/opencode.exe --version', executable: 'opencode.exe' })
+      expect(repairInteropRowFromCmdline(
+        ['/init', '/usr/local/bin/opencode.exe', '--version'].join(NUL),
+        'init',
+      )).toEqual({ args: '/usr/local/bin/opencode.exe --version', executable: 'opencode.exe' })
+      expect(repairInteropRowFromCmdline(['/init', 'C:\\tools\\codex.exe', '--version'].join(NUL), null)).toEqual({
+        args: 'C:\\tools\\codex.exe --version',
+        executable: 'codex.exe',
+      })
+    })
+
+    /**
+     * Review cycle-4 P2: only the TERMINATING NUL field may be stripped. Legitimate empty
+     * argv elements in the middle of the relayed command line are real boundaries
+     * (`prog '' more` is three arguments, not two) and must survive the repair — which also
+     * requires the serializer to emit `""` for an empty token, since an unquoted empty
+     * element re-splits to ZERO tokens.
+     */
+    it('preserves interior empty argv elements through the round trip', () => {
+      const interpreterPath = 'C:\\Program Files\\nodejs\\node.exe'
+      const relayed = repairInteropRowFromCmdline(
+        ['/init', interpreterPath, '', 'hello'].join(NUL),
+        'node.exe',
+      )
+      expect(argvTokens(relayed.args!)).toEqual([interpreterPath, '', 'hello'])
+      // The terminating NUL artifact is still stripped; the spaced path stays quoted (with
+      // doubled backslashes per the round-trip rule) and the plain arg stays bare.
+      expect(repairInteropRowFromCmdline(
+        ['/init', interpreterPath, 'arg'].join(NUL) + NUL,
+        'node.exe',
+      ).args).toBe('"C:\\\\Program Files\\\\nodejs\\\\node.exe" arg')
+    })
+
+    /**
+     * Review cycle-4 P2: the quote -> argvTokens round trip must be faithful for INTERNAL
+     * doubled backslash runs too. argvTokens() collapses `\\` unconditionally inside double
+     * quotes, so quote() must double EVERY backslash in a quoted token — not only runs that
+     * touch a quote or the token end. A spaced UNC path came back with its runs halved.
+     */
+    it('round-trips internal doubled backslash runs token-faithfully', () => {
+      const interpreterPath = 'C:\\\\Program Files\\\\nodejs\\\\node.exe'
+      const unc = 'C:' + '\\\\' + '\\\\' + 'UNC share ' + '\\\\' + '\\\\' + ' y z'
+      const relayed = repairInteropRowFromCmdline(['/init', interpreterPath, unc].join(NUL), 'node.exe')
+      expect(argvTokens(relayed.args!)).toEqual([interpreterPath, unc])
+      expect(bypassPermissionActive('codex', relayed.args!)).toBe(false)
+    })
+
+    /**
+     * Review cycle-5 P2: the strip-ALL trailing-empty loop deleted legitimate empty FINAL
+     * arguments. A cmdline read is the execve argv region — every element stored
+     * NUL-terminated — so split() yields all elements plus exactly ONE artifact empty after
+     * the final NUL, no matter how long the trailing NUL run is:
+     * `/init\0prog\0x\0\0\0` is `prog x '' ''`, not `x` with three artifacts.
+     */
+    it('strips exactly one trailing artifact and keeps legitimate empty final elements', () => {
+      // One terminating NUL: one artifact, nothing else lost.
+      expect(repairInteropRowFromCmdline(
+        ['/init', 'node.exe', 'x'].join(NUL) + NUL,
+        'node.exe',
+      ).args).toBe('node.exe x')
+      // `/init\0node.exe\0x\0\0\0` — the kernel region of `prog x '' ''`: each element
+      // carries its own terminating NUL, so the join needs the final one appended.
+      const tailEmpties = repairInteropRowFromCmdline(
+        ['/init', 'node.exe', 'x', '', ''].join(NUL) + NUL,
+        'node.exe',
+      )
+      expect(argvTokens(tailEmpties.args!)).toEqual(['node.exe', 'x', '', ''])
+      // A genuinely empty FINAL argument with a single terminator survives as one `""`.
+      const finalEmpty = repairInteropRowFromCmdline(
+        ['/init', 'node.exe', 'x', ''].join(NUL) + NUL,
+        'node.exe',
+      )
+      expect(argvTokens(finalEmpty.args!)).toEqual(['node.exe', 'x', ''])
+      // No trailing NUL at all (read stopped at buffer end): strip nothing.
+      const unterminated = repairInteropRowFromCmdline(
+        ['/init', 'node.exe', 'x'].join(NUL),
+        'node.exe',
+      )
+      expect(argvTokens(unterminated.args!)).toEqual(['node.exe', 'x'])
+    })
+  })
+
+  /**
+   * Review cycle-8 P2: ordinary rows (no `?` mangle, no interop relay) used to keep flattened
+   * `ps` text even with /proc readable, losing the boundaries of spaced arguments.
+   * `repairMangledRows` now re-serializes ordinary rows through `faithfulArgsFromCmdline`;
+   * rows with no /proc evidence stay flattened. Pinned through the pure pieces on every host.
+   */
+  describe('faithfulArgsFromCmdline', () => {
+    it('serializes ordinary /proc argv with the shared quoting dialect', () => {
+      expect(faithfulArgsFromCmdline('codex\0--flag')).toBe('codex --flag')
+      expect(faithfulArgsFromCmdline('codex\0fix the bug')).toBe('codex "fix the bug"')
+      expect(faithfulArgsFromCmdline('codex\0C:\\Program Files\\x\\y.exe'))
+        .toBe('codex "C:\\\\Program Files\\\\x\\\\y.exe"')
+    })
+
+    it('strips exactly one trailing NUL artifact and refuses empty evidence', () => {
+      expect(faithfulArgsFromCmdline('codex\0--flag\0')).toBe('codex --flag')
+      expect(faithfulArgsFromCmdline('')).toBeNull()
+    })
+
   })
 
   it.each([
@@ -281,11 +550,142 @@ describe('tmux process primitives', () => {
     expect(bypassPermissionActive('opencode', 'opencode --auto')).toBe(true)
   })
 
+  /**
+   * Review cycle-5 P1 (security): a bare `--` option terminator ends the option section in
+   * every engine's CLI grammar — everything after it is a POSITIONAL, however flag-shaped.
+   * Boundary-faithful tokenization (cycles 2-4) made a flag-shaped positional SURVIVE as a
+   * token, so a relayed prompt `-- --dangerously-bypass-approvals-and-sandbox` read as an
+   * active bypass flag and cli.ts persisted it for the relaunch. The flag must appear
+   * BEFORE the terminator to count, for every engine with a confirmed flag.
+   */
+  it.each([
+    ['claude', '--dangerously-skip-permissions'],
+    ['codex', '--dangerously-bypass-approvals-and-sandbox'],
+    ['cursor', '--force'],
+    ['opencode', '--auto'],
+  ] as const)('does not count a flag-shaped positional after `--` for %s', (engine, flag) => {
+    expect(bypassPermissionActive(engine, `engine -- ${flag}`)).toBe(false)
+    expect(bypassPermissionActive(engine, `engine -- prompt about ${flag}`)).toBe(false)
+    // Before the terminator it still counts.
+    expect(bypassPermissionActive(engine, `engine ${flag} -- prompt`)).toBe(true)
+    // No terminator at all: unchanged behavior.
+    expect(bypassPermissionActive(engine, `engine ${flag}`)).toBe(true)
+  })
+
+  it('still reads flags when no `--` terminator is present', () => {
+    expect(bypassPermissionActive('codex', 'codex --dangerously-bypass-approvals-and-sandbox')).toBe(true)
+    expect(bypassPermissionActive('codex', 'codex --model gpt-5 --dangerously-bypass-approvals-and-sandbox')).toBe(true)
+  })
+
   it('does not false-positive on a flag that only appears as a substring', () => {
     // The flag text can legitimately appear inside a prompt/argument; only an exact token counts.
     expect(bypassPermissionActive('claude', 'claude "please avoid --dangerously-skip-permissions for now"'))
       .toBe(false)
     expect(bypassPermissionActive('claude', 'claude --dangerously-skip-permissions-explained')).toBe(false)
+  })
+
+  /**
+   * Review cycle-2 P1 (security): the WSL-interop repair re-quotes relayed argv by escaping
+   * embedded double quotes as `\"`. The old argvTokens() regex split on those escapes, so ONE
+   * relayed prompt argument — 'Explain " --dangerously-bypass-approvals-and-sandbox " please' —
+   * re-tokenized with the flag standing alone, and bypassPermissionActive() flipped false → true.
+   * cli.ts persists that state (registry.setBypassPermission) and reads it on relaunch, so prompt
+   * text could enable bypass mode for the next session. argvTokens() must treat `\"` inside a
+   * double-quoted token as a literal quote, exactly what quote() emits.
+   */
+  it('does not let an escaped quote inside a relayed prompt enable bypass mode', () => {
+    const promptArg = 'Explain " --dangerously-bypass-approvals-and-sandbox " please'
+    // quote()'s exact output shape for an element carrying spaces and double quotes.
+    const relayedArgs = '"C:\\Program Files\\nodejs\\node.exe"'
+      + ' C:\\Users\\mcspd\\AppData\\Roaming\\npm/node_modules/@openai/codex/bin/codex.js'
+      + ` "${promptArg.replace(/"/g, '\\"')}"`
+    expect(bypassPermissionActive('codex', relayedArgs)).toBe(false)
+  })
+
+  it('argvTokens treats \\" inside a double-quoted token as a literal quote', () => {
+    expect(argvTokens('codex "say \\"hi\\" now"')).toEqual(['codex', 'say "hi" now'])
+    // Unchanged behaviour for the plain cases the matcher relies on.
+    expect(argvTokens('codex "hello world" --flag')).toEqual(['codex', 'hello world', '--flag'])
+    expect(argvTokens("claude 'pick --dangerously-skip-permissions' x")).toEqual(
+      ['claude', 'pick --dangerously-skip-permissions', 'x'])
+    // A Windows path with spaces stays one token, and backslashes are not escapes outside quotes.
+    expect(argvTokens('"C:\\Program Files\\nodejs\\node.exe" --version'))
+      .toEqual(['C:\\Program Files\\nodejs\\node.exe', '--version'])
+  })
+
+  /**
+   * Review cycle-4 P1 (security): the `?`-mangled-row branch — a localeless `ps` substitutes
+   * `?` for every unprintable byte, and a PROMPT ending in `?` lands one in row.args — used to
+   * NUL->space-join /proc cmdline with NO quoting and return before the interop repair ran.
+   * The joined string re-tokenized with the flag standing alone and
+   * bypassPermissionActive('codex', args) flipped to true from prompt text alone, and /init
+   * stayed the entrypoint so relay discovery died with it. The branch must re-serialize the
+   * raw argv through the same CRT-dialect quoting as the repair.
+   *
+   * readProcField is Linux-only (`/proc`), so the branch itself cannot run on this host — the
+   * test pins the QUOTING CONTRACT through quoteArgvElement, the exact serializer the branch
+   * joins with: re-splitting its output must reproduce the original argv elements verbatim.
+   */
+  it('does not let a ?-mangled cmdline re-split prompt text into flags (quoteArgvElement contract)', () => {
+    // The cmdline argv of the repro: a prompt ending in `?` whose text names the bypass flag.
+    const promptArg = 'Should I use --dangerously-bypass-approvals-and-sandbox ?'
+    const cmdlineArgv = ['C:\\Program Files\\nodejs\\node.exe', 'codex.js', promptArg]
+    const joined = cmdlineArgv.map(quoteArgvElement).join(' ')
+    expect(argvTokens(joined)).toEqual(cmdlineArgv)
+    expect(bypassPermissionActive('codex', joined)).toBe(false)
+    // The old shape — the same argv NUL->space-joined bare — DID flip (documents the defect).
+    const legacyJoin = cmdlineArgv.join(' ')
+    expect(bypassPermissionActive('codex', legacyJoin)).toBe(true)
+  })
+
+  /**
+   * Review cycle-3 P1 (security): the relayed argv round trip — quote() inside
+   * repairInteropRowFromCmdline -> argvTokens() — must be token-faithful for EVERY element, or
+   * prompt/argument text re-tokenizes into standalone flags and bypassPermissionActive() flips.
+   * Two shapes closed the loop beyond cycle-2's escaped-double-quote repro:
+   *   1. a token carrying SINGLE quotes around a flag was serialized bare-with-single-quotes;
+   *      argvTokens stripped them and the flag stood alone.
+   *   2. a token ending in a backslash emitted `...\"`, whose escape rule swallowed the closing
+   *      quote and exposed the NEXT argument's flag text as standalone tokens.
+   * Each case pins the round trip itself: repair -> re-split must return the ORIGINAL argv.
+   */
+  it('preserves argv boundaries through the repair quoting round trip', () => {
+    const NUL = String.fromCharCode(0)
+    const relayout = (elements: string[]) =>
+      repairInteropRowFromCmdline(['/init', ...elements].join(NUL), 'node.exe')
+    const interpreterPath = 'C:\\Program Files\\nodejs\\node.exe'
+
+    // 1. Single-quoted flag argument: quote() double-quotes the whole element, the inner single
+    //    quotes are literal content, and the flag NEVER stands alone as its own token.
+    const singleQuoted = relayout([interpreterPath, "'--dangerously-bypass-approvals-and-sandbox'"])
+    expect(argvTokens(singleQuoted.args!))
+      .toEqual([interpreterPath, "'--dangerously-bypass-approvals-and-sandbox'"])
+    expect(bypassPermissionActive('codex', singleQuoted.args!)).toBe(false)
+
+    // 2. A prompt argument with embedded double quotes escapes as \" and round-trips exactly.
+    const promptArg = 'Explain " --dangerously-bypass-approvals-and-sandbox " please'
+    const relayed = relayout([interpreterPath, promptArg])
+    expect(bypassPermissionActive('codex', relayed.args!)).toBe(false)
+    expect(argvTokens(relayed.args!)).toEqual([interpreterPath, promptArg])
+
+    // 3. Trailing-backslash token: backslashes double before the closing quote, so the quote
+    //    survives as a boundary and no neighbouring text merges into the token.
+    const backslashTail = relayout([interpreterPath, 'C:\\Dir\\', 'plain'])
+    expect(argvTokens(backslashTail.args!)).toEqual([interpreterPath, 'C:\\Dir\\', 'plain'])
+
+    // 4. The reviewer's repro shape: a space-bearing token ending in a backslash followed by a
+    //    prompt whose text contains the flag — boundaries must hold so it stays prompt text.
+    const repro = relayout([
+      interpreterPath,
+      'C:\\Dir With Space\\',
+      'explain --dangerously-bypass-approvals-and-sandbox please',
+    ])
+    expect(bypassPermissionActive('codex', repro.args!)).toBe(false)
+    expect(argvTokens(repro.args!)).toEqual([
+      interpreterPath,
+      'C:\\Dir With Space\\',
+      'explain --dangerously-bypass-approvals-and-sandbox please',
+    ])
   })
 
   it('reads false when the confirmed flag is absent', () => {
@@ -302,6 +702,54 @@ describe('tmux process primitives', () => {
     expect(bypassPermissionActive('devin', 'devin --dangerously-skip-permissions')).toBe(false)
   })
 
+  /**
+   * Review cycle-6 P1 (security): resumeSessionId's regex searched INSIDE quoted prompt
+   * arguments, so one prompt 'Explain --session ses_OTHER now' supplied a false resume session
+   * that discovery bound a relaunch to. The token form requires the flag as a STANDALONE token
+   * with the id as the NEXT token, and stops at a bare `--` terminator.
+   */
+  it('does not read a session id out of prompt text', () => {
+    // Quoted prompt argument: the flag text is inside ONE token, never a standalone flag.
+    expect(resumeSessionId(
+      'opencode', '"/usr/local/bin/opencode" "Explain --session ses_OTHER now"',
+    )).toBeNull()
+    // After the `--` option terminator everything is positional prompt text.
+    expect(resumeSessionId('opencode', 'opencode -- Explain --session ses_OTHER now')).toBeNull()
+    expect(resumeSessionId('cursor', 'agent -- --resume 53d3843c-724e-47ff-ae3a-9fedfa328bba')).toBeNull()
+    // A real flag still binds.
+    expect(resumeSessionId('opencode', 'opencode --session ses_05e335115ffeM05DT5hJHeN3Vp'))
+      .toBe('ses_05e335115ffeM05DT5hJHeN3Vp')
+  })
+
+  /** Review cycle-6 P2: codex.exe/claude.exe native names scored 0 while opencode.exe scored. */
+  it.each(['claude', 'codex'] as const)('recognises native Windows %s.exe basenames', (engine) => {
+    expect(engineProcessMatchScore({ executable: `${engine}.exe`, args: `${engine}.exe --version` }, engine))
+      .toBeGreaterThan(0)
+  })
+
+  /**
+   * Review cycle-9 P2: the both-separator basename over-corrected the Windows port — `\` is a
+   * legal filename character in POSIX paths, so a Linux script literally named `not\codex`
+   * came out as basename `codex` and scored as a Codex match; discovery could claim an
+   * unrelated process. The dialect is read from the path itself: drive-letter/UNC paths split
+   * on both separators, POSIX paths on `/` only.
+   */
+  it('does not split a POSIX path on a backslash that is part of a filename', () => {
+    expect(engineProcessMatchScore({
+      executable: '/tmp/not\\codex',
+      args: '/tmp/not\\codex --version',
+    }, 'codex')).toBe(0)
+    // The Windows dialect still splits on both separators.
+    expect(engineProcessMatchScore({
+      executable: 'C:\\tools\\not\\codex.exe',
+      args: 'C:\\tools\\not\\codex.exe --version',
+    }, 'codex')).toBeGreaterThan(0)
+    expect(engineProcessMatchScore({
+      executable: '\\\\nas\\share\\not\\codex.exe',
+      args: '\\\\nas\\share\\not\\codex.exe --version',
+    }, 'codex')).toBeGreaterThan(0)
+  })
+
   it('maps neutral visible/history and ANSI capture options to tmux flags', () => {
     expect(tmuxCaptureArgs('%7', 60)).toEqual([
       'capture-pane', '-p', '-e', '-J', '-t', '%7', '-S', '-60',
@@ -311,7 +759,9 @@ describe('tmux process primitives', () => {
     ])
   })
 
-  it('carries prompt and literal bytes only over stdin, never child argv or diagnostics', async () => {
+  // POSIX host artifact: the fake tmux is a `#!/bin/sh` script, which Windows cannot exec through
+  // execFile, and the PATH injection below uses a `:` separator that Windows never matches.
+  it.skipIf(process.platform === 'win32')('carries prompt and literal bytes only over stdin, never child argv or diagnostics', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'harness-tmux-input-'))
     const argsFile = join(dir, 'args')
     const stdinFile = join(dir, 'stdin')

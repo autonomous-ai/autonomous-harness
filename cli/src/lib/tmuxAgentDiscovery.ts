@@ -26,6 +26,7 @@ import {
   enrichProcessRows,
   parseProcessRow,
   processTreePids,
+  repairMangledRows,
   resumeSessionId,
   setPaneMouseOn,
   type ProcessRow,
@@ -268,7 +269,10 @@ export async function probeTmuxAgents(
   if (!tmux.ok) return { ok: false, error: `tmux list-panes failed: ${tmux.error}` }
   if (!ps.ok) return { ok: false, error: `process table failed: ${ps.error}` }
   const parsed = ps.stdout.split('\n').map(parseProcessRow).filter((row): row is ProcessRow => row !== null)
-  const rows = await enrichProcessRows(parsed, processTreePids(parsed, tmux.panes.map((pane) => pane.rootPid)))
+  // `ps` hides the Windows interpreter and script behind WSL's `/init` relay. Rebuild those rows
+  // from `/proc/<pid>/cmdline` before matching, just as the composite terminal probe does.
+  const repaired = repairMangledRows(parsed)
+  const rows = await enrichProcessRows(repaired, processTreePids(repaired, tmux.panes.map((pane) => pane.rootPid)))
   const probe = discoverTmuxAgentsFromSnapshot(
     tmux.panes,
     rows,

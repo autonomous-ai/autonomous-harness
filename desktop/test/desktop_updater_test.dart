@@ -80,6 +80,26 @@ Future<(List<int>, String)> _fakeAppImageBytes(String version) async {
 }
 
 void main() {
+  test('Windows never polls or offers the upstream macOS update', () async {
+    var requests = 0;
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            requests++;
+            handler.reject(DioException(requestOptions: options));
+          },
+        ),
+      );
+    final updater = DesktopUpdater(
+      isWindows: true,
+      isLinux: false,
+      releaseMode: true,
+      dio: dio,
+    );
+    expect(await updater.checkOnce(currentVersion: '1.0.0'), isNull);
+    expect(requests, 0);
+  });
   late Directory scratch;
   HttpServer? server;
   late List<int> zipBytes;
@@ -138,6 +158,7 @@ void main() {
     () async {
       final url = await serveMetadataAndZip(manifestVersion: newVersion);
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         dio: Dio(),
         isLinux: false,
@@ -156,6 +177,7 @@ void main() {
     final url = await serveMetadataAndZip(manifestVersion: newVersion);
     // No releaseMode override — defaults to kReleaseMode, which is false under `flutter test`.
     final updater = DesktopUpdater(
+      isWindows: false,
       enabled: true,
       dio: Dio(),
       isLinux: false,
@@ -164,6 +186,7 @@ void main() {
     expect(await updater.checkOnce(currentVersion: '1.0.0'), isNull);
 
     final explicitlyOff = DesktopUpdater(
+      isWindows: false,
       enabled: true,
       dio: Dio(),
       isLinux: false,
@@ -174,7 +197,11 @@ void main() {
   });
 
   test('a disabled updater skips checks, downloads and applying even in release mode', () async {
-    final updater = DesktopUpdater(enabled: false, releaseMode: true);
+    final updater = DesktopUpdater(
+      isWindows: false,
+      enabled: false,
+      releaseMode: true,
+    );
     const info = UpdateInfo(
       version: '9.9.9',
       url: 'https://fixture.invalid/update.zip',
@@ -199,6 +226,7 @@ void main() {
   test('checkOnce returns null when the running version is already current or newer', () async {
     final url = await serveMetadataAndZip(manifestVersion: '1.0.0');
     final updater = DesktopUpdater(
+      isWindows: false,
       enabled: true,
       dio: Dio(),
       isLinux: false,
@@ -213,6 +241,7 @@ void main() {
     'checkOnce returns null (not an error) when the manifest is unreachable',
     () async {
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         dio: Dio(),
         isLinux: false,
@@ -225,6 +254,7 @@ void main() {
 
   test('checkOnce also treats unavailable package metadata as no update', () async {
     final updater = DesktopUpdater(
+      isWindows: false,
       enabled: true,
       dio: Dio(),
       isLinux: false,
@@ -252,6 +282,7 @@ void main() {
       final noUpdates = <UpdateInfo>[];
       final t1 =
           DesktopUpdater(
+            isWindows: false,
             enabled: true,
             dio: Dio(),
             isLinux: false,
@@ -272,6 +303,7 @@ void main() {
       final found = <UpdateInfo>[];
       final t2 =
           DesktopUpdater(
+            isWindows: false,
             enabled: true,
             dio: Dio(),
             isLinux: false,
@@ -293,7 +325,12 @@ void main() {
     'downloadAndStage verifies sha256 before trusting the download',
     () async {
       await serveMetadataAndZip(manifestVersion: newVersion);
-      final updater = DesktopUpdater(enabled: true, dio: Dio(), isLinux: false);
+      final updater = DesktopUpdater(
+        isWindows: false,
+        enabled: true,
+        dio: Dio(),
+        isLinux: false,
+      );
       final badInfo = UpdateInfo(
         version: newVersion,
         url: 'http://127.0.0.1:${server!.port}/Harness-macos.zip',
@@ -307,7 +344,12 @@ void main() {
 
   test('downloadAndStage unpacks and confirms the staged bundle really carries the advertised version', () async {
     await serveMetadataAndZip(manifestVersion: newVersion);
-    final updater = DesktopUpdater(enabled: true, dio: Dio(), isLinux: false);
+    final updater = DesktopUpdater(
+      isWindows: false,
+      enabled: true,
+      dio: Dio(),
+      isLinux: false,
+    );
     final info = UpdateInfo(
       version: newVersion,
       url: 'http://127.0.0.1:${server!.port}/Harness-macos.zip',
@@ -323,7 +365,12 @@ void main() {
 
   test('downloadAndStage rejects a bundle whose Info.plist does not match the advertised version', () async {
     await serveMetadataAndZip(manifestVersion: newVersion);
-    final updater = DesktopUpdater(enabled: true, dio: Dio(), isLinux: false);
+    final updater = DesktopUpdater(
+      isWindows: false,
+      enabled: true,
+      dio: Dio(),
+      isLinux: false,
+    );
     // Real zip on disk is stamped $newVersion — advertise a different one.
     final mismatched = UpdateInfo(
       version: '1.2.3',
@@ -338,6 +385,7 @@ void main() {
   test('applyStaged spawns a detached command and never launches a real process', () async {
     final calls = <String>[];
     final updater = DesktopUpdater(
+      isWindows: false,
       enabled: true,
       // The macOS relaunch, asked for by name rather than inherited from the
       // host — the Linux one is the group at the bottom of this file, and both
@@ -369,6 +417,7 @@ void main() {
     () async {
       var called = false;
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         // Same as above: the macOS "not inside a .app" branch. On Linux every
         // executable has a parent directory, so the host's own answer would
@@ -459,6 +508,7 @@ void main() {
       Map<String, String> versions,
     ) async {
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         dio: Dio(),
         metadataUrl: await serveMacManifest(versions),
@@ -560,6 +610,7 @@ void main() {
         manifestVersion: newVersion,
       );
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         dio: Dio(),
         metadataUrl: url,
@@ -579,6 +630,7 @@ void main() {
         architecture: 'arm64',
       );
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         dio: Dio(),
         metadataUrl: url,
@@ -597,6 +649,7 @@ void main() {
       () async {
         await serveLinuxMetadataAndAppImage(manifestVersion: newVersion);
         final updater = DesktopUpdater(
+          isWindows: false,
           enabled: true,
           dio: Dio(),
           isLinux: true,
@@ -613,10 +666,19 @@ void main() {
         expect(staged!.version, newVersion);
         expect(staged.bundlePath, endsWith('/Harness-linux-x64.AppImage'));
         expect(File(staged.bundlePath).existsSync(), isTrue);
-        final mode = File(staged.bundlePath).statSync().modeString();
-        expect(mode, contains('x'), reason: 'staged AppImage should be +x');
+        if (!Platform.isWindows) {
+          // The +x bit is POSIX; the staging call is a no-op binary copy on
+          // Windows (there is no /bin/chmod), so only POSIX hosts assert it.
+          final mode = File(staged.bundlePath).statSync().modeString();
+          expect(mode, contains('x'), reason: 'staged AppImage should be +x');
+        }
         await Directory(staged.stagingDirPath).delete(recursive: true);
       },
+      // A Linux host's chmod does not exist here; the download, checksum and
+      // staging path itself is still exercised on Windows.
+      skip: Platform.isWindows
+          ? 'needs /bin/chmod, a POSIX host binary'
+          : false,
     );
 
     test(
@@ -624,6 +686,7 @@ void main() {
       () async {
         await serveLinuxMetadataAndAppImage(manifestVersion: newVersion);
         final updater = DesktopUpdater(
+          isWindows: false,
           enabled: true,
           dio: Dio(),
           isLinux: true,
@@ -643,6 +706,7 @@ void main() {
     test('applyStaged on Linux execs the swapped AppImage file directly instead of `open -n`', () async {
       final calls = <String>[];
       final updater = DesktopUpdater(
+        isWindows: false,
         enabled: true,
         isLinux: true,
         architecture: 'x64',

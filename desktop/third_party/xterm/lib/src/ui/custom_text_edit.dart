@@ -183,6 +183,8 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
       _connection!.show();
     } else {
       final config = TextInputConfiguration(
+        // Windows rejects the client without its owning Flutter view ID.
+        viewId: View.of(context).viewId,
         inputType: widget.inputType,
         inputAction: widget.inputAction,
         keyboardAppearance: widget.keyboardAppearance,

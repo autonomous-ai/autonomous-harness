@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harness/core/config.dart';
 import 'package:harness/core/harness_cli_runner.dart';
+import 'package:harness/core/models.dart';
 import 'package:harness/ws/local_cli_discovery.dart';
 
 void main() {
@@ -18,7 +20,18 @@ void main() {
   tearDown(() async {
     await server?.close(force: true);
     server = null;
-    if (await scratch.exists()) await scratch.delete(recursive: true);
+    // Windows holds a deleted-but-open handle briefly after socket-backed
+    // probes and timed-out connects; a first delete can lose that race.
+    // Retry a few times, then leave the directory for the OS temp cleaner
+    // rather than failing the test that just ran.
+    for (var attempt = 0; attempt < 5; attempt++) {
+      try {
+        if (await scratch.exists()) await scratch.delete(recursive: true);
+        return;
+      } on FileSystemException {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
   });
 
   test('uses the stable Harness computer id path', () {
@@ -27,6 +40,73 @@ void main() {
     );
     expect(path, '/Users/tester/.harness/computer-id');
   }, skip: Platform.isWindows);
+
+  test('selected WSL identity ignores a stale host identity', () async {
+    final identityFile = File('${scratch.path}/computer-id');
+    var reads = 0;
+    final identity = LocalMachineIdentity(
+      computerIdFile: identityFile,
+      environment: const {},
+      wslComputerId: () async {
+        reads++;
+        return '0123456789abcdef0123456789abcdef';
+      },
+    );
+    final discovery = LocalCliDiscovery(
+      config: AppConfig.dev,
+      identity: identity,
+    );
+    expect(await discovery.computerId(), '0123456789abcdef0123456789abcdef');
+    expect(await discovery.usesWslCli(), isTrue);
+    expect(reads, 1);
+    // A host-side file from an old native prototype is not the selected
+    // daemon's identity and must not change its filesystem decision.
+    identityFile.writeAsStringSync('fedcba9876543210fedcba9876543210');
+    expect(await discovery.computerId(), '0123456789abcdef0123456789abcdef');
+    expect(await discovery.usesWslCli(), isTrue);
+    expect(reads, 1);
+  }, skip: !Platform.isWindows);
+
+  test('a WSL miss never adopts a stale or pinned host identity', () async {
+    final staleId = 'fedcba9876543210fedcba9876543210';
+    final identityFile = File('${scratch.path}/computer-id')
+      ..writeAsStringSync(staleId);
+    for (final environment in [
+      <String, String>{},
+      {'ADAPTER_COMPUTER_ID': staleId},
+    ]) {
+      final identity = LocalMachineIdentity(
+        computerIdFile: identityFile,
+        environment: environment,
+        wslSelected: () async => false,
+      );
+      expect(await identity.computerId(), isNull);
+      expect(identity.usesWsl, isFalse);
+    }
+  }, skip: !Platform.isWindows);
+
+  test('a pinned id retains the selected WSL filesystem', () async {
+    var idReads = 0;
+    final identity = LocalMachineIdentity(
+      computerIdFile: File('${scratch.path}/computer-id'),
+      environment: const {
+        'ADAPTER_COMPUTER_ID': '0123456789abcdef0123456789abcdef',
+      },
+      wslSelected: () async => true,
+      wslComputerId: () async {
+        idReads++;
+        return 'fedcba9876543210fedcba9876543210';
+      },
+    );
+    final discovery = LocalCliDiscovery(
+      config: AppConfig.dev,
+      identity: identity,
+    );
+
+    expect(await discovery.computerId(), '0123456789abcdef0123456789abcdef');
+    expect(await discovery.usesWslCli(), isTrue);
+    expect(idReads, 0, reason: 'the explicit id does not need a second read');
+  }, skip: !Platform.isWindows);
 
   test('discovers only an exact-computer loopback endpoint', () async {
     const computerId = '0123456789abcdef0123456789abcdef';
@@ -204,6 +284,19 @@ void main() {
       apiBaseUrl: 'https://harness-api.autonomous.ai',
       localCliBaseUrl: 'http://127.0.0.1:$port',
     ),
+    // Windows can take longer than the production 400ms to surface a
+    // refusal on a closed loopback port — the probe then spends the whole
+    // default timeout learning what macOS learns in under a millisecond,
+    // and the supervisor's millisecond-scale test windows never see a
+    // spawn. A loopback connect that has not answered in 40ms is DOWN for
+    // the purposes of these tests; live daemons answer in single digits.
+    dio: Dio(
+      BaseOptions(
+        connectTimeout: const Duration(milliseconds: 40),
+        receiveTimeout: const Duration(milliseconds: 40),
+        sendTimeout: const Duration(milliseconds: 40),
+      ),
+    ),
     identity: LocalMachineIdentity(computerIdFile: identityFile),
     spawnCommand: spawnCommand,
   );
@@ -248,6 +341,114 @@ void main() {
       expect(projects['first']!.branch, isNull);
     },
     skip: Platform.isWindows,
+  );
+
+  /**
+   * Review cycle-6 P2: the daemon may run inside WSL2 while the GUI runs on Windows, and its
+   * session cwds are POSIX paths. The old code validated them with Platform.isWindows rules,
+   * so the drive/UNC regex dropped every real WSL project folder. With the identity reporting
+   * a WSL CLI, `/home/...` and `/mnt/c/...` cwds must publish as agent projects.
+   */
+  test(
+    'keeps POSIX project folders from a WSL daemon on a Windows GUI host',
+    () async {
+      const computerId = '0123456789abcdef0123456789abcdef';
+      final identityFile = File('${scratch.path}/computer-id')
+        ..writeAsStringSync(computerId);
+      server = await serveStatus(
+        await freePort(),
+        () => {
+          ...readyStatus(computerId),
+          'sessions': [
+            {'id': 'agent', 'cwd': '/home/user/project'},
+            {'id': 'drivemount', 'cwd': '/mnt/c/Users/user/project/'},
+            {'id': 'windowsnative', 'cwd': r'C:\work\project'},
+            // Dot segments resolve textually in the daemon's dialect — never through host
+            // File/Uri normalization, which on Windows would mangle the POSIX text
+            // (review cycle-7, P2).
+            {'id': 'dotted', 'cwd': '/mnt/c/Users/user/../user/project/./src'},
+          ],
+        },
+      );
+      final endpoint = await LocalCliDiscovery(
+        config: AppConfig(
+          apiBaseUrl: 'https://fixture.invalid',
+          localCliBaseUrl: 'http://127.0.0.1:${server!.port}',
+        ),
+        identity: LocalMachineIdentity(
+          computerIdFile: identityFile,
+          environment: const {},
+          // A reader both selects WSL and answers the id, so `probe()` gets past
+          // its identity gate exactly like a real WSL daemon does.
+          wslComputerId: () async => computerId,
+        ),
+      ).discover();
+      final projects = endpoint!.agentProjects;
+      expect(projects.keys, ['agent', 'drivemount', 'dotted']);
+      expect(projects['agent']!.cwd, '/home/user/project');
+      expect(projects['agent']!.name, 'project');
+      // A trailing separator in the status is trimmed, not doubled.
+      expect(projects['drivemount']!.cwd, '/mnt/c/Users/user/project');
+      expect(projects['drivemount']!.name, 'project');
+      expect(projects['dotted']!.cwd, '/mnt/c/Users/user/project/src');
+      expect(projects['dotted']!.name, 'src');
+    },
+    skip: !Platform.isWindows,
+  );
+
+  /**
+   * Bug-hunt P2: a POSIX (WSL) daemon's `~/project` was expanded with the
+   * Windows GUI's own home. `C:\Users\me` failed the POSIX absolute check and
+   * silently dropped the row; an MSYS-inherited `HOME=/c/Users/me` passed it
+   * and registered a cwd that names nothing inside the distro. A tilde is
+   * expanded only with a genuinely POSIX home, and otherwise kept verbatim —
+   * the daemon's own shell resolves it.
+   */
+  test(
+    'a WSL daemon tilde cwd is expanded only with a POSIX home, kept verbatim otherwise',
+    () async {
+      const computerId = '0123456789abcdef0123456789abcdef';
+      final identityFile = File('${scratch.path}/computer-id')
+        ..writeAsStringSync(computerId);
+      server = await serveStatus(
+        await freePort(),
+        () => {
+          ...readyStatus(computerId),
+          'sessions': [
+            {'id': 'tilde', 'cwd': '~/work/project'},
+          ],
+        },
+      );
+      Future<AgentProject?> tildeProjectWith(String? home) async {
+        final endpoint = await LocalCliDiscovery(
+          config: AppConfig(
+            apiBaseUrl: 'https://fixture.invalid',
+            localCliBaseUrl: 'http://127.0.0.1:${server!.port}',
+          ),
+          identity: LocalMachineIdentity(
+            computerIdFile: identityFile,
+            environment: home == null ? const {} : {'HOME': home},
+            // A reader both selects WSL and answers the id, so `probe()` gets
+            // past its identity gate exactly like a real WSL daemon does.
+            wslComputerId: () async => computerId,
+          ),
+        ).discover();
+        return endpoint!.agentProjects['tilde'];
+      }
+
+      final windowsHome = await tildeProjectWith(r'C:\Users\me');
+      expect(windowsHome!.cwd, '~/work/project',
+          reason: 'the Windows USERPROFILE must not stand in for the distro home');
+      expect(windowsHome.name, 'project');
+      final msysHome = await tildeProjectWith('/c/Users/me');
+      expect(msysHome!.cwd, '~/work/project',
+          reason: 'an MSYS HOME must not fabricate a distro path');
+      final posixHome = await tildeProjectWith('/home/me');
+      expect(posixHome!.cwd, '/home/me/work/project');
+      final noHome = await tildeProjectWith(null);
+      expect(noHome!.cwd, '~/work/project');
+    },
+    skip: !Platform.isWindows,
   );
 
   test(
@@ -517,6 +718,7 @@ void main() {
 
   test('runHarnessStart treats a non-zero exit as a failed spawn', () async {
     final failing = HarnessCliRunner(
+      isWindows: false,
       runProcess: (exe, args, {environment}) async =>
           ProcessResult(1, 1, '', 'daemon spawn lock is held'),
     );
@@ -525,6 +727,7 @@ void main() {
       throwsA(isA<ProcessException>()),
     );
     final fine = HarnessCliRunner(
+      isWindows: false,
       runProcess: (exe, args, {environment}) async =>
           ProcessResult(1, 0, 'already running', ''),
     );
@@ -607,7 +810,11 @@ void main() {
     );
     addTearDown(timer.cancel);
 
-    await Future.delayed(const Duration(milliseconds: 120));
+    // Two down-probes must land before the spawn (spawnAfter: 2); on a host
+    // whose closed-port connects do not refuse instantly each probe can cost
+    // its whole timeout, so the window is sized for two full probes plus the
+    // spawn, not for macOS-class instant refusals.
+    await Future.delayed(const Duration(milliseconds: 400));
     expect(spawnCount, 1);
     expect(server, isNotNull);
 
@@ -744,6 +951,16 @@ void main() {
         apiBaseUrl: 'https://harness-api.autonomous.ai',
         localCliBaseUrl: 'http://127.0.0.1:$closedPort',
       ),
+      // Same fast probe timeouts as discoveryFor: a closed loopback port
+      // must read as DOWN inside these millisecond-scale test windows on
+      // every host, not just the ones that refuse instantly.
+      dio: Dio(
+        BaseOptions(
+          connectTimeout: const Duration(milliseconds: 40),
+          receiveTimeout: const Duration(milliseconds: 40),
+          sendTimeout: const Duration(milliseconds: 40),
+        ),
+      ),
       identity: LocalMachineIdentity(computerIdFile: identityFile),
       spawnCommand: () async {
         spawnCount++;
@@ -786,6 +1003,16 @@ void main() {
         config: AppConfig(
           apiBaseUrl: 'https://harness-api.autonomous.ai',
           localCliBaseUrl: 'http://127.0.0.1:$closedPort',
+        ),
+        // Same fast probe timeouts as discoveryFor: a closed loopback port
+        // must read as DOWN inside these millisecond-scale test windows on
+        // every host, not just the ones that refuse instantly.
+        dio: Dio(
+          BaseOptions(
+            connectTimeout: const Duration(milliseconds: 40),
+            receiveTimeout: const Duration(milliseconds: 40),
+            sendTimeout: const Duration(milliseconds: 40),
+          ),
         ),
         identity: LocalMachineIdentity(computerIdFile: identityFile),
         spawnCommand: () async {
@@ -832,6 +1059,16 @@ void main() {
         config: AppConfig(
           apiBaseUrl: 'https://harness-api.autonomous.ai',
           localCliBaseUrl: 'http://127.0.0.1:$closedPort',
+        ),
+        // Same fast probe timeouts as discoveryFor: a closed loopback port
+        // must read as DOWN inside these millisecond-scale test windows on
+        // every host, not just the ones that refuse instantly.
+        dio: Dio(
+          BaseOptions(
+            connectTimeout: const Duration(milliseconds: 40),
+            receiveTimeout: const Duration(milliseconds: 40),
+            sendTimeout: const Duration(milliseconds: 40),
+          ),
         ),
         identity: LocalMachineIdentity(computerIdFile: identityFile),
         spawnCommand: () async {

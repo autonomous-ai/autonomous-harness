@@ -30,11 +30,23 @@ Future<void> loadRealFonts() async {
   // an unthemed widget falls back to in a test. Registering both platforms'
   // names rather than branching keeps this helper one code path: a family the
   // running host never asks for costs a no-op registration.
+  // Windows keeps the same metric-compatible faces as the hosts above —
+  // Arial (the same Monotype metrics the macOS path names) and Courier New —
+  // so the overflow thresholds these tests assert mean the same thing on a
+  // Windows developer box. The faces ship with every Windows install and are
+  // located through WINDIR rather than a hardcoded drive. Segoe UI and
+  // Consolas are last-resort fallbacks for a machine missing the Arial pair:
+  // not metric-compatible with Liberation, but a run measuring a real face
+  // beats a suite that cannot start.
+  final windowsFontDirectory =
+      Platform.environment['WINDIR'] ?? r'C:\Windows';
   final sans = await bytes(
-    _firstExisting('sans', const [
+    _firstExisting('sans', [
       '/System/Library/Fonts/Supplemental/Arial.ttf',
       '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
       '/usr/share/fonts/liberation/LiberationSans-Regular.ttf',
+      '$windowsFontDirectory\\Fonts\\arial.ttf',
+      '$windowsFontDirectory\\Fonts\\segoeui.ttf',
     ]),
   );
   for (final family in [
@@ -49,10 +61,12 @@ Future<void> loadRealFonts() async {
   // A model id is set in mono, and an unregistered mono family falls back to
   // Ahem just as loudly.
   final mono = await bytes(
-    _firstExisting('mono', const [
+    _firstExisting('mono', [
       '/System/Library/Fonts/Supplemental/Courier New.ttf',
       '/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf',
       '/usr/share/fonts/liberation/LiberationMono-Regular.ttf',
+      '$windowsFontDirectory\\Fonts\\cour.ttf',
+      '$windowsFontDirectory\\Fonts\\consola.ttf',
     ]),
   );
   for (final family in [

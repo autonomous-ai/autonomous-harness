@@ -4,14 +4,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/harness_cli_runner.dart';
+import '../core/wsl_runtime.dart';
 
 /// The CLI-only installer contract for callers that already own host setup.
 /// Desktop verifies tmux, the active Linux clipboard helper and the rest of
 /// what the CLI runs before reaching this command, then performs its own
 /// complete verification again after Harness lands.
 const String kHarnessDesktopInstallCommand =
-    'curl -fsSL https://cdn.autonomous.ai/harness/cli/install.sh | '
-    '/bin/sh -s -- --desktop';
+    'curl -fsSL ${WslRuntime.cliInstallUrl} | /bin/sh -s -- --desktop';
 
 /// The same installer's host half — tmux and what the CLI runs beside it.
 /// On macOS this is how tmux is obtained, in-app: Homebrew's if Homebrew is
@@ -153,6 +153,37 @@ class EnvironmentPlanItem {
     detail: '~/.harness only',
     command: kHarnessDesktopInstallCommand,
   );
+
+  static EnvironmentPlanItem windowsWslPrerequisite({
+    bool dockerOnly = false,
+  }) => EnvironmentPlanItem(
+    step: EnvironmentStep.harness,
+    title: dockerOnly
+        ? 'Install a WSL2 distribution Harness may use'
+        : 'Install WSL2 and Ubuntu',
+    detail: dockerOnly
+        ? 'Docker Desktop distributions are excluded'
+        : 'Windows feature · elevated PowerShell · reboot',
+    command: WslRuntime.enableWslCommand,
+    requiresTerminal: true,
+  );
+
+  static EnvironmentPlanItem windowsTmux(String distro) => EnvironmentPlanItem(
+    step: EnvironmentStep.tmux,
+    title: 'tmux in $distro',
+    detail: 'Terminal backend inside the selected WSL2 distribution',
+    command: WslRuntime.tmuxCommandForDisplay(distro: distro),
+    requiresTerminal: true,
+  );
+
+  static EnvironmentPlanItem windowsHarnessCli(String distro) =>
+      EnvironmentPlanItem(
+        step: EnvironmentStep.harness,
+        title: 'Managed Node 20+ & Harness CLI in $distro',
+        detail: '~/.harness inside the selected WSL2 distribution',
+        command: WslRuntime.installCommandForDisplay(distro: distro),
+        requiresTerminal: true,
+      );
 }
 
 class EnvironmentReadiness {
@@ -165,6 +196,11 @@ class EnvironmentReadiness {
   final String? terminalLogPath;
   final String? terminalResultPath;
   final EnvironmentTerminalSetup? terminalSetup;
+
+  /// The provisioning flow is evaluating a native Windows host. Stored in the
+  /// state so widget fixtures and resumed checks do not infer it from the test
+  /// runner's operating system.
+  final bool windowsHost;
 
   /// What setup will install, in order — empty when everything runs.
   final List<EnvironmentPlanItem> plan;
@@ -179,6 +215,7 @@ class EnvironmentReadiness {
     this.terminalLogPath,
     this.terminalResultPath,
     this.terminalSetup,
+    this.windowsHost = false,
     this.plan = const [],
   });
 
@@ -228,6 +265,7 @@ class EnvironmentReadiness {
     String? terminalLogPath,
     String? terminalResultPath,
     EnvironmentTerminalSetup? terminalSetup,
+    bool? windowsHost,
     List<EnvironmentPlanItem>? plan,
     bool clearFailure = false,
     bool clearTerminalHandoff = false,
@@ -247,6 +285,7 @@ class EnvironmentReadiness {
     terminalSetup: clearTerminalHandoff
         ? null
         : terminalSetup ?? this.terminalSetup,
+    windowsHost: windowsHost ?? this.windowsHost,
     plan: plan ?? this.plan,
   );
 }
@@ -272,13 +311,13 @@ typedef EmitStep = void Function({
   EnvironmentStepStatus? status,
   String? message,
   String? output,
+  EnvironmentSetupPhase? phase,
+  EnvironmentFailure? failure,
+  String? terminalLogPath,
+  String? terminalResultPath,
+  EnvironmentTerminalSetup? terminalSetup,
+  List<EnvironmentPlanItem>? plan,
 });
-
-Future<ProcessResult> _defaultRun(
-  String executable,
-  List<String> arguments, {
-  Map<String, String>? environment,
-}) => Process.run(executable, arguments, environment: environment);
 
 Future<Process> _defaultStart(
   String executable,
@@ -322,12 +361,18 @@ Future<void> _defaultOpenTerminal(String scriptPath) async {
 class EnvironmentProvisioner {
   final Directory harnessHome;
   final ProcessRunner _run;
+  final bool _runWasInjected;
   final ProcessStarter? _start;
   final TerminalLauncher _openTerminal;
   final bool _isMacOS;
   final bool _isLinux;
   final bool _isWindows;
   final Map<String, String> _platformEnvironment;
+
+  /// A test seam for the Windows branch: the WSL2 bridge with its own process
+  /// hooks, so a test can drive probing and installation without spawning a real
+  /// `wsl.exe` (and, on this host, without ever touching Docker's distribution).
+  final WslRuntime? _wslRuntime;
 
   EnvironmentProvisioner({
     Directory? harnessHome,
@@ -338,8 +383,10 @@ class EnvironmentProvisioner {
     bool? isLinux,
     bool? isWindows,
     Map<String, String>? platformEnvironment,
+    this._wslRuntime,
   }) : harnessHome = harnessHome ?? Directory(_defaultHarnessHome()),
-       _run = run ?? _defaultRun,
+       _run = run ?? Process.run,
+       _runWasInjected = run != null,
        _start = start ?? (run == null ? _defaultStart : null),
        _openTerminal = openTerminal ?? _defaultOpenTerminal,
        _isMacOS = isMacOS ?? Platform.isMacOS,
@@ -381,6 +428,7 @@ class EnvironmentProvisioner {
       mode: mode,
       clearFailure: true,
       clearTerminalHandoff: retryingFailedSetup,
+      windowsHost: _isWindows,
     );
     void emit({
       EnvironmentStep? step,
@@ -416,6 +464,7 @@ class EnvironmentProvisioner {
         terminalLogPath: terminalLogPath ?? state.terminalLogPath,
         terminalResultPath: terminalResultPath ?? state.terminalResultPath,
         terminalSetup: terminalSetup ?? state.terminalSetup,
+        windowsHost: state.windowsHost,
         plan: plan ?? state.plan,
       );
       onProgress(state);
@@ -565,8 +614,7 @@ class EnvironmentProvisioner {
 
     if (!_isMacOS && !_isLinux) {
       if (_isWindows) {
-        await _verifyWindows(emit);
-        return state;
+        return _verifyWindows(emit, snapshot: () => state, install: install);
       }
       emit(
         step: EnvironmentStep.harness,
@@ -923,61 +971,408 @@ class EnvironmentProvisioner {
     );
   }
 
-  /// Windows gets a VERIFY pass rather than the install pass above.
+  /// Windows gets a VERIFY + WSL2 pass rather than the POSIX install pass above.
   ///
-  /// Every installer this class drives is a POSIX shell script — `install.sh` piped into `/bin/sh`,
-  /// a `zsh`/`bash` login shell for each probe, `brew`, `apt-get` — and none of it exists here. So
-  /// instead of refusing to boot a Windows box that is in fact provisioned, this checks what is
-  /// actually on it and names the command for whatever is missing. Windows packaging remains out
-  /// of scope for this release.
-  Future<void> _verifyWindows(EmitStep emit) async {
+  /// Every installer that pass drives is a POSIX shell script — `install.sh`
+  /// piped into `/bin/sh`, a `zsh`/`bash` login shell for each probe, `brew`,
+  /// `apt-get` — and none of it exists on a stock Windows 11 install. What DOES
+  /// exist is WSL2, and the CLI is a Linux program: so this checks the CLI and
+  /// tmux inside a named WSL2 distro, and installs them there when the distro
+  /// can be driven without a password prompt.
+  ///
+  /// Every branch either names the exact command that fixes the missing piece or
+  /// refuses with `failed`, because "run this on a machine that can" is a
+  /// different answer from "this computer is ready". Nothing here waits on a
+  /// prompt it cannot answer: [WslRuntime.canInstallUnattended] is asked before
+  /// the installer runs, and a distro that needs a password is handed back to
+  /// the user as a command to run in Windows Terminal.
+  Future<EnvironmentReadiness> _verifyWindows(
+    EmitStep emit, {
+    required EnvironmentReadiness Function() snapshot,
+    required bool install,
+  }) async {
     emit(
       step: EnvironmentStep.clipboard,
       status: EnvironmentStepStatus.notApplicable,
+      message: 'Windows paste uses the app clipboard; no helper is required.',
+      output: '– native image clipboard N/A (Windows)',
     );
+    emit(output: '✓ Windows host · no POSIX toolchain required');
+
+    final runner = HarnessCliRunner(
+      harnessHome: harnessHome,
+      runProcess: _runWasInjected ? _run : null,
+      environment: _platformEnvironment,
+      // Forward the injected platform override: a test (or embedder) forcing
+      // isWindows on a non-Windows host must drive the runner's WINDOWS
+      // resolution — the WSL2 bridge — not the native path this host would
+      // otherwise pick (review cycle-3, P2; the fixtures reject native
+      // invocations, so without this the readiness assertions fail off-Windows).
+      isWindows: _isWindows,
+    );
+    final wsl =
+        _wslRuntime ?? WslRuntime(runProcess: _runWasInjected ? _run : null);
+
     emit(
       step: EnvironmentStep.harness,
       status: EnvironmentStepStatus.running,
-      message: 'Checking the Harness CLI…',
-    );
-    var harnessReady = false;
-    try {
-      final runner = HarnessCliRunner(
-        harnessHome: harnessHome,
-        runProcess: _run,
-      );
-      final status = await runner.run(['auth', 'status', '--json']);
-      harnessReady =
-          status.exitCode == 0 && (status.stdout as String).trim().isNotEmpty;
-    } on ProcessException {
-      harnessReady = false;
-    } on StateError {
-      // No managed node/cli.js pair recorded under ~/.harness yet.
-      harnessReady = false;
-    }
-    if (!harnessReady) {
-      emit(
-        step: EnvironmentStep.harness,
-        status: EnvironmentStepStatus.failed,
-        message:
-            'The Harness CLI is not installed for this user. There is no Windows installer yet — '
-            'from a checkout of the CLI run: npm install && npm run bundle && '
-            'bash scripts/install-cli.sh — then click Recheck.',
-      );
-      return;
-    }
-    emit(
-      step: EnvironmentStep.harness,
-      status: EnvironmentStepStatus.ready,
-      output: 'Harness CLI ready',
+      message: 'Looking for the Harness CLI…',
     );
 
+    // The supported Windows runtime is WSL2, and the pieces are checked in the
+    // order a person would: is WSL there, is there a distro the app may use, is
+    // the CLI in it, is tmux in it.
+    final wslAvailable = await wsl.available();
+    final usable = wslAvailable ? await wsl.usableDistros() : const <String>[];
+    final dockerOnly = wslAvailable && usable.isEmpty
+        ? await wsl.dockerOnlyDistros()
+        : const <String>[];
+
+    WslHarnessProbe probe = const WslHarnessProbe.notFound();
+    if (usable.isNotEmpty) {
+      probe = await wsl.findHarness(distros: usable);
+    }
+
+    // A distro to install INTO: the one the CLI was found in, or — when it is
+    // absent — the first distro the app is allowed to use. Never Docker's, never
+    // an implicit default, and never a distro the app did not name.
+    final installTarget =
+        probe.distro ?? (usable.isEmpty ? null : usable.first);
+
+    List<EnvironmentPlanItem> planFor(WslHarnessProbe current) {
+      if (installTarget == null) {
+        return [
+          EnvironmentPlanItem.windowsWslPrerequisite(
+            dockerOnly: dockerOnly.isNotEmpty,
+          ),
+        ];
+      }
+      return [
+        if (!current.tmuxReady) EnvironmentPlanItem.windowsTmux(installTarget),
+        if (!current.found)
+          EnvironmentPlanItem.windowsHarnessCli(installTarget),
+      ];
+    }
+
+    emit(plan: planFor(probe));
+
+    if ((!probe.found || !probe.tmuxReady) &&
+        install &&
+        installTarget != null) {
+      // Installation is reached only from the explicit Automatic setup action.
+      // Recheck calls ensureReady with install:false and cannot enter here.
+      final unattended = await wsl.canInstallUnattended(distro: installTarget);
+      if (unattended) {
+        if (!probe.tmuxReady) {
+          emit(
+            step: EnvironmentStep.tmux,
+            status: EnvironmentStepStatus.running,
+            message: 'Installing tmux in $installTarget…',
+          );
+          final tmuxResult = await wsl.installTmux(
+            distro: installTarget,
+            onOutput: (line) => emit(output: line),
+          );
+          if (tmuxResult.exitCode != 0) {
+            emit(
+              output:
+                  'tmux installer exited ${tmuxResult.exitCode}: ${_resultText(tmuxResult)}',
+            );
+          }
+          probe = await wsl.probeHarness(distro: installTarget);
+          emit(plan: planFor(probe));
+          if (!probe.tmuxReady) {
+            if (!probe.found) {
+              emit(
+                step: EnvironmentStep.harness,
+                status: EnvironmentStepStatus.failed,
+              );
+            }
+            emit(
+              step: EnvironmentStep.tmux,
+              status: EnvironmentStepStatus.failed,
+            );
+            final failure = EnvironmentFailure(
+              step: EnvironmentStep.tmux,
+              title: 'tmux could not be installed in $installTarget',
+              detail:
+                  'Automatic setup stopped before installing the Harness CLI because tmux did not pass verification in $installTarget. Run the command below, then click Recheck.',
+              command: WslRuntime.tmuxCommandForDisplay(distro: installTarget),
+              exitCode: tmuxResult.exitCode,
+            );
+            emit(
+              message: failure.detail,
+              phase: EnvironmentSetupPhase.failed,
+              failure: failure,
+            );
+            return snapshot();
+          }
+        }
+        if (!probe.found) {
+          emit(
+            step: EnvironmentStep.harness,
+            status: EnvironmentStepStatus.running,
+            message: 'Installing the Harness CLI in $installTarget…',
+          );
+          final result = await wsl.installHarness(
+            distro: installTarget,
+            onOutput: (line) => emit(output: line),
+          );
+          if (result.exitCode != 0) {
+            emit(
+              output:
+                  'Harness installer exited ${result.exitCode}: ${_resultText(result)}',
+            );
+          }
+          probe = await wsl.findHarness(distros: usable);
+          emit(plan: planFor(probe));
+        }
+      } else {
+        emit(
+          output: 'The WSL distro needs a password for its package manager, so Harness will not start it unattended.',
+        );
+      }
+    }
+
+    if (probe.found) {
+      // The CLI answered a probe; now make it RUN and prove it, through the
+      // same runner the app will use for every later call (which resolves to
+      // this distro). A distro that has a `harness` file that cannot execute is
+      // not a ready computer.
+      final ProcessResult version;
+      try {
+        version = await runner.runBounded(['version']);
+      } on StateError catch (error) {
+        // _resolveWindows validates the PACKAGED CLI by throwing: a bundle a
+        // partial update, antivirus quarantine, or a deleted cli.js broke must
+        // surface here as a setup failure the wizard can show — not escape to
+        // bootstrap's outer catch, which reads as "unauthenticated" and bounces
+        // the user to the sign-in screen with no hint a reinstall fixes it.
+        emit(
+          step: EnvironmentStep.harness,
+          status: EnvironmentStepStatus.failed,
+          message: 'The packaged Harness CLI could not be loaded.',
+          output: '✗ $error',
+        );
+        emit(
+          message: 'The Harness CLI shipped with this app is missing or damaged.',
+          phase: EnvironmentSetupPhase.failed,
+          failure: EnvironmentFailure(
+            step: EnvironmentStep.harness,
+            title: 'The packaged Harness CLI is missing or damaged',
+            detail: 'The CLI bundled with this app could not be loaded '
+                '($error). Reinstall the app, or restore the folder named in '
+                'the output, then click Recheck.',
+          ),
+        );
+        return snapshot();
+      }
+      if (version.exitCode != 0) {
+        final stderrText = '${version.stderr}'.trim();
+        final timedOut = version.exitCode == 124;
+        emit(
+          step: EnvironmentStep.harness,
+          status: EnvironmentStepStatus.failed,
+          message: timedOut
+              ? 'The Harness CLI in ${probe.distroLabel} did not answer in time.'
+              : 'The Harness CLI in ${probe.distroLabel} did not run.',
+          output:
+              '✗ harness version exited ${version.exitCode}'
+              '${stderrText.isEmpty ? '' : ' · $stderrText'}',
+        );
+        final failed = EnvironmentFailure(
+          step: EnvironmentStep.harness,
+          title: timedOut
+              ? 'The Harness CLI in ${probe.distroLabel} stopped responding'
+              : 'The Harness CLI in ${probe.distroLabel} did not run',
+          detail: timedOut
+              ? 'The CLI was found in ${probe.distroLabel} but did not answer '
+                    'within 30 seconds, so the check stopped waiting and requested '
+                    'that it stop. Try again, or run `harness version` inside that '
+                    'distribution to see what it is stuck on.'
+              : 'A Harness CLI was found in ${probe.distroLabel}, but running it '
+                    'failed. Reinstall it inside that distribution, then click '
+                    'Recheck.',
+          command: WslRuntime.installCommandForDisplay(distro: probe.distro),
+        );
+        emit(
+          message: failed.detail,
+          phase: EnvironmentSetupPhase.failed,
+          failure: failed,
+        );
+        return snapshot();
+      }
+      emit(
+        step: EnvironmentStep.harness,
+        status: EnvironmentStepStatus.ready,
+        message: 'Harness CLI ready in ${probe.distroLabel}.',
+        output:
+            '✓ harness version · ${probe.distroLabel}'
+            '${probe.viaPath ? ' · on PATH' : ' · ~/.local/bin/harness'}',
+      );
+      // tmux is a SEPARATE required component, and "the CLI is there" does not
+      // imply it. The probe above already answered for this same distro.
+      final tmuxReady =
+          probe.tmuxReady || await wsl.hasTmux(distro: probe.distro!);
+      if (tmuxReady) {
+        emit(
+          step: EnvironmentStep.tmux,
+          status: EnvironmentStepStatus.ready,
+          message: 'Terminals are tmux panes inside ${probe.distroLabel}.',
+          output: '✓ tmux · provided by ${probe.distroLabel}',
+        );
+        emit(
+          message: 'All required tools passed verification.',
+          phase: EnvironmentSetupPhase.ready,
+          plan: const [],
+        );
+        return snapshot();
+      }
+      emit(
+        step: EnvironmentStep.tmux,
+        status: EnvironmentStepStatus.failed,
+        message: 'tmux is missing in ${probe.distroLabel}.',
+        output: '✗ tmux · not installed in ${probe.distroLabel}',
+      );
+      final failure = EnvironmentFailure(
+        step: EnvironmentStep.tmux,
+        title: 'tmux is missing in ${probe.distroLabel}',
+        detail:
+            'The Harness CLI is installed in ${probe.distroLabel}, but tmux — the '
+            'backend every terminal session runs in — is not. Install it inside '
+            'that distribution, then click Recheck.',
+        command: WslRuntime.tmuxCommandForDisplay(distro: probe.distro!),
+      );
+      emit(
+        message: failure.detail,
+        phase: install
+            ? EnvironmentSetupPhase.failed
+            : EnvironmentSetupPhase.review,
+        failure: failure,
+      );
+      return snapshot();
+    }
+
+    emit(step: EnvironmentStep.harness, status: EnvironmentStepStatus.failed);
     emit(
       step: EnvironmentStep.tmux,
-      status: EnvironmentStepStatus.unavailable,
-      output:
-          'tmux does not exist on Windows — terminals come from Herdr instead.',
+      status: usable.isEmpty
+          ? EnvironmentStepStatus.unavailable
+          : EnvironmentStepStatus.failed,
     );
+    final failure = _windowsSetupFailure(
+      wslAvailable: wslAvailable,
+      usable: usable,
+      dockerOnly: dockerOnly,
+    );
+    emit(
+      message: failure.detail,
+      phase: install
+          ? EnvironmentSetupPhase.failed
+          : EnvironmentSetupPhase.review,
+      failure: failure,
+    );
+    return snapshot();
+  }
+
+  /// What is missing on this Windows host, as one instruction a person can run.
+  ///
+  /// Each of these is a different problem with different words, because "enable
+  /// WSL2", "install a distribution", and "the distribution you may use has no
+  /// CLI" are three different things to do.
+  EnvironmentFailure _windowsSetupFailure({
+    required bool wslAvailable,
+    required List<String> usable,
+    required List<String> dockerOnly,
+  }) {
+    if (!wslAvailable) {
+      return const EnvironmentFailure(
+        title: 'WSL2 is required on Windows',
+        detail:
+            'The Harness CLI is a Linux program, and this Windows app reaches it '
+            'through WSL2. WSL2 is not installed on this computer yet. Run the '
+            'command below in an elevated PowerShell window, reboot, then click '
+            'Recheck.',
+        command: WslRuntime.enableWslCommand,
+      );
+    }
+    if (usable.isEmpty && dockerOnly.isNotEmpty) {
+      return EnvironmentFailure(
+        title: 'Only Docker\u2019s WSL distributions are installed',
+        detail:
+            'WSL2 answers, but the only distributions on this machine '
+            '(${dockerOnly.join(', ')}) belong to Docker Desktop. Harness will not '
+            'probe or install into those — they host the Docker engine, not a '
+            'development environment. Install a distribution you own, then click '
+            'Recheck.',
+        command: WslRuntime.enableWslCommand,
+      );
+    }
+    if (usable.isEmpty) {
+      return const EnvironmentFailure(
+        title: 'No WSL2 distribution is installed',
+        detail:
+            'WSL2 is enabled but has no distribution. Install one from an '
+            'elevated PowerShell window, reboot, then click Recheck.',
+        command: WslRuntime.enableWslCommand,
+      );
+    }
+    return EnvironmentFailure(
+      title: 'The Harness CLI is not installed in ${usable.first}',
+      detail:
+          'The distribution ${usable.first} answers, but has no Harness CLI. Run '
+          'the command below inside it — the installer provisions the managed '
+          'Node runtime and tmux — then click Recheck. If it asks for a password, '
+          'Harness cannot type it for you.',
+      command: WslRuntime.installCommandForDisplay(distro: usable.first),
+    );
+  }
+
+  /// The steps the Windows setup screen lists, in the order they have to happen.
+  static List<({String title, String detail, String command})>
+  windowsSetupSteps({
+    required bool wslAvailable,
+    required List<String> usable,
+    required List<String> dockerOnly,
+  }) {
+    final installStep = (
+      title: usable.isEmpty
+          ? 'Install the Harness CLI inside Ubuntu'
+          : 'Install the Harness CLI inside ${usable.first}',
+      detail: 'managed Node 20+ · tmux · ~/.harness',
+      // The command must name a real target. With no usable distribution, an unnamed
+      // `wsl -- bash -lc …` would run in the implicit default — exactly the excluded
+      // docker-desktop when that is the only distro (review cycle-6, P1) — so the
+      // no-distro steps point at Ubuntu, the distribution they tell the person to install.
+      command: WslRuntime.installCommandForDisplay(
+        distro: usable.isEmpty ? 'Ubuntu' : usable.first,
+      ),
+    );
+    if (!wslAvailable) {
+      return [
+        (
+          title: 'Enable WSL2',
+          detail: 'Windows feature · elevated PowerShell · reboot',
+          command: WslRuntime.enableWslCommand,
+        ),
+        installStep,
+      ];
+    }
+    if (usable.isEmpty) {
+      return [
+        (
+          title: dockerOnly.isEmpty
+              ? 'Install a WSL2 distribution'
+              : 'Install a distribution Harness may use',
+          detail: dockerOnly.isEmpty
+              ? 'Ubuntu is the supported default'
+              : 'Docker\u2019s distributions (${dockerOnly.join(', ')}) are excluded',
+          command: WslRuntime.enableWslCommand,
+        ),
+        installStep,
+      ];
+    }
+    return [installStep];
   }
 
   Future<bool> _hasWritableHome() async {
