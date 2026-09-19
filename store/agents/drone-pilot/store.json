@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/drone-pilot",
+  "license": "MIT",
+  "tagline": "Fly a seeded canyon course in first person",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/drone-pilot/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Design a slalom course over a canyon floor. Make the autopilot fly a clean lap, then give me manual controls and a trace to compare against it.",
+      "caption": "Vector · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/drone-pilot/starter.jpg"
+    }
+  ]
+}

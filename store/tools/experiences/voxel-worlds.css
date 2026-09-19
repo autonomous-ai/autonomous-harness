@@ -1,0 +1,247 @@
+:root {
+  --bg: #203b37;
+  --ink: #f1f0d9;
+  --muted: #d6e2c8;
+  --line: #ddeacd45;
+  --accent: #d3e4a5;
+}
+.masthead {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  background: linear-gradient(#112b35b0, transparent);
+  border: 0;
+}
+.masthead input,
+.masthead button {
+  background: #18353655;
+}
+.mark {
+  border: 0;
+  font-size: 27px;
+}
+.world-stage {
+  position: relative;
+  height: 100dvh;
+  min-height: 560px;
+  background: #94b6bb;
+  overflow: hidden;
+}
+#world {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  touch-action: none;
+  outline-offset: -3px;
+}
+.world-heading {
+  position: absolute;
+  left: 30px;
+  top: 92px;
+  pointer-events: none;
+  text-shadow: 0 2px 25px #0d282966;
+}
+.world-heading .eyebrow {
+  font-size: 9px;
+}
+.world-heading h1 {
+  font:
+    clamp(50px, 6.5vw, 88px) / 0.91 Georgia,
+    serif;
+  letter-spacing: -0.065em;
+  margin: 14px 0 18px;
+}
+.world-heading > p:last-child {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.world-toolbar {
+  position: absolute;
+  right: 22px;
+  top: 89px;
+  display: grid;
+  gap: 7px;
+}
+.world-toolbar button,
+.build-actions button,
+.world-time button,
+.world-pad button {
+  background: #17352eaa;
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+}
+.build-actions .primary {
+  background: #d3e4a5;
+  color: #203b37;
+}
+.world-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 25px;
+  color: #fff9;
+  pointer-events: none;
+}
+.world-coordinates {
+  position: absolute;
+  left: 25px;
+  bottom: 184px;
+  display: grid;
+  gap: 3px;
+  font:
+    9px/1.6 ui-monospace,
+    monospace;
+  text-shadow: 0 1px 3px #000;
+}
+.world-bottom {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 90%;
+  pointer-events: none;
+}
+.world-bottom > p {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-align: center;
+  text-shadow: 0 1px 4px #000;
+  background: #153e3466;
+  padding: 6px 12px;
+  border-radius: 4px;
+}
+.hotbar {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+.hotbar button {
+  width: 55px;
+  height: 54px;
+  background: #18382fd9;
+  border: 1px solid #ffffff33;
+  border-radius: 5px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  font:
+    8px ui-monospace,
+    monospace;
+}
+.hotbar button[aria-pressed="true"] {
+  border: 2px solid #edebb7;
+  box-shadow: 0 0 20px #b9d98e44;
+}
+.hotbar i {
+  width: 21px;
+  height: 21px;
+  box-shadow: inset -5px -5px #0002;
+  display: block;
+}
+.build-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.world-time {
+  position: absolute;
+  right: 22px;
+  bottom: 184px;
+  display: grid;
+  gap: 7px;
+  width: 125px;
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.world-time input {
+  width: 100%;
+}
+.world-pad {
+  display: none;
+}
+.world-error {
+  position: absolute;
+  inset: 25% 10%;
+  background: #173d36ee;
+  padding: 30px;
+  border-radius: 8px;
+  z-index: 20;
+}
+.overview .world-crosshair {
+  display: none;
+}
+@media (max-width: 750px) {
+  .world-heading {
+    left: 20px;
+    top: 100px;
+  }
+  .world-heading h1 {
+    font-size: 56px;
+  }
+  .world-heading > p:last-child {
+    display: none;
+  }
+  .world-toolbar {
+    top: 90px;
+    right: 14px;
+  }
+  .world-toolbar button {
+    padding: 7px;
+    font-size: 10px;
+  }
+  .world-coordinates {
+    left: 17px;
+    bottom: 190px;
+  }
+  .world-time {
+    right: 14px;
+    bottom: 185px;
+    width: 100px;
+  }
+  .world-pad {
+    position: absolute;
+    display: grid;
+    grid-template-columns: repeat(3, 32px);
+    gap: 4px;
+    left: 16px;
+    bottom: 250px;
+  }
+  .world-pad button {
+    touch-action: none;
+    padding: 6px;
+  }
+  .world-pad button:first-child {
+    grid-column: 2;
+  }
+  .world-pad button:nth-child(2) {
+    grid-column: 1;
+  }
+  .world-pad button:last-child {
+    grid-column: 2;
+  }
+  .world-heading .eyebrow {
+    max-width: 120px;
+  }
+  .hotbar button {
+    width: 47px;
+  }
+  .world-bottom > p {
+    font-size: 9px;
+    max-width: 300px;
+  }
+  .world-bottom {
+    bottom: 16px;
+  }
+}

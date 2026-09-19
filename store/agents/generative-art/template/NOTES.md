@@ -1,0 +1,4 @@
+# Fieldwork workspace
+
+Open `sketch/index.html` in the pane, try the controls, then describe what you want to create.
+Keep your decisions in `sketch/DESIGN.md`. Save the exported result when you are ready.

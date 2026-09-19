@@ -1,0 +1,1152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>VECTOR — Drone Pilot</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  --bg: #152025;
+  --panel: #1e2d32;
+  --ink: #e3ece5;
+  --muted: #9ab0b5;
+  --line: #66838744;
+  --accent: #c7e39b;
+}
+.mark {
+  border-radius: 50%;
+  color: var(--accent);
+}
+.flight-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 24px;
+  padding: 0 28px 28px;
+}
+.cockpit {
+  position: relative;
+  min-height: 530px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #293f45;
+}
+.cockpit > canvas {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  outline-offset: -3px;
+}
+.hud-top {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  justify-content: space-between;
+  font:
+    10px ui-monospace,
+    monospace;
+  letter-spacing: 0.1em;
+  text-shadow: 0 1px 3px #000;
+}
+.hud-bottom {
+  position: absolute;
+  bottom: 20px;
+  left: 25px;
+  right: 25px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.hud-bottom > div {
+  display: grid;
+  text-shadow: 0 2px 5px #000;
+}
+.hud-bottom strong {
+  font:
+    32px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.hud-bottom span {
+  font:
+    9px ui-monospace,
+    monospace;
+  opacity: 0.8;
+}
+.reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 27px;
+  color: #ffffff99;
+  pointer-events: none;
+}
+.gate-hint {
+  position: absolute;
+  top: 56px;
+  left: 20px;
+  font:
+    10px ui-monospace,
+    monospace;
+  color: #d4e9d0;
+}
+.flight-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.flight-actions {
+  display: grid;
+  gap: 8px;
+}
+.flight-actions button {
+  width: 100%;
+}
+#minimap {
+  width: 100%;
+  height: 180px;
+  margin-top: 12px;
+}
+.flight-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 5px;
+  margin-top: 15px;
+}
+.flight-pad button:first-child {
+  grid-column: 2;
+}
+.flight-pad button:nth-child(2) {
+  grid-column: 1;
+}
+.flight-pad button {
+  touch-action: none;
+}
+.flight-summary {
+  position: absolute;
+  inset: 32% 10% auto;
+  background: #142124eb;
+  border: 1px solid #b3cdaf55;
+  padding: 24px;
+  text-align: center;
+  backdrop-filter: blur(8px);
+  font-size: 24px;
+}
+.flight-summary span {
+  font-size: 12px;
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+@media (max-width: 800px) {
+  .flight-layout {
+    grid-template-columns: 1fr;
+  }
+  .cockpit {
+    min-height: 500px;
+  }
+  .flight-aside {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .flight-actions {
+    align-content: start;
+  }
+  .flight-aside .section {
+    margin: 0;
+  }
+}
+@media (max-width: 480px) {
+  .flight-layout {
+    padding: 0 16px 20px;
+  }
+  .cockpit {
+    min-height: 440px;
+  }
+  .hud-top {
+    left: 12px;
+    right: 12px;
+    font-size: 8px;
+  }
+  .hud-bottom {
+    left: 14px;
+    right: 14px;
+  }
+  .hud-bottom strong {
+    font-size: 25px;
+  }
+  .flight-aside {
+    gap: 15px;
+  }
+  .flight-pad {
+    grid-template-columns: repeat(3, 34px);
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">↗</span>VECTOR / FLIGHT</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<section class="intro">
+  <div>
+    <p class="eyebrow">Training ground / Canyon sector 07</p>
+    <h1>Find your line.</h1>
+    <p>
+      Fly it yourself. Study the autopilot. Every gate, correction and split is
+      yours to inspect.
+    </p>
+  </div>
+  <button id="export-flight">Export telemetry ↗</button>
+</section>
+<main class="flight-layout">
+  <section class="cockpit">
+    <canvas
+      id="flight"
+      tabindex="0"
+      aria-label="First person drone flight. Use W and S to climb and descend, A and D to steer, Space to brake."
+    ></canvas>
+    <div class="hud-top">
+      <span
+        ><i class="dot"></i
+        ><span id="flight-mode">READY / AUTOPILOT</span></span
+      ><span id="flight-clock">00:00.00</span>
+    </div>
+    <div class="reticle" aria-hidden="true">＋</div>
+    <div class="gate-hint" id="gate-hint">12 gates. One clean line.</div>
+    <div class="hud-bottom">
+      <div><strong id="velocity">0</strong><span>m/s · airspeed</span></div>
+      <div><strong id="altitude">13.0</strong><span>m · altitude</span></div>
+      <div><strong id="gates">0 / 12</strong><span>gates cleared</span></div>
+    </div>
+    <div id="flight-summary" class="flight-summary" hidden role="status"></div>
+  </section>
+  <aside class="flight-aside">
+    <div class="flight-actions">
+      <button class="primary" id="start-flight">▶ Watch autopilot</button
+      ><button id="manual">Take control</button
+      ><button id="reset-flight">↻ Restart course</button>
+    </div>
+    <section class="section">
+      <p class="eyebrow">The racing line</p>
+      <canvas
+        id="minimap"
+        aria-label="Course overview and recorded flight path"
+      ></canvas>
+    </section>
+    <section class="section">
+      <h3>Flight controls</h3>
+      <p class="small muted">
+        W / S · climb / descend<br />A / D · steer left / right<br />Shift ·
+        boost &nbsp; Space · brake
+      </p>
+      <div class="flight-pad">
+        <button data-axis="y" data-value="1" aria-label="Climb">↑</button
+        ><button data-axis="x" data-value="-1" aria-label="Steer left">←</button
+        ><button data-axis="y" data-value="-1" aria-label="Descend">↓</button
+        ><button data-axis="x" data-value="1" aria-label="Steer right">
+          →
+        </button>
+      </div>
+    </section>
+    <section class="section small muted">
+      <p>
+        Fixed-step browser simulation. The autopilot is a local tracking
+        controller you can inspect and replace.
+      </p>
+      <p style="margin-top: 8px">
+        Flight dynamics are illustrative. This does not control a physical
+        drone.
+      </p>
+    </section>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>60 Hz SIMULATION / SEEDED COURSE</span
+  ><span>PRECISION IS A FEELING YOU CAN LEARN.</span>
+</footer>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+function flightCourse(seed, count = 12) {
+  const r = random(seed, "gates"),
+    phase = r() * 6.28;
+  return Array.from({ length: count }, (_, i) => ({
+    x: Math.sin(i * 0.62 + phase) * 17,
+    y: 13 + Math.sin(i * 0.85 + phase) * 5,
+    z: 45 + i * 42,
+    radius: 6,
+    index: i,
+  }));
+}
+function flightStart() {
+  return {
+    x: 0,
+    y: 13,
+    z: 0,
+    vx: 0,
+    vy: 0,
+    speed: 22,
+    next: 0,
+    passed: 0,
+    missed: 0,
+    steps: 0,
+    time: 0,
+    finished: false,
+    crashed: false,
+  };
+}
+function flightStep(state, course, input = {}, dt = 1 / 60) {
+  const s = { ...state };
+  if (s.finished || s.crashed) return s;
+  const target = course[Math.min(s.next, course.length - 1)];
+  const auto = input.autopilot !== false;
+  const desiredX = auto
+    ? clamp((target.x - s.x) * 2, -15, 15)
+    : (input.x || 0) * 14;
+  const desiredY = auto
+    ? clamp((target.y - s.y) * 2, -10, 10)
+    : (input.y || 0) * 10;
+  s.vx = lerp(s.vx, desiredX, 1 - Math.exp(-dt * 4));
+  s.vy = lerp(s.vy, desiredY, 1 - Math.exp(-dt * 4));
+  s.speed = lerp(
+    s.speed,
+    input.brake ? 7 : input.boost ? 34 : 22,
+    1 - Math.exp(-dt * 3),
+  );
+  s.x = clamp(s.x + s.vx * dt, -65, 65);
+  s.y += s.vy * dt;
+  s.z += s.speed * dt;
+  s.steps++;
+  s.time = s.steps / 60;
+  if (s.y < 1.5) {
+    s.crashed = true;
+    s.y = 1.5;
+    return s;
+  }
+  s.y = Math.min(48, s.y);
+  if (s.next < course.length && s.z >= target.z) {
+    if (Math.hypot(s.x - target.x, s.y - target.y) <= target.radius) s.passed++;
+    else s.missed++;
+    s.next++;
+  }
+  if (s.z >= course.at(-1).z + 25) s.finished = true;
+  return s;
+}
+function flyAutopilot(seed) {
+  const course = flightCourse(seed);
+  let state = flightStart();
+  for (let i = 0; i < 6000 && !state.finished && !state.crashed; i++)
+    state = flightStep(state, course);
+  return state;
+}
+
+</script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let course,
+  state,
+  flightRunning = false,
+  autopilot = true,
+  telemetry = [],
+  keys = {},
+  touchInput = { x: 0, y: 0 },
+  accumulator = 0,
+  previousTime = 0;
+function projectFlight(x, y, z, w, h) {
+  const dz = z - state.z;
+  if (dz < 0.6) return null;
+  const scale = (w * 0.8) / dz;
+  return {
+    x: w / 2 + (x - state.x) * scale,
+    y: h * 0.47 - (y - state.y) * scale,
+    scale,
+  };
+}
+function drawFlight() {
+  if (!state) return;
+  const c = $("#flight"),
+    ctx = c.getContext("2d"),
+    w = c.width,
+    h = c.height;
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#243e4a");
+  sky.addColorStop(0.53, "#849c9a");
+  sky.addColorStop(1, "#576654");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#d7d9af";
+  ctx.beginPath();
+  ctx.arc(w * 0.72, h * 0.23, w * 0.035, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.save();
+  ctx.translate(w / 2, h * 0.5);
+  ctx.rotate(-state.vx * 0.009);
+  ctx.translate(-w / 2, -h * 0.5);
+  for (let layer = 0; layer < 3; layer++) {
+    ctx.fillStyle = ["#708989", "#5d7777", "#476164"][layer];
+    ctx.beginPath();
+    ctx.moveTo(-w, h);
+    for (let i = -1; i <= 24; i++) {
+      const x = (i * w) / 22;
+      const y =
+        h * (0.4 + layer * 0.035) -
+        Math.sin(i * 1.2 + layer * 2.2 + (hash(seed) % 20)) * h * 0.05 -
+        Math.cos(i * 2.7) * h * 0.025;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w * 2, h);
+    ctx.fill();
+  }
+  const base = Math.floor(state.z / 14) * 14;
+  for (let z = base + 250; z > state.z + 1; z -= 14) {
+    const a = projectFlight(-80, 0, z, w, h),
+      b = projectFlight(80, 0, z, w, h);
+    if (!a || !b) continue;
+    ctx.strokeStyle = "#bed3ae24";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  for (let x = -80; x <= 80; x += 10) {
+    const a = projectFlight(x, 0, state.z + 2, w, h),
+      b = projectFlight(x, 0, state.z + 270, w, h);
+    ctx.strokeStyle = "#bed3ae20";
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  // Cliff columns are projected in world space; their parallax makes steering legible.
+  const boxes = [];
+  for (let i = Math.floor(state.z / 28); i < Math.floor(state.z / 28) + 12; i++)
+    for (const side of [-1, 1]) {
+      const r = random(seed, `rock:${i}:${side}`);
+      boxes.push({
+        x: side * (34 + r() * 22),
+        z: i * 28 + 12,
+        y: 12 + r() * 35,
+        width: 8 + r() * 7,
+      });
+    }
+  for (const box of boxes.sort((a, b) => b.z - a.z)) {
+    const p = [
+      projectFlight(box.x - box.width, 0, box.z, w, h),
+      projectFlight(box.x + box.width, 0, box.z, w, h),
+      projectFlight(box.x + box.width, box.y, box.z, w, h),
+      projectFlight(box.x - box.width, box.y, box.z, w, h),
+    ];
+    if (p.some((v) => !v)) continue;
+    ctx.fillStyle = box.x < 0 ? "#344f53" : "#3d5558";
+    ctx.beginPath();
+    p.forEach((v, i) => (i ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#768d7744";
+    ctx.stroke();
+  }
+  for (let i = course.length - 1; i >= state.next; i--) {
+    const gate = course[i],
+      p = projectFlight(gate.x, gate.y, gate.z, w, h);
+    if (!p || gate.z - state.z > 260) continue;
+    const radius = gate.radius * p.scale;
+    ctx.strokeStyle = i === state.next ? "#d9f0a7" : "#bfd9bc66";
+    ctx.lineWidth = Math.max(2, p.scale * 0.35);
+    ctx.shadowColor = "#ddf7af";
+    ctx.shadowBlur = i === state.next ? 9 : 0;
+    ctx.beginPath();
+    for (let j = 0; j <= 8; j++) {
+      const a = Math.PI / 8 + (j * Math.PI) / 4,
+        x = p.x + Math.cos(a) * radius,
+        y = p.y + Math.sin(a) * radius;
+      j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.font = `${clamp(p.scale * 1.8, 10, 50)}px monospace`;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e6f3cc";
+    ctx.fillText(String(i + 1).padStart(2, "0"), p.x, p.y - radius - 8);
+  }
+  ctx.restore();
+  drawMinimap();
+}
+function drawMinimap() {
+  const c = $("#minimap"),
+    ctx = c.getContext("2d"),
+    w = c.width,
+    h = c.height;
+  if (!course) return;
+  ctx.clearRect(0, 0, w, h);
+  const pos = (x, z) => ({
+    x: w / 2 + (x / 90) * w,
+    y: h - 12 - (z / (course.at(-1).z + 30)) * (h - 24),
+  });
+  ctx.strokeStyle = "#94b2a95c";
+  ctx.beginPath();
+  course.forEach((g, i) => {
+    const p = pos(g.x, g.z);
+    i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+  });
+  ctx.stroke();
+  course.forEach((g, i) => {
+    const p = pos(g.x, g.z);
+    ctx.fillStyle = i < state.next ? "#8eac99" : "#cde4a1";
+    ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+  });
+  ctx.strokeStyle = "#dfa578";
+  ctx.beginPath();
+  telemetry.forEach((t, i) => {
+    const p = pos(t.x, t.z);
+    i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+  });
+  ctx.stroke();
+  const p = pos(state.x, state.z);
+  ctx.fillStyle = "#f4eac7";
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+}
+function updateFlightHUD() {
+  $("#velocity").textContent = flightRunning ? state.speed.toFixed(1) : "0";
+  $("#altitude").textContent = state.y.toFixed(1);
+  $("#gates").textContent = `${state.passed} / ${course.length}`;
+  $("#flight-clock").textContent =
+    `${String(Math.floor(state.time / 60)).padStart(2, "0")}:${(state.time % 60).toFixed(2).padStart(5, "0")}`;
+  $("#flight-mode").textContent =
+    `${flightRunning ? "FLYING" : "PAUSED"} / ${autopilot ? "AUTOPILOT" : "MANUAL"}`;
+  $("#gate-hint").textContent =
+    state.next < course.length
+      ? `GATE ${String(state.next + 1).padStart(2, "0")} · ${Math.max(0, course[state.next].z - state.z).toFixed(0)} m · ${state.missed} missed`
+      : "Course complete";
+  $("#start-flight").textContent = flightRunning
+    ? "Ⅱ Pause flight"
+    : autopilot
+      ? "▶ Watch autopilot"
+      : "▶ Resume flight";
+  $("#manual").textContent = autopilot ? "Take control" : "Engage autopilot";
+}
+function resetFlight() {
+  course = flightCourse(seed);
+  state = flightStart();
+  telemetry = [{ ...state }];
+  flightRunning = false;
+  accumulator = 0;
+  keys = {};
+  $("#flight-summary").hidden = true;
+  updateFlightHUD();
+  drawFlight();
+}
+$("#start-flight").onclick = () => {
+  if (state.finished || state.crashed) resetFlight();
+  flightRunning = !flightRunning;
+  updateFlightHUD();
+  $("#flight").focus();
+};
+$("#manual").onclick = () => {
+  autopilot = !autopilot;
+  flightRunning = true;
+  updateFlightHUD();
+  $("#flight").focus();
+};
+$("#reset-flight").onclick = resetFlight;
+addEventListener("keydown", (e) => {
+  if (editable(e.target)) return;
+  if (
+    [
+      "w",
+      "a",
+      "s",
+      "d",
+      "arrowup",
+      "arrowdown",
+      "arrowleft",
+      "arrowright",
+      " ",
+      "shift",
+    ].includes(e.key.toLowerCase())
+  ) {
+    e.preventDefault();
+    keys[e.key.toLowerCase()] = true;
+  }
+});
+addEventListener("keyup", (e) => {
+  keys[e.key.toLowerCase()] = false;
+});
+addEventListener("blur", () => {
+  keys = {};
+  touchInput = { x: 0, y: 0 };
+});
+$$(".flight-pad button").forEach((b) => {
+  b.onpointerdown = (e) => {
+    e.preventDefault();
+    autopilot = false;
+    flightRunning = true;
+    touchInput[b.dataset.axis] = +b.dataset.value;
+    b.setPointerCapture(e.pointerId);
+    updateFlightHUD();
+  };
+  b.onpointerup = b.onpointercancel = () => {
+    touchInput[b.dataset.axis] = 0;
+  };
+});
+$("#export-flight").onclick = () =>
+  saveFile(
+    `vector-${hash(seed)}.json`,
+    JSON.stringify(
+      {
+        seed,
+        mode: autopilot ? "autopilot" : "manual",
+        step: 1 / 60,
+        course,
+        telemetry,
+        result: state,
+      },
+      null,
+      2,
+    ),
+  );
+function flightFrame(time) {
+  const delta = Math.min(0.1, (time - previousTime) / 1000 || 0);
+  previousTime = time;
+  if (flightRunning && !document.hidden) {
+    accumulator += delta;
+    while (accumulator >= 1 / 60) {
+      state = flightStep(state, course, {
+        autopilot,
+        x:
+          touchInput.x +
+          (keys.d || keys.arrowright ? 1 : 0) -
+          (keys.a || keys.arrowleft ? 1 : 0),
+        y:
+          touchInput.y +
+          (keys.w || keys.arrowup ? 1 : 0) -
+          (keys.s || keys.arrowdown ? 1 : 0),
+        brake: keys[" "],
+        boost: keys.shift,
+      });
+      accumulator -= 1 / 60;
+      if (state.steps % 12 === 0) telemetry.push({ ...state });
+      if (state.finished || state.crashed) {
+        flightRunning = false;
+        $("#flight-summary").hidden = false;
+        $("#flight-summary").replaceChildren(
+          document.createTextNode(
+            state.crashed
+              ? "Back to the flight line."
+              : state.missed
+                ? "A line to improve."
+                : "A clean run.",
+          ),
+        );
+        const span = document.createElement("span");
+        span.textContent = `${state.passed} / ${course.length} gates · ${state.time.toFixed(2)} s · ${state.missed} missed`;
+        $("#flight-summary").append(span);
+        break;
+      }
+    }
+    updateFlightHUD();
+    drawFlight();
+  }
+  requestAnimationFrame(flightFrame);
+}
+fitCanvas($("#flight"), drawFlight);
+fitCanvas($("#minimap"), drawMinimap);
+addEventListener("seedchange", resetFlight);
+resetFlight();
+requestAnimationFrame(flightFrame);
+ready();
+
+</script></body></html>

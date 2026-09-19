@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/creative-direction",
+  "name": "Creative Direction",
+  "category": "Design",
+  "author": "Autonomous",
+  "description": "Build a coherent visual identity with coordinated posters, typography and palettes. Compare art directions, lock colors, customize a name, and export SVG posters and design tokens.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "board/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
+  "verdict": ".harness/verdict.json"
+}

@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>FORME — Creative Direction</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  color-scheme: light;
+  --bg: #eeeae2;
+  --panel: #f6f2e9;
+  --ink: #282c29;
+  --muted: #6e746b;
+  --line: #2b32292a;
+  --accent: #303e32;
+}
+button.primary {
+  color: #eeeae2;
+}
+.mark {
+  background: var(--ink);
+  color: var(--bg);
+  border: 0;
+}
+.intro {
+  padding-bottom: 28px;
+}
+.intro h1 {
+  font:
+    clamp(34px, 5vw, 64px) / 1.02 Georgia,
+    serif;
+  letter-spacing: -0.06em;
+}
+.direction-layout {
+  padding: 0 28px 30px;
+  max-width: 1440px;
+  margin: auto;
+}
+.direction-nav {
+  display: flex;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 26px;
+  gap: 24px;
+  overflow: auto;
+}
+.direction-nav button {
+  border: 0;
+  border-radius: 0;
+  padding: 17px 0;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.direction-nav button[aria-pressed="true"] {
+  box-shadow: inset 0 -2px var(--ink);
+  color: var(--ink);
+}
+.brand-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(240px, 0.7fr);
+  gap: 40px;
+}
+.poster {
+  padding: 24px;
+  background: #d9d7cc;
+  min-width: 0;
+}
+.poster svg {
+  display: block;
+  width: 100%;
+  max-height: 820px;
+  filter: drop-shadow(0 7px 10px #0002);
+}
+.brand-details {
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.brand-details h2 {
+  font:
+    32px/1.15 Georgia,
+    serif;
+}
+.brand-details > p:not(.eyebrow) {
+  font-size: 13px;
+  max-width: 380px;
+}
+.brand-details .field {
+  margin: 3px 0;
+}
+.palette-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  gap: 8px;
+}
+.palette-head button {
+  font-size: 10px;
+  padding: 5px 8px;
+}
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  height: 76px;
+}
+.swatches button {
+  border: 0;
+  border-radius: 0;
+  padding: 7px 3px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.type-spec {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 5px;
+}
+.specimen {
+  font-size: 46px;
+  line-height: 1.05;
+  margin: 10px 0;
+  letter-spacing: -0.04em;
+}
+.brand-card {
+  padding: 24px;
+  min-height: 150px;
+  box-shadow: 0 3px 12px #0001;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.brand-card .eyebrow {
+  color: inherit;
+  opacity: 0.8;
+}
+.brand-card h3 {
+  font-size: 27px;
+  margin: 15px 0;
+}
+.brand-card > span:last-child {
+  font-size: 10px;
+}
+.direction-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-top: 1px solid var(--line);
+  margin-top: 26px;
+  padding-top: 20px;
+}
+.direction-foot p {
+  max-width: 360px;
+}
+@media (max-width: 800px) {
+  .brand-grid {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+  .brand-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .brand-details > h2,
+  .brand-details > p,
+  .brand-details > .palette-head,
+  .swatches,
+  #contrast {
+    grid-column: 1/-1;
+  }
+  .type-spec {
+    margin: 0;
+    border: 0;
+  }
+  .brand-card {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 480px) {
+  .direction-layout {
+    padding: 0 16px 24px;
+  }
+  .direction-nav {
+    gap: 18px;
+  }
+  .brand-details {
+    display: flex;
+  }
+  .poster {
+    padding: 12px;
+  }
+  .direction-foot {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">F</span>FORME</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<section class="intro">
+  <div>
+    <p class="eyebrow">Independent identities / Direction 01—03</p>
+    <h1>An identity.<br />A point of view.</h1>
+  </div>
+  <div class="actions">
+    <button id="tokens">Export tokens</button
+    ><button id="poster-export" class="primary">Export poster ↗</button>
+  </div>
+</section>
+<main class="direction-layout">
+  <nav class="direction-nav" id="directions" aria-label="Art direction"></nav>
+  <div class="brand-grid">
+    <section id="poster" class="poster" aria-label="Brand poster"></section>
+    <aside class="brand-details">
+      <p class="eyebrow" id="direction-name"></p>
+      <h2 id="direction-line"></h2>
+      <p id="rationale" class="muted"></p>
+      <label class="field"
+        ><span>Your name on it</span
+        ><input id="brand-name" maxlength="28" aria-label="Brand name"
+      /></label>
+      <div class="palette-head">
+        <h3>The palette</h3>
+        <button id="lock-palette" aria-pressed="false">Lock palette</button>
+      </div>
+      <div id="swatches" class="swatches"></div>
+      <p class="small muted" id="contrast"></p>
+      <div class="type-spec">
+        <p class="eyebrow">Type in context</p>
+        <p class="specimen" id="type-specimen">Aa Bb Cc<br />0123456789</p>
+        <span class="small muted" id="type-name"></span>
+      </div>
+      <div class="brand-card" id="brand-card">
+        <span class="eyebrow">The small things matter</span>
+        <h3 id="card-name"></h3>
+        <span>Objects. Places. Possibilities.</span>
+      </div>
+    </aside>
+  </div>
+  <div class="direction-foot">
+    <p class="eyebrow" id="mood"></p>
+    <p class="small muted">
+      A working identity: a poster, a type system, a palette and the reasoning
+      behind them.
+    </p>
+  </div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+const directions = [
+  {
+    name: "Coastal modern",
+    brand: "LOW TIDE",
+    line: "Less noise. More horizon.",
+    note: "Mineral tones, generous space and a quietly expressive serif. A direction for places you want to stay.",
+    colors: ["#163f3c", "#f1ebd9", "#d16a3d", "#b4c8b0", "#d9bb8d"],
+    type: "Georgia",
+    mood: "Warm / deliberate / grounded",
+  },
+  {
+    name: "Electric editorial",
+    brand: "OFF HOURS",
+    line: "For the hours that are yours.",
+    note: "Acid yellow interrupts midnight ink. Dense typography and an oversized orbit turn every application into a signal.",
+    colors: ["#1d2448", "#f2eee4", "#d5ef53", "#b3aff0", "#d85a43"],
+    type: "Arial",
+    mood: "Direct / restless / independent",
+  },
+  {
+    name: "Botanical archive",
+    brand: "FERN & FORM",
+    line: "A slower kind of growth.",
+    note: "Botanical silhouettes and archival paper meet deep wine. An old-world serif gives the living forms room to breathe.",
+    colors: ["#4e2834", "#f0e7d5", "#a1b287", "#d5a093", "#b7af7e"],
+    type: "Georgia",
+    mood: "Organic / curious / considered",
+  },
+];
+function directionModel(seed, index, lockedColors) {
+  const choice =
+    index ?? Math.floor(random(seed, "direction")() * directions.length);
+  return {
+    ...directions[choice],
+    colors: lockedColors ?? [...directions[choice].colors],
+    index: choice,
+    seed: String(seed),
+    angle: random(seed, "layout")() * 80 - 40,
+  };
+}
+function luminance(hex) {
+  const c = [1, 3, 5]
+    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((n) => (n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4));
+  return c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+}
+function contrast(a, b) {
+  const x = luminance(a),
+    y = luminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+function xml(value) {
+  return String(value).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&apos;",
+      })[c],
+  );
+}
+function brandSVG(model, brand = model.brand) {
+  const [ink, paper, accent, secondary] = model.colors;
+  const motif =
+    model.index === 2
+      ? Array.from(
+          { length: 11 },
+          (_, i) =>
+            `<ellipse cx="${480 + Math.sin(i * 2.4) * 130}" cy="${190 + i * 39}" rx="125" ry="34" fill="${i % 2 ? accent : secondary}" transform="rotate(${i % 2 ? -35 : 35} ${480 + Math.sin(i * 2.4) * 130} ${190 + i * 39})"/>`,
+        ).join("")
+      : `<circle cx="520" cy="360" r="210" fill="${accent}"/>` +
+        Array.from(
+          { length: 18 },
+          (_, i) =>
+            `<ellipse cx="510" cy="390" rx="${80 + i * 9}" ry="${205 - i * 8}" fill="none" stroke="${model.index === 0 ? ink : secondary}" stroke-width="2" transform="rotate(${model.angle} 510 390)"/>`,
+        ).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900"><rect width="800" height="900" fill="${paper}"/><text x="52" y="62" fill="${ink}" font-family="Arial,sans-serif" font-size="13" letter-spacing="5">INDEPENDENT BY NATURE / ${xml(model.seed.slice(0, 12))}</text>${motif}<text x="50" y="740" textLength="695" lengthAdjust="spacingAndGlyphs" fill="${ink}" font-family="${model.type},serif" font-size="88" font-weight="${model.index === 1 ? 700 : 400}">${xml(brand.slice(0, 28))}</text><line x1="52" y1="785" x2="748" y2="785" stroke="${ink}"/><text x="52" y="827" fill="${ink}" font-family="Arial,sans-serif" font-size="20">${xml(model.line)}</text><text x="52" y="864" fill="${ink}" font-family="monospace" font-size="10" letter-spacing="2">AN EXPLORATION BY FORME — ${xml(model.name.toUpperCase())}</text></svg>`;
+}
+
+</script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let direction,
+  directionIndex,
+  lockedColors,
+  customBrand = "";
+function renderDirection() {
+  direction = directionModel(seed, directionIndex, lockedColors);
+  const name = customBrand || direction.brand;
+  $("#poster").innerHTML = brandSVG(direction, name);
+  $("#direction-name").textContent =
+    `DIRECTION 0${direction.index + 1} / ${direction.name}`;
+  $("#direction-line").textContent = direction.line;
+  $("#rationale").textContent = direction.note;
+  $("#brand-name").value = name;
+  $("#type-specimen").style.fontFamily = direction.type;
+  $("#type-name").textContent = `${direction.type} display / system sans body`;
+  $("#mood").textContent = direction.mood;
+  $("#swatches").replaceChildren();
+  direction.colors.forEach((color) => {
+    const b = document.createElement("button");
+    b.style.background = color;
+    b.style.color =
+      contrast(color, "#ffffff") > contrast(color, "#151515")
+        ? "#ffffff"
+        : "#151515";
+    b.textContent = color.toUpperCase();
+    b.title = `Show color ${color}`;
+    b.onclick = () =>
+      toast(`${color.toUpperCase()} — included in your exported tokens`);
+    $("#swatches").append(b);
+  });
+  const ratio = contrast(direction.colors[0], direction.colors[1]);
+  $("#contrast").textContent =
+    `Ink on paper: ${ratio.toFixed(1)}:1 contrast · ${ratio >= 7 ? "AAA" : ratio >= 4.5 ? "AA" : "display only"}`;
+  $("#brand-card").style.background = direction.colors[0];
+  $("#brand-card").style.color = direction.colors[1];
+  $("#card-name").textContent = name;
+  $("#card-name").style.fontFamily = direction.type;
+  $$("#directions button").forEach((b, i) =>
+    b.setAttribute("aria-pressed", i === direction.index),
+  );
+}
+directions.forEach((d, i) => {
+  const b = document.createElement("button");
+  b.textContent = `0${i + 1} / ${d.name}`;
+  b.onclick = () => {
+    directionIndex = i;
+    renderDirection();
+  };
+  $("#directions").append(b);
+});
+$("#brand-name").addEventListener("input", (e) => {
+  customBrand = e.target.value;
+  renderDirection();
+});
+$("#lock-palette").onclick = () => {
+  lockedColors = lockedColors ? undefined : [...direction.colors];
+  $("#lock-palette").setAttribute("aria-pressed", !!lockedColors);
+  $("#lock-palette").textContent = lockedColors
+    ? "Palette locked"
+    : "Lock palette";
+};
+$("#tokens").onclick = () =>
+  saveFile(
+    `forme-${hash(seed)}.json`,
+    JSON.stringify(
+      {
+        seed,
+        brand: customBrand || direction.brand,
+        direction: direction.name,
+        colors: Object.fromEntries(
+          ["ink", "paper", "accent", "secondary", "detail"].map((key, i) => [
+            key,
+            direction.colors[i],
+          ]),
+        ),
+        typography: { display: direction.type, body: "system-ui" },
+        rationale: direction.note,
+      },
+      null,
+      2,
+    ),
+  );
+$("#poster-export").onclick = () =>
+  saveFile(
+    `forme-${hash(seed)}.svg`,
+    brandSVG(direction, customBrand || direction.brand),
+    "image/svg+xml",
+  );
+addEventListener("seedchange", () => {
+  directionIndex = undefined;
+  renderDirection();
+});
+renderDirection();
+ready();
+
+</script></body></html>

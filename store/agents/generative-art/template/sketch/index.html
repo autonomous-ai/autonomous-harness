@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>FIELDWORK — Generative Art</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  color-scheme: light;
+  --bg: #e9e8e1;
+  --panel: #f5f3eb;
+  --line: #242d292a;
+  --ink: #26342d;
+  --muted: #646d62;
+  --accent: #314b3a;
+}
+button.primary {
+  color: #f4f1e7;
+}
+.mark {
+  border-radius: 50%;
+}
+.intro h1 {
+  font-weight: 450;
+}
+.intro em {
+  font-family: Georgia, serif;
+  font-weight: 400;
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 230px;
+  max-width: 1320px;
+  margin: auto;
+  gap: 40px;
+}
+.intro {
+  max-width: 1320px;
+  margin: auto;
+}
+.paper-stage {
+  background: #dbdcd4;
+  padding: 30px 50px 18px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  min-width: 0;
+}
+.paper-stage > canvas {
+  width: min(100%, 620px);
+  aspect-ratio: 4/5;
+  height: auto;
+  box-shadow: 0 13px 28px #28302620;
+}
+.caption {
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 18px;
+  gap: 8px;
+}
+.palettes {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+.palettes button {
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 3px solid var(--bg);
+  outline: 1px solid var(--line);
+}
+.palettes button[aria-pressed="true"] {
+  outline: 2px solid var(--ink);
+}
+.editions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.editions button {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.editions canvas {
+  width: 100%;
+}
+.editions span {
+  font:
+    9px ui-monospace,
+    monospace;
+  display: block;
+  margin-top: 6px;
+}
+.side h2 {
+  font:
+    27px/1.15 Georgia,
+    serif;
+}
+.seed-form button:hover {
+  background: #0000000b;
+}
+.actions select {
+  background: #e9e8e1;
+  font-size: 12px;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .paper-stage {
+    padding: 24px 32px 16px;
+  }
+}
+@media (max-width: 480px) {
+  .paper-stage {
+    padding: 18px;
+  }
+  .intro {
+    padding-top: 22px;
+  }
+  .intro h1 {
+    font-size: 42px;
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">≋</span>FIELDWORK</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<section class="intro">
+  <div>
+    <p class="eyebrow">A study in controlled disorder · 001</p>
+    <h1>Follow the<br /><em>unexpected.</em></h1>
+    <p>
+      A field of lines. A small set of rules. An edition that belongs to you.
+    </p>
+  </div>
+  <div class="actions">
+    <select id="export-size" aria-label="Export resolution">
+      <option value="1600">1600 × 2000</option>
+      <option value="3200">3200 × 4000</option></select
+    ><button class="primary" id="export">Export print ↗</button>
+  </div>
+</section>
+<main class="workspace">
+  <section class="paper-stage">
+    <canvas id="art" aria-label="Seeded generative artwork"></canvas>
+    <div class="caption">
+      <span>FIELD NOTES / <span id="edition"></span></span
+      ><span id="palette-name"></span>
+    </div>
+  </section>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">The system</p>
+      <h2 style="margin-top: 10px">Make a little<br />room for chance.</h2>
+      <label class="field"
+        ><span>Technique</span
+        ><select id="mode">
+          <option value="contours">01 / Contour field</option>
+          <option value="dunes">02 / Dune study</option>
+          <option value="orbits">03 / Orbital motion</option>
+        </select></label
+      ><label class="field"
+        ><span>Line density <output id="density-value">120</output></span
+        ><input
+          id="density"
+          type="range"
+          min="40"
+          max="200"
+          value="120" /></label
+      ><label class="field"
+        ><span>Field tension <output id="curl-value">55</output></span
+        ><input id="curl" type="range" min="0" max="100" value="55"
+      /></label>
+      <div
+        id="palettes"
+        class="palettes"
+        role="group"
+        aria-label="Palette"
+      ></div>
+    </div>
+    <div class="section">
+      <h3>Nearby possibilities</h3>
+      <div class="editions" id="editions"></div>
+      <p class="small muted" style="margin-top: 12px">
+        Every seed is a composition. Return to a seed to find it exactly as you
+        left it.
+      </p>
+    </div>
+    <div class="section small muted">
+      Prints use the same geometry at every size. Color and rasterization can
+      vary between devices.
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>DETERMINISTIC BY DESIGN</span
+  ><span>CANVAS / NO EXTERNAL ASSETS</span>
+</footer>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+const artPalettes = [
+  {
+    name: "Estuary",
+    paper: "#f1ecdf",
+    colors: ["#203c36", "#527863", "#9cab86", "#d87746", "#e2b65f"],
+  },
+  {
+    name: "Ultramarine",
+    paper: "#efebe2",
+    colors: ["#132d6c", "#355bb5", "#6e99b3", "#e24f32", "#d59b75"],
+  },
+  {
+    name: "After the rain",
+    paper: "#e9e6ee",
+    colors: ["#332852", "#79658d", "#ac8992", "#cf805c", "#354d52"],
+  },
+  {
+    name: "Ember",
+    paper: "#201e23",
+    colors: ["#edbe7f", "#e67a53", "#ad4248", "#69787b", "#ad9a83"],
+  },
+];
+function artModel(
+  seed,
+  { density = 120, curl = 55, mode = "contours", palette } = {},
+) {
+  const rnd = random(seed, "composition");
+  return {
+    seed: String(seed),
+    density,
+    curl,
+    mode,
+    palette:
+      palette ?? Math.floor(random(seed, "palette")() * artPalettes.length),
+    phases: Array.from({ length: 5 }, () => rnd() * Math.PI * 2),
+    frequency: 1.4 + rnd() * 1.8,
+    tilt: (rnd() - 0.5) * 0.22,
+  };
+}
+function artPaths(model) {
+  const { density, curl, phases: p, frequency: f, mode } = model;
+  const paths = [];
+  for (let i = 0; i < density; i++) {
+    const u = i / (density - 1),
+      path = [];
+    for (let j = 0; j <= 140; j++) {
+      const v = j / 140;
+      if (mode === "orbits") {
+        const theta = v * Math.PI * 2;
+        const radius =
+          50 + u * 385 + Math.sin(theta * 3 + p[0]) * (curl * 0.6) * u;
+        path.push([
+          500 + Math.cos(theta) * radius,
+          580 + Math.sin(theta) * radius * 1.25,
+        ]);
+      } else {
+        const wave =
+          Math.sin(v * f * Math.PI + p[0] + u * 2.6) * Math.sin(u * Math.PI);
+        const wave2 =
+          Math.cos(v * Math.PI * 3 + p[1]) * Math.sin(u * Math.PI) * 0.27;
+        if (mode === "dunes")
+          path.push([
+            70 + v * 860,
+            170 + u * 890 + (wave + wave2) * curl * 2.1,
+          ]);
+        else
+          path.push([
+            80 + u * 840 + (wave + wave2) * curl * 2.2,
+            80 + v * 1070 + (u - 0.5) * model.tilt * 400,
+          ]);
+      }
+    }
+    paths.push(path);
+  }
+  return paths;
+}
+
+</script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let artwork, paletteOverride;
+function drawArt(canvas, model) {
+  const ctx = canvas.getContext("2d"),
+    p = artPalettes[model.palette];
+  ctx.setTransform(canvas.width / 1000, 0, 0, canvas.height / 1250, 0, 0);
+  ctx.fillStyle = p.paper;
+  ctx.fillRect(0, 0, 1000, 1250);
+  const paths = artPaths(model),
+    colors = random(model.seed, "line-colors");
+  // Batch by ink color. Hundreds of tiny GPU submissions otherwise dominate the redraw.
+  const inks = p.colors.map(() => new Path2D());
+  paths.forEach((points, i) => {
+    const index = Math.floor(
+      (((i / paths.length) * 3 + colors() * 0.45) % 1) * p.colors.length,
+    );
+    points.forEach(([x, y], j) =>
+      j ? inks[index].lineTo(x, y) : inks[index].moveTo(x, y),
+    );
+  });
+  ctx.lineWidth = model.mode === "dunes" ? 2.6 : 2.1;
+  ctx.globalAlpha = 0.83;
+  inks.forEach((path, i) => {
+    ctx.strokeStyle = p.colors[i];
+    ctx.stroke(path);
+  });
+  ctx.globalAlpha = 1;
+  // Seeded paper texture in one draw, in logical coordinates at every export resolution.
+  const grain = random(model.seed, "paper");
+  const texture = document.createElement("canvas");
+  texture.width = texture.height = 128;
+  const textureContext = texture.getContext("2d");
+  const pixels = textureContext.createImageData(128, 128);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    pixels.data[i] = model.palette === 3 ? 255 : 65;
+    pixels.data[i + 1] = model.palette === 3 ? 255 : 55;
+    pixels.data[i + 2] = model.palette === 3 ? 255 : 46;
+    pixels.data[i + 3] = grain() > 0.91 ? 16 : 0;
+  }
+  textureContext.putImageData(pixels, 0, 0);
+  ctx.fillStyle = ctx.createPattern(texture, "repeat");
+  ctx.fillRect(0, 0, 1000, 1250);
+  ctx.fillStyle = p.colors[0];
+  ctx.font = "9px monospace";
+  ctx.fillText(
+    `FIELDWORK   /   ${model.seed.slice(0, 26)}   /   ${model.mode.toUpperCase()}`,
+    70,
+    1208,
+  );
+}
+function controls() {
+  return {
+    density: +$("#density").value,
+    curl: +$("#curl").value,
+    mode: $("#mode").value,
+    palette: paletteOverride,
+  };
+}
+function renderArt() {
+  artwork = artModel(seed, controls());
+  $("#density-value").value = artwork.density;
+  $("#curl-value").value = artwork.curl;
+  $("#edition").textContent = seed;
+  $("#palette-name").textContent = artPalettes[artwork.palette].name;
+  drawArt($("#art"), artwork);
+  $$("#palettes button").forEach((b, i) =>
+    b.setAttribute("aria-pressed", i === artwork.palette),
+  );
+  $("#editions").replaceChildren();
+  for (let i = 1; i <= 3; i++) {
+    const next = /^\d{1,9}$/.test(seed) ? String(+seed + i) : `${seed}.${i}`;
+    const button = document.createElement("button"),
+      c = document.createElement("canvas"),
+      label = document.createElement("span");
+    c.width = 160;
+    c.height = 200;
+    label.textContent = next.slice(0, 9);
+    button.setAttribute("aria-label", `Explore seed ${next}`);
+    button.append(c, label);
+    button.onclick = () => setSeed(next);
+    $("#editions").append(button);
+    drawArt(c, artModel(next, controls()));
+  }
+}
+artPalettes.forEach((p, i) => {
+  const b = document.createElement("button");
+  b.title = p.name;
+  b.setAttribute("aria-label", p.name);
+  b.style.background = `conic-gradient(${p.colors.map((c, j) => `${c} ${j * 20}% ${(j + 1) * 20}%`).join(",")})`;
+  b.onclick = () => {
+    paletteOverride = i;
+    renderArt();
+  };
+  $("#palettes").append(b);
+});
+$("#art").width = 1000;
+$("#art").height = 1250;
+for (const id of ["density", "curl", "mode"])
+  $("#" + id).addEventListener("input", renderArt);
+$("#export").onclick = () => {
+  const c = document.createElement("canvas");
+  c.width = +$("#export-size").value;
+  c.height = c.width * 1.25;
+  drawArt(c, artwork);
+  canvasPNG(c, `fieldwork-${hash(seed)}-${artwork.mode}.png`);
+  toast("Your print is ready.");
+};
+addEventListener("seedchange", renderArt);
+renderArt();
+ready();
+
+</script></body></html>

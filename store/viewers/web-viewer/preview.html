@@ -1,34 +1,473 @@
 <!doctype html>
 <html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Web Viewer</title>
-<style>
-  :root { color-scheme: light dark; font: 12px system-ui, sans-serif; }
-  body { margin: 0; height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: light-dark(#f4f4f4, #252525); }
-  #file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #status { margin-left: auto; opacity: .65; white-space: nowrap; }
-  button { color: inherit; background: transparent; border: 1px solid #8886; border-radius: 5px; padding: 4px 8px; cursor: pointer; }
-  button:hover { background: #8882; }
-  iframe { width: 100%; flex: 1; min-height: 0; border: 0; }
-</style>
-<header><span id="file"></span><span id="status" role="status">Connecting…</span><button id="reload">Reload</button></header>
-<iframe id="preview" title="Workspace preview" sandbox="allow-scripts"></iframe>
-<script>
-  const requested = new URLSearchParams(location.search).get('file') || 'index.html';
-  const parts = requested.split(/[\\/]/);
-  const file = parts.some(part => !part || part.startsWith('.')) ? 'index.html' : requested;
-  const frame = document.querySelector('#preview');
-  const status = document.querySelector('#status');
-  document.querySelector('#file').textContent = file;
-  const reload = () => { frame.src = '/files/' + file.split('/').map(encodeURIComponent).join('/') + '?v=' + Date.now(); };
-  document.querySelector('#reload').addEventListener('click', reload);
-  reload();
-  const events = new EventSource('/events');
-  events.onopen = () => { status.textContent = 'Live'; reload(); };
-  events.onerror = () => { status.textContent = 'Reconnecting…'; };
-  events.addEventListener('change', reload);
-  events.addEventListener('watch-error', () => { status.textContent = 'Use Reload to see changes'; });
-</script>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Web Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        font:
+          12px/1.4 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        --bg: light-dark(#f1f2ee, #121615);
+        --ink: light-dark(#23312a, #e4eae4);
+        --line: light-dark(#d4dbd3, #354139);
+        --muted: light-dark(#627167, #9aaba0);
+        --accent: light-dark(#276244, #b9d998);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      header {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+        min-height: 45px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+      .logo {
+        color: var(--accent);
+        font-size: 21px;
+      }
+      .file {
+        font:
+          11px ui-monospace,
+          monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 32vw;
+      }
+      .spacer {
+        flex: 1;
+      }
+      button,
+      select,
+      a {
+        color: inherit;
+        font: inherit;
+        background: transparent;
+        border: 1px solid var(--line);
+        padding: 5px 9px;
+        border-radius: 5px;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover,
+      a:hover {
+        background: light-dark(#ffffff, #253029);
+      }
+      button:focus-visible,
+      a:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      select {
+        background: var(--bg);
+      }
+      #status {
+        color: var(--muted);
+        font-size: 10px;
+        white-space: nowrap;
+        display: flex;
+        gap: 5px;
+        align-items: center;
+      }
+      #status::before {
+        content: "";
+        display: block;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      #status[data-state="live"] {
+        color: var(--accent);
+      }
+      #status[data-state="error"] {
+        color: light-dark(#994e1f, #efb58d);
+      }
+      .stage {
+        flex: 1;
+        min-height: 0;
+        position: relative;
+        display: flex;
+        justify-content: center;
+        background: light-dark(#dce0d9, #080d0b);
+        overflow: hidden;
+      }
+      iframe {
+        height: 100%;
+        width: 100%;
+        border: 0;
+        background: var(--bg);
+        transition: width 0.18s ease;
+      }
+      .stage[data-size="phone"] iframe {
+        width: min(100%, 390px);
+      }
+      .stage[data-size="tablet"] iframe {
+        width: min(100%, 768px);
+      }
+      #empty {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        text-align: center;
+        gap: 14px;
+        padding: 30px;
+        background: var(--bg);
+      }
+      #empty .symbol {
+        font-size: 36px;
+        color: var(--accent);
+      }
+      #empty h1 {
+        font-size: 20px;
+        letter-spacing: -0.02em;
+        font-weight: 500;
+        margin: 0;
+      }
+      #empty p {
+        max-width: 430px;
+        color: var(--muted);
+        margin: 0;
+        line-height: 1.7;
+      }
+      #empty button {
+        justify-self: center;
+      }
+      #diagnostics {
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--line);
+        max-height: 140px;
+        overflow: auto;
+        font:
+          11px/1.7 ui-monospace,
+          monospace;
+      }
+      #diagnostics p {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      #errors {
+        color: light-dark(#9b4423, #e9a881);
+      }
+      @media (max-width: 620px) {
+        header {
+          gap: 6px;
+          padding: 7px 8px;
+        }
+        .file {
+          max-width: 26vw;
+        }
+        #viewport,
+        #open {
+          display: none;
+        }
+        #status {
+          font-size: 9px;
+        }
+        button {
+          font-size: 11px;
+          padding: 5px 7px;
+        }
+      }
+      @media (max-width: 390px) {
+        .brand {
+          display: none;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        iframe {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="brand"
+        ><span class="logo" aria-hidden="true">▧</span
+        ><span class="file" id="file"></span></span
+      ><span id="status" role="status" data-state="loading">Connecting</span
+      ><span class="spacer"></span
+      ><button
+        id="errors"
+        hidden
+        aria-expanded="false"
+        aria-controls="diagnostics"
+      >
+        0 errors</button
+      ><select id="viewport" aria-label="Preview width">
+        <option value="fit">Fit</option>
+        <option value="tablet">Tablet</option>
+        <option value="phone">Phone</option></select
+      ><button
+        id="auto"
+        aria-pressed="true"
+        title="Pause automatic reloads to keep interacting while files change"
+      >
+        Live reload</button
+      ><a
+        id="open"
+        target="_blank"
+        rel="noopener"
+        title="Open artifact in a new tab"
+        >Open ↗</a
+      ><button id="reload" title="Reload preview (R)">↻ Reload</button>
+    </header>
+    <div id="diagnostics" hidden aria-label="Artifact errors"></div>
+    <main class="stage" id="stage" data-size="fit">
+      <iframe
+        id="preview"
+        title="Workspace preview"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads"
+        allow="autoplay; fullscreen"
+        allowfullscreen
+      ></iframe>
+      <section id="empty">
+        <span class="symbol" aria-hidden="true">▧</span>
+        <h1 id="empty-title">Opening your workspace</h1>
+        <p id="empty-text">The preview will appear here.</p>
+        <button id="retry" hidden>Try again</button>
+      </section>
+    </main>
+    <script>
+      "use strict";
+      const params = new URLSearchParams(location.search);
+      const requested = params.get("file") || "index.html";
+      const parts = requested.replaceAll("\\", "/").split("/");
+      const file = parts.some((part) => !part || part.startsWith("."))
+        ? "index.html"
+        : parts.join("/");
+      const encoded = file.split("/").map(encodeURIComponent).join("/");
+      const frame = document.querySelector("#preview"),
+        empty = document.querySelector("#empty"),
+        status = document.querySelector("#status");
+      const forwarded = new URLSearchParams(params);
+      for (const key of ["file", "v"]) forwarded.delete(key);
+      let connected = false,
+        loaded = false,
+        watching = true,
+        automatic = true,
+        changed = false,
+        sequence = 0,
+        request,
+        hasConnected = false;
+      const errors = [];
+      document.querySelector("#file").textContent = file;
+      function artifactURL(bust = false) {
+        const url = new URL("/files/" + encoded, location.origin);
+        url.search = forwarded.toString();
+        if (bust) url.searchParams.set("v", `${Date.now()}-${sequence}`);
+        return url;
+      }
+      function refreshStatus() {
+        let text = "Loading",
+          state = "loading";
+        if (!watching) {
+          text = "Use Reload";
+          state = "error";
+        } else if (!connected) {
+          text = "Reconnecting";
+          state = "error";
+        } else if (!automatic) {
+          text = changed ? "Changes pending" : "Reload paused";
+          state = "paused";
+        } else if (loaded) {
+          text = "Live";
+          state = "live";
+        } else if (!empty.hidden) text = "Waiting";
+        status.textContent = text;
+        status.dataset.state = state;
+      }
+      function showEmpty(title, text, retry = false) {
+        loaded = false;
+        empty.hidden = false;
+        document.querySelector("#empty-title").textContent = title;
+        document.querySelector("#empty-text").textContent = text;
+        document.querySelector("#retry").hidden = !retry;
+        refreshStatus();
+      }
+      function clearErrors() {
+        errors.length = 0;
+        document.querySelector("#errors").hidden = true;
+        document.querySelector("#diagnostics").hidden = true;
+        document.querySelector("#diagnostics").replaceChildren();
+      }
+      async function load() {
+        const current = ++sequence;
+        request?.abort();
+        request = new AbortController();
+        changed = false;
+        document.querySelector("#open").href = artifactURL().href;
+        try {
+          const response = await fetch(artifactURL(), {
+            method: "HEAD",
+            cache: "no-store",
+            signal: request.signal,
+          });
+          if (current !== sequence) return;
+          if (response.status === 404) {
+            showEmpty(
+              "Waiting for your artifact",
+              `Create ${file} in the workspace. It will appear here as soon as it is saved.`,
+            );
+            return;
+          }
+          if (!response.ok) {
+            showEmpty(
+              "Preview unavailable",
+              response.status === 413
+                ? "This file exceeds the 32 MiB preview limit."
+                : `The server returned ${response.status}. Save the artifact and try again.`,
+              true,
+            );
+            return;
+          }
+          clearErrors();
+          frame.src = artifactURL(true).href;
+        } catch (error) {
+          if (error.name !== "AbortError" && current === sequence)
+            showEmpty(
+              "The viewer is reconnecting",
+              "Your workspace is still here. The preview will resume when the server is available.",
+              true,
+            );
+        }
+      }
+      frame.addEventListener("load", () => {
+        if (!frame.getAttribute("src")) return;
+        loaded = true;
+        empty.hidden = true;
+        refreshStatus();
+      });
+      document.querySelector("#reload").onclick = load;
+      document.querySelector("#retry").onclick = load;
+      document.querySelector("#viewport").onchange = (e) => {
+        document.querySelector("#stage").dataset.size = e.target.value;
+      };
+      document.querySelector("#auto").onclick = (e) => {
+        automatic = !automatic;
+        e.currentTarget.setAttribute("aria-pressed", automatic);
+        e.currentTarget.textContent = automatic
+          ? "Live reload"
+          : "Resume reload";
+        if (automatic && changed) load();
+        refreshStatus();
+      };
+      document.querySelector("#errors").onclick = (e) => {
+        const panel = document.querySelector("#diagnostics");
+        panel.hidden = !panel.hidden;
+        e.currentTarget.setAttribute("aria-expanded", !panel.hidden);
+      };
+      window.addEventListener("keydown", (e) => {
+        if (
+          e.target.closest?.("input,textarea,select,[contenteditable=true]") ||
+          e.ctrlKey ||
+          e.metaKey ||
+          e.altKey
+        )
+          return;
+        if (e.key.toLowerCase() === "r") {
+          e.preventDefault();
+          load();
+        }
+      });
+      window.addEventListener("message", (e) => {
+        if (
+          e.source !== frame.contentWindow ||
+          e.origin !== location.origin ||
+          !e.data ||
+          typeof e.data !== "object"
+        )
+          return;
+        if (
+          ["harness:ready", "harness:state"].includes(e.data.type) &&
+          typeof e.data.seed === "string" &&
+          e.data.seed.length <= 128
+        ) {
+          forwarded.set("seed", e.data.seed);
+          const url = new URL(location.href);
+          url.searchParams.set("seed", e.data.seed);
+          history.replaceState(null, "", url);
+          document.querySelector("#open").href = artifactURL().href;
+        }
+        if (
+          e.data.type === "harness:error" &&
+          typeof e.data.message === "string" &&
+          errors.length < 30
+        ) {
+          errors.push(e.data.message.slice(0, 1000));
+          const line = document.createElement("p");
+          line.textContent = errors.at(-1);
+          document.querySelector("#diagnostics").append(line);
+          const button = document.querySelector("#errors");
+          button.hidden = false;
+          button.textContent = `${errors.length} ${errors.length === 1 ? "error" : "errors"}`;
+        }
+      });
+      const events = new EventSource("/events");
+      events.onopen = () => {
+        connected = true;
+        if (hasConnected) {
+          changed = true;
+          if (automatic) load();
+        }
+        hasConnected = true;
+        refreshStatus();
+      };
+      events.onerror = () => {
+        connected = false;
+        refreshStatus();
+      };
+      events.addEventListener("change", () => {
+        changed = true;
+        if (automatic) load();
+        else refreshStatus();
+      });
+      events.addEventListener("watch-error", () => {
+        watching = false;
+        refreshStatus();
+      });
+      window.addEventListener("pagehide", () => {
+        events.close();
+        request?.abort();
+      });
+      load();
+    </script>
+  </body>
 </html>

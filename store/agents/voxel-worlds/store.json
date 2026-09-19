@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/voxel-worlds",
+  "license": "MIT",
+  "tagline": "Build and walk a seeded voxel island",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/voxel-worlds/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Turn this island into a harbor village with a walkable pier, a hilltop observatory, and lanterns along the road.",
+      "caption": "Tidelands · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/voxel-worlds/starter.jpg"
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+<section class="intro">
+  <div>
+    <p class="eyebrow">A study in controlled disorder · 001</p>
+    <h1>Follow the<br /><em>unexpected.</em></h1>
+    <p>
+      A field of lines. A small set of rules. An edition that belongs to you.
+    </p>
+  </div>
+  <div class="actions">
+    <select id="export-size" aria-label="Export resolution">
+      <option value="1600">1600 × 2000</option>
+      <option value="3200">3200 × 4000</option></select
+    ><button class="primary" id="export">Export print ↗</button>
+  </div>
+</section>
+<main class="workspace">
+  <section class="paper-stage">
+    <canvas id="art" aria-label="Seeded generative artwork"></canvas>
+    <div class="caption">
+      <span>FIELD NOTES / <span id="edition"></span></span
+      ><span id="palette-name"></span>
+    </div>
+  </section>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">The system</p>
+      <h2 style="margin-top: 10px">Make a little<br />room for chance.</h2>
+      <label class="field"
+        ><span>Technique</span
+        ><select id="mode">
+          <option value="contours">01 / Contour field</option>
+          <option value="dunes">02 / Dune study</option>
+          <option value="orbits">03 / Orbital motion</option>
+        </select></label
+      ><label class="field"
+        ><span>Line density <output id="density-value">120</output></span
+        ><input
+          id="density"
+          type="range"
+          min="40"
+          max="200"
+          value="120" /></label
+      ><label class="field"
+        ><span>Field tension <output id="curl-value">55</output></span
+        ><input id="curl" type="range" min="0" max="100" value="55"
+      /></label>
+      <div
+        id="palettes"
+        class="palettes"
+        role="group"
+        aria-label="Palette"
+      ></div>
+    </div>
+    <div class="section">
+      <h3>Nearby possibilities</h3>
+      <div class="editions" id="editions"></div>
+      <p class="small muted" style="margin-top: 12px">
+        Every seed is a composition. Return to a seed to find it exactly as you
+        left it.
+      </p>
+    </div>
+    <div class="section small muted">
+      Prints use the same geometry at every size. Color and rasterization can
+      vary between devices.
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>DETERMINISTIC BY DESIGN</span
+  ><span>CANVAS / NO EXTERNAL ASSETS</span>
+</footer>

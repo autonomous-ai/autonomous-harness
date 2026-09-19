@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/game-master",
+  "name": "Game Master",
+  "category": "Games",
+  "author": "Autonomous",
+  "description": "Design and compare strategies in a seeded arena. Watch two squads compete for relays, inspect decisions, step and rewind matches, and run a 32-map tournament.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "game/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
+  "verdict": ".harness/verdict.json"
+}

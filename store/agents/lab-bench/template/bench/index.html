@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>SIGNAL — Lab Bench</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  --bg: #111b20;
+  --panel: #17242b;
+  --ink: #e9efe9;
+  --muted: #98abb1;
+  --line: #8ea4aa30;
+  --accent: #efc273;
+}
+.intro h1 {
+  font-weight: 450;
+}
+.mark {
+  border-radius: 50%;
+  color: var(--accent);
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 28px;
+}
+.chart-panel {
+  margin-top: 18px;
+}
+.chart-panel canvas {
+  width: 100%;
+  height: 390px;
+}
+.filter {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.key {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+}
+.control-key {
+  background: #73b3b5;
+}
+.treatment-key {
+  background: #efc273;
+}
+.probe {
+  padding: 10px 18px;
+  font-size: 10px;
+  min-height: 38px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+.inference {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 20px;
+  padding: 24px 0;
+}
+.inference h2 {
+  font-size: 22px;
+  margin: 7px 0;
+}
+.inference canvas {
+  width: 100%;
+  height: 115px;
+}
+.formula {
+  padding: 15px 12px;
+  background: #0b151b;
+  font:
+    11px/1.9 ui-monospace,
+    monospace;
+  border-left: 2px solid var(--accent);
+  color: var(--accent);
+}
+details {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+}
+summary {
+  font-size: 12px;
+  cursor: pointer;
+}
+.table-scroll {
+  overflow: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font:
+    11px ui-monospace,
+    monospace;
+  margin-top: 14px;
+  text-align: left;
+}
+td,
+th {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  color: var(--muted);
+  font-weight: 400;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .chart-panel canvas {
+    height: 300px;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+  .inference {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+  .metric strong {
+    font-size: 21px;
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">∿</span>SIGNAL / LAB</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<section class="intro">
+  <div>
+    <p class="eyebrow">Experiment 024 / Synthetic materials lab</p>
+    <h1>Find the signal.</h1>
+    <p>
+      Does a catalyst improve yield? Change the experiment, inspect each
+      observation, and see what the data supports.
+    </p>
+  </div>
+  <button id="export-csv" class="primary">Export observations ↗</button>
+</section>
+<main class="workspace">
+  <div>
+    <div class="metrics">
+      <div class="metric">
+        <strong id="sample-count"></strong><span>Visible samples</span>
+      </div>
+      <div class="metric">
+        <strong id="effect-estimate"></strong><span>Observed uplift · pp</span>
+      </div>
+      <div class="metric">
+        <strong id="r-squared"></strong><span>Visible fit · R²</span>
+      </div>
+    </div>
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <span class="small">Temperature × reaction yield</span>
+        <div class="actions">
+          <button class="filter" id="control" aria-pressed="true">
+            <i class="key control-key"></i>Control</button
+          ><button class="filter" id="treatment" aria-pressed="true">
+            <i class="key treatment-key"></i>Catalyst
+          </button>
+        </div>
+      </div>
+      <canvas
+        id="chart"
+        tabindex="0"
+        role="img"
+        aria-label="Scatter plot of temperature against yield. Exact observations are available in the table below."
+      ></canvas>
+      <p id="probe" class="probe mono" role="status">
+        Hover a point to inspect an observation.
+      </p>
+    </section>
+    <section class="inference">
+      <div>
+        <p class="eyebrow">What the experiment says</p>
+        <h2 id="conclusion"></h2>
+        <p class="small muted" id="interval"></p>
+      </div>
+      <canvas
+        id="interval-chart"
+        aria-label="Confidence interval for the observed treatment difference"
+      ></canvas>
+    </section>
+    <details>
+      <summary>
+        Inspect observations <span class="muted">/ first 12 visible rows</span>
+      </summary>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Sample</th>
+              <th>Group</th>
+              <th>Temp · °C</th>
+              <th>Yield · %</th>
+            </tr>
+          </thead>
+          <tbody id="observations"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">Design the experiment</p>
+      <label class="field"
+        ><span>True catalyst effect <output id="effect-value"></output></span
+        ><input id="effect" type="range" min="-20" max="30" value="12" /></label
+      ><label class="field"
+        ><span>Measurement noise <output id="noise-value"></output></span
+        ><input id="noise" type="range" min="1" max="20" value="9" /></label
+      ><label class="field"
+        ><span>Sample size <output id="count-value"></output></span
+        ><input
+          id="count"
+          type="range"
+          min="48"
+          max="240"
+          step="12"
+          value="120" /></label
+      ><button id="run" style="width: 100%">Replay collection</button>
+    </div>
+    <div class="section">
+      <h3>A model you can inspect</h3>
+      <p class="formula">
+        yield = 28 + 0.48 × temperature<br />+ catalyst effect + noise
+      </p>
+      <p class="small muted" style="margin-top: 12px">
+        Balanced groups, seeded temperatures, independent Gaussian measurement
+        noise. The observed difference can depart from the true effect.
+      </p>
+    </div>
+    <div class="section small muted">
+      <strong>Synthetic data, by design.</strong>
+      <p style="margin-top: 8px">
+        The 95% interval uses a normal approximation for the unadjusted
+        difference of means. It illustrates uncertainty; it is not a real
+        experimental finding.
+      </p>
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>REPRODUCIBLE OBSERVATIONS</span
+  ><span>SEED / PROBE / QUESTION / REPEAT</span>
+</footer>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+function experiment(seed, { count = 120, effect = 12, noise = 9 } = {}) {
+  const xRng = random(seed, "temperature"),
+    noiseRng = random(seed, "measurement");
+  return Array.from({ length: count }, (_, i) => {
+    const group = i % 2,
+      x = 15 + xRng() * 70;
+    return {
+      id: i + 1,
+      group,
+      x,
+      y: 28 + x * 0.48 + effect * group + normal(noiseRng) * noise,
+    };
+  });
+}
+function stats(values) {
+  const n = values.length,
+    mean = n ? values.reduce((a, b) => a + b, 0) / n : 0;
+  const variance =
+    n > 1 ? values.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) : 0;
+  return { n, mean, variance, sd: Math.sqrt(variance) };
+}
+function regression(points) {
+  const x = stats(points.map((p) => p.x)),
+    y = stats(points.map((p) => p.y));
+  const xx = points.reduce((a, p) => a + (p.x - x.mean) ** 2, 0);
+  const xy = points.reduce((a, p) => a + (p.x - x.mean) * (p.y - y.mean), 0);
+  const slope = xx ? xy / xx : 0,
+    intercept = y.mean - slope * x.mean;
+  const ss = points.reduce((a, p) => a + (p.y - y.mean) ** 2, 0);
+  const residual = points.reduce(
+    (a, p) => a + (p.y - intercept - slope * p.x) ** 2,
+    0,
+  );
+  return { slope, intercept, r2: ss ? clamp(1 - residual / ss, 0, 1) : 1 };
+}
+function treatmentEffect(points) {
+  const a = stats(points.filter((p) => p.group === 0).map((p) => p.y));
+  const b = stats(points.filter((p) => p.group === 1).map((p) => p.y));
+  const difference = b.mean - a.mean,
+    se = Math.sqrt(
+      a.variance / Math.max(1, a.n) + b.variance / Math.max(1, b.n),
+    );
+  return {
+    a,
+    b,
+    difference,
+    low: difference - 1.96 * se,
+    high: difference + 1.96 * se,
+  };
+}
+function csvRows(points) {
+  return (
+    "sample,group,temperature_c,yield_percent\n" +
+    points
+      .map(
+        (p) =>
+          `${p.id},${p.group ? "treatment" : "control"},${p.x.toFixed(6)},${p.y.toFixed(6)}`,
+      )
+      .join("\n") +
+    "\n"
+  );
+}
+
+</script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let points = [],
+  visible = [],
+  showControl = true,
+  showTreatment = true,
+  collected = Infinity,
+  collectTimer;
+const groupColors = ["#73b3b5", "#efc273"];
+function experimentOptions() {
+  return {
+    effect: +$("#effect").value,
+    noise: +$("#noise").value,
+    count: +$("#count").value,
+  };
+}
+function drawChart() {
+  const c = $("#chart"),
+    ctx = c.getContext("2d"),
+    w = c.width,
+    h = c.height;
+  if (!w || !h) return;
+  const d = w / c.getBoundingClientRect().width,
+    m = { l: 53 * d, r: 22 * d, t: 24 * d, b: 48 * d };
+  const low = Math.floor(Math.min(0, ...points.map((p) => p.y)) / 20) * 20,
+    high = Math.ceil(Math.max(100, ...points.map((p) => p.y)) / 20) * 20;
+  const px = (x) => m.l + (x / 100) * (w - m.l - m.r),
+    py = (y) => h - m.b - ((y - low) / (high - low)) * (h - m.b - m.t);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = `${10 * d}px monospace`;
+  ctx.lineWidth = d;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= 5; i++) {
+    const y = low + ((high - low) * i) / 5;
+    ctx.strokeStyle = "#8ea4aa20";
+    ctx.beginPath();
+    ctx.moveTo(m.l, py(y));
+    ctx.lineTo(w - m.r, py(y));
+    ctx.stroke();
+    ctx.fillStyle = "#98abb1";
+    ctx.fillText(y.toFixed(0), m.l - 12 * d, py(y));
+    const x = i * 20;
+    ctx.textAlign = "center";
+    ctx.fillText(x, px(x), h - m.b + 20 * d);
+    ctx.textAlign = "right";
+  }
+  ctx.save();
+  ctx.translate(15 * d, h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText("Yield (%)", 0, 0);
+  ctx.restore();
+  ctx.textAlign = "center";
+  ctx.fillText("Temperature (°C)", w / 2, h - 10 * d);
+  for (const group of [0, 1]) {
+    const subset = visible.filter((p) => p.group === group);
+    if (subset.length < 2) continue;
+    const r = regression(subset);
+    ctx.strokeStyle = groupColors[group];
+    ctx.globalAlpha = 0.7;
+    ctx.setLineDash([5 * d, 4 * d]);
+    ctx.beginPath();
+    ctx.moveTo(px(10), py(r.intercept + r.slope * 10));
+    ctx.lineTo(px(90), py(r.intercept + r.slope * 90));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  visible.forEach((p) => {
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = groupColors[p.group];
+    ctx.beginPath();
+    ctx.arc(px(p.x), py(p.y), 3.5 * d, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  drawChart.project = (p) => ({ x: px(p.x) / d, y: py(p.y) / d });
+}
+function drawInterval() {
+  const c = $("#interval-chart"),
+    ctx = c.getContext("2d"),
+    w = c.width,
+    h = c.height;
+  const e = treatmentEffect(points.slice(0, collected)),
+    min = Math.min(-20, e.low - 3),
+    max = Math.max(30, e.high + 3),
+    px = (v) => 25 + ((v - min) / (max - min)) * (w - 50);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "#98abb1";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(25, h * 0.5);
+  ctx.lineTo(w - 25, h * 0.5);
+  ctx.stroke();
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(px(0), h * 0.15);
+  ctx.lineTo(px(0), h * 0.7);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = "#efc273";
+  ctx.beginPath();
+  ctx.moveTo(px(e.low), h * 0.5);
+  ctx.lineTo(px(e.high), h * 0.5);
+  ctx.stroke();
+  ctx.fillStyle = "#e9efe9";
+  ctx.beginPath();
+  ctx.arc(px(e.difference), h * 0.5, 7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#98abb1";
+  ctx.font = "18px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("0", px(0), h * 0.9);
+  ctx.fillText("95% interval", w / 2, h * 0.12);
+}
+function updateBench() {
+  const partial = points.slice(0, collected);
+  visible = partial.filter((p) => (p.group ? showTreatment : showControl));
+  const e = treatmentEffect(partial),
+    r = regression(visible);
+  $("#sample-count").textContent = visible.length;
+  $("#effect-estimate").textContent =
+    `${e.difference >= 0 ? "+" : ""}${e.difference.toFixed(1)}`;
+  $("#r-squared").textContent = visible.length > 1 ? r.r2.toFixed(2) : "—";
+  $("#conclusion").textContent =
+    e.low > 0
+      ? "A positive signal emerges."
+      : e.high < 0
+        ? "The catalyst reduces yield."
+        : "The effect is still uncertain.";
+  $("#interval").textContent =
+    `95% interval: ${e.low.toFixed(1)} to ${e.high.toFixed(1)} percentage points · both groups, ${partial.length} samples.`;
+  $("#observations").replaceChildren();
+  visible.slice(0, 12).forEach((p) => {
+    const tr = document.createElement("tr");
+    for (const text of [
+      p.id,
+      p.group ? "Catalyst" : "Control",
+      p.x.toFixed(2),
+      p.y.toFixed(2),
+    ]) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.append(td);
+    }
+    $("#observations").append(tr);
+  });
+  drawChart();
+  drawInterval();
+}
+function generateExperiment() {
+  clearInterval(collectTimer);
+  collected = Infinity;
+  $("#run").textContent = "Replay collection";
+  const options = experimentOptions();
+  points = experiment(seed, options);
+  $("#effect-value").value = `${options.effect} pp`;
+  $("#noise-value").value = `±${options.noise} σ`;
+  $("#count-value").value = options.count;
+  updateBench();
+}
+for (const id of ["effect", "noise", "count"])
+  $("#" + id).oninput = generateExperiment;
+$("#control").onclick = () => {
+  if (showControl && !showTreatment)
+    return toast("Keep at least one group visible.");
+  showControl = !showControl;
+  $("#control").setAttribute("aria-pressed", showControl);
+  updateBench();
+};
+$("#treatment").onclick = () => {
+  if (showTreatment && !showControl)
+    return toast("Keep at least one group visible.");
+  showTreatment = !showTreatment;
+  $("#treatment").setAttribute("aria-pressed", showTreatment);
+  updateBench();
+};
+$("#run").onclick = () => {
+  if (Number.isFinite(collected)) {
+    collected = Infinity;
+    clearInterval(collectTimer);
+    $("#run").textContent = "Replay collection";
+    updateBench();
+    return;
+  }
+  collected = 4;
+  $("#run").textContent = "Finish collection";
+  updateBench();
+  collectTimer = setInterval(() => {
+    collected += 4;
+    if (collected >= points.length) {
+      collected = Infinity;
+      clearInterval(collectTimer);
+      $("#run").textContent = "Replay collection";
+    }
+    updateBench();
+  }, 90);
+};
+$("#chart").onpointermove = (e) => {
+  const box = e.currentTarget.getBoundingClientRect(),
+    x = e.clientX - box.left,
+    y = e.clientY - box.top;
+  let best,
+    dist = Infinity;
+  for (const p of visible) {
+    const pos = drawChart.project(p),
+      d = Math.hypot(pos.x - x, pos.y - y);
+    if (d < dist) {
+      best = p;
+      dist = d;
+    }
+  }
+  $("#probe").textContent =
+    best && dist < 25
+      ? `Sample ${best.id} · ${best.group ? "Catalyst" : "Control"} · ${best.x.toFixed(2)} °C · ${best.y.toFixed(2)}% yield`
+      : "Hover a point to inspect an observation.";
+};
+$("#export-csv").onclick = () =>
+  saveFile(`signal-${hash(seed)}.csv`, csvRows(visible), "text/csv");
+fitCanvas($("#chart"), drawChart);
+fitCanvas($("#interval-chart"), drawInterval);
+addEventListener("seedchange", generateExperiment);
+generateExperiment();
+ready();
+
+</script></body></html>

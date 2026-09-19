@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/music-studio",
+  "name": "Music Studio",
+  "category": "Audio",
+  "author": "Autonomous",
+  "description": "Compose a seeded eight-bar track, edit five instrument patterns, shape swing and the mix, listen locally, and export the result as a WAV file.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "piece/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
+  "verdict": ".harness/verdict.json"
+}

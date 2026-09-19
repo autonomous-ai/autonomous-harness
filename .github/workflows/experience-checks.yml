@@ -1,0 +1,31 @@
+name: Experience checks
+
+on:
+  pull_request:
+    paths: ['store/**', '.github/workflows/experience-checks.yml']
+  push:
+    branches: [main]
+    paths: ['store/**', '.github/workflows/experience-checks.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  models-and-viewer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22.23.2'
+      - name: Verify generated artifacts match reviewed sources
+        run: node store/tools/build-experiences.mjs --check
+      - name: Check models, packages and viewer behavior
+        run: >-
+          node --test
+          store/tools/experience-tests/models.test.mjs
+          store/agents/{voxel-worlds,generative-art,music-studio,creative-direction,drone-pilot,game-master,lab-bench}/test/*.test.mjs
+          store/viewers/web-viewer/test/*.test.mjs
+      - name: Validate Store catalog
+        run: node store/tools/catalog.mjs

@@ -1,0 +1,1634 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>TIDELANDS — Voxel Worlds</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  --bg: #203b37;
+  --ink: #f1f0d9;
+  --muted: #d6e2c8;
+  --line: #ddeacd45;
+  --accent: #d3e4a5;
+}
+.masthead {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  background: linear-gradient(#112b35b0, transparent);
+  border: 0;
+}
+.masthead input,
+.masthead button {
+  background: #18353655;
+}
+.mark {
+  border: 0;
+  font-size: 27px;
+}
+.world-stage {
+  position: relative;
+  height: 100dvh;
+  min-height: 560px;
+  background: #94b6bb;
+  overflow: hidden;
+}
+#world {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  touch-action: none;
+  outline-offset: -3px;
+}
+.world-heading {
+  position: absolute;
+  left: 30px;
+  top: 92px;
+  pointer-events: none;
+  text-shadow: 0 2px 25px #0d282966;
+}
+.world-heading .eyebrow {
+  font-size: 9px;
+}
+.world-heading h1 {
+  font:
+    clamp(50px, 6.5vw, 88px) / 0.91 Georgia,
+    serif;
+  letter-spacing: -0.065em;
+  margin: 14px 0 18px;
+}
+.world-heading > p:last-child {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.world-toolbar {
+  position: absolute;
+  right: 22px;
+  top: 89px;
+  display: grid;
+  gap: 7px;
+}
+.world-toolbar button,
+.build-actions button,
+.world-time button,
+.world-pad button {
+  background: #17352eaa;
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+}
+.build-actions .primary {
+  background: #d3e4a5;
+  color: #203b37;
+}
+.world-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 25px;
+  color: #fff9;
+  pointer-events: none;
+}
+.world-coordinates {
+  position: absolute;
+  left: 25px;
+  bottom: 184px;
+  display: grid;
+  gap: 3px;
+  font:
+    9px/1.6 ui-monospace,
+    monospace;
+  text-shadow: 0 1px 3px #000;
+}
+.world-bottom {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 90%;
+  pointer-events: none;
+}
+.world-bottom > p {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-align: center;
+  text-shadow: 0 1px 4px #000;
+  background: #153e3466;
+  padding: 6px 12px;
+  border-radius: 4px;
+}
+.hotbar {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+.hotbar button {
+  width: 55px;
+  height: 54px;
+  background: #18382fd9;
+  border: 1px solid #ffffff33;
+  border-radius: 5px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  font:
+    8px ui-monospace,
+    monospace;
+}
+.hotbar button[aria-pressed="true"] {
+  border: 2px solid #edebb7;
+  box-shadow: 0 0 20px #b9d98e44;
+}
+.hotbar i {
+  width: 21px;
+  height: 21px;
+  box-shadow: inset -5px -5px #0002;
+  display: block;
+}
+.build-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.world-time {
+  position: absolute;
+  right: 22px;
+  bottom: 184px;
+  display: grid;
+  gap: 7px;
+  width: 125px;
+  font:
+    9px ui-monospace,
+    monospace;
+}
+.world-time input {
+  width: 100%;
+}
+.world-pad {
+  display: none;
+}
+.world-error {
+  position: absolute;
+  inset: 25% 10%;
+  background: #173d36ee;
+  padding: 30px;
+  border-radius: 8px;
+  z-index: 20;
+}
+.overview .world-crosshair {
+  display: none;
+}
+@media (max-width: 750px) {
+  .world-heading {
+    left: 20px;
+    top: 100px;
+  }
+  .world-heading h1 {
+    font-size: 56px;
+  }
+  .world-heading > p:last-child {
+    display: none;
+  }
+  .world-toolbar {
+    top: 90px;
+    right: 14px;
+  }
+  .world-toolbar button {
+    padding: 7px;
+    font-size: 10px;
+  }
+  .world-coordinates {
+    left: 17px;
+    bottom: 190px;
+  }
+  .world-time {
+    right: 14px;
+    bottom: 185px;
+    width: 100px;
+  }
+  .world-pad {
+    position: absolute;
+    display: grid;
+    grid-template-columns: repeat(3, 32px);
+    gap: 4px;
+    left: 16px;
+    bottom: 250px;
+  }
+  .world-pad button {
+    touch-action: none;
+    padding: 6px;
+  }
+  .world-pad button:first-child {
+    grid-column: 2;
+  }
+  .world-pad button:nth-child(2) {
+    grid-column: 1;
+  }
+  .world-pad button:last-child {
+    grid-column: 2;
+  }
+  .world-heading .eyebrow {
+    max-width: 120px;
+  }
+  .hotbar button {
+    width: 47px;
+  }
+  .world-bottom > p {
+    font-size: 9px;
+    max-width: 300px;
+  }
+  .world-bottom {
+    bottom: 16px;
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">▧</span>TIDELANDS</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<main class="world-stage">
+  <canvas
+    id="world"
+    tabindex="0"
+    aria-label="Walkable voxel island. Click to look around, use WASD to walk, Space to jump. Use the buttons to place or break blocks."
+  ></canvas>
+  <div class="world-heading">
+    <p class="eyebrow">A place worth getting lost in</p>
+    <h1>A little<br />wild.</h1>
+    <p>Walk the shoreline. Find the cabin.<br />Leave something of your own.</p>
+  </div>
+  <div class="world-toolbar">
+    <button id="overview">Island overview</button
+    ><button id="export-world">Save world ↗</button
+    ><button id="import-world">Open saved world</button
+    ><input
+      id="world-file"
+      type="file"
+      accept=".json,application/json"
+      hidden
+    /><button id="home">Return home</button>
+  </div>
+  <div class="world-crosshair" aria-hidden="true">＋</div>
+  <div class="world-coordinates">
+    <span id="coordinates"></span><span id="world-clock"></span>
+  </div>
+  <div class="world-bottom">
+    <p id="target" role="status">
+      Click the world to look around · WASD to walk · Space to jump
+    </p>
+    <div
+      class="hotbar"
+      id="hotbar"
+      role="group"
+      aria-label="Building materials"
+    ></div>
+    <div class="build-actions">
+      <button id="break">Break block</button
+      ><button id="place" class="primary">Place block</button>
+    </div>
+  </div>
+  <div class="world-pad">
+    <button data-key="w" aria-label="Walk forward">↑</button
+    ><button data-key="a" aria-label="Walk left">←</button
+    ><button data-key="s" aria-label="Walk backward">↓</button
+    ><button data-key="d" aria-label="Walk right">→</button
+    ><button data-key=" " aria-label="Jump">↟</button>
+  </div>
+  <div class="world-time">
+    <label for="daylight">Time of day</label
+    ><input id="daylight" type="range" min="0" max="100" value="32" /><button
+      id="cycle"
+      aria-pressed="false"
+    >
+      Day cycle
+    </button>
+  </div>
+  <div class="world-error" id="world-error" hidden></div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+const blockTypes = [
+  null,
+  { name: "Grass", color: [0.4, 0.58, 0.31] },
+  { name: "Earth", color: [0.48, 0.34, 0.23] },
+  { name: "Stone", color: [0.51, 0.55, 0.53] },
+  { name: "Sand", color: [0.81, 0.74, 0.54] },
+  { name: "Timber", color: [0.43, 0.29, 0.17] },
+  { name: "Canopy", color: [0.25, 0.47, 0.27] },
+  { name: "Water", color: [0.24, 0.52, 0.59] },
+  { name: "Cedar", color: [0.68, 0.46, 0.28] },
+  { name: "Lantern", color: [1, 0.74, 0.32] },
+];
+function blockAt(world, x, y, z) {
+  if (x < 0 || y < 0 || z < 0 || x >= world.w || y >= world.h || z >= world.d)
+    return 0;
+  return world.blocks[(y * world.d + z) * world.w + x];
+}
+function putBlock(world, x, y, z, id) {
+  if (x < 0 || y < 0 || z < 0 || x >= world.w || y >= world.h || z >= world.d)
+    return false;
+  world.blocks[(y * world.d + z) * world.w + x] = id;
+  return true;
+}
+function solidBlock(id) {
+  return id !== 0 && id !== 7;
+}
+function groundAt(world, x, z) {
+  for (let y = world.h - 1; y >= 0; y--)
+    if (solidBlock(blockAt(world, Math.floor(x), y, Math.floor(z))))
+      return y + 1;
+  return 0;
+}
+function voxelWorld(seed) {
+  const world = {
+      seed: String(seed),
+      w: 48,
+      h: 28,
+      d: 48,
+      blocks: new Uint8Array(48 * 28 * 48),
+    },
+    r = random(seed, "terrain"),
+    phase = r() * 6.28,
+    phase2 = r() * 6.28;
+  for (let z = 0; z < world.d; z++)
+    for (let x = 0; x < world.w; x++) {
+      const radius = Math.hypot((x - 24) / 25, (z - 24) / 26);
+      let height = clamp(
+        Math.floor(
+          5 +
+            (1 - radius) * 9 +
+            Math.sin(x * 0.23 + phase) * 1.6 +
+            Math.cos(z * 0.24 + phase2) * 1.6,
+        ),
+        2,
+        15,
+      );
+      if (z > 16 && Math.abs(x - (22 + Math.sin(z * 0.2) * 3)) < 1.6)
+        height = Math.min(height, 5);
+      for (let y = 0; y < Math.max(height, 6); y++)
+        putBlock(
+          world,
+          x,
+          y,
+          z,
+          y >= height
+            ? 7
+            : y === height - 1
+              ? height < 8
+                ? 4
+                : 1
+              : y > height - 4
+                ? 2
+                : 3,
+        );
+    }
+  const pad = (cx, cz, radius, height) => {
+    for (let z = cz - radius; z <= cz + radius; z++)
+      for (let x = cx - radius; x <= cx + radius; x++)
+        for (let y = 0; y < world.h; y++)
+          putBlock(world, x, y, z, y < height ? (y === height - 1 ? 1 : 2) : 0);
+  };
+  const spawnHeight = Math.max(8, groundAt(world, 31, 35));
+  pad(31, 35, 3, spawnHeight);
+  const hutHeight = Math.max(8, groundAt(world, 31, 25));
+  pad(31, 25, 4, hutHeight);
+  for (let x = 28; x <= 34; x++)
+    for (let z = 22; z <= 27; z++) {
+      putBlock(world, x, hutHeight, z, 8);
+      for (let y = 1; y <= 3; y++)
+        if (
+          (x === 28 || x === 34 || z === 22 || z === 27) &&
+          !(z === 27 && x === 31 && y <= 2) &&
+          !((x === 28 || x === 34) && z === 24 && y === 2)
+        )
+          putBlock(world, x, hutHeight + y, z, 5);
+      putBlock(world, x, hutHeight + 4, z, 8);
+      if (x > 28 && x < 34) putBlock(world, x, hutHeight + 5, z, 8);
+    }
+  putBlock(world, 30, hutHeight + 3, 26, 9);
+  const towerHeight = groundAt(world, 14, 16);
+  for (let y = towerHeight; y < towerHeight + 7; y++)
+    for (let x = 13; x <= 15; x++)
+      for (let z = 15; z <= 17; z++)
+        putBlock(world, x, y, z, y === towerHeight + 6 ? 9 : 4);
+  // A graded three-block-wide trail connects the cabin floor to the shore.
+  for (let z = 28; z <= 37; z++)
+    for (let x = 30; x <= 32; x++) {
+      const height = Math.round(
+        hutHeight + 1 + ((spawnHeight - hutHeight - 1) * (z - 28)) / 9,
+      );
+      for (let y = 0; y < world.h; y++)
+        putBlock(world, x, y, z, y < height ? (y === height - 1 ? 4 : 2) : 0);
+    }
+  const trees = random(seed, "trees");
+  for (let i = 0; i < 65; i++) {
+    const x = 3 + Math.floor(trees() * 42),
+      z = 3 + Math.floor(trees() * 42),
+      y = groundAt(world, x, z);
+    if (
+      y < 8 ||
+      y > 15 ||
+      blockAt(world, x, y - 1, z) !== 1 ||
+      (x > 26 && x < 37 && z > 19)
+    )
+      continue;
+    for (let j = 0; j < 4; j++) putBlock(world, x, y + j, z, 5);
+    for (let dy = 2; dy <= 5; dy++)
+      for (let dx = -2; dx <= 2; dx++)
+        for (let dz = -2; dz <= 2; dz++)
+          if (
+            Math.abs(dx) + Math.abs(dz) + (dy === 5 ? 1 : 0) < 4 &&
+            blockAt(world, x + dx, y + dy, z + dz) === 0
+          )
+            putBlock(world, x + dx, y + dy, z + dz, 6);
+  }
+  world.spawn = {
+    x: 31.5,
+    y: groundAt(world, 31, 29) + 0.03,
+    z: 29.5,
+    yaw: -0.65,
+    pitch: -0.18,
+  };
+  return world;
+}
+function raycastWorld(world, origin, direction, max = 7) {
+  let previous;
+  for (let d = 0; d <= max; d += 0.035) {
+    const p = {
+      x: Math.floor(origin.x + direction.x * d),
+      y: Math.floor(origin.y + direction.y * d),
+      z: Math.floor(origin.z + direction.z * d),
+    };
+    const id = blockAt(world, p.x, p.y, p.z);
+    if (solidBlock(id)) return { ...p, id, previous, distance: d };
+    previous = p;
+  }
+  return null;
+}
+function playerFits(world, x, y, z) {
+  for (const dx of [-0.24, 0.24])
+    for (const dz of [-0.24, 0.24])
+      for (const dy of [0.001, 0.85, 1.65])
+        if (
+          solidBlock(
+            blockAt(
+              world,
+              Math.floor(x + dx),
+              Math.floor(y + dy),
+              Math.floor(z + dz),
+            ),
+          )
+        )
+          return false;
+  return true;
+}
+function movePlayer(world, player, input, dt = 1 / 60) {
+  const p = { ...player };
+  const speed = input.sprint ? 6 : 3.8;
+  let dx =
+      Math.sin(p.yaw) * (input.forward || 0) +
+      Math.cos(p.yaw) * (input.right || 0),
+    dz =
+      Math.cos(p.yaw) * (input.forward || 0) -
+      Math.sin(p.yaw) * (input.right || 0);
+  const length = Math.max(1, Math.hypot(dx, dz));
+  dx = (dx / length) * speed * dt;
+  dz = (dz / length) * speed * dt;
+  const swimming =
+    blockAt(world, Math.floor(p.x), Math.floor(p.y + 0.3), Math.floor(p.z)) ===
+    7;
+  for (const [axis, delta] of [
+    ["x", dx],
+    ["z", dz],
+  ]) {
+    const n = clamp(
+        p[axis] + delta,
+        0.3,
+        (axis === "x" ? world.w : world.d) - 0.3,
+      ),
+      x = axis === "x" ? n : p.x,
+      z = axis === "z" ? n : p.z;
+    if (playerFits(world, x, p.y, z)) p[axis] = n;
+    else if (
+      (p.grounded || swimming) &&
+      playerFits(world, x, p.y + (swimming ? 1.3 : 1.05), z)
+    ) {
+      p[axis] = n;
+      p.y += swimming ? 1.3 : 1.05;
+    }
+  }
+  if (input.jump && (p.grounded || swimming)) p.vy = 6;
+  p.vy = (p.vy || 0) - 16 * dt;
+  if (swimming && p.y < 5.85) p.vy = Math.max(p.vy, (5.85 - p.y) * 5);
+  const nextY = p.y + p.vy * dt;
+  if (playerFits(world, p.x, nextY, p.z)) {
+    p.y = nextY;
+    p.grounded = false;
+  } else {
+    if (p.vy < 0) {
+      p.grounded = true;
+      p.y = Math.ceil(nextY);
+    }
+    p.vy = 0;
+  }
+  if (p.y < 0) {
+    Object.assign(p, world.spawn, { vy: 0, grounded: true });
+  }
+  return p;
+}
+
+function importWorld(value) {
+  if (
+    !value ||
+    value.format !== "tidelands-1" ||
+    JSON.stringify(value.size) !== "[48,28,48]" ||
+    !Array.isArray(value.blocks) ||
+    value.blocks.length !== 48 * 28 * 48 ||
+    !value.blocks.every(
+      (n) => Number.isInteger(n) && n >= 0 && n < blockTypes.length,
+    )
+  )
+    throw new Error("This file is not a valid Tidelands world.");
+  const world = {
+    seed: String(value.seed).slice(0, 128),
+    w: 48,
+    h: 28,
+    d: 48,
+    blocks: Uint8Array.from(value.blocks),
+  };
+  const p = value.player;
+  if (
+    !p ||
+    !["x", "y", "z", "yaw", "pitch"].every((k) => Number.isFinite(p[k])) ||
+    p.x < 0.3 ||
+    p.x > 47.7 ||
+    p.z < 0.3 ||
+    p.z > 47.7 ||
+    p.y < 0 ||
+    p.y > 28 ||
+    !playerFits(world, p.x, p.y, p.z)
+  )
+    throw new Error("The saved player position is invalid.");
+  world.spawn = {
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    yaw: p.yaw,
+    pitch: clamp(p.pitch, -1.3, 1.3),
+  };
+  return {
+    world,
+    player: { ...world.spawn, vy: 0, grounded: false },
+    timeOfDay: Number.isFinite(value.timeOfDay)
+      ? clamp(value.timeOfDay, 0, 1)
+      : 0.32,
+  };
+}
+
+</script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let worldDirty = true;
+let world,
+  player,
+  targetBlock,
+  gl,
+  program,
+  worldBuffer,
+  worldVertexCount = 0,
+  lineBuffer,
+  keys = {},
+  selected = 8,
+  overview = false,
+  cycling = false,
+  timeOfDay = 0.32,
+  lastWorldTime = 0,
+  worldAccum = 0,
+  drag = null,
+  edited = 0;
+const canvas = $("#world");
+function shader(type, source) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, source);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function initGL() {
+  gl = canvas.getContext("webgl", {
+    antialias: true,
+    alpha: true,
+    preserveDrawingBuffer: true,
+  });
+  if (!gl)
+    throw new Error(
+      "This world needs WebGL. Enable hardware acceleration or try another browser.",
+    );
+  program = gl.createProgram();
+  gl.attachShader(
+    program,
+    shader(
+      gl.VERTEX_SHADER,
+      `attribute vec3 position;attribute vec3 color;attribute vec3 normal;attribute vec2 uv;uniform vec3 eye;uniform vec3 right;uniform vec3 up;uniform vec3 forward;uniform float aspect;varying vec3 vColor;varying vec2 vUV;varying float distance;varying float light;void main(){vec3 p=position-eye;float z=dot(p,forward);gl_Position=vec4(dot(p,right)*1.4/aspect,dot(p,up)*1.4,1.0005*z-.100025,z);vColor=color;vUV=uv;distance=length(p);light=.65+max(0.,dot(normal,normalize(vec3(-.4,.9,.3))))*.35;}`,
+    ),
+  );
+  gl.attachShader(
+    program,
+    shader(
+      gl.FRAGMENT_SHADER,
+      `precision mediump float;varying vec3 vColor;varying vec2 vUV;varying float distance;varying float light;uniform vec3 sky;uniform float day;void main(){vec2 pixel=floor(vUV*12.);float grain=fract(sin(dot(pixel,vec2(12.9898,78.233)))*43758.5453);float edge=step(.04,fract(vUV.x))*step(.04,fract(vUV.y));if(vColor.b>vColor.r*1.5){grain=.6;edge=1.;}vec3 c=vColor*(.86+grain*.2)*light*(.25+day*.75)*(.88+.12*edge);gl_FragColor=vec4(mix(c,sky,smoothstep(35.,150.,distance)*.65),1.);}`,
+    ),
+  );
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  gl.enable(gl.DEPTH_TEST);
+  worldBuffer = gl.createBuffer();
+  lineBuffer = gl.createBuffer();
+}
+const faces = [
+  {
+    n: [1, 0, 0],
+    v: [
+      [1, 0, 0],
+      [1, 1, 0],
+      [1, 1, 1],
+      [1, 0, 1],
+    ],
+  },
+  {
+    n: [-1, 0, 0],
+    v: [
+      [0, 0, 1],
+      [0, 1, 1],
+      [0, 1, 0],
+      [0, 0, 0],
+    ],
+  },
+  {
+    n: [0, 1, 0],
+    v: [
+      [0, 1, 1],
+      [1, 1, 1],
+      [1, 1, 0],
+      [0, 1, 0],
+    ],
+  },
+  {
+    n: [0, -1, 0],
+    v: [
+      [0, 0, 0],
+      [1, 0, 0],
+      [1, 0, 1],
+      [0, 0, 1],
+    ],
+  },
+  {
+    n: [0, 0, 1],
+    v: [
+      [1, 0, 1],
+      [1, 1, 1],
+      [0, 1, 1],
+      [0, 0, 1],
+    ],
+  },
+  {
+    n: [0, 0, -1],
+    v: [
+      [0, 0, 0],
+      [0, 1, 0],
+      [1, 1, 0],
+      [1, 0, 0],
+    ],
+  },
+];
+function meshWorld() {
+  const data = [],
+    uvs = [
+      [0, 0],
+      [0, 1],
+      [1, 1],
+      [1, 0],
+    ];
+  for (let y = 0; y < world.h; y++)
+    for (let z = 0; z < world.d; z++)
+      for (let x = 0; x < world.w; x++) {
+        const id = blockAt(world, x, y, z);
+        if (!id) continue;
+        for (const face of faces) {
+          const [nx, ny, nz] = face.n,
+            next = blockAt(world, x + nx, y + ny, z + nz);
+          if (next && (id === 7 || next !== 7)) continue;
+          let color = blockTypes[id].color;
+          if (id === 1 && ny === 0) color = [0.43, 0.43, 0.25];
+          if (id === 7 && ny < 1) continue;
+          for (const i of [0, 1, 2, 0, 2, 3])
+            data.push(
+              x + face.v[i][0],
+              y + face.v[i][1],
+              z + face.v[i][2],
+              ...color,
+              ...face.n,
+              ...uvs[i],
+            );
+        }
+      }
+  for (const [x1, z1, x2, z2] of [
+    [-160, -160, 208, 0],
+    [-160, 48, 208, 208],
+    [-160, 0, 0, 48],
+    [48, 0, 208, 48],
+  ]) {
+    const vertices = [
+      [x1, 6, z1],
+      [x2, 6, z1],
+      [x2, 6, z2],
+      [x1, 6, z2],
+    ];
+    for (const i of [0, 1, 2, 0, 2, 3])
+      data.push(
+        ...vertices[i],
+        0.24,
+        0.52,
+        0.59,
+        0,
+        1,
+        0,
+        vertices[i][0],
+        vertices[i][2],
+      );
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, worldBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+  worldVertexCount = data.length / 11;
+}
+function bindVertices(buffer) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  for (const [name, size, offset] of [
+    ["position", 3, 0],
+    ["color", 3, 3],
+    ["normal", 3, 6],
+    ["uv", 2, 9],
+  ]) {
+    const loc = gl.getAttribLocation(program, name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 44, offset * 4);
+  }
+}
+function drawWorld() {
+  if (!gl || !world) return;
+  const w = canvas.width,
+    h = canvas.height;
+  gl.viewport(0, 0, w, h);
+  const daylight = 0.25 + 0.75 * Math.max(0, Math.sin(timeOfDay * Math.PI * 2)),
+    sky = [
+      lerp(0.075, 0.64, daylight),
+      lerp(0.12, 0.76, daylight),
+      lerp(0.19, 0.76, daylight),
+    ];
+  canvas.style.background = `radial-gradient(circle at 72% 20%,rgba(255,239,182,${daylight}) 0 3%,transparent 3.2%),linear-gradient(180deg,rgb(${sky.map((n) => Math.round(n * 180)).join(",")}),rgb(${sky.map((n) => Math.round(n * 255)).join(",")}) 65%)`;
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const camera = overview
+    ? { x: 57, y: 36, z: 62, yaw: -2.4, pitch: -0.53 }
+    : { ...player, y: player.y + 1.6 };
+  const { yaw, pitch } = camera,
+    forward = [
+      Math.sin(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      Math.cos(yaw) * Math.cos(pitch),
+    ],
+    right = [Math.cos(yaw), 0, -Math.sin(yaw)],
+    up = [
+      -Math.sin(yaw) * Math.sin(pitch),
+      Math.cos(pitch),
+      -Math.cos(yaw) * Math.sin(pitch),
+    ];
+  for (const [name, value] of [
+    ["eye", [camera.x, camera.y, camera.z]],
+    ["forward", forward],
+    ["right", right],
+    ["up", up],
+    ["sky", sky],
+  ])
+    gl.uniform3fv(gl.getUniformLocation(program, name), value);
+  gl.uniform1f(gl.getUniformLocation(program, "aspect"), w / h);
+  gl.uniform1f(gl.getUniformLocation(program, "day"), daylight);
+  bindVertices(worldBuffer);
+  gl.drawArrays(gl.TRIANGLES, 0, worldVertexCount);
+  targetBlock = overview
+    ? null
+    : raycastWorld(
+        world,
+        { x: camera.x, y: camera.y, z: camera.z },
+        { x: forward[0], y: forward[1], z: forward[2] },
+      );
+  if (targetBlock) {
+    const { x, y, z } = targetBlock,
+      data = [],
+      corners = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+      ];
+    for (const [a, b] of [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 0],
+      [4, 5],
+      [5, 6],
+      [6, 7],
+      [7, 4],
+      [0, 4],
+      [1, 5],
+      [2, 6],
+      [3, 7],
+    ])
+      for (const i of [a, b])
+        data.push(
+          x + corners[i][0] * 1.004 - 0.002,
+          y + corners[i][1] * 1.004 - 0.002,
+          z + corners[i][2] * 1.004 - 0.002,
+          1,
+          1,
+          0.78,
+          0,
+          1,
+          0,
+          0.5,
+          0.5,
+        );
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
+    bindVertices(lineBuffer);
+    gl.drawArrays(gl.LINES, 0, data.length / 11);
+  }
+  $("#target").textContent = overview
+    ? "An island shaped by your seed. Return to the trail to build."
+    : targetBlock
+      ? `${blockTypes[targetBlock.id].name} · ${targetBlock.distance.toFixed(1)} m · left click breaks / right click places`
+      : "Click to look · WASD to walk · Space to jump · drag to look on touch";
+  $("#coordinates").textContent =
+    `${player.x.toFixed(1)} / ${player.y.toFixed(1)} / ${player.z.toFixed(1)} · ${edited} edits`;
+  const hour = Math.floor(timeOfDay * 24);
+  $("#world-clock").textContent =
+    `${String(hour).padStart(2, "0")}:${String(Math.floor(timeOfDay * 24 * 60) % 60).padStart(2, "0")} · island ${seed.slice(0, 14)}`;
+}
+let clickAudio;
+function blockClick() {
+  try {
+    clickAudio ??= new (window.AudioContext || window.webkitAudioContext)();
+    clickAudio.resume();
+    const o = clickAudio.createOscillator(),
+      g = clickAudio.createGain();
+    o.type = "triangle";
+    o.frequency.value = selected === 9 ? 660 : 180;
+    g.gain.setValueAtTime(0.07, clickAudio.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, clickAudio.currentTime + 0.075);
+    o.connect(g).connect(clickAudio.destination);
+    o.start();
+    o.stop(clickAudio.currentTime + 0.08);
+  } catch {}
+}
+function editBlock(place) {
+  if (!targetBlock) return toast("Look at a nearby block first.");
+  const p = place ? targetBlock.previous : targetBlock;
+  if (!p || p.y < 1) return toast("The foundation stays in place.");
+  if (
+    place &&
+    Math.abs(p.x + 0.5 - player.x) < 0.75 &&
+    Math.abs(p.z + 0.5 - player.z) < 0.75 &&
+    p.y < player.y + 1.8 &&
+    p.y + 1 > player.y
+  )
+    return toast("Step back a little before placing that block.");
+  if (putBlock(world, p.x, p.y, p.z, place ? selected : 0)) {
+    edited++;
+    meshWorld();
+    blockClick();
+    drawWorld();
+  }
+}
+function newWorld() {
+  world = voxelWorld(seed);
+  player = { ...world.spawn, vy: 0, grounded: true };
+  edited = 0;
+  meshWorld();
+  drawWorld();
+}
+for (const [id, i] of [1, 3, 5, 8, 9].map((id, i) => [id, i])) {
+  const b = document.createElement("button");
+  b.setAttribute("aria-label", blockTypes[id].name);
+  b.title = `${i + 1}: ${blockTypes[id].name}`;
+  b.setAttribute("aria-pressed", selected === id);
+  const sw = document.createElement("i");
+  sw.style.background = `rgb(${blockTypes[id].color.map((n) => Math.round(n * 255)).join(",")})`;
+  b.append(sw, document.createTextNode(blockTypes[id].name));
+  b.onclick = () => {
+    selected = id;
+    $$("#hotbar button").forEach((button, j) =>
+      button.setAttribute("aria-pressed", j === i),
+    );
+  };
+  $("#hotbar").append(b);
+}
+$("#break").onclick = () => editBlock(false);
+$("#place").onclick = () => editBlock(true);
+$("#overview").onclick = () => {
+  overview = !overview;
+  document.body.classList.toggle("overview", overview);
+  $("#overview").textContent = overview
+    ? "Back to the trail"
+    : "Island overview";
+  document.exitPointerLock?.();
+  drawWorld();
+};
+$("#home").onclick = () => {
+  player = { ...world.spawn, vy: 0, grounded: true };
+  overview = false;
+  document.body.classList.remove("overview");
+  $("#overview").textContent = "Island overview";
+  drawWorld();
+};
+$("#daylight").oninput = () => {
+  timeOfDay = +$("#daylight").value / 100;
+  drawWorld();
+};
+$("#cycle").onclick = () => {
+  cycling = !cycling;
+  $("#cycle").setAttribute("aria-pressed", cycling);
+};
+$("#export-world").onclick = () =>
+  saveFile(
+    `tidelands-${hash(seed)}.json`,
+    JSON.stringify({
+      format: "tidelands-1",
+      seed,
+      size: [world.w, world.h, world.d],
+      blocks: Array.from(world.blocks),
+      player,
+      timeOfDay,
+    }),
+  );
+canvas.oncontextmenu = (e) => e.preventDefault();
+canvas.onpointerdown = (e) => {
+  canvas.focus();
+  if (overview) return;
+  if (document.pointerLockElement === canvas) {
+    editBlock(e.button === 2);
+    return;
+  }
+  drag = { x: e.clientX, y: e.clientY };
+  if (e.pointerType === "mouse")
+    canvas.requestPointerLock?.()?.catch?.(() => toast("Drag to look around."));
+  else canvas.setPointerCapture(e.pointerId);
+};
+canvas.onpointerup = canvas.onpointercancel = () => {
+  drag = null;
+};
+addEventListener("pointerup", () => {
+  drag = null;
+});
+document.addEventListener("pointerlockchange", () => {
+  drag = null;
+});
+canvas.onpointermove = (e) => {
+  if (overview) return;
+  let dx = 0,
+    dy = 0;
+  if (document.pointerLockElement === canvas) {
+    dx = e.movementX;
+    dy = e.movementY;
+  } else if (drag) {
+    dx = e.clientX - drag.x;
+    dy = e.clientY - drag.y;
+    drag = { x: e.clientX, y: e.clientY };
+  }
+  if (dx || dy) worldDirty = true;
+  player.yaw += dx * 0.004;
+  player.pitch = clamp(player.pitch - dy * 0.004, -1.3, 1.3);
+};
+addEventListener("keydown", (e) => {
+  if (editable(e.target)) return;
+  const key = e.key.toLowerCase();
+  if (
+    [
+      "w",
+      "a",
+      "s",
+      "d",
+      " ",
+      "shift",
+      "arrowup",
+      "arrowdown",
+      "arrowleft",
+      "arrowright",
+    ].includes(key)
+  ) {
+    e.preventDefault();
+    keys[key] = true;
+  }
+  if (/^[1-5]$/.test(key)) $$("#hotbar button")[+key - 1].click();
+});
+addEventListener("keyup", (e) => {
+  keys[e.key.toLowerCase()] = false;
+});
+addEventListener("blur", () => {
+  keys = {};
+  drag = null;
+});
+$$(".world-pad button").forEach((b) => {
+  b.onpointerdown = (e) => {
+    e.preventDefault();
+    keys[b.dataset.key] = true;
+    b.setPointerCapture(e.pointerId);
+  };
+  b.onpointerup = b.onpointercancel = () => {
+    keys[b.dataset.key] = false;
+  };
+});
+function worldFrame(time) {
+  const delta = Math.min(0.1, (time - lastWorldTime) / 1000 || 0);
+  lastWorldTime = time;
+  if (!document.hidden) {
+    const before = { x: player.x, y: player.y, z: player.z };
+    if (!overview) {
+      worldAccum += delta;
+      while (worldAccum >= 1 / 60) {
+        player = movePlayer(world, player, {
+          forward:
+            (keys.w || keys.arrowup ? 1 : 0) -
+            (keys.s || keys.arrowdown ? 1 : 0),
+          right:
+            (keys.d || keys.arrowright ? 1 : 0) -
+            (keys.a || keys.arrowleft ? 1 : 0),
+          jump: keys[" "],
+          sprint: keys.shift,
+        });
+        worldAccum -= 1 / 60;
+      }
+    }
+    if (cycling) {
+      timeOfDay = (timeOfDay + delta / 240) % 1;
+      $("#daylight").value = timeOfDay * 100;
+    }
+    if (
+      worldDirty ||
+      cycling ||
+      Math.hypot(
+        player.x - before.x,
+        player.y - before.y,
+        player.z - before.z,
+      ) > 0.0001
+    ) {
+      drawWorld();
+      worldDirty = false;
+    }
+  }
+  requestAnimationFrame(worldFrame);
+}
+try {
+  initGL();
+  newWorld();
+  fitCanvas(canvas, drawWorld, 1.5);
+  addEventListener("seedchange", newWorld);
+  requestAnimationFrame(worldFrame);
+  ready();
+} catch (error) {
+  $("#world-error").hidden = false;
+  $("#world-error").textContent = error.message;
+  parentMessage({ type: "harness:error", message: error.message });
+}
+
+$("#import-world").onclick = () => $("#world-file").click();
+$("#world-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    if (file.size > 2 * 1024 * 1024)
+      throw new Error("Choose a Tidelands JSON file smaller than 2 MiB.");
+    const restored = importWorld(JSON.parse(await file.text()));
+    setSeed(restored.world.seed);
+    world = restored.world;
+    player = restored.player;
+    timeOfDay = restored.timeOfDay;
+    $("#daylight").value = timeOfDay * 100;
+    edited = 0;
+    meshWorld();
+    drawWorld();
+    toast("Your world is restored.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    e.target.value = "";
+  }
+};
+
+</script></body></html>

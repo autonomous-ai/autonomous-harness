@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/music-studio",
+  "license": "MIT",
+  "tagline": "Compose a seeded eight-bar track, edit five instrument patterns, shape swing and",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/music-studio/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Build a warm, unhurried eight-bar piece with a syncopated bass line and a sparse melody. Give it a distinct opening and ending.",
+      "caption": "Afterhours · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/music-studio/starter.jpg"
+    }
+  ]
+}

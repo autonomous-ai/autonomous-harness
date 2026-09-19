@@ -1,0 +1,102 @@
+<section class="intro">
+  <div>
+    <p class="eyebrow">A contest of strategies / No reflexes required</p>
+    <h1>Think in moves.</h1>
+    <p>
+      Two squads. Three relays. Change the policies, watch the consequences, and
+      test your theory across an entire tournament.
+    </p>
+  </div>
+  <button id="export-replay">Export replay ↗</button>
+</section>
+<main class="workspace">
+  <div>
+    <div class="scoreboard">
+      <div class="team ember">
+        <span class="eyebrow">EMBER / CORAL</span
+        ><strong id="score-ember">0</strong>
+      </div>
+      <div class="match-state">
+        <p id="match-state">THE OPENING</p>
+        <span id="turn">Turn 00 / 72</span>
+      </div>
+      <div class="team tide">
+        <span class="eyebrow">TIDE / TEAL</span
+        ><strong id="score-tide">0</strong>
+      </div>
+    </div>
+    <section class="arena-stage">
+      <canvas
+        id="arena"
+        aria-label="Strategy arena showing two squads competing for three relays"
+      ></canvas>
+      <div class="arena-legend">
+        <span><i style="background: #df896f"></i>Ember</span
+        ><span><i style="background: #74c8c2"></i>Tide</span
+        ><span>◇ Hold a relay: +1 / turn</span>
+      </div>
+    </section>
+    <div class="replay-controls">
+      <button id="play-match" class="primary">Ⅱ Pause</button
+      ><button id="rewind" aria-label="Rewind match">↤</button
+      ><button id="step" aria-label="Next turn">→</button
+      ><input
+        id="timeline"
+        aria-label="Replay turn"
+        type="range"
+        min="0"
+        max="72"
+        value="0"
+      /><select id="speed" aria-label="Playback speed">
+        <option value="600">1×</option>
+        <option value="250">2×</option>
+        <option value="80">4×</option>
+      </select>
+    </div>
+    <section class="event-log">
+      <p class="eyebrow">Decisions at this turn / Heuristic policies</p>
+      <div id="events" role="log"></div>
+    </section>
+  </div>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">The matchup</p>
+      <label class="field"
+        ><span>Ember policy</span
+        ><select id="coral-policy">
+          <option value="control">Control / hold the relays</option>
+          <option value="hunt">Hunt / pressure opponents</option>
+        </select></label
+      ><label class="field"
+        ><span>Tide policy</span
+        ><select id="teal-policy">
+          <option value="hunt">Hunt / pressure opponents</option>
+          <option value="control">Control / hold the relays</option>
+        </select></label
+      >
+      <p class="small muted">
+        Control defends captured relays. Hunt trades position for attacks. Each
+        knockout scores two points, followed by a three-turn respawn.
+      </p>
+    </div>
+    <div class="section">
+      <h3>Put your theory to the test.</h3>
+      <p class="small muted">
+        Run both policies over 32 seeded maps. Find out whether a convincing win
+        survives a different board.
+      </p>
+      <button id="tournament" style="width: 100%; margin-top: 14px">
+        Run 32-match tournament
+      </button>
+      <div id="tournament-result" class="tournament-result" role="status"></div>
+    </div>
+    <div class="section small muted">
+      All decisions are local, inspectable rules. Replays record every turn,
+      position, score and decision. No hidden model calls.
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>DETERMINISTIC MATCH ENGINE</span
+  ><span>CHANGE A RULE. WATCH A WORLD CHANGE.</span>
+</footer>

@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/creative-direction",
+  "license": "MIT",
+  "tagline": "Build a coherent visual identity with coordinated posters, typography and palett",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/creative-direction/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Create a coastal identity for COVE STUDIO: mineral green, warm paper, an expressive serif, and a poster that feels like a place to stay.",
+      "caption": "Forme · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/creative-direction/starter.jpg"
+    }
+  ]
+}

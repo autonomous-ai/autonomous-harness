@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/game-master",
+  "license": "MIT",
+  "tagline": "Design and compare strategies in a seeded arena",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/game-master/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Create a capture arena where patient defenders face aggressive hunters. Show every decision and compare their win rates over 32 maps.",
+      "caption": "Relay · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/game-master/starter.jpg"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "spec": 1,
+  "id": "autonomous/generative-art",
+  "name": "Generative Art",
+  "category": "Original art",
+  "author": "Autonomous",
+  "description": "Design reproducible generative editions. Explore contour fields, dunes and orbital studies, tune their geometry and palettes, and export prints up to 3200 \u00d7 4000.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "sketch/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ],
+    "env": {
+      "GENART_DSH_DIR": "${dsh}"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
+  "verdict": ".harness/verdict.json"
+}

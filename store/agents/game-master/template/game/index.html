@@ -1,0 +1,1133 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>RELAY — Game Master</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  --bg: #161c23;
+  --panel: #1d2731;
+  --ink: #e7e8e3;
+  --muted: #99a7b3;
+  --line: #7c90a42b;
+  --accent: #aadad1;
+}
+.mark {
+  border: 0;
+  font-size: 30px;
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 235px;
+  gap: 26px;
+}
+.scoreboard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 25px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: #1b242d;
+}
+.team {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.team .eyebrow {
+  color: inherit;
+  font-size: 9px;
+}
+.team strong {
+  font:
+    44px ui-monospace,
+    monospace;
+  letter-spacing: -0.08em;
+}
+.ember {
+  color: #df896f;
+}
+.tide {
+  color: #74c8c2;
+  flex-direction: row-reverse;
+}
+.match-state {
+  text-align: center;
+  font:
+    9px/1.8 ui-monospace,
+    monospace;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.match-state p {
+  color: var(--ink);
+}
+.arena-stage {
+  background: radial-gradient(ellipse at center, #273743, #111a22);
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+.arena-stage canvas {
+  width: 100%;
+  height: 445px;
+}
+.arena-legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  font:
+    10px ui-monospace,
+    monospace;
+  padding: 12px;
+  color: var(--muted);
+}
+.arena-legend i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+}
+.replay-controls input {
+  flex: 1;
+  width: 50px;
+}
+.replay-controls button,
+.replay-controls select {
+  font-size: 11px;
+  padding: 7px 9px;
+}
+.event-log {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+#events {
+  margin-top: 8px;
+  min-height: 108px;
+  font:
+    10px/1.8 ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+#events p {
+  overflow-wrap: anywhere;
+}
+.tournament-result {
+  font:
+    12px/1.8 ui-monospace,
+    monospace;
+  color: var(--accent);
+  margin-top: 14px;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .arena-stage canvas {
+    height: 420px;
+  }
+}
+@media (max-width: 480px) {
+  .scoreboard {
+    padding: 12px;
+  }
+  .team {
+    gap: 8px;
+    flex-direction: column;
+  }
+  .team strong {
+    font-size: 33px;
+  }
+  .arena-stage canvas {
+    height: 320px;
+  }
+  .arena-legend {
+    font-size: 8px;
+    gap: 10px;
+  }
+  .replay-controls {
+    gap: 5px;
+  }
+  .replay-controls button {
+    padding: 7px;
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">◇</span>RELAY / ARENA</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<section class="intro">
+  <div>
+    <p class="eyebrow">A contest of strategies / No reflexes required</p>
+    <h1>Think in moves.</h1>
+    <p>
+      Two squads. Three relays. Change the policies, watch the consequences, and
+      test your theory across an entire tournament.
+    </p>
+  </div>
+  <button id="export-replay">Export replay ↗</button>
+</section>
+<main class="workspace">
+  <div>
+    <div class="scoreboard">
+      <div class="team ember">
+        <span class="eyebrow">EMBER / CORAL</span
+        ><strong id="score-ember">0</strong>
+      </div>
+      <div class="match-state">
+        <p id="match-state">THE OPENING</p>
+        <span id="turn">Turn 00 / 72</span>
+      </div>
+      <div class="team tide">
+        <span class="eyebrow">TIDE / TEAL</span
+        ><strong id="score-tide">0</strong>
+      </div>
+    </div>
+    <section class="arena-stage">
+      <canvas
+        id="arena"
+        aria-label="Strategy arena showing two squads competing for three relays"
+      ></canvas>
+      <div class="arena-legend">
+        <span><i style="background: #df896f"></i>Ember</span
+        ><span><i style="background: #74c8c2"></i>Tide</span
+        ><span>◇ Hold a relay: +1 / turn</span>
+      </div>
+    </section>
+    <div class="replay-controls">
+      <button id="play-match" class="primary">Ⅱ Pause</button
+      ><button id="rewind" aria-label="Rewind match">↤</button
+      ><button id="step" aria-label="Next turn">→</button
+      ><input
+        id="timeline"
+        aria-label="Replay turn"
+        type="range"
+        min="0"
+        max="72"
+        value="0"
+      /><select id="speed" aria-label="Playback speed">
+        <option value="600">1×</option>
+        <option value="250">2×</option>
+        <option value="80">4×</option>
+      </select>
+    </div>
+    <section class="event-log">
+      <p class="eyebrow">Decisions at this turn / Heuristic policies</p>
+      <div id="events" role="log"></div>
+    </section>
+  </div>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">The matchup</p>
+      <label class="field"
+        ><span>Ember policy</span
+        ><select id="coral-policy">
+          <option value="control">Control / hold the relays</option>
+          <option value="hunt">Hunt / pressure opponents</option>
+        </select></label
+      ><label class="field"
+        ><span>Tide policy</span
+        ><select id="teal-policy">
+          <option value="hunt">Hunt / pressure opponents</option>
+          <option value="control">Control / hold the relays</option>
+        </select></label
+      >
+      <p class="small muted">
+        Control defends captured relays. Hunt trades position for attacks. Each
+        knockout scores two points, followed by a three-turn respawn.
+      </p>
+    </div>
+    <div class="section">
+      <h3>Put your theory to the test.</h3>
+      <p class="small muted">
+        Run both policies over 32 seeded maps. Find out whether a convincing win
+        survives a different board.
+      </p>
+      <button id="tournament" style="width: 100%; margin-top: 14px">
+        Run 32-match tournament
+      </button>
+      <div id="tournament-result" class="tournament-result" role="status"></div>
+    </div>
+    <div class="section small muted">
+      All decisions are local, inspectable rules. Replays record every turn,
+      position, score and decision. No hidden model calls.
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>DETERMINISTIC MATCH ENGINE</span
+  ><span>CHANGE A RULE. WATCH A WORLD CHANGE.</span>
+</footer>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+const arenaSize = { w: 11, h: 9 };
+function arenaMap(seed) {
+  const r = random(seed, "terrain"),
+    walls = [];
+  for (let y = 1; y < 8; y++)
+    if (y !== 4 && r() > 0.48) {
+      walls.push([3, y], [7, 8 - y]);
+    }
+  return {
+    ...arenaSize,
+    walls,
+    relays: [
+      { x: 5, y: 1, name: "NORTH" },
+      { x: 5, y: 4, name: "CORE" },
+      { x: 5, y: 7, name: "SOUTH" },
+    ],
+  };
+}
+function arenaPath(map, from, target, occupied = []) {
+  const blocked = new Set(
+    [...map.walls, ...occupied].map(([x, y]) => `${x},${y}`),
+  );
+  blocked.delete(`${target.x},${target.y}`);
+  const queue = [{ x: from.x, y: from.y, path: [] }],
+    seen = new Set([`${from.x},${from.y}`]);
+  for (let i = 0; i < queue.length; i++) {
+    const p = queue[i];
+    if (p.x === target.x && p.y === target.y) return p.path;
+    for (const [dx, dy] of [
+      [1, 0],
+      [0, -1],
+      [-1, 0],
+      [0, 1],
+    ]) {
+      const x = p.x + dx,
+        y = p.y + dy,
+        key = `${x},${y}`;
+      if (
+        x < 0 ||
+        y < 0 ||
+        x >= map.w ||
+        y >= map.h ||
+        seen.has(key) ||
+        blocked.has(key)
+      )
+        continue;
+      seen.add(key);
+      queue.push({ x, y, path: [...p.path, { x, y }] });
+    }
+  }
+  return [];
+}
+function arenaMatch(
+  seed,
+  { coral = "control", teal = "hunt", rounds = 72 } = {},
+) {
+  const map = arenaMap(seed),
+    rng = random(seed, "decisions"),
+    units = [];
+  for (let team = 0; team < 2; team++)
+    for (let i = 0; i < 3; i++)
+      units.push({
+        id: team * 3 + i,
+        team,
+        x: team ? 10 : 0,
+        y: 2 + i * 2,
+        hp: 3,
+        wait: 0,
+      });
+  let score = [0, 0],
+    owners = [-1, -1, -1];
+  const history = [];
+  const snapshot = (turn, log) => ({
+    turn,
+    score: [...score],
+    owners: [...owners],
+    units: units.map((u) => ({ ...u })),
+    log,
+  });
+  history.push(
+    snapshot(0, ["Three relays. Seventy-two turns. Hold ground to score."]),
+  );
+  for (let turn = 1; turn <= rounds; turn++) {
+    const log = [];
+    const order = turn % 2 ? [0, 3, 1, 4, 2, 5] : [3, 0, 4, 1, 5, 2];
+    for (const index of order) {
+      const u = units[index];
+      if (u.wait) {
+        u.wait--;
+        if (!u.wait) {
+          u.hp = 3;
+          u.x = u.team ? 10 : 0;
+          u.y = 2 + (u.id % 3) * 2;
+        }
+        continue;
+      }
+      const opponents = units.filter((v) => v.team !== u.team && !v.wait),
+        adjacent = opponents.find(
+          (v) => Math.abs(v.x - u.x) + Math.abs(v.y - u.y) === 1,
+        );
+      const name = u.team ? "Tide" : "Ember";
+      if (adjacent) {
+        adjacent.hp--;
+        log.push(
+          `${name} ${(u.id % 3) + 1} tags ${adjacent.team ? "Tide" : "Ember"} ${(adjacent.id % 3) + 1}.`,
+        );
+        if (adjacent.hp === 0) {
+          adjacent.wait = 3;
+          score[u.team] += 2;
+          log.push(`${name} scores a knockout (+2).`);
+        }
+        continue;
+      }
+      const policy = u.team ? teal : coral;
+      const occupied = units
+        .filter((v) => v !== u && !v.wait)
+        .map((v) => [v.x, v.y]);
+      let target;
+      const onRelay = map.relays.findIndex((r) => r.x === u.x && r.y === u.y);
+      if (onRelay !== -1 && policy === "control") {
+        log.push(
+          `${name} ${(u.id % 3) + 1} holds ${map.relays[onRelay].name}.`,
+        );
+        continue;
+      }
+      if (policy === "hunt" && opponents.length && rng() < 0.56)
+        target = [...opponents].sort(
+          (a, b) =>
+            Math.abs(a.x - u.x) +
+            Math.abs(a.y - u.y) -
+            (Math.abs(b.x - u.x) + Math.abs(b.y - u.y)),
+        )[0];
+      else {
+        const candidates = map.relays.map((r, i) => ({
+          ...r,
+          index: i,
+          cost:
+            Math.abs(r.x - u.x) +
+            Math.abs(r.y - u.y) +
+            (owners[i] === u.team ? 7 : 0) +
+            rng() * 2,
+        }));
+        target = candidates.sort((a, b) => a.cost - b.cost)[0];
+      }
+      const path = arenaPath(map, u, target, occupied);
+      const next = path[0];
+      if (next && !occupied.some(([x, y]) => x === next.x && y === next.y)) {
+        u.x = next.x;
+        u.y = next.y;
+        log.push(
+          `${name} ${(u.id % 3) + 1} → ${target.name || "opponent"} (${policy}).`,
+        );
+      }
+    }
+    owners = map.relays.map((r) => {
+      const u = units.find((u) => !u.wait && u.x === r.x && u.y === r.y);
+      return u ? u.team : -1;
+    });
+    owners.forEach((owner) => {
+      if (owner !== -1) score[owner]++;
+    });
+    history.push(snapshot(turn, log.slice(-6)));
+  }
+  return {
+    seed: String(seed),
+    map,
+    policies: { coral, teal },
+    history,
+    winner: score[0] === score[1] ? -1 : score[0] > score[1] ? 0 : 1,
+  };
+}
+function arenaTournament(seed, options, count = 32) {
+  const wins = [0, 0, 0];
+  let margins = 0;
+  for (let i = 0; i < count; i++) {
+    const match = arenaMatch(`${seed}/match/${i}`, options);
+    wins[match.winner === -1 ? 2 : match.winner]++;
+    const last = match.history.at(-1);
+    margins += last.score[0] - last.score[1];
+  }
+  return {
+    count,
+    ember: wins[0],
+    tide: wins[1],
+    draws: wins[2],
+    meanMargin: margins / count,
+  };
+}
+
+</script>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let match,
+  turn = 0,
+  running = !reducedMotion,
+  lastTurnTime = 0;
+const policyOptions = () => ({
+  coral: $("#coral-policy").value,
+  teal: $("#teal-policy").value,
+});
+function drawArena() {
+  if (!match) return;
+  const c = $("#arena"),
+    ctx = c.getContext("2d"),
+    w = c.width,
+    h = c.height,
+    state = match.history[turn],
+    unit = Math.min(w / 13, h / 11),
+    left = (w - match.map.w * unit) / 2,
+    top = (h - match.map.h * unit) / 2;
+  ctx.clearRect(0, 0, w, h);
+  const pos = (x, y) => ({
+    x: left + (x + 0.5) * unit,
+    y: top + (y + 0.5) * unit,
+  });
+  for (let y = 0; y < match.map.h; y++)
+    for (let x = 0; x < match.map.w; x++) {
+      const p = pos(x, y),
+        wall = match.map.walls.some((v) => v[0] === x && v[1] === y);
+      ctx.fillStyle = wall ? "#405262" : (x + y) % 2 ? "#24333f" : "#263743";
+      ctx.strokeStyle = "#475d6e33";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(
+        p.x - unit * 0.46,
+        p.y - unit * 0.46,
+        unit * 0.92,
+        unit * 0.92,
+        unit * 0.08,
+      );
+      ctx.fill();
+      ctx.stroke();
+      if (wall) {
+        ctx.fillStyle = "#536573";
+        ctx.fillRect(
+          p.x - unit * 0.3,
+          p.y - unit * 0.3,
+          unit * 0.6,
+          unit * 0.12,
+        );
+      }
+    }
+  match.map.relays.forEach((r, i) => {
+    const p = pos(r.x, r.y),
+      owner = state.owners[i];
+    ctx.strokeStyle = owner === -1 ? "#d6c69a" : owner ? "#74c8c2" : "#df896f";
+    ctx.lineWidth = 2;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeRect(-unit * 0.3, -unit * 0.3, unit * 0.6, unit * 0.6);
+    ctx.restore();
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.font = `${unit * 0.16}px monospace`;
+    ctx.textAlign = "center";
+    ctx.fillText(r.name, p.x, p.y + unit * 0.47);
+  });
+  state.units
+    .filter((u) => !u.wait)
+    .forEach((u) => {
+      const p = pos(u.x, u.y),
+        color = u.team ? "#74c8c2" : "#df896f";
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, unit * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#162129";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `bold ${unit * 0.24}px monospace`;
+      ctx.fillText((u.id % 3) + 1, p.x, p.y);
+      ctx.fillStyle = color;
+      for (let i = 0; i < u.hp; i++)
+        ctx.fillRect(
+          p.x - unit * 0.19 + i * unit * 0.14,
+          p.y - unit * 0.39,
+          unit * 0.1,
+          unit * 0.055,
+        );
+    });
+  ctx.textBaseline = "alphabetic";
+}
+function showTurn() {
+  const state = match.history[turn];
+  $("#score-ember").textContent = state.score[0];
+  $("#score-tide").textContent = state.score[1];
+  $("#turn").textContent = `Turn ${String(turn).padStart(2, "0")} / 72`;
+  $("#timeline").value = turn;
+  $("#match-state").textContent =
+    turn === 72
+      ? match.winner === -1
+        ? "DRAW"
+        : match.winner
+          ? "TIDE WINS"
+          : "EMBER WINS"
+      : turn < 12
+        ? "THE OPENING"
+        : turn < 50
+          ? "THE CONTEST"
+          : "THE ENDGAME";
+  $("#events").replaceChildren();
+  state.log.forEach((line) => {
+    const p = document.createElement("p");
+    p.textContent = line;
+    $("#events").append(p);
+  });
+  $("#play-match").textContent = running
+    ? "Ⅱ Pause"
+    : turn === 72
+      ? "↻ Replay"
+      : "▶ Play";
+  drawArena();
+}
+function newMatch() {
+  match = arenaMatch(seed, policyOptions());
+  turn = 0;
+  $("#tournament-result").textContent = "";
+  showTurn();
+}
+$("#play-match").onclick = () => {
+  if (turn === 72) turn = 0;
+  running = !running;
+  lastTurnTime = performance.now();
+  showTurn();
+};
+$("#step").onclick = () => {
+  running = false;
+  turn = Math.min(72, turn + 1);
+  showTurn();
+};
+$("#rewind").onclick = () => {
+  running = false;
+  turn = 0;
+  showTurn();
+};
+$("#timeline").oninput = () => {
+  running = false;
+  turn = +$("#timeline").value;
+  showTurn();
+};
+for (const id of ["coral-policy", "teal-policy"])
+  $("#" + id).onchange = newMatch;
+$("#export-replay").onclick = () =>
+  saveFile(`relay-${hash(seed)}.json`, JSON.stringify(match, null, 2));
+$("#tournament").onclick = async () => {
+  const b = $("#tournament");
+  b.disabled = true;
+  $("#tournament-result").textContent = "Playing 32 independent maps…";
+  await new Promise((r) => setTimeout(r, 30));
+  const result = arenaTournament(seed, policyOptions());
+  $("#tournament-result").textContent =
+    `Ember ${result.ember} · Tide ${result.tide} · Draws ${result.draws}. Mean Ember margin: ${result.meanMargin.toFixed(1)} points.`;
+  b.disabled = false;
+};
+function arenaFrame(time) {
+  if (running && time - lastTurnTime > +$("#speed").value) {
+    turn = Math.min(72, turn + 1);
+    if (turn === 72) running = false;
+    lastTurnTime = time;
+    showTurn();
+  }
+  requestAnimationFrame(arenaFrame);
+}
+fitCanvas($("#arena"), drawArena);
+addEventListener("seedchange", newMatch);
+newMatch();
+requestAnimationFrame(arenaFrame);
+ready();
+
+</script></body></html>

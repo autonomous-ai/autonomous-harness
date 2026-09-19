@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/drone-pilot",
+  "name": "Drone Pilot",
+  "category": "Simulation",
+  "author": "Autonomous",
+  "description": "Fly a seeded canyon course in first person. Switch between manual controls and a tracking autopilot, inspect gate results and the flight path, and export telemetry.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "flight/index.html",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": [
+      "skills"
+    ]
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
+  "verdict": ".harness/verdict.json"
+}
