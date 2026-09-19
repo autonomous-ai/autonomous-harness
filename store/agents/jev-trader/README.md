@@ -41,7 +41,7 @@ stand-in for *plumbing*, not judgement. This is paper trading on a synthetic mar
 form policy (buy the trend / cut losses) and react to a moving tape. Treat any P&L as a demo, not a
 strategy.
 
-## Credits and stewardship
+## Credit and stewardship
 
 - **Jev** is the work of **TypeSafe AI** (typesafe.ai). This harness is an OpenHarness wrapper that
   only calls the public API; it contains no TypeSafe code.

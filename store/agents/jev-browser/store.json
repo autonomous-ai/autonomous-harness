@@ -2,11 +2,11 @@
   "homepage": "https://typesafe.ai",
   "upstream": "https://typesafe.ai",
   "license": "MIT",
-  "tagline": "Jev drives a web browser: a flight booked in seconds, one picked element per step",
+  "tagline": "Jev drives a web browser: a flight booked in seconds, one pick per step",
   "examples": [
     {
       "prompt": "Write ten booking tasks for a family trip: different cities, days and bag counts, some nonstop only. Then raise distraction until fewer than 9 in 10 bookings come out exactly right, and tell me where that is.",
-      "caption": "The cursor flies through search, results, passenger details and review while rings show the probability Jev gave each element"
+      "caption": "The cursor flies through four pages while rings show the probability Jev gave each element"
     },
     {
       "prompt": "Slow it down to one step a second with no distraction so I can read what Jev sees and what it picks at every step.",
