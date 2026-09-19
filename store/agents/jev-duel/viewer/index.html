@@ -9,36 +9,93 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="brand"><span class="dot"></span><h1>Jev Duel</h1></div>
-  <div id="title"></div>
-  <div id="meta"></div>
+  <div class="brand"><span class="dot"></span><h1>Jev Duel</h1><span class="sub" id="title"></span></div>
+  <div class="stats">
+    <div class="stat"><label>Game</label><span id="s-game">1</span></div>
+    <div class="stat"><label>Move</label><span id="s-move">0</span></div>
+    <div class="stat"><label>Games won</label><span id="s-wins"><b class="o">0</b> – <b class="x">0</b></span></div>
+    <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+    <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+    <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
+  </div>
   <div class="controls">
-    <button id="play" class="primary">Play</button>
     <button id="pause">Pause</button>
     <button id="step">Step</button>
-    <button id="reset">Reset</button>
+    <button id="reset" class="primary">Reset</button>
   </div>
 </header>
+<div id="cfgError" class="cfg-error hidden"></div>
 
 <main>
   <section id="stage">
-    <div id="scoreboard">
-      <div class="side o" id="scoreO"></div>
-      <div id="turn">Jev vs Jev</div>
-      <div class="side x" id="scoreX"></div>
+    <canvas id="fx" aria-hidden="true"></canvas>
+    <div id="arena">
+      <div class="player o" id="cardO">
+        <div class="who"><span class="chip"></span><span class="name" id="nameO">O</span></div>
+        <div class="pts" id="ptsO">2</div>
+        <div class="state" id="stateO">&nbsp;</div>
+        <p class="persona" id="personaO"></p>
+        <label class="reads">Reads <b id="insightOVal">2</b><input id="insightO" type="range" min="0" max="2" step="1" value="2"></label>
+        <div class="readsHint" id="insightOHint"></div>
+        <div class="lastmove" id="lastO">&nbsp;</div>
+      </div>
+      <div id="boardcol">
+        <div id="boardwrap"><div id="board" role="grid" aria-label="The Reversi board. Click a glowing square to play that move for the side to move."></div></div>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+      <div class="player x" id="cardX">
+        <div class="who"><span class="chip"></span><span class="name" id="nameX">X</span></div>
+        <div class="pts" id="ptsX">2</div>
+        <div class="state" id="stateX">&nbsp;</div>
+        <p class="persona" id="personaX"></p>
+        <label class="reads">Reads <b id="insightXVal">2</b><input id="insightX" type="range" min="0" max="2" step="1" value="2"></label>
+        <div class="readsHint" id="insightXHint"></div>
+        <div class="lastmove" id="lastX">&nbsp;</div>
+      </div>
     </div>
-    <div id="boardwrap"><div id="board"></div></div>
+    <div class="panel meters">
+      <div class="meter-row"><span class="lab">Territory</span>
+        <div id="territory"><i class="o" id="terO"></i><i class="e" id="terE"></i><i class="x" id="terX"></i></div>
+        <span class="lab num" id="terNum">2 · 2</span>
+      </div>
+      <div class="meter-row"><span class="lab">Move quality</span>
+        <canvas id="spark" aria-label="The referee's score for every move of this game"></canvas>
+        <span class="lab num" id="sparkNum">—</span>
+      </div>
+    </div>
+    <div class="toolbar panel">
+      <button id="swap" title="The two players change colour. The player to move rethinks at once.">Swap sides</button>
+      <div class="sizes" role="group" aria-label="Board size"><span class="lab">Board</span><button data-size="6">6</button><button data-size="8">8</button><button data-size="10">10</button></div>
+      <label class="slider">Pace <input id="speed" type="range" min="120" max="2000" step="20" value="700"> <b id="speedVal">700 ms</b></label>
+      <span class="hint">The dots are Jev's odds for each move. <b>Click a dot to play that move yourself.</b> "Reads" sets how much the text tells each player.</span>
+    </div>
   </section>
 
   <aside id="rail">
     <div class="panel">
-      <div class="panel-title">Referee</div>
+      <div class="panel-title">Referee <span class="right pill" id="refCall">—</span></div>
       <div id="ref-focus"></div>
       <ol id="ref-log"></ol>
     </div>
     <div class="panel">
-      <div class="panel-title">Move history</div>
-      <ol id="log"></ol>
+      <div class="panel-title">What the mover reads <span class="right pill" id="readsWho">O</span></div>
+      <pre id="stateText" class="statetext"></pre>
+    </div>
+    <div class="panel">
+      <div class="panel-title">How it works</div>
+      <div class="how">
+        Jev plays <b>both sides</b> and a third Jev is the <b>referee</b>. Each player reads the board
+        and its list of legal moves as text and answers with a probability for every move. Those
+        are the dots on the board. After each move the referee scores it: how <b>strong</b>, how
+        <b>aggressive</b>, how <b>decided</b> the game is.<br><br>
+        <b>Reads</b> is the honest dial. At 0 a player is told only how many disks each move flips.
+        At 1 it is also told where the square sits. At 2 it is also told what its rival can do in
+        reply. The game is made up. Edit <code>battle.json</code> to change the rivals.
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Games</div>
+      <ul id="games"></ul>
     </div>
   </aside>
 </main>

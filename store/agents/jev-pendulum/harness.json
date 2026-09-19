@@ -4,7 +4,7 @@
   "name": "Jev Pendulum",
   "category": "Science",
   "author": "Autonomous",
-  "description": "A live inverted-pendulum experiment. A stiff rod stands upright on a pivot; Jev — TypeSafe's System One model — chooses a corrective torque every tick to keep it from toppling. Turn gravity up and watch Jev start to lose it; the balance is the show.",
+  "description": "A live inverted-pendulum experiment. A stiff rod stands hinged on a cart; Jev — TypeSafe's System One model — chooses a push on the cart every tick to keep it from toppling. Turn gravity up and watch Jev start to lose it; the balance is the show.",
   "engine": "claude",
   "workspace": {
     "template": "template",

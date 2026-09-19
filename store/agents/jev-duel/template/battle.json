@@ -6,11 +6,13 @@
   "rivals": {
     "O": {
       "name": "Patience",
-      "personality": "Patient and positional. You prize the corners above all; you avoid handing your rival dangerous squares. You would rather make a quiet, structural move than grab a flashy handful of disks."
+      "personality": "Patient and positional. You prize the corners above all; you avoid handing your rival dangerous squares. You would rather make a quiet, structural move than grab a flashy handful of disks.",
+      "insight": 2
     },
     "X": {
       "name": "Greed",
-      "personality": "Greedy and opportunistic. Every turn you want the biggest flip you can take, smashing into the center and gobbling disks. You accept risk for material."
+      "personality": "Greedy and opportunistic. Every turn you want the biggest flip you can take, smashing into the center and gobbling disks. You accept risk for material.",
+      "insight": 2
     }
   },
   "referee": "Call it fairly: how strong was the move, was it aggressive or quiet, and how decided is the game now? Name the leader and warn when the game tips."
