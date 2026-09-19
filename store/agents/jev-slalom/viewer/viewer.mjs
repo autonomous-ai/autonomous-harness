@@ -11,7 +11,7 @@ import { createServer } from 'node:http'
 import { watch, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { evaluate } from '../toolchain/jev.mjs'
+import { evaluate, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const clean = (v) => String(v ?? '').replace(/\x1b\[[0-9;]*m/g, '').slice(0, 2000)
@@ -228,6 +228,8 @@ export async function startSlalomViewer({ workspace, port = 0 } = {}) {
     const url = new URL(req.url, 'http://127.0.0.1')
     if (req.method === 'GET' && url.pathname === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'index.html'))) }
     if (req.method === 'GET' && url.pathname === '/studio.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.js'))) }
+    if (req.method === 'GET' && url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
+    if (req.method === 'GET' && url.pathname === '/jev-hud.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'jev-hud.js'))) }
     if (req.method === 'GET' && url.pathname === '/studio.css') { res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.css'))) }
     if (req.method === 'GET' && url.pathname === '/state') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ title: p.title, instrument: p.instrument, speed: p.speed, valleyWidth: p.valleyWidth, x: state?.x, rows: state?.rows, move, step, running, error, finished, gates: state?.gates, next: state?.next, history: history.slice(-300) })) }
     if (req.method === 'GET' && url.pathname === '/events') {
