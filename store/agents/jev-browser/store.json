@@ -6,11 +6,12 @@
   "examples": [
     {
       "prompt": "Write ten booking tasks for a family trip: different cities, days and bag counts, some nonstop only. Then raise distraction until fewer than 9 in 10 bookings come out exactly right, and tell me where that is.",
-      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-browser/pick-the-flight.jpg",
-      "caption": "The cursor flies through four pages while rings show the probability Jev gave each element"
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-browser/booked-exactly-right.jpg",
+      "caption": "A flight booked exactly as asked in 1.5 seconds and 10 steps, checked against the task"
     },
     {
       "prompt": "Slow it down to one step a second with no distraction so I can read what Jev sees and what it picks at every step.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-browser/pick-the-flight.jpg",
       "caption": "Step mode: the page text Jev reads on the right, its chosen element ringed on the page"
     }
   ]
