@@ -8,7 +8,7 @@
       "author": "Freek Van der Herten and contributors",
       "description": "A small pattern can become a whole mood. Make a loop, play with its pulse, and keep the happy accidents.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/ableton-ai",
       "homepage": "https://github.com/freekmurze/ableton-ai",
       "upstream": "https://github.com/freekmurze/ableton-ai",
@@ -31,7 +31,7 @@
       "author": "Autonomous",
       "description": "Describe a board; get a fab-ready PCB with a live board view, ordered from JLCPCB in a click.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/autonomous-circuit",
       "upstream": "https://github.com/autonomous-ai/autonomous-circuit",
       "license": "MIT",
@@ -60,7 +60,7 @@
       "author": "Autonomous",
       "description": "Talk to your fleet. Deploy open-weight models, find the right machine for each workload, and watch your Grid come alive with a live map of engines, models, memory, temperature and performance.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/autonomous-grid",
       "homepage": "https://github.com/autonomous-ai/autonomous-grid",
       "upstream": "https://github.com/autonomous-ai/autonomous-grid",
@@ -81,7 +81,7 @@
       "author": "Autonomous",
       "description": "Describe a part; get a validated, printable STEP with a live 3D view.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/autonomous-workshop",
       "upstream": "https://github.com/autonomous-ai/autonomous-workshop",
       "license": "MIT",
@@ -111,7 +111,7 @@
       "author": "Trevin creator; Andrej Karpathy",
       "description": "Follow a small idea through a real experiment. Train, compare, and see what the evidence says.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/autoresearch-mlx",
       "homepage": "https://github.com/trevin-creator/autoresearch-mlx",
       "upstream": "https://github.com/trevin-creator/autoresearch-mlx",
@@ -134,7 +134,7 @@
       "author": "Blender Foundation",
       "description": "Describe an object, a scene, a shot — and watch it take shape: modelled in Blender's Python, rendered headless, exported as glTF you can orbit and zoom in the pane.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/blender",
       "homepage": "https://www.blender.org",
       "upstream": "https://projects.blender.org/blender/blender",
@@ -165,7 +165,7 @@
       "author": "Show2Instruct",
       "description": "Make room for a new idea. Shape a small building, inspect its spaces, and open the real IFC model anywhere.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/bonsai-mcp",
       "homepage": "https://github.com/Show2Instruct/bonsai-mcp",
       "upstream": "https://github.com/Show2Instruct/bonsai-mcp",
@@ -189,7 +189,7 @@
       "author": "Jake Fitzgerald",
       "description": "Jake Fitzgerald's CAD Viewer (earthtojake/text-to-cad) as a Harness pane: STEP, GLB, STL, 3MF, DXF, URDF, SRDF and SDF, with MoveIt2 inverse kinematics.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/cad-viewer",
       "upstream": "https://github.com/earthtojake/text-to-cad",
       "license": "MIT",
@@ -204,7 +204,7 @@
       "author": "Paul Falstad",
       "description": "Describe a circuit — an RC filter, a 555 flasher, an amplifier — and watch it run in the pane: charge animating along the wires, scope traces drawing, every value still yours to poke at.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/circuitjs",
       "homepage": "https://www.falstad.com/circuit/",
       "upstream": "https://github.com/pfalstad/circuitjs1",
@@ -234,7 +234,7 @@
       "author": "Comfy Org",
       "description": "Follow a visual thread. Explore a family of forms, collect your favourites, and keep the recipe with every image.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/comfy-mcp",
       "homepage": "https://github.com/Comfy-Org/comfy-mcp",
       "upstream": "https://github.com/Comfy-Org/comfy-mcp",
@@ -257,7 +257,7 @@
       "author": "Autonomous",
       "description": "Build a coherent visual identity with coordinated posters, typography and palettes. Compare art directions, lock colors, customize a name, and export SVG posters and design tokens.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/creative-direction",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/creative-direction",
       "license": "MIT",
@@ -285,7 +285,7 @@
       "author": "Dimensional",
       "description": "Send a little rover on a small adventure. Pick a destination, watch it find a way, and replay the journey.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/dimos",
       "homepage": "https://github.com/dimensionalOS/dimos",
       "upstream": "https://github.com/dimensionalOS/dimos",
@@ -309,7 +309,7 @@
       "author": "Autonomous",
       "description": "A reader for the PDF a harness is writing: thumbnails, the outline, find, zoom and two-page spreads on pdf.js — redrawn in place on every compile, changed pages marked, compile errors shown over the last good pages.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/doc-viewer",
       "upstream": "https://github.com/mozilla/pdf.js",
       "license": "MIT",
@@ -324,7 +324,7 @@
       "author": "Autonomous",
       "description": "Fly a seeded canyon course in first person. Switch between manual controls and a tracking autopilot, inspect gate results and the flight path, and export telemetry.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/drone-pilot",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/drone-pilot",
       "license": "MIT",
@@ -352,7 +352,7 @@
       "author": "Excalidraw",
       "description": "Describe a diagram — an architecture, a flow, a whiteboard sketch — and watch it appear hand-drawn in the pane, as an .excalidraw file you can open anywhere.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/excalidraw",
       "homepage": "https://excalidraw.com",
       "upstream": "https://github.com/excalidraw/excalidraw",
@@ -383,7 +383,7 @@
       "author": "OpenHarness contributors",
       "description": "A screening room for OpenMontage productions: live storyboards, a film player, render versions, and notes tied to a moment in the cut.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/film-viewer",
       "homepage": "https://github.com/autonomous-ai/openharness",
       "upstream": "https://github.com/calesthio/OpenMontage",
@@ -403,7 +403,7 @@
       "author": "Foam-Agent team",
       "description": "Give the wind something to move around. Explore shapes, trace the currents, and compare your experiments.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/foam-agent",
       "homepage": "https://github.com/csml-rpi/Foam-Agent",
       "upstream": "https://github.com/csml-rpi/Foam-Agent",
@@ -426,7 +426,7 @@
       "author": "Autonomous",
       "description": "Design and compare strategies in a seeded arena. Watch two squads compete for relays, inspect decisions, step and rewind matches, and run a 32-map tournament.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/game-master",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/game-master",
       "license": "MIT",
@@ -455,7 +455,7 @@
       "author": "OpenHarness contributors",
       "description": "A live game studio: playable previews, real build progress, versions, and an uninterrupted last working game while the next one takes shape.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/game-viewer",
       "homepage": "https://github.com/autonomous-ai/openharness",
       "license": "MIT",
@@ -471,7 +471,7 @@
       "author": "Autonomous",
       "description": "Design reproducible generative editions. Explore contour fields, dunes and orbital studies, tune their geometry and palettes, and export prints up to 3200 × 4000.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/generative-art",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/generative-art",
       "license": "MIT",
@@ -499,7 +499,7 @@
       "author": "Alex Ermolov",
       "description": "Build a world you can play. Watch your game take shape in a live studio, explore each version, and play while the agent keeps creating.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/godogen",
       "homepage": "https://github.com/htdt/godogen",
       "upstream": "https://github.com/htdt/godogen",
@@ -534,7 +534,7 @@
       "author": "Autonomous",
       "description": "A live archery range. Jev — TypeSafe's System One model — is the archer, tracking a target sliding across a line. Every tick Jev reads the target and the aim point and nudges the aim to track it, releasing an arrow each window. Speed the target up and Jev's aim trails and misses pile up.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-archer",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -543,13 +543,14 @@
       "examples": [
         {
           "prompt": "Set Jev Archer up for a hard range — speed the target up so it slides faster than Jev's aim can correct. Give Jev a lead-the-motion aiming style, then watch it read the target every tick, nudge the aim to track, and release arrow after arrow into (or past) the bullseye.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-archer/range-at-dusk.jpg",
           "caption": "Jev's Day on the Range — a fast decision model tracking the sliding target and planting the bullseye on each shot"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "1338ffdea750c18ec9ad370d683ecc095018cf44"
+      "revision": "83f1cac5fc12f937bfbbf891912bc9b7b9d1a83d"
     },
     {
       "id": "autonomous/jev-arena",
@@ -558,7 +559,7 @@
       "author": "Autonomous",
       "description": "A live grid world powered by Jev, TypeSafe's System One model. Jev decides every move in real time — watch its probability distributions and confidence as it thinks, and redesign the world to test it.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-arena",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -567,13 +568,14 @@
       "examples": [
         {
           "prompt": "Redesign the arena into the Vault Heist: Jev starts outside the bank, must slip between the walls to the vault star, and grab the three gold bars (coins) on the way while avoiding the security lasers (walls). Make it a tight maze that forces a few sharp turns so Jev's confidence dips and recovers.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-arena/grid-world.jpg",
           "caption": "The Vault Heist · a tight maze where Jev's probability bars visibly shift at each turn"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "8aaec08e08555b8ee11a299c536f9fb40dc0d5fb"
+      "revision": "d31a34d699e6c7a71faea0eee78f38087934d922"
     },
     {
       "id": "autonomous/jev-blocks",
@@ -582,7 +584,7 @@
       "author": "Autonomous",
       "description": "A falling-blocks puzzle played live by Jev, TypeSafe's System One model. One call per piece picks a placement from every legal one, with a probability for each, drawn on the board. The piece keeps falling while Jev thinks. Raise gravity and find where it breaks. A synthetic demo.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-blocks",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -611,7 +613,7 @@
       "author": "Autonomous",
       "description": "Jev operates a web browser, live. On a made-up travel site it books flights in seconds: each step the page is written out as text and Jev, TypeSafe's System One model, picks one element from the list. Add pop-ups and layout shifts, or click the page yourself, and watch it cope.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-browser",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -641,7 +643,7 @@
       "author": "Autonomous",
       "description": "A live fielding demo. Jev — TypeSafe's System One model — is the outfielder, guarding the line as pop flies drop to random spots. Every tick Jev reads the glove's position and the next ball's landing spot and slides to catch it. Speed the falls up and Jev's glove can't keep up and the drops pile up.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-catcher",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -650,22 +652,23 @@
       "examples": [
         {
           "prompt": "Set Jev Catcher up for a hard session — speed the pop flies up so they drop faster than Jev can chase. Give Jev a burst-to-the-spot fielding style, then watch it read the landing spot every tick, slide the glove across the grass, and catch (or drop) each ball as it falls.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-catcher/ballpark.jpg",
           "caption": "Jev's Day at the Field — a fast decision model sliding the glove to catch every pop fly on each tick"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "c7dc580e1a5838bf6375b58b1226bf3d1ce32a2d"
+      "revision": "c3065ae816b637e1dc97fb49680092f9aeb9d920"
     },
     {
       "id": "autonomous/jev-compactor",
       "name": "Jev Compactor",
       "category": "Dev Tools",
       "author": "Autonomous",
-      "description": "A live demo of instant context compaction on a made-up coding-agent session. When the window passes its budget, Jev judges every tool result in one pass: keep, trim or drop. Recall is measured against hidden ground truth. Raise distraction and Jev keeps junk and loses needles.",
+      "description": "Instant context compaction, live. On a made-up coding-agent session, Jev judges every tool result in one pass (keep, trim or drop) and recall is measured against hidden ground truth. Or load your own transcript and get a plan of what Jev would cut. An analysis, not a plugin.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-compactor",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -676,12 +679,17 @@
           "prompt": "Design a session for a made-up repo: five tasks with sharp, separate vocabularies, a 300,000 token budget and trimTo 300. Then find the highest distraction where needle recall still stays above 90% while the reduction stays above 70%. Report the numbers you saw.",
           "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-compactor/context-tower.jpg",
           "caption": "A synthetic agent session where Jev judges every tool result at once and the context tower collapses"
+        },
+        {
+          "prompt": "I copied one of my coding-agent transcripts into this workspace as my-session.jsonl. Point the session at it, let Jev judge every tool result, then read compaction-plan.json and tell me how many tokens it would save and which five blocks were the biggest cuts. Do not paste the transcript into chat.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-compactor/own-transcript.jpg",
+          "caption": "Your own transcript: what Jev would cut, and how much it would save"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "c8585ad952e83a400c5247389fd308727a017131"
+      "revision": "fdb5a9e52b5a1198935ecef783921963c982bb26"
     },
     {
       "id": "autonomous/jev-conductor",
@@ -690,7 +698,7 @@
       "author": "Autonomous",
       "description": "Jev — TypeSafe's System One model — is the composer. It improvises a live piece bar by bar: chords, bass and melody in real time, played through the Web Audio API. Edit moods, tempo, scales and chords while it's playing and the music changes.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-conductor",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -700,13 +708,14 @@
       "examples": [
         {
           "prompt": "Jev is improvising a warm, nocturnal jazz tune. Set a slow tempo, lush 7th chords, and a brooding-to-hopeful mood arc. Live up to the name.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-conductor/piano-roll.jpg",
           "caption": "Jev in Blue — a slow, moody jazz improvisation"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "5172499485c5ef14d13d1b4edfa7046f853498d8"
+      "revision": "e5f83c5c2eb86912cc1b354c1cc3ba7f4fa3f1e5"
     },
     {
       "id": "autonomous/jev-duel",
@@ -715,7 +724,7 @@
       "author": "Autonomous",
       "description": "A live Reversi battle where Jev — TypeSafe's System One model — plays BOTH sides and a third Jev referees. Two rivals with distinct personalities fight for the board, the referee calls every move, and you can edit the rivals mid-game.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-duel",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -725,27 +734,28 @@
       "examples": [
         {
           "prompt": "Stage a grudge match: a patient corner-lover called Patience against a greedy opportunist called Greed. Make their personalities clash and watch the referee call it as the game tips.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-duel/reversi-war.jpg",
           "caption": "The Quiet War — patience vs greed on a 6x6 board"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "1618cb3952ca2f88d860ec5f8b48dd2cecc3b3c2"
+      "revision": "552fbb62c4f4bfead58c716a5f0134f68e550ba6"
     },
     {
       "id": "autonomous/jev-firehose",
       "name": "Jev Firehose",
       "category": "AI",
       "author": "Autonomous",
-      "description": "A live map-reduce demo on made-up data. Thousands of synthetic inbox messages stream in, and Jev, TypeSafe's System One model, triages each one in a single call with five parallel questions. Unsure ones go to an escalate lane. Speed, cost, count and measured accuracy climb as you watch.",
+      "description": "A live map-reduce demo. Thousands of inbox messages stream in, made-up or from your own file, and Jev, TypeSafe's System One model, triages each one in a single call with five parallel questions. Unsure ones go to an escalate lane. Your own file comes back as triage.csv.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-firehose",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
       "license": "MIT",
-      "tagline": "Jev triages thousands of made-up inbox messages live: fast, cheap, measured",
+      "tagline": "Jev triages thousands of inbox messages live, made-up or your own, for cents",
       "examples": [
         {
           "prompt": "Turn the desk into player support for a made-up game studio. Write 8 teams with sharp descriptions and at least 6 phrases each. Then find the lowest threshold that keeps auto-routing above 95% right at noise 0.3, and tell me how many messages it escalates.",
@@ -755,12 +765,17 @@
         {
           "prompt": "Make it hard. Set noise to 0.7 and tell me what happens to accuracy and escalations, which two teams get mixed up most, and which threshold you would pick.",
           "caption": "Turn the noise dial and read the trade-off on synthetic data"
+        },
+        {
+          "prompt": "I put my own messages in inbox.csv in the workspace. Read only the header and a small sample, design teams from what is really in it, and triage the whole file. Then tell me where the results file is and how the messages split.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-firehose/your-own-messages.jpg",
+          "caption": "Your own messages: triaged once, handed back as triage.csv"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "cdf93cc27b2a33dfd5a5880eb5da79459f9283f0"
+      "revision": "c78770e8b4fd96913debd9f2a9612d8256f07870"
     },
     {
       "id": "autonomous/jev-fps",
@@ -769,7 +784,7 @@
       "author": "Autonomous",
       "description": "Jev plays a first-person arena shooter, live. About nine times a second the fight is written out as text and Jev, TypeSafe's System One model, answers four typed questions in one call: turn, move, fire and threat. Redraw the map, speed up the demons, or grab the controls yourself.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-fps",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -799,7 +814,7 @@
       "author": "Autonomous",
       "description": "Jev — TypeSafe's System One model — is your code reviewer. You fix a tiny broken module and Jev's guard judges every edit live: how close to the goal, how risky, how much it trusts it. Watch a decision model referee your own coding as you work.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-guard",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -809,13 +824,14 @@
       "examples": [
         {
           "prompt": "Fix the broken module in project/ so every test in test.js passes. Make Jev Guard watch you work and tell you — live — when your change is risky and when the goal is truly met.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-guard/review-console.jpg",
           "caption": "Ship it green — Jev guarding your fix, run by run"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "4e8235ff99dcbfcaffdd3b5a0d980698dd98d52a"
+      "revision": "b8ed15a680ecc88dcc5f218a9dca1fe028d26e92"
     },
     {
       "id": "autonomous/jev-lander",
@@ -824,7 +840,7 @@
       "author": "Autonomous",
       "description": "A live landing demo. A booster falls out of the sky under gravity; Jev — TypeSafe's System One model — is the flight computer, reading altitude, vertical speed and fuel every tick and setting a throttle to bring it down soft. Crank the gravity up and watch the touchdowns start to crash.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-lander",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -833,13 +849,14 @@
       "examples": [
         {
           "prompt": "Set Jev Lander up as a rough descent — boost the gravity and cut the fuel. Give Jev a decisive burn-early style line, then watch it read the telemetry every tick, throttle the booster down the pad, and land soft (or slam in when gravity is too high and the burns go twitchy).",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-lander/soft-landing.jpg",
           "caption": "Jev's Landing — a fast decision model flying a booster down to a soft touchdown on every tick"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "31ba8baaa8b71c519fb1b5eba0d89ee627bb0d50"
+      "revision": "9ea3a0aaea72f637fb1caa4926f49a7359c3d985"
     },
     {
       "id": "autonomous/jev-launcher",
@@ -848,7 +865,7 @@
       "author": "Autonomous",
       "description": "A live predictive command palette. As you type, Jev — TypeSafe's System One model — re-ranks your launch targets on every keystroke, showing which one it would fire and how confident it is. Curate the palette; Jev does the ranking.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-launcher",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -857,37 +874,39 @@
       "examples": [
         {
           "prompt": "Set Jev Launcher up as a developer's command palette — targets for run-tests, open-editor, deploy, chat, music — each with good aliases. Type partial queries and watch Jev re-rank the field on every keystroke, then fire the winner on paper.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-launcher/ranked-as-you-type.jpg",
           "caption": "Jev's Palette — a fast decision model ranking launch targets live, per keystroke"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "c9063c7a623ce22712568783184dd63ddd56d466"
+      "revision": "4c44043592c4d973a0be120e178318bd200c07c8"
     },
     {
       "id": "autonomous/jev-pendulum",
       "name": "Jev Pendulum",
       "category": "Science",
       "author": "Autonomous",
-      "description": "A live inverted-pendulum experiment. A stiff rod stands upright on a pivot; Jev — TypeSafe's System One model — chooses a corrective torque every tick to keep it from toppling. Turn gravity up and watch Jev start to lose it; the balance is the show.",
+      "description": "A live inverted-pendulum experiment. A stiff rod stands hinged on a cart; Jev — TypeSafe's System One model — chooses a push on the cart every tick to keep it from toppling. Turn gravity up and watch Jev start to lose it; the balance is the show.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-pendulum",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
       "license": "MIT",
-      "tagline": "Jev balances an inverted pendulum live on a pivot",
+      "tagline": "Jev balances a rod on a moving cart, live",
       "examples": [
         {
           "prompt": "Set Jev Pendulum up as a tense balancing rig — a stiff rod under gravity 8 with a gust every few ticks that shoves it toward the fall line. Give Jev a style line for how to recover, then watch it hold, wobble, and eventually drop.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-pendulum/balancing-rig.jpg",
           "caption": "Jev's Balancing Act — a fast decision model keeping a rod upright, and losing it at high gravity"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "7d749c0db0fd5932d0967c2161fac67e824d0960"
+      "revision": "62159cb0a5295a30bf953dd8931f2c63653fbc3a"
     },
     {
       "id": "autonomous/jev-pong",
@@ -896,7 +915,7 @@
       "author": "Autonomous",
       "description": "A live paddle-defense rally. Jev — TypeSafe's System One model — is the paddle: every tick it reads the ball and moves to meet the return. The ball speeds up with every hit, so a long rally is a losing battle — watch Jev chase, wobble, and finally drop it.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-pong",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -905,13 +924,14 @@
       "examples": [
         {
           "prompt": "Set Jev Pong up as a tense rally — a mid-size court at speed 6 with a gentle accel so the ball builds up over a few returns. Give Jev a decisive style line, then watch it hold the streak until the rally outruns the paddle.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-pong/neon-rally.jpg",
           "caption": "Jev's Rally — a fast decision model chasing a ball that speeds up with every return"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "71fe071129f6933dcae10af1f0700eaeedf67311"
+      "revision": "018ad3cd1c802fb79d350a33a513893db9c2a047"
     },
     {
       "id": "autonomous/jev-sheets",
@@ -920,7 +940,7 @@
       "author": "Autonomous",
       "description": "A live spreadsheet where a column header is a question. Type \"Urgent?\" and Jev, TypeSafe's System One model, answers it for every row: one call per row, all columns at once, each cell shaded by confidence and flagged for review when unsure. Made-up data. Runs offline on a mock.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-sheets",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -940,7 +960,7 @@
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "a7173a4eaf0a38ebb96e29c68aae307b31e8b4e0"
+      "revision": "da2890fe1c18519c0b9fcb948b5dbc7051c205ab"
     },
     {
       "id": "autonomous/jev-shopper",
@@ -949,7 +969,7 @@
       "author": "Autonomous",
       "description": "A live price-watching demo. A small shop window streams prices; Jev — TypeSafe's System One model — reads the stream each tick and calls the best buy, showing how sure it is and spending on paper when the signal is strong. Turn up the volatility and watch Jev's calls start to flip.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-shopper",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -958,13 +978,14 @@
       "examples": [
         {
           "prompt": "Set Jev Shopper up as a weekend-camp haul — a few pieces of gear with divergent price drifts. Give Jev a decisive momentum style line, then watch it read the window each tick, call the steepest faller, and commit the paper budget when the signal is clear. Crank the volatility to see its calls start to flip.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-shopper/price-board.jpg",
           "caption": "Jev's Shop — a fast decision model calling the best buy on every live price tick"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "f3ffb9d3c7b7e98fd435fe4811cea37612d09b0d"
+      "revision": "b7a1cbc9b314d280b08eaa4a34f4229c24dc60e0"
     },
     {
       "id": "autonomous/jev-slalom",
@@ -973,7 +994,7 @@
       "author": "Autonomous",
       "description": "A live skiing demo. Jev — TypeSafe's System One model — is the racer, carving a slalom line as the gates sweep toward it, steering left and right to thread each gap. Crank the descent speed up and Jev's aim starts to wobble and it clips a gate and falls.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-slalom",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -982,13 +1003,14 @@
       "examples": [
         {
           "prompt": "Set Jev Slalom up as a hard run — push the descent speed up near the limit. Give Jev a decisive line-up-early style, then watch it read the next gate every tick, carve the valley, thread every gate (or clip one and fall when the speed gets too hot).",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-slalom/slope.jpg",
           "caption": "Jev's Run — a fast decision model carving a slalom line and threading each gate on every tick"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "2350410faedceb9d4f1fbc32ba5f44ae6496c0bd"
+      "revision": "cf11ee186bc9d67d97515e6e829d3b872715fca5"
     },
     {
       "id": "autonomous/jev-trader",
@@ -997,7 +1019,7 @@
       "author": "Autonomous",
       "description": "Jev — TypeSafe's System One model — runs a paper-trading desk on a synthetic market. It reads the price tape and its own P&L, then decides buy, hold or sell, tick by tick. Watch the equity curve move as a decision model trades. Reshape instrument, volatility and style while it runs.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/jev-trader",
       "homepage": "https://typesafe.ai",
       "upstream": "https://typesafe.ai",
@@ -1006,13 +1028,14 @@
       "examples": [
         {
           "prompt": "Set Jev Trader as a momentum desk on a volatile synthetic instrument — high volatility, a trend-following style. Watch whether it buys the upswings and cuts the downswings, and keep it honest on paper.",
+          "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-trader/paper-desk.jpg",
           "caption": "Jev's Desk — a decision model trading a synthetic market, tick by tick"
         }
       ],
       "engine": "claude",
       "tier": 2,
       "verified": true,
-      "revision": "f9ac8ae84cbe9f83690d4dfe0ef3310b6acc0e63"
+      "revision": "e132d3635161280f2bd1671ad14c60fa7b132247"
     },
     {
       "id": "autonomous/juce-agent-toolkit",
@@ -1021,7 +1044,7 @@
       "author": "Daniel Raffel",
       "description": "Find a sound that feels like you. Shape a synth, play a little, and take the recording with you.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/juce-agent-toolkit",
       "homepage": "https://github.com/danielraffel/juce-agent-toolkit",
       "upstream": "https://github.com/danielraffel/juce-agent-toolkit",
@@ -1044,7 +1067,7 @@
       "author": "KiCad",
       "description": "Describe a board; get a real KiCad project — a wired schematic, DRC-checked copper, a prototype packet — with a live board view.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/kicad",
       "homepage": "https://www.kicad.org",
       "upstream": "https://github.com/autonomous-ai/autonomous-circuit",
@@ -1063,7 +1086,7 @@
       "author": "Autonomous",
       "description": "Explore an experiment with reproducible synthetic data. Change effect, noise and sample size, probe observations, filter groups, inspect computed uncertainty, and export CSV.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/lab-bench",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/lab-bench",
       "license": "MIT",
@@ -1091,7 +1114,7 @@
       "author": "Manim Community",
       "description": "Describe an explanation — a proof, a transform, an algorithm, a graph — and watch it animate: scenes in Python, rendered by Manim, playing in the pane.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/manim",
       "homepage": "https://www.manim.community",
       "upstream": "https://github.com/ManimCommunity/manim",
@@ -1122,7 +1145,7 @@
       "author": "marimo",
       "description": "Describe an analysis, a model, a dashboard — and watch the reactive notebook come alive in the pane: marimo's own editor on the notebook the agent writes, cells re-running as it types.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/marimo",
       "homepage": "https://marimo.io",
       "upstream": "https://github.com/marimo-team/marimo",
@@ -1152,7 +1175,7 @@
       "author": "Yuki Hattori",
       "description": "Describe a talk; get a keynote — huge type, generated art, speaker notes — live in the pane, exported to PDF, PPTX or HTML.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/marp",
       "homepage": "https://marp.app",
       "upstream": "https://github.com/marp-team/marp-cli",
@@ -1183,7 +1206,7 @@
       "author": "Autonomous",
       "description": "A Blender-style viewport for the glTF a harness exports — outliner, properties in mm, shading modes, measure, section, explode, scene camera, timeline — live on every export.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/model-viewer",
       "homepage": "https://threejs.org",
       "upstream": "https://github.com/mrdoob/three.js",
@@ -1199,7 +1222,7 @@
       "author": "Google DeepMind",
       "description": "Describe a robot, a scene, a controller — a Unitree quadruped standing, a humanoid learning to walk — and watch the rollout play: MuJoCo physics, Menagerie robots, MJX for training.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/mujoco",
       "homepage": "https://mujoco.org",
       "upstream": "https://github.com/google-deepmind/mujoco",
@@ -1231,7 +1254,7 @@
       "author": "Autonomous",
       "description": "MuJoCo's own simulate, in the pane: live physics you can push, pull and pause, every actuator on a slider, contacts and forces drawn, sensors plotted, and the agent's recording replayed frame by frame — on MuJoCo's WebAssembly build.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/mujoco-viewer",
       "upstream": "https://github.com/google-deepmind/mujoco",
       "license": "MIT",
@@ -1246,7 +1269,7 @@
       "author": "Autonomous",
       "description": "Compose a seeded eight-bar track, edit five instrument patterns, shape swing and the mix, listen locally, and export the result as a WAV file.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/music-studio",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/music-studio",
       "license": "MIT",
@@ -1274,7 +1297,7 @@
       "author": "calesthio",
       "description": "Direct a film from the first idea to the final cut. Watch the script, shots, and edits arrive in a live studio; play each version and leave notes right on the film.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/openmontage",
       "homepage": "https://github.com/calesthio/OpenMontage",
       "upstream": "https://github.com/calesthio/OpenMontage",
@@ -1309,7 +1332,7 @@
       "author": "Phaser Studio",
       "description": "Describe a game — a breakout, a platformer, a shooter, a puzzle — and play it in the pane as the agent writes it in Phaser 4, reloading on every save.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/phaser",
       "homepage": "https://phaser.io",
       "upstream": "https://github.com/phaserjs/phaser",
@@ -1339,7 +1362,7 @@
       "author": "RDKit",
       "description": "Describe a molecule — a drug, an analogue, a scaffold — and get it designed, its properties computed and a 3D conformer you can rotate in the pane.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/rdkit",
       "homepage": "https://www.rdkit.org",
       "upstream": "https://github.com/rdkit/rdkit",
@@ -1369,7 +1392,7 @@
       "author": "Remotion",
       "description": "Describe a video — a product launch, an explainer, a data story — and watch it play in Remotion Studio as the agent writes it in React, then render it to MP4.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/remotion",
       "homepage": "https://www.remotion.dev",
       "upstream": "https://github.com/remotion-dev/remotion",
@@ -1399,7 +1422,7 @@
       "author": "Qiliu Chen and contributors",
       "description": "Make a little city flow better. Change the lights, watch the streets, and measure what happens.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/simskill",
       "homepage": "https://github.com/qiliuchn/SimSkill-V1",
       "upstream": "https://github.com/qiliuchn/SimSkill-V1",
@@ -1422,7 +1445,7 @@
       "author": "Strudel",
       "description": "Describe a track — a groove, a bassline, a break — and hear it in the pane. The agent writes one Strudel pattern file; Strudel's own REPL plays it live and hot-swaps on every save.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/strudel",
       "homepage": "https://strudel.cc",
       "upstream": "https://github.com/tidalcycles/strudel",
@@ -1453,7 +1476,7 @@
       "author": "OpenHarness contributors",
       "description": "An interactive workbench for experiments, instruments, simulations, and creative tools. Keep every run, compare results, and take your work with you.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/studio-viewer",
       "homepage": "https://github.com/autonomous-ai/openharness",
       "license": "MIT",
@@ -1469,7 +1492,7 @@
       "author": "Jake Fitzgerald",
       "description": "Jake Fitzgerald's text-to-cad skills (earthtojake/text-to-cad), pinned: describe a part, get STEP with mesh exports, drawings, robot files and G-code, live in the CAD Viewer.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/text-to-cad",
       "homepage": "https://github.com/earthtojake/text-to-cad",
       "upstream": "https://github.com/earthtojake/text-to-cad",
@@ -1500,7 +1523,7 @@
       "author": "Typst GmbH",
       "description": "Describe a document — a paper, a spec sheet, a report, a letter — and watch the PDF take shape as Typst compiles it on every save.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/typst",
       "homepage": "https://typst.app",
       "upstream": "https://github.com/typst/typst",
@@ -1532,7 +1555,7 @@
       "author": "Autonomous",
       "description": "An editor-grade player for what a harness renders: every render listed, chapters on the timeline, frame-accurate scrubbing with a filmstrip, loops and stills — and the render in progress playable as it is made.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/video-viewer",
       "license": "MIT",
       "tier": 2,
@@ -1546,7 +1569,7 @@
       "author": "Autonomous",
       "description": "Build and walk a seeded voxel island. Sculpt terrain, place and break blocks, explore a cabin and lighthouse, change the light, and save your world.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/voxel-worlds",
       "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/voxel-worlds",
       "license": "MIT",
@@ -1575,7 +1598,7 @@
       "author": "OpenHarness contributors",
       "description": "A live preview for HTML, CSS, and JavaScript in a harness workspace. Reloads when files change.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/viewers/web-viewer",
       "license": "MIT",
       "tier": 2,
@@ -1589,7 +1612,7 @@
       "author": "YosysHQ",
       "description": "Describe a digital circuit — a counter, a UART, a state machine — and get Verilog, a simulation with waveforms, a synthesized gate-level schematic and an FPGA bitstream for an iCE40 board. Prompt to silicon.",
       "repo": "https://github.com/autonomous-ai/openharness",
-      "ref": "022f71e895ebd87333ef0826fc148004059bf372",
+      "ref": "7d00b92f59cf3943274e8d87e74c6e018f12b06a",
       "path": "store/agents/yosys",
       "homepage": "https://yosyshq.net",
       "upstream": "https://github.com/YosysHQ/yosys",
