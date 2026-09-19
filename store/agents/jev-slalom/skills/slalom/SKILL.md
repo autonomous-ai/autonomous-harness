@@ -11,7 +11,7 @@ agent shapes `slalom.json`: the descent speed, the valley width, and how many ga
 
 ## The loop
 
-1. Update `slalom.json` (title, speed, gates, valleyWidth, a `style` line that tells Jev a line
+1. Update `slalom.json` (title, speed, gates, valleyWidth, optional gateGap, a `style` line that tells Jev a line
    strategy). The viewer watches it and Jev adapts live — no restart, no second server.
 2. `node "$JEV_DSH/toolchain/check.mjs"` verifies the workspace's `slalom.json` is valid. Run it
    before you call a run done.
@@ -29,7 +29,7 @@ up and Jev's aim wobbles and it clips a gate and falls.
 ## Verifying a course
 
 `node "$JEV_DSH/toolchain/check.mjs"` returns non-zero when `slalom.json` is invalid (no title, a
-non-positive speed, out-of-range gates/valleyWidth/tickMs). It doesn't replace watching the run:
+non-positive speed, out-of-range gates/valleyWidth/gateGap/tickMs). It doesn't replace watching the run:
 confirm Jev threads the gates at the speed you set, and that cranking `speed` up makes it visibly
 fall.
 

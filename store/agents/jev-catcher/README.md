@@ -26,12 +26,34 @@ jev-catcher/
 
 ## The viewer
 
-`viewer/viewer.mjs` runs the field over a loopback HTTP server. Each tick it drops a ball one step,
-asks Jev for the slide, and streams the session — the glove sliding along the grass, the ball arcing
-down to its landing spot (lighting up amber as an out), and a session log — to the pane. It calls
-`POST /v1/systemone` when `TYPESAFE_API_KEY` is set; without it a deterministic mock reads the same
-field and lines up on the landing spot, so the demo runs offline. `.harness/verdict.json` tracks
-caught, dropped, and whether the session was clean.
+`viewer/viewer.mjs` runs the field over a loopback HTTP server. Each tick it drops every ball one
+step, asks Jev for the slide, and streams one frame to the pane. It calls `POST /v1/systemone` when
+`TYPESAFE_API_KEY` is set. Without a key, a deterministic stand-in reads the same line of text, so
+the demo runs offline, and the pane shows a `MOCK` badge. `.harness/verdict.json` tracks caught,
+dropped, and whether the session was clean. A finished session stays up about three seconds, then
+a new one starts with a new seed.
+
+**The pane** draws a ballpark at dusk at 60 fps and eases between Jev's decisions. Each fly leaves
+the infield, climbs into the lights and comes down on a real arc. Its shadow shrinks on the grass
+as it falls, and a dashed ring, as wide as the glove's reach, marks where it will land. The fielder
+runs, raises the glove, and dives when the catch is a stretch. A dropped ball bounces and kicks up
+dust. The scoreboard on the wall counts caught, drops and the streak. Jev's mind is in the scene:
+five ghost gloves, one per option, as bright as their probability, and a small bar chart that rides
+under the fielder. The top bar shows decisions per second, decisions, and cost so far.
+
+**You can play with it:**
+
+- **Fall time** and **Glove reach** sliders override `fallTicks` and `gloveReach` at once. The next
+  edit to `catcher.json` clears them.
+- **Click the grass** to pop an extra fly to that spot. With two balls up, Jev is told about both
+  and goes for the one landing first.
+- **Gust of wind** carries every ball in the air sideways for a few ticks, so the landing rings move.
+- **Slow motion** stretches every tick three times.
+- **Pause**, **Step** (one decision) and **Reset**.
+
+Measured with the offline stand-in over 1,500 ticks: `fallTicks` 8 and up, every ball caught; 6,
+94%; 5, 87%; 4, 77%; 3, 63%. The glove covers at most 1.2 slots a tick, so a short fall leaves a
+far ball out of range. No randomness is added.
 
 The field is synthetic: balls land at random spots near the glove, and Jev's "slide" is a
 moment-to-moment line call — read the spot early, glide over, commit as it lands — which is why a
