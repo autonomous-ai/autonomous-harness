@@ -55,7 +55,11 @@ export function fpsMock(text, id, q) {
   if (id === 'turn') {
     const amt = { LEFT_HARD: -s.turnAmount.HARD, LEFT: -s.turnAmount.NORMAL, LEFT_FINE: -s.turnAmount.FINE, AHEAD: 0, RIGHT_FINE: s.turnAmount.FINE, RIGHT: s.turnAmount.NORMAL, RIGHT_HARD: s.turnAmount.HARD }
     let pick = 'AHEAD', best = Infinity
-    for (const o of q.options) { const err = Math.abs(faceB - (amt[o] ?? 0)); if (err < best) { best = err; pick = o } }
+    for (const o of q.options) {
+      const a = amt[o] ?? 0
+      const err = Math.abs(faceB - a) - (!s.crosshair && a !== 0 && Math.sign(a) === Math.sign(faceB) ? 0.01 : 0)
+      if (err < best) { best = err; pick = o }
+    }
     return peaked(q.options, pick, 1.8)
   }
 
@@ -66,7 +70,7 @@ export function fpsMock(text, id, q) {
     if (near) {
       if (near.dist < 1.7 || (hurt && near.dist < 3.2)) pick = s.walls.behind > 0.7 ? 'BACK' : open(wider) ? wider : 'HOLD'
       else if (near.dist < 4.2) pick = open(wider) ? wider : 'HOLD'
-      else pick = Math.abs(near.b) < 30 && s.walls.ahead > 0.8 ? 'FORWARD' : 'HOLD'
+      else pick = Math.abs(near.b) < 30 && s.walls.ahead > 0.8 ? 'FORWARD' : open(wider) ? wider : 'HOLD'
     } else if (s.route) {
       pick = Math.abs(s.route.b) < 40 ? (s.walls.ahead > 0.55 ? 'FORWARD' : open(wider) ? wider : 'HOLD') : 'HOLD'
     } else pick = 'HOLD'

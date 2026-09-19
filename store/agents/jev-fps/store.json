@@ -11,6 +11,7 @@
     },
     {
       "prompt": "Make it brutal: 8 demons at once, fast, in one big open room with no cover. Tell Jev to keep its back to a wall. How many waves does it survive?",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-fps/pillar-hall.jpg",
       "caption": "A stress test for a decision model: more demons, more speed, the same nine decisions a second"
     }
   ]

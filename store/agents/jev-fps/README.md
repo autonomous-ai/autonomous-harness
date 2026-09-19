@@ -41,9 +41,10 @@ Measured with the offline stand-in over 6,000 decisions:
 
 | `demonSpeed` | deaths | best wave reached |
 |---|---|---|
-| 1.2 (default) | 2 | 10 |
-| 2.4 | 4 | 6 |
-| 4.0 | 8 | 4 |
+| 0.6 | 1 | 11 |
+| 1.2 (default) | 2 | 9 |
+| 2.4 | 3 | 7 |
+| 4.0 | 9 | 4 |
 
 ## Anatomy
 
