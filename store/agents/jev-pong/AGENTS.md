@@ -21,23 +21,25 @@ authority, and the starting ball speed; the viewer watches it and Jev adapts imm
   "paddleH": 26,
   "ballR": 3,
   "speed": 6,
-  "maxSpeed": 3,
-  "accel": 0.5,
-  "topSpeed": 14,
+  "maxSpeed": 2,
+  "accel": 1,
+  "topSpeed": 40,
   "stepMs": 60,
+  "seed": 90210,
   "style": "Keep the rally alive. Track the ball, predict where it will cross your wall, and get the paddle there in time. Be decisive."
 }
 ```
 
-- **`speed`** — the starting ball speed (the difficulty dial). `4–5` is easy; `6–8` is tense;
-  `9+` is a scramble from the first serve.
+- **`speed`** — the serve pace, in court units per decision (the difficulty dial). `3–6` gives a
+  long build-up; `12–16` is tense from the first serve; `20+` ends most rallies in a few returns.
 - **`accel`** — how much faster the ball gets per return. Higher accel makes rallies short and
   hectic; lower lets them grow long before Jev is overrun. This is the *other* tension knob.
-- **`maxSpeed`** — how fast Jev can move the paddle (FAST moves = `maxSpeed`, normal = half). A
-  paddle far slower than the ball is helpless; one near the ball's speed makes each rally a tight
-  race.
-- **`topSpeed`** — the cap the ball can reach. Leave it well above `speed` so rallies have room to
-  accelerate.
+- **`maxSpeed`** — how far a plain paddle move goes in one decision. A FAST move goes twice as
+  far. This is the honest limit: once the ball comes back before the paddle can cross the court,
+  Jev misses. `check.mjs` prints the pace where that starts.
+- **`topSpeed`** — the cap the ball can reach. Leave it well above the pace `check.mjs` prints, or
+  Jev may never miss.
+- **`seed`** — the seed for the serves. Same seed, same rallies.
 - **`courtW` / `courtH` / `paddleH` / `stepMs`** — court geometry and responsiveness. A wider
   court means longer cross-court flight (easier reads); a taller court means more vertical
   scrambling.
@@ -48,10 +50,10 @@ authority, and the starting ball speed; the viewer watches it and Jev adapts imm
 
 Design `pong.json` so the rally is an event:
 
-- **Pick a starting speed with tension.** `6` is a sweet spot: Jev holds a few returns, the ball
-  speeds up, and it eventually slips past — the natural arc of Pong.
-- **Tune accel for the right pace.** Low accel (≈0.3) builds long, impressive streaks; high accel
-  (≈0.8) makes every rally short and frantic.
+- **Pick a starting speed with tension.** `6` is a sweet spot: Jev holds about twenty returns, the
+  ball speeds up, and it finally slips past. That is the natural arc of Pong.
+- **Tune accel for the right pace.** Low accel (about 0.5) builds long streaks; high accel (2 or
+  more) makes every rally short and frantic.
 - **Set a style line that names a strategy.** Jev should *decide* how to defend, not guess.
 
 Do NOT just ship the template. Every `pong.json` you publish should be its own court with a
@@ -63,7 +65,12 @@ always drop (too hard)? Either extreme is a finding to report, not a bug to mask
 
 ## Rules
 
-- Keep `pong.json` valid JSON always. A bad edit freezes the court on the last good state.
+- Keep `pong.json` valid JSON always. After a bad edit the viewer keeps playing on the last good
+  court and shows the parse error in the pane.
+- The person can also poke the rally in the pane (shove the ball, speed burst, sliders). Those are
+  runtime overrides. Your next edit to `pong.json` resets them.
+- Never propose opening a browser, changing ports, or running a second server. The pane on the
+  left is the viewer.
 - Keep `title`, `description` and `style` truthful — and never present this as a real physics app
   or real control software.
 - Jev is reached through `toolchain/jev.mjs`. You can call it directly to ask Jev's read on a state

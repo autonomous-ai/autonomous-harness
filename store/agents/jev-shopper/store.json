@@ -6,6 +6,7 @@
   "examples": [
     {
       "prompt": "Set Jev Shopper up as a weekend-camp haul — a few pieces of gear with divergent price drifts. Give Jev a decisive momentum style line, then watch it read the window each tick, call the steepest faller, and commit the paper budget when the signal is clear. Crank the volatility to see its calls start to flip.",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/jev-shopper/price-board.jpg",
       "caption": "Jev's Shop — a fast decision model calling the best buy on every live price tick"
     }
   ]

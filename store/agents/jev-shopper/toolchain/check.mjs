@@ -25,8 +25,15 @@ for (const [i, prod] of (p.products || []).entries()) {
 }
 const names = new Set((p.products || []).map((x) => x.name))
 if (names.size !== (p.products || []).length) bad('error  product names must be unique')
-if (typeof p.tickMs !== 'number' || p.tickMs < 100 || p.tickMs > 5000) bad('error  tickMs must be ms 100..5000')
-if (typeof p.vol !== 'number' || p.vol < 0 || p.vol > 0.5) bad('error  vol must be a rate 0..0.5 per tick')
+if ((p.products || []).length > 8) bad('error  the board holds at most 8 products')
+for (const [i, prod] of (p.products || []).entries()) {
+  if (prod && prod.drift !== undefined && (typeof prod.drift !== 'number' || prod.drift < -0.05 || prod.drift > 0.05)) bad(`error  products[${i}].drift must be a rate -0.05..0.05 per tick`)
+}
+if (typeof p.tickMs !== 'number' || p.tickMs < 60 || p.tickMs > 5000) bad('error  tickMs must be ms 60..5000')
+if (p.cash !== undefined && (typeof p.cash !== 'number' || p.cash < 1 || p.cash > 1e6)) bad('error  cash (the budget for a round) must be 1..1000000')
+if (p.minDeal !== undefined && (typeof p.minDeal !== 'number' || p.minDeal < 0.01 || p.minDeal > 0.4)) bad('error  minDeal (how far under its usual price a product must be before Jev may buy) must be 0.01..0.4')
+if (p.seed !== undefined && (typeof p.seed !== 'number' || p.seed < 0 || p.seed > 1e9)) bad('error  seed must be 0..1000000000')
+if (typeof p.vol !== 'number' || p.vol < 0 || p.vol > 0.5) bad('error  vol (price noise, the difficulty dial) must be a rate 0..0.5 per tick')
 if (!p.style || typeof p.style !== 'string') bad('warn  a style line helps Jev buy coherently')
 
 console.log(fail ? 'fail  invalid shopper.json' : 'ok   shopper.json is valid')

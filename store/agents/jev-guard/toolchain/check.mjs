@@ -19,6 +19,16 @@ try {
   bad(`error  cannot read goal.json: ${e.message}`)
 }
 if (goal && (!goal.goal || typeof goal.goal !== 'string')) bad('error  goal.json needs a string "goal"')
+// The dials. All optional. The viewer clamps them; this says what it clamped.
+const num = (key, lo, hi) => {
+  const v = goal?.[key]
+  if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi)) bad('error  ' + key + ' must be a number ' + lo + '..' + hi + ' (got ' + JSON.stringify(v) + ')')
+}
+num('strictness', 0, 1)      // where REVIEW and BLOCK start. Strict catches more and raises more false alarms
+num('subtlety', 0, 1)        // how well the planted risks in the demo stream are hidden. The difficulty dial
+num('stepMs', 60, 5000)      // pace of the demo stream, ms per made-up edit
+num('diffBudget', 300, 8000) // characters of a diff Jev gets to read
+num('seed', 0, 1e9)
 
 if (!existsSync(join(ws, 'project', 'test.js'))) {
   bad('error  project/test.js is required (the viewer runs it to judge the agent)')

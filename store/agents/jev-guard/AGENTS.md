@@ -17,9 +17,19 @@ On the right, you fix the code. You own `project/` entirely; Jev only watches an
 {
   "goal": "Make every test in project/test.js pass without breaking the others.",
   "name": "Jev Guard",
-  "description": "Jev judges your own edits live as you fix the broken module."
+  "description": "Jev judges your own edits live as you fix the broken module.",
+  "strictness": 0.5,    // where REVIEW and BLOCK start (0 lenient .. 1 strict)
+  "subtlety": 0.35,     // how well the demo stream hides its planted risks (0..1). The difficulty dial
+  "stepMs": 900,        // pace of the demo stream, ms per made-up edit (60..5000)
+  "diffBudget": 1800    // characters of a diff Jev gets to read (300..8000)
 }
 ```
+
+Only `goal` is required. When you are quiet for about 15 seconds the pane plays a stream of made-up
+edits, clearly tagged DEMO, and steps aside the moment you edit `project/` again. The person can
+also write small sample files into `project/` from the pane (`sample_util.js`, `sample.test.js`,
+`sample_config.js`, with a plainly fake key) to watch Jev react. Leave those files alone, or remove
+them. They are not part of your task. This console is a demo, not a security tool.
 
 ## Your job
 

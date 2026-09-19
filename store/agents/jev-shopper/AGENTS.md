@@ -6,57 +6,64 @@ best buy right now, says how sure it is, and when the signal is strong it spends
 shop is synthetic; the decision loop is the show.
 
 On the right, you edit `shopper.json`. This is the ONLY file you edit. It holds the products (name,
-start price, drift) and the market's volatility; the viewer watches it and Jev adapts immediately.
+list price, slow drift), the price noise and the budget; the viewer watches it and Jev adapts immediately.
 
 ## The shopper file
 
 ```jsonc
 {
   "title": "Jev Shopper",
-  "description": "Jev watches prices stream in and calls the best buy, live.",
+  "description": "Jev watches made-up prices stream in and calls the best buy on every tick.",
   "instrument": "SHOPPER",
-  "tickMs": 500,
-  "vol": 0.08,
-  "cash": 100,
+  "tickMs": 250,        // ms per tick, one Jev call per tick (60..5000)
+  "vol": 0.03,          // price noise per tick (0..0.5). THE difficulty dial
+  "cash": 600,          // the paper budget for a round
+  "minDeal": 0.08,      // how far under its usual price a product must be before Jev may buy (0.01..0.4)
+  "seed": 616,          // makes the shop repeatable
   "products": [
-    { "name": "Espresso Machine", "price": 240, "drift": 0.02 },
-    { "name": "Hiking Boots", "price": 120, "drift": -0.05 },
-    { "name": "Noise Cancellers", "price": 180, "drift": 0.01 },
-    { "name": "Desk Lamp", "price": 45, "drift": -0.03 }
+    { "name": "Espresso Machine", "price": 240, "drift": 0.0005 },
+    { "name": "Hiking Boots", "price": 120, "drift": -0.0015 },
+    { "name": "Noise Cancellers", "price": 180, "drift": 0 },
+    { "name": "Desk Lamp", "price": 45, "drift": -0.0005 }
   ],
-  "style": "Watch the recent price stream and pick the product whose price is most likely still falling — the best value right now. Be decisive."
+  "style": "Pick the product that is the best deal right now: the one furthest below its own usual price. Say spend now only when the deal looks real and not a one-tick wobble."
 }
 ```
 
-- **`products[]`** — what's in the window. Each has a `name`, a starting `price`, and an optional
-  `drift` (the persistent daily direction, e.g. `-0.05` = falling ~5% per tick). Products with
-  different drifts give Jev a real spread to read.
-- **`vol`** — price volatility per tick. Low (`0.05`) is calm and Jev reads clean momentum; high
-  (`0.3+`) makes prices jitter so hard Jev's calls start to flip. This is the difficulty dial.
-- **`tickMs`** — how often the prices update (and Jev decides). Fast ticks = a frantic decision
-  rate; slow ticks = a contemplative shop.
-- **`cash`** — the paper budget Jev spends when it acts. Set it to your shop's vibe.
-- **`style`** — the instruction to Jev. It should name a buying strategy (momentum, value, wait)
-  so Jev *decides* rather than guesses.
+- **`products[]`** — 2 to 8 made-up products. Each has a `name`, a list `price`, and an optional
+  `drift`: a slow trend per tick, from `-0.05` to `0.05`. Keep it small (`0.001` is already a clear
+  trend). Every product also runs real sales on its own, a dip of 10% to 32% that lasts a while.
+- **`vol`** — price noise: a fresh random wobble on every tick. Low (`0.01`) and Jev tells real
+  sales from wobbles almost every time. High (`0.15` and up) and wobbles pass for deals, so its calls
+  are right about half the time and its buys save little. This is the difficulty dial.
+- **`tickMs`** — how often prices update and Jev decides.
+- **`cash`** — the paper budget for a round. A round ends when it cannot buy anything more, or after
+  240 ticks. Then a new round starts on its own.
+- **`minDeal`** — the deal bar. Jev's pick must be at least this far under its usual price, and Jev
+  must say "spend now", before an order goes in. The order lands one tick later.
+- **`style`** — the instruction to Jev. It is part of the text Jev reads.
+
+The person can also play in the pane: click a product to start a flash sale, move the budget, the
+noise and the speed, and add or remove products. Your next edit to `shopper.json` puts the file back
+in charge.
 
 ## Your job
 
 Design `shopper.json` so the shop is an event:
 
 - **Curate a coherent window.** Give it a theme — a coffee lover's cart, a weekend-camp haul, a
-  studio upgrade — with products whose drifts create genuine divergence (some falling, some rising).
-- **Pick a volatility with tension.** `8–12%` vol on mildly-drifted products gives clean, readable
-  calls. Crank `vol` to `0.3+` and watch Jev second-guess itself as prices jitter — that flip is
-  the fun.
-- **Write a distinct style line.** "Buy the steepest faller" plays very differently from "wait for a
-  clear signal" — and Jev will visibly act less.
+  studio upgrade — with prices that make sense for it and a budget that can buy a few of them.
+- **Pick a noise level with tension.** `0.03` gives clean, readable calls. Around `0.08` Jev starts
+  to be fooled. At `0.15` and up it is close to a coin flip. That slide is the point of the demo.
+- **Write a distinct style line.** "Buy the deepest real discount" plays differently from "wait for
+  a very clear signal".
 
 Do NOT just ship the template. Every `shopper.json` you publish should be its own shop with a
 deliberate, testable market.
 
-Validate with `node "$JEV_DSH/toolchain/check.mjs"`. The real test is the call: does Jev pick the
-product whose price is actually falling, and commit when the signal is decisive — or does it buy a
-riser (bad) or never commit (dull)? Either extreme is a finding to report, not a bug to mask.
+Validate with `node "$JEV_DSH/toolchain/check.mjs"`. The real test is the call: the pane shows the
+share of deal calls Jev got right and what its buys saved against the usual price. If Jev buys
+wobbles (little saved) or never buys (dull), that is a finding to report, not a bug to mask.
 
 ## Rules
 
@@ -68,7 +75,7 @@ riser (bad) or never commit (dull)? Either extreme is a finding to report, not a
   window before you commit to it (e.g. "what does Jev call for this shop?"). Use the `jev`
   helpers: `noul`, `choice`, `score`.
 - Without a `TYPESAFE_API_KEY`, Jev runs on a deterministic local mock that still reads the price
-  stream and calls the steepest faller — so the demo runs offline. With a key, the viewer calls the
+  stream and calls the product furthest under its own usual price — so the demo runs offline. With a key, the viewer calls the
   real API.
 - The Jev Shopper viewer writes `.harness/verdict.json` itself (ticks watched, best pick, any
   commit). Do not edit it.
@@ -78,7 +85,7 @@ riser (bad) or never commit (dull)? Either extreme is a finding to report, not a
 ## Definition of done
 
 - A valid `shopper.json` that parses and passes `toolchain/check.mjs`.
-- A shop with a real decision loop: Jev reads the window, calls the falling product, shows
-  confidence, and on a strong signal commits the paper budget.
+- A shop with a real decision loop: Jev reads the board, calls the product furthest under its usual
+  price, shows confidence, and on a strong signal spends from the paper budget.
 - The style and volatility actually shape the calls — report it if Jev picks the same product no
   matter what, or never commits.

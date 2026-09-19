@@ -1,253 +1,176 @@
-// Jev Pong viewer — a loopback server running a live paddle-defense demo. A ball ricochets
-// around a slim court; Jev (TypeSafe's System One model) decides the paddle's vertical move every
-// `pong.stepMs` to keep a rally alive. The agent shapes pong.json (ball speed, paddle authority) —
-// turn the speed up and watch Jev chase, wobble and finally drop it. The physics is honest but toy.
+// Jev Pong viewer — a loopback server running a live paddle-defence rally. A ball ricochets around
+// a neon court; about sixteen times a second the court is written out as text and Jev (TypeSafe's
+// System One model) answers two typed questions in ONE call: which paddle move to make, and whether
+// the paddle will reach the ball at all. Every return makes the ball faster. The paddle never gets
+// faster. The court is synthetic; the decision loop is the demo.
+//
+// The chat agent edits pong.json (court, pace, paddle). The pane can also poke the rally live:
+// shove the ball, make it faster, change the dials.
 //
 // Harness env: HARNESS_VIEWER_PORT, HARNESS_WORKSPACE. Workspace holds pong.json (watched live).
 
-import { createServer } from 'node:http'
-import { watch, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { evaluate, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
+import { evaluate, jev } from '../toolchain/jev.mjs'
+import { serveViewer, watchConfig, writeVerdict, clean } from './serve.mjs'
+import { DEFAULT, MOVES, MV, PADDLE_X, sanitize, createWorld, serve, step, stateText, predict, applyPace, shove, burst } from './sim.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const clean = (v) => String(v ?? '').replace(/\x1b\[[0-9;]*m/g, '').slice(0, 2000)
+const clampN = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
 
-const DEFAULT = {
-  title: 'Jev Pong',
-  description: 'Jev is the paddle — keep the rally alive as the ball speeds up.',
-  instrument: 'PONG',
-  courtW: 200, courtH: 120, paddleH: 26, ballR: 3,
-  speed: 6, maxSpeed: 3, accel: 0.5, topSpeed: 14, stepMs: 60,
-  style: 'Keep the rally alive. Track the ball, predict where it will cross your wall, and get the paddle there in time. Be decisive.',
+const QUESTIONS = {
+  move: jev.choice({
+    MOVE_UP_FAST: 'slide the paddle up (toward y 0) at full speed',
+    MOVE_UP: 'slide the paddle up (toward y 0) at plain speed',
+    HOLD: 'keep the paddle where it is',
+    MOVE_DOWN: 'slide the paddle down (toward larger y) at plain speed',
+    MOVE_DOWN_FAST: 'slide the paddle down (toward larger y) at full speed',
+  }, 'Which paddle move gets you to the ball in time?'),
+  reach: jev.noul('Will the paddle reach the ball in time?'),
 }
 
-const MOVES = ['MOVE_UP_FAST', 'MOVE_UP', 'HOLD', 'MOVE_DOWN', 'MOVE_DOWN_FAST']
-const MV = { MOVE_UP_FAST: -2, MOVE_UP: -1, HOLD: 0, MOVE_DOWN: 1, MOVE_DOWN_FAST: 2 }
-
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
-
-// Fold a trajectory's y onto the court (bounce off floor/ceiling) at a given travel distance dx.
-function bounceY(y0, dy, H, r) {
-  const span = H - 2 * r
-  let u = (y0 - r + dy) % (2 * span)
-  if (u < 0) u += 2 * span
-  return u <= span ? u + r : 2 * H - r - u - r + r // reflect off far edge
-}
-
-function stateBlock(p, ball, paddleY, speed) {
-  const b = ball
-  const hardness = Math.max(0, Math.min(1, (speed - 3) / 9))
-  const dir = b.vx < 0 ? 'toward you' : 'away'
-  return `${p.style}
-A paddle on the left wall (centre y ${paddleY.toFixed(1)}, half-height ${(p.paddleH / 2).toFixed(0)}) defends a ${p.courtW}×${p.courtH} court.
-ball: x ${b.x.toFixed(1)}  y ${b.y.toFixed(1)}  vx ${b.vx.toFixed(1)}  vy ${b.vy.toFixed(1)}  (${dir})
-speed: ${speed.toFixed(1)}   hardness: ${hardness.toFixed(2)}
-Move the paddle to meet the ball when it crosses your wall. Be decisive.`
-}
-
-function penalty(streak) {
-  return streak <= 2 ? ' · Jev keeps dropping it, dial the speed down' : ''
-}
+/** Dials the pane may override while it runs. An edit to pong.json resets them. */
+const DIALS = { speed: [1, 60], maxSpeed: [0.25, 20], paddleH: [6, 96], accel: [0, 10] }
 
 export async function startPongViewer({ workspace, port = 0 } = {}) {
   workspace = resolve(workspace)
-  mkdirSync(join(workspace, '.harness'), { recursive: true })
 
-  let p = readCfg(join(workspace, 'pong.json'))
-  let rng = mulberry32(90210)
-  // court state
-  let ball = { x: p.courtW * 0.7, y: p.courtH / 2, vx: -p.speed, vy: (rng() - 0.5) * p.speed }
-  let paddleY = p.courtH / 2
-  let clients = new Set()
-  let lastLine = null // the last frame sent, replayed to a pane that connects later
-  let stopped = false
-  let salt = 1
+  // Every binding is declared before anything can call into the closures below.
+  let world = null
+  let stopped = false, running = false
+  let timer = null, salt = 1, lastVerdictAt = 0
+  let queue = Promise.resolve()
+  let overrides = {}
+  let decision = { move: 'HOLD', probs: {}, conf: 0, reach: 0.5 }
+  let text = ''
   let error = null
-  let step = 0
-  let running = false
-  let misses = 0
-  let bestRally = 0
-  let rally = 0
-  let history = []   // per-decision {step, ballY, paddleY, move, conf}
-  let lastMove = 'HOLD'
-  let lastConf = 0
-  let notifiedMiss = false
+  let server = null
+  let history = [] // per decision: { step, ballY, paddleY, move, conf }
+  const session = { decisions: 0 }
 
-  function readCfg(file) {
-    try {
-      const raw = JSON.parse(readFileSync(file, 'utf8'))
-      return { ...DEFAULT, ...raw }
-    } catch (e) {
-      error = clean(e.message)
-      return DEFAULT
+  const cfgWatch = watchConfig(join(workspace, 'pong.json'), DEFAULT, () => { overrides = {}; restart(); push(true) })
+  const cfg = () => sanitize({ ...cfgWatch.get(), ...overrides })
+
+  function restart() {
+    world = createWorld(cfg())
+    history = []
+    text = stateText(world, cfg())
+  }
+
+  /** The pace past which a ball at the far end of the wall cannot be reached, even moving FAST all the way. */
+  function outrunPace(c) {
+    const roundTrip = 2 * (c.courtW - c.ballR - (PADDLE_X + c.ballR))
+    return (2 * c.maxSpeed * roundTrip) / Math.max(1, c.courtH - c.paddleH)
+  }
+
+  function frame() {
+    const c = cfg(), w = world, half = c.paddleH / 2
+    const ghosts = {}
+    // The options Jev chose between for the move now on screen: one decision of travel from where the paddle was.
+    for (const m of MOVES) ghosts[m] = Math.max(half, Math.min(c.courtH - half, w.paddleFrom + MV[m] * c.maxSpeed))
+    return {
+      t: w.t, tickMs: c.stepMs, title: c.title, episode: w.episode,
+      court: { W: c.courtW, H: c.courtH, paddleH: c.paddleH, r: c.ballR, px: PADDLE_X },
+      ball: w.ball, path: w.path, paddleY: w.paddleY, paddleFrom: w.paddleFrom,
+      phase: w.phase, hold: w.hold,
+      rally: w.rally, bestRally: w.best, misses: w.misses, returns: w.returns,
+      speedNow: w.speedNow, lastRally: w.lastRally, lastMissSpeed: w.lastMissSpeed, rallies: w.rallies,
+      dials: { speed: c.speed, maxSpeed: c.maxSpeed, paddleH: c.paddleH, accel: c.accel, topSpeed: c.topSpeed },
+      outrunPace: outrunPace(c),
+      decision, ghosts, intercept: predict(w, c), events: w.events, stateText: text,
+      running, error, cfgError: cfgWatch.error(), overrides,
     }
   }
-
-  function resetState() {
-    ball = { x: p.courtW * 0.7, y: p.courtH / 2, vx: -p.speed, vy: (rng() - 0.5) * p.speed }
-    paddleY = p.courtH / 2
-    misses = 0; bestRally = 0; rally = 0; history = []; notifiedMiss = false; step = 0
-  }
-
-  function broadcast(obj) {
-    const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
-    lastLine = line
-    for (const c of clients) c.write(line)
-  }
+  // /state also keeps the older field names (step, speed, lastMove, lastConf, history).
+  const fullState = () => ({
+    ...frame(), description: cfg().description, instrument: cfg().instrument,
+    step: world.t, speed: cfg().speed, lastMove: decision.move, lastConf: decision.conf, history: history.slice(-240),
+  })
 
   function verdict() {
-    const state = history.length === 0 ? 'learning' : notifiedMiss ? 'missed' : 'rallying'
-    return {
-      spec: 1,
-      ready: history.length > 0,
-      summary: error
-        ? 'Jev Pong needs a fix'
-        : notifiedMiss
-          ? `${p.title} · dropped after ${rally} hits · best ${bestRally} · Jev lost the rally at speed ${p.speed}`
-          : `${p.title} · rally ${rally} · best ${bestRally} · Jev defending at speed ${p.speed}`,
-      findings: (error ? [{ severity: 'error', kind: 'pong', message: error }] : []).concat(
-        notifiedMiss ? [{ severity: 'warn', kind: 'pong', message: `Jev missed the ball at speed ${p.speed} after ${rally} hits — dial the speed down or it keeps dropping it` }] : []
-      ),
+    const c = cfg(), w = world
+    const problem = cfgWatch.error() || error
+    const mean = w.rallies.length ? w.rallies.reduce((a, r) => a + r.n, 0) / w.rallies.length : 0
+    writeVerdict(workspace, {
+      ready: session.decisions > 0,
+      summary: problem
+        ? `Jev Pong needs a fix: ${problem}`
+        : w.misses
+          ? `${c.title} · rally ${w.rally} · best ${w.best} · ${w.misses} misses · last ball got past at pace ${w.lastMissSpeed.toFixed(1)}`
+          : `${c.title} · rally ${w.rally} · best ${w.best} · no misses yet at pace ${w.speedNow.toFixed(1)}`,
+      findings: [
+        ...(problem ? [{ severity: 'error', kind: 'pong', message: problem }] : []),
+        { severity: 'info', kind: 'pong', message: `${session.decisions} decisions, ${w.returns} returns, ${w.misses} misses, mean rally ${mean.toFixed(1)}. Start pace ${c.speed}, +${c.accel} per return, paddle ${2 * c.maxSpeed} per decision at most. A far ball is out of reach past pace ${outrunPace(c).toFixed(1)}.` },
+        ...(w.misses ? [{ severity: 'warn', kind: 'pong', message: `Jev lost the last rally after ${w.lastRally} returns, at pace ${w.lastMissSpeed.toFixed(1)}` }] : []),
+      ],
       artifact: 'pong.json',
       phases: [
-        { id: 'learn', name: 'Learning', state: history.length < 5 ? 'active' : 'done' },
-        { id: 'rally', name: 'Rallying', state: history.length >= 5 && !notifiedMiss ? 'active' : notifiedMiss ? 'done' : 'pending' },
-        { id: 'edge', name: 'At the edge', state: notifiedMiss ? 'active' : 'pending' },
+        { id: 'serve', name: 'Court up', state: 'done' },
+        { id: 'rally', name: 'Rallying', state: session.decisions > 0 ? (w.phase === 'missed' ? 'done' : 'active') : 'pending' },
+        { id: 'edge', name: 'Outrun', state: w.misses ? 'done' : 'pending' },
       ],
-      updatedAt: new Date().toISOString(),
-    }
-  }
-
-  function tail() {
-    const v = verdict()
-    const file = join(workspace, '.harness/verdict.json')
-    writeFileSync(file + '.tmp', JSON.stringify(v))
-    renameSync(file + '.tmp', file)
-    broadcast({
-      type: 'tick', title: p.title, description: p.description, instrument: p.instrument,
-      ball, paddleY, speed: p.speed, step, running, error, misses, bestRally, rally, lastMove, lastConf,
-      history: history.slice(-240),
     })
   }
 
-  function reset() { resetState(); tail(); if (running) schedule() }
-  function pause() { running = false; clearTimeout(timer) }
-  function start() { if (!running) { running = true; schedule() } }
-  let timer = null
-  function schedule() { clearTimeout(timer); timer = setTimeout(run, p.stepMs) }
-  async function run() { if (stopped) return; await decide(); schedule() }
-
-  function integrate() {
-    const W = p.courtW, H = p.courtH, r = p.ballR
-    // paddle velocity from the last move, integrated before Jev's next read
-    const half = p.paddleH / 2
-    paddleY += (MV[lastMove] ?? 0) * (p.maxSpeed || 2.4)
-    paddleY = Math.max(half, Math.min(H - half, paddleY))
-    ball.x += ball.vx
-    ball.y += ball.vy
-    if (ball.y < r) { ball.y = r; ball.vy = Math.abs(ball.vy) }
-    if (ball.y > H - r) { ball.y = H - r; ball.vy = -Math.abs(ball.vy) }
-    if (ball.x > W - r) { ball.x = W - r; ball.vx = -Math.abs(ball.vx) } // right wall
-    // left wall: paddle hit or miss
-    if (ball.x <= r) {
-      if (Math.abs(ball.y - paddleY) <= half) {
-        ball.x = r
-        rally++
-        if (rally > bestRally) bestRally = rally
-        notifiedMiss = false
-        // the rally accelerates: each hit speeds the ball up, so a long rally gets harder and harder
-        ball.vx = Math.sign(ball.vx) * Math.min(p.speed + (p.accel ?? 0.5) * rally, (p.topSpeed ?? p.speed + 8))
-      } else {
-        misses++
-        notifiedMiss = true
-        rally = 0
-        // restart far on the right with a fresh-ish aim at the dial speed
-        ball = { x: W * 0.75, y: r + rng() * (H - 2 * r), vx: -p.speed, vy: (rng() - 0.5) * p.speed }
-        ball.vx = -p.speed
-      }
-    }
+  function push(force = false) {
+    const now = Date.now()
+    if (force || now - lastVerdictAt > 1000) { lastVerdictAt = now; try { verdict() } catch (e) { error = clean(e.message) } }
+    server?.broadcast(frame())
   }
 
-  async function decide() {
+  async function decideOnce() {
     if (stopped) return
     try {
-      const res = await evaluate({
-        state: stateBlock(p, ball, paddleY, p.speed),
-        questions: {
-          move: { type: 'choice', instructions: 'Which paddle move keeps the rally alive?', options: MOVES },
-          conf: { type: 'noul', instructions: 'Is the ball under control?' },
-        },
-        salt: salt++,
-        model: process.env.JEV_MODEL || 'jev-latest',
-      })
-      lastMove = String(res.answers.move?.choice || 'HOLD')
-      lastConf = typeof res.answers.conf?.noul === 'number' ? res.answers.conf.noul : 0.5
-      step++
-      integrate()
-      history.push({ step, ballY: ball.y, paddleY, move: lastMove, conf: lastConf })
+      const c = cfg()
+      if (world.phase === 'missed') { step(world, c, 'HOLD'); text = stateText(world, c); return } // the ball is gone: nothing to ask
+      text = stateText(world, c)
+      const res = await evaluate({ state: text, questions: QUESTIONS, salt: salt++, model: process.env.JEV_MODEL || 'jev-latest' })
+      const a = res.answers
+      const move = MOVES.includes(a.move?.choice) ? a.move.choice : 'HOLD'
+      decision = { move, probs: a.move?.probabilities ?? {}, conf: Number(a.move?.confidence ?? 0), reach: Number(a.reach?.noul ?? 0.5) }
+      session.decisions++
+      step(world, c, move)
+      history.push({ step: world.t, ballY: world.ball.y, paddleY: world.paddleY, move, conf: decision.conf })
       if (history.length > 300) history.splice(0, history.length - 300)
+      text = stateText(world, c)
       error = null
     } catch (e) {
-      error = clean(e?.message ?? e?.name ?? String(e))
+      error = clean(e?.message ?? String(e))
     }
-    tail()
+  }
+  /** Decisions never overlap: a `tick` from a test waits for the timer's decision, and the other way round. */
+  function decide() { queue = queue.then(decideOnce, decideOnce); return queue }
+
+  function schedule() { clearTimeout(timer); if (running && !stopped) timer = setTimeout(run, cfg().stepMs) }
+  async function run() { const t0 = Date.now(); await decide(); push(); if (running && !stopped) timer = setTimeout(run, Math.max(0, cfg().stepMs - (Date.now() - t0))) }
+
+  async function control(cmd, body) {
+    if (cmd === 'pause') { running = false; clearTimeout(timer) }
+    else if (cmd === 'start') { if (!running) { running = true; schedule() } }
+    else if (cmd === 'reset') { overrides = {}; salt = 1; session.decisions = 0; await queue; restart() }
+    else if (cmd === 'tick') { const n = Math.round(clampN(body.n, 1, 20000, 1)); for (let i = 0; i < n; i++) await decide() }
+    else if (cmd === 'set') {
+      const range = DIALS[body.key]
+      if (range) { overrides = { ...overrides, [body.key]: clampN(body.value, range[0], range[1], cfg()[body.key]) }; applyPace(world, cfg()) }
+    } else if (cmd === 'shove') {
+      const c = cfg()
+      shove(world, c, clampN(body.x, 0, c.courtW, c.courtW / 2), clampN(body.y, 0, c.courtH, c.courtH / 2))
+    } else if (cmd === 'burst') burst(world, cfg(), Math.round(clampN(body.n, 1, 20, 4)))
+    else if (cmd === 'serve') serve(world, cfg())
+    text = stateText(world, cfg())
+    push(true)
+    return { step: world.t }
   }
 
-  const watcher = watch(join(workspace, 'pong.json'), () => {
-    p = readCfg(join(workspace, 'pong.json'))
-    tail()
-    if (running) schedule()
-  })
-
-  const server = createServer(async (req, res) => {
-    res.setHeader('cache-control', 'no-store')
-    res.setHeader('x-content-type-options', 'nosniff')
-    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host ?? '')) { res.writeHead(403); return res.end('Loopback only') }
-    const url = new URL(req.url, 'http://127.0.0.1')
-    if (req.method === 'GET' && url.pathname === '/') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'index.html'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.js'))) }
-    if (req.method === 'GET' && url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
-    if (req.method === 'GET' && url.pathname === '/jev-hud.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'jev-hud.js'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.css') { res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'studio.css'))) }
-    if (req.method === 'GET' && url.pathname === '/state') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ title: p.title, instrument: p.instrument, ball, paddleY, speed: p.speed, step, running, error, misses, bestRally, rally, lastMove, lastConf, history: history.slice(-240) })) }
-    if (req.method === 'GET' && url.pathname === '/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
-      clients.add(res)
-      if (lastLine) res.write(lastLine)
-      req.on('close', () => clients.delete(res))
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/control') {
-      let body = ''
-      for await (const c of req) { body += c; if (body.length > 1024) break }
-      const cmd = JSON.parse(body || '{}').cmd
-      if (cmd === 'pause') pause()
-      if (cmd === 'start') start()
-      if (cmd === 'reset') reset()
-      if (cmd === 'tick') await decide()
-      res.writeHead(200, { 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ ok: true }))
-    }
-    res.writeHead(404); res.end('Not found')
-  })
-
-  await new Promise((resolveP, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolveP) })
-  resetState()
-  tail()
-  start()
+  restart()
+  server = await serveViewer({ here: HERE, port, state: fullState, control })
+  push(true)
+  running = true
+  schedule()
 
   return {
-    url: `http://127.0.0.1:${server.address().port}`,
-    async close() { stopped = true; clearTimeout(timer); watcher.close(); for (const c of clients) c.end(); server.closeAllConnections(); await new Promise((r) => server.close(r)) },
+    url: server.url,
+    async close() { stopped = true; running = false; clearTimeout(timer); cfgWatch.close(); await server.close() },
   }
 }
 

@@ -1,309 +1,289 @@
-// Jev Arena viewer — a loopback server that renders a live grid game where Jev (TypeSafe's System One
-// model) is the brain. The agent designs the world (nodes, goals, walls, rules) as JSON; this server
-// runs the game loop and calls Jev at a tunable cadence to pick the next move. Every decision's
-// probability distribution and confidence streams to the pane over SSE, so the user *watches Jev
-// think* — the decisions are the experience.
+// Jev Arena viewer — a loopback server that runs a small living grid world where Jev (TypeSafe's
+// System One model) is the brain. Each decision the world is written out as text and Jev answers four
+// typed questions in one call: which way to move, what it is heading for, whether it is sure, and
+// whether it is boxed in. The full probability spread goes to the pane with every frame, so the
+// person watches Jev think on the board itself.
 //
-// Harness runs this for the life of the agent's pane with:
-//   HARNESS_VIEWER_PORT   loopback port
-//   HARNESS_WORKSPACE     the workspace folder (the agent's cwd)
-//   HARNESS_DSH_DIR       this install dir
+// The honest dial is `sight`: the hero only knows the walls it has seen. With a short sight the
+// step counts in the text point through walls it has not met yet, so it walks into dead ends.
 //
-// The workspace holds arena.json (the world + rules). The viewer watches it; the agent edits it and
-// the game adapts live. No external runtime dependencies.
+// The chat agent edits arena.json (the world, the pace, the sight). The pane lets a person build and
+// break walls, drop coins, drag the goal and move the dials. It never idles: a finished run shows a
+// short banner, then a fresh layout from the seed.
+//
+// Harness env: HARNESS_VIEWER_PORT, HARNESS_WORKSPACE. Workspace holds arena.json (watched live).
 
 import { createServer } from 'node:http'
 import { watch, readFileSync, existsSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
-import { join, resolve, dirname } from 'node:path'
+import { join, resolve, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { evaluate, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
+import { evaluate, jev, snapshot as jevSnapshot } from '../toolchain/jev.mjs'
+import { DEFAULT, ACTIONS, SEE_ALL, sanitize, createWorld, observe, act, finish, walledIn, look, toggleWall, toggleCoin, moveGoal } from './sim.mjs'
+import { arenaMock } from './mock.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const clean = (v) => String(v ?? '').replace(/\x1b\[[0-9;]*m/g, '').slice(0, 3000)
+const FILES = new Set(['index.html', 'studio.css', 'studio.js', 'jev-hud.js'])
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' }
+const REST_MS = 3000
+const clean = (v) => String(v ?? '').replace(/\x1b\[[0-9;]*m/g, '').slice(0, 2000)
+const num = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
 
-const DEFAULT_WORLD = {
-  title: 'Jev Arena',
-  description: 'A tiny grid world where Jev decides each move.',
-  size: 12,
-  hero: { x: 1, y: 1, emoji: '🤖', label: 'Jev' },
-  goal: { x: 10, y: 10, emoji: '⭐', label: 'goal' },
-  walls: [],
-  coins: [{ x: 6, y: 6, emoji: '🪙', value: 1 }],
-  rules: 'Reach the goal in as few steps as possible. Move one cell at a time (up/down/left/right).',
-  speed: 300, // ms per decision
-  movesPerStep: 1,
-}
-
-const ACTIONS = ['up', 'down', 'left', 'right', 'wait']
-
-function stateBlock(world, hero) {
-  // Build the state text Jev reads: the world grid, the hero, remaining coins, known obstacles.
-  const { size, walls, coins, goal, rules } = world
-  const grid = Array.from({ length: size }, () => Array(size).fill('.'))
-  const isWall = (x, y) => walls.some((w) => w.x === x && w.y === y)
-  for (const w of walls) if (inBounds(w, size)) grid[w.y] && (grid[w.y][w.x] = '#')
-  const remaining = coins.filter((c) => inBounds(c, size) && !(c.x === hero.x && c.y === hero.y))
-  for (const c of remaining) grid[c.y][c.x] = '$'
-  if (inBounds(goal, size)) grid[goal.y][goal.x] = 'G'
-  grid[hero.y] = grid[hero.y] || []
-  grid[hero.y][hero.x] = '@'
-  const rows = grid.map((r) => r.join('')).join('\n')
-  const distToGoal = Math.abs(hero.x - goal.x) + Math.abs(hero.y - goal.y)
-  return `You are the @ on this grid. # is a wall, $ is a coin, G is the goal.\n${rows}\n\nPosition: (${hero.x},${hero.y}). Goal: (${goal.x},${goal.y}). Manhattan distance to goal: ${distToGoal}. Coins remaining to collect: ${remaining.length}. Obstacles are impassable; collect coins and reach G.`
-}
-
-function inBounds(pos, size) {
-  return pos && pos.x >= 0 && pos.y >= 0 && pos.x < size && pos.y < size
-}
-
-function moveLegal(world, pos, action) {
-  const { size, walls } = world
-  let [x, y] = [pos.x, pos.y]
-  if (action === 'up') y -= 1
-  else if (action === 'down') y += 1
-  else if (action === 'left') x -= 1
-  else if (action === 'right') x += 1
-  else return { x, y, legal: true } // wait
-  const blocked = x < 0 || y < 0 || x >= size || y >= size || walls.some((w) => w.x === x && w.y === y)
-  return { x, y, legal: !blocked }
-}
-
-async function decide(world, hero, salt) {
-  const questions = {
-    move: {
-      type: 'choice',
-      instructions: 'Choose the best next move to reach the goal (collect coins first), without walking into walls.',
-      options: ACTIONS,
-    },
-    confidence_full: {
-      type: 'noul',
-      instructions: 'Is the selected move clearly the best choice, with high certainty?',
-    },
-  }
-  // Pass obstacles/awareness to state. The mock and live model both read the state.
-  try {
-    const res = await evaluate({
-      state: stateBlock(world, hero),
-      questions,
-      salt,
-      model: process.env.JEV_MODEL || 'jev-latest',
-    })
-    const moveAns = res.answers.move || {}
-    const probs = moveAns.probabilities || {}
-    const best = moveAns.choice || pickBestByProbs(probs)
-    return {
-      action: best,
-      probabilities: probs,
-      confidence: moveAns.confidence ?? Math.max(...Object.values(probs), 0),
-      client: res.client,
-      model: res.model,
-    }
-  } catch (err) {
-    return { action: 'wait', probabilities: {}, confidence: 0, error: clean(err.message), client: 'error' }
-  }
-}
-
-function pickBestByProbs(probs) {
-  let best = 'wait', bestP = -1
-  for (const [a, p] of Object.entries(probs)) if (p > bestP) { best = a; bestP = p }
-  return best
-}
-
-function verdict(world, state) {
-  const ready = state.error ? false : state.moves > 0
-  return {
-    spec: 1,
-    ready,
-    summary: state.error
-      ? 'Arena needs a fix'
-      : `${world.title} · Jev has made ${state.moves} decisions · reached goal ${state.reachedGoal ? 'yes' : 'not yet'}`,
-    findings: state.error ? [{ severity: 'error', kind: 'arena', message: state.error }] : [],
-    artifact: 'arena.json',
-    phases: [
-      { id: 'world', name: 'World', state: state.reachedGoal ? 'done' : 'active' },
-      { id: 'play', name: 'Play', state: state.reachedGoal ? 'done' : 'pending' },
-    ],
-    updatedAt: new Date().toISOString(),
-  }
-}
+export { sanitize }
 
 export async function startArenaViewer({ workspace, port = 0 } = {}) {
   workspace = resolve(workspace)
   mkdirSync(join(workspace, '.harness'), { recursive: true })
+  const file = join(workspace, 'arena.json')
 
-  let world = readWorld(join(workspace, 'arena.json'))
-  let hero = { ...world.hero }
-  let state = { moves: 0, reachedGoal: false, coinsCollected: 0, error: null, running: false }
-  let clients = new Set()
-  let lastLine = null // the last frame sent, replayed to a pane that connects later
-  let stopped = false
-  const decisionLog = []
-  let salt = 1
+  // Every binding is declared before anything can call into the closures below.
+  let raw = { ...DEFAULT }
+  let cfgError = null
+  let overrides = {}
+  let world = null
+  let seen = null // what observe() last returned, for the pane
+  let last = null // the last decision, with its full probability spread
+  let stopped = false, running = false, busy = false
+  let timer = null, watchTimer = null, salt = 1, episode = 0, lastVerdictAt = 0
+  let error = null
+  const clients = new Set()
+  const totals = { decisions: 0, episodes: 0, goals: 0, coins: 0, bumps: 0, wonMoves: 0, wonPar: 0, results: [] }
 
-  function readWorld(file) {
-    try {
-      const raw = JSON.parse(readFileSync(file, 'utf8'))
-      return { ...DEFAULT_WORLD, ...raw }
-    } catch {
-      return DEFAULT_WORLD
+  function load() {
+    try { raw = { ...DEFAULT, ...JSON.parse(readFileSync(file, 'utf8')) }; cfgError = null } catch (e) {
+      cfgError = existsSync(file) ? clean(`arena.json: ${e.message}`) : null
+    }
+  }
+  const cfg = () => sanitize({ ...raw, ...overrides })
+
+  function newEpisode(from = null, forceFresh = false) {
+    world = createWorld(cfg(), episode, from, forceFresh)
+    last = null
+    seen = observe(world, cfg())
+  }
+
+  function rows(bytes, on) {
+    const out = []
+    for (let y = 0; y < world.h; y++) { let r = ''; for (let x = 0; x < world.w; x++) r += on(bytes[y * world.w + x]); out.push(r) }
+    return out
+  }
+
+  function frame() {
+    const c = cfg()
+    return {
+      type: 'frame', title: c.title, description: c.description, rules: c.rules,
+      w: world.w, h: world.h, walls: rows(world.wall, (v) => (v ? '#' : '.')), seen: rows(world.memory, (v) => (v ? '1' : '0')),
+      coins: world.coins.map((p) => [p.x, p.y]), goal: [world.goal.x, world.goal.y], hero: [world.hero.x, world.hero.y],
+      trail: world.trail, plan: seen?.plan ?? [], heading: seen?.heading ?? 'none',
+      episode: world.episode, status: world.status, result: world.result,
+      moves: world.moves, par: world.par, maxMoves: world.maxMoves, coinsCollected: world.coinsCollected, coinsTotal: world.coinsTotal,
+      last, totals: { ...totals, results: totals.results.slice(-8) },
+      speed: c.speed, sight: c.sight, remix: c.remix, seed: c.seed,
+      density: Number((world.wall.reduce((a, b) => a + b, 0) / (world.w * world.h)).toFixed(3)),
+      stateText: seen?.text ?? '', running, error, cfgError, overrides,
     }
   }
 
-  function broadcast(obj) {
-    const line = `event: state\ndata: ${JSON.stringify(obj)}\n\n`
-    lastLine = line
+  /** /state keeps the shape older tools read (world, state, decisionLog) and adds the full frame. */
+  function fullState() {
+    const c = cfg()
+    return {
+      world: { title: c.title, description: c.description, rules: c.rules, size: Math.max(c.w, c.h), width: c.w, height: c.h, speed: c.speed, sight: c.sight, remix: c.remix, seed: c.seed, hero: world.start, goal: world.goal, coins: world.coins, walls: [...world.wall].flatMap((v, i) => (v ? [{ x: i % world.w, y: Math.floor(i / world.w) }] : [])) },
+      state: { moves: world.moves, reachedGoal: world.status === 'won', coinsCollected: world.coinsCollected, status: world.status, running, error: error || cfgError },
+      decisionLog: last ? [last] : [],
+      frame: frame(),
+    }
+  }
+
+  function verdict() {
+    const c = cfg()
+    const problem = cfgError || error
+    const reached = totals.goals > 0 || world.status === 'won'
+    const eff = totals.wonMoves ? Math.round((totals.wonPar / totals.wonMoves) * 100) : null
+    const v = {
+      spec: 1,
+      ready: !problem && totals.decisions > 0,
+      summary: problem
+        ? `Arena needs a fix: ${problem}`
+        : `${c.title} · Jev has made ${totals.decisions} decisions · reached goal ${reached ? 'yes' : 'not yet'} · ${totals.goals} goals, ${totals.coins} coins${eff == null ? '' : `, ${eff}% of the shortest way`}`,
+      findings: [
+        ...(problem ? [{ severity: 'error', kind: 'arena', message: problem }] : []),
+        ...totals.results.filter((r) => r.status !== 'won').slice(-4).map((r) => ({ severity: 'warning', kind: 'run', message: r.status === 'stuck' ? `run ${r.episode + 1}: walled in, no way to the goal` : `run ${r.episode + 1}: out of moves after ${r.moves}` })),
+        { severity: 'info', kind: 'run', message: `sight ${c.sight >= SEE_ALL ? 'whole board' : c.sight + ' cells'}, ${c.speed} ms per decision, ${totals.bumps} bumps into walls` },
+      ],
+      artifact: 'arena.json',
+      phases: [
+        { id: 'world', name: 'World', state: 'done' },
+        { id: 'play', name: 'Play', state: reached ? 'done' : totals.decisions > 0 ? 'active' : 'pending' },
+      ],
+      updatedAt: new Date().toISOString(),
+    }
+    const out = join(workspace, '.harness/verdict.json')
+    writeFileSync(out + '.tmp', JSON.stringify(v))
+    renameSync(out + '.tmp', out)
+  }
+
+  function push(force = false) {
+    const now = Date.now()
+    if (force || now - lastVerdictAt > 1000) { lastVerdictAt = now; try { verdict() } catch (e) { error = clean(e.message) } }
+    if (!clients.size) return
+    const line = `event: state\ndata: ${JSON.stringify(frame())}\n\n`
     for (const c of clients) c.write(line)
   }
 
-  function tail() {
-    const gameOver = state.reachedGoal
-    state.running = !gameOver && !stopped
-    const summary = { title: world.title, description: world.description, hero, goal: world.goal, walls: world.walls, coins: world.coins, size: world.size, rules: world.rules, speed: world.speed }
-    broadcast({ type: 'frame', moves: state.moves, reachedGoal: state.reachedGoal, coinsCollected: state.coinsCollected, gameOver, running: state.running, hero, coins: world.coins, goal: world.goal, walls: world.walls, size: world.size, decisionLog: decisionLog.slice(-20), speed: world.speed, model: state.model, client: state.client })
-    // write verdict
-    const v = verdict(world, state)
-    const file = join(workspace, '.harness/verdict.json')
-    writeFileSync(file + '.tmp', JSON.stringify(v))
-    renameSync(file + '.tmp', file)
-    void summary
+  function settle() {
+    totals.episodes++
+    if (world.status === 'won') { totals.goals++; totals.wonMoves += world.moves; totals.wonPar += Math.min(world.par, world.moves) }
+    totals.results.push({ episode: world.episode, ...world.result })
+    if (totals.results.length > 40) totals.results.shift()
   }
 
-  async function step() {
-    if (stopped || state.reachedGoal) return
-    // Ask Jev for the next move.
-    const d = await decide(world, hero, salt++)
-    state.model = d.model
-    state.client = d.client
-    if (d.error) { state.error = d.error; tail(); return }
-    // Apply the move.
-    const mv = moveLegal(world, hero, d.action)
-    if (mv.legal) {
-      hero = { x: mv.x, y: mv.y }
-      // Collect coins.
-      const coinAt = world.coins.findIndex((c) => c.x === hero.x && c.y === hero.y)
-      if (coinAt >= 0) { world.coins.splice(coinAt, 1); state.coinsCollected++ }
-      // Reached goal?
-      if (hero.x === world.goal.x && hero.y === world.goal.y) state.reachedGoal = true
+  /** One decision. While a finished run is on show it only counts down to the next run. */
+  async function decide() {
+    if (busy || stopped) return
+    busy = true
+    try {
+      const c = cfg()
+      if (world.status !== 'play') {
+        world.rest++
+        if (world.rest * c.speed >= REST_MS) { episode++; newEpisode(c.remix ? world.hero : null); push(true) }
+        return
+      }
+      const o = observe(world, c)
+      const res = await evaluate({
+        state: o.text,
+        questions: {
+          move: jev.choice({
+            up: 'step one cell up (y gets smaller)', down: 'step one cell down (y gets bigger)',
+            left: 'step one cell left (x gets smaller)', right: 'step one cell right (x gets bigger)',
+            wait: 'stay on this cell',
+          }, 'Which move leaves the fewest steps? Go for the nearest coin while one can be reached, then the goal. Never pick a wall.'),
+          heading: jev.choice({ coin: 'a coin can still be reached, so get it first', goal: 'no coin is left to get, so head for the goal' }, 'What are you heading for right now?'),
+          sure: jev.noul('Is one move clearly better than every other move?'),
+          boxed_in: jev.noul('Are you boxed in, with walls on most sides or no way to the goal?'),
+        },
+        salt: salt++, model: process.env.JEV_MODEL || 'jev-latest', mock: arenaMock,
+      })
+      const a = res.answers.move ?? {}
+      const move = ACTIONS.includes(a.choice) ? a.choice : 'wait'
+      const ev = act(world, move)
+      totals.decisions++
+      if (ev?.coin) totals.coins++
+      if (ev?.bumped) totals.bumps++
+      last = {
+        at: totals.decisions, move, probabilities: a.probabilities ?? {}, confidence: Number(a.confidence ?? 0),
+        heading: res.answers.heading?.choice ?? o.heading, sure: Number(res.answers.sure?.noul ?? 0), boxedIn: Number(res.answers.boxed_in?.noul ?? 0),
+        from: [ev.from.x, ev.from.y], to: [ev.to.x, ev.to.y], bumped: ev.bumped, coin: ev.coin ? [ev.coin.x, ev.coin.y] : null,
+        steps: o.heading === 'coin' ? o.coinSteps : o.goalSteps, client: res.client, model: res.model,
+      }
+      if (world.status === 'play') { seen = observe(world, c); if (walledIn(seen)) finish(world, 'stuck') } else seen = { ...observe(world, c), plan: [] }
+      if (world.status !== 'play') settle()
+      error = null
+    } catch (e) {
+      error = clean(e?.message ?? String(e))
+    } finally {
+      busy = false
     }
-    state.moves++
-    if (state.moves > 4 && !state.reachedGoal) {
-      // Safety: Jev shouldn't be stuck. Let the world know via the panel, but keep moving.
-    }
-    decisionLog.push({ move: d.action, probabilities: d.probabilities, confidence: d.confidence, at: state.moves, hero: { ...hero } })
-    if (decisionLog.length > 200) decisionLog.splice(0, decisionLog.length - 200)
-    tail()
   }
 
-  let timer = null
-  function schedule() {
-    clearTimeout(timer)
-    timer = setTimeout(run, Math.max(60, Number(world.speed) || 300))
-  }
+  function schedule() { clearTimeout(timer); if (running && !stopped) timer = setTimeout(run, cfg().speed) }
   async function run() {
-    if (stopped) return
-    await step()
-    if (!state.reachedGoal) schedule()
-    // Never sit on the finished screen: show the result for a few seconds, then play again.
-    else { clearTimeout(timer); timer = setTimeout(() => { if (!stopped && state.reachedGoal) { const was = state.running; reset(); state.running = was; tail(); schedule() } }, 4000) }
+    const t0 = Date.now(), before = world.status
+    await decide()
+    push(before !== world.status)
+    if (running && !stopped) timer = setTimeout(run, Math.max(0, cfg().speed - (Date.now() - t0)))
   }
 
-  function start() {
-    if (state.reachedGoal) return
-    schedule()
-  }
-  function pause() {
-    clearTimeout(timer)
-  }
-  function reset() {
-    state = { moves: 0, reachedGoal: false, coinsCollected: 0, error: null, running: false }
-    hero = { ...world.hero }
-    // restore coins from world (we mutate world.coins in place; keep a pristine copy)
-    world = readWorld(join(workspace, 'arena.json'))
-    // re-read resets coins to the file. good.
-    hero = { ...world.hero }
-    decisionLog.length = 0
-    salt = 1
-    tail()
-    if (state.running) schedule()
-  }
+  function edited(ok) { if (ok) { look(world, cfg().sight); seen = observe(world, cfg()); if (walledIn(seen)) { finish(world, 'stuck'); settle() } } return ok }
 
-  // Watch the workspace for world edits.
-  const watcher = watch(workspace, { recursive: true }, (_, name) => {
-    if (!name) return
-    name = String(name).split('/').join('/')
-    if (name === 'arena.json') {
-      const got = readWorld(join(workspace, 'arena.json'))
-      const changed = JSON.stringify(got.size) !== JSON.stringify(world.size) ||
-        JSON.stringify(got.goal) !== JSON.stringify(world.goal) ||
-        JSON.stringify(got.walls) !== JSON.stringify(world.walls) ||
-        JSON.stringify(got.hero) !== JSON.stringify(world.hero)
-      world = got
-      // Keep existing coins only if the file didn't redefine them; re-read does.
-      if (changed) { /* keep world as read; reset hero if it moved? leave */ }
-      tail()
-      schedule()
+  async function control(cmd, body) {
+    const x = Math.round(Number(body.x)), y = Math.round(Number(body.y))
+    let ok = true
+    if (cmd === 'pause') { running = false; clearTimeout(timer) }
+    else if (cmd === 'start') { if (!running) { running = true; schedule() } }
+    else if (cmd === 'reset') {
+      Object.assign(totals, { decisions: 0, episodes: 0, goals: 0, coins: 0, bumps: 0, wonMoves: 0, wonPar: 0, results: [] })
+      overrides = {}; episode = 0; salt = 1; newEpisode()
     }
+    else if (cmd === 'tick' || cmd === 'step') { const n = Math.round(num(body.n, 1, 20000, 1)); for (let i = 0; i < n; i++) await decide() }
+    else if (cmd === 'wall') ok = edited(toggleWall(world, x, y))
+    else if (cmd === 'coin') ok = edited(toggleCoin(world, x, y))
+    else if (cmd === 'goal') ok = edited(moveGoal(world, x, y))
+    else if (cmd === 'remix') { episode++; newEpisode(world.hero, true) }
+    else if (cmd === 'set') {
+      const allowed = { speed: [60, 2000], sight: [1, SEE_ALL], density: [0, 0.4] }
+      const r = allowed[body.key]
+      if (!r) ok = false
+      else {
+        overrides = { ...overrides, [body.key]: num(body.value, r[0], r[1], r[0]) }
+        if (body.key === 'density') { episode++; newEpisode(world.hero) } else { seen = observe(world, cfg()); if (running) schedule() }
+      }
+    } else ok = false
+    push(true)
+    return { ok, moves: world.moves, episode: world.episode, status: world.status }
+  }
+
+  load()
+  newEpisode()
+
+  // Watch the folder, not the file: an editor that saves by rename would drop a file watch.
+  const watcher = watch(workspace, (_, name) => {
+    if (name && String(name) !== 'arena.json') return
+    clearTimeout(watchTimer)
+    watchTimer = setTimeout(() => {
+      if (stopped) return
+      const before = JSON.stringify(raw)
+      load()
+      if (JSON.stringify(raw) !== before) { overrides = {}; episode = 0; newEpisode() }
+      push(true)
+    }, 40)
   })
 
   const server = createServer(async (req, res) => {
     res.setHeader('cache-control', 'no-store')
     res.setHeader('x-content-type-options', 'nosniff')
+    // Loopback only: a page on another origin (DNS rebinding) must not reach this server.
     if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host ?? '')) { res.writeHead(403); return res.end('Loopback only') }
     const url = new URL(req.url, 'http://127.0.0.1')
-    if (req.method === 'GET' && url.pathname === '/') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      return res.end(readFileSync(join(HERE, 'index.html')))
+    try {
+      if (req.method === 'GET') {
+        const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1)
+        if (FILES.has(name)) { res.writeHead(200, { 'content-type': TYPES[extname(name)] }); return res.end(readFileSync(join(HERE, name))) }
+        if (url.pathname === '/state') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(fullState())) }
+        if (url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
+        if (url.pathname === '/events') {
+          res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
+          res.write(`event: state\ndata: ${JSON.stringify(frame())}\n\n`)
+          clients.add(res)
+          req.on('close', () => clients.delete(res))
+          return
+        }
+      }
+      if (req.method === 'POST' && url.pathname === '/control') {
+        let body = ''
+        for await (const c of req) { body += c; if (body.length > 65536) { res.writeHead(413); return res.end('Too large') } }
+        let j
+        try { j = JSON.parse(body || '{}') } catch { res.writeHead(400); return res.end('Bad JSON') }
+        const reply = await control(String(j?.cmd ?? ''), j && typeof j === 'object' ? j : {})
+        res.writeHead(200, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify(reply))
+      }
+      res.writeHead(404); res.end('Not found')
+    } catch (e) {
+      res.writeHead(500, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: clean(e?.message ?? e) }))
     }
-    if (req.method === 'GET' && url.pathname === '/studio.js') {
-      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' })
-      return res.end(readFileSync(join(HERE, 'studio.js')))
-    }
-    if (req.method === 'GET' && url.pathname === '/jev') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(jevSnapshot())) }
-    if (req.method === 'GET' && url.pathname === '/jev-hud.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' }); return res.end(readFileSync(join(HERE, 'jev-hud.js'))) }
-    if (req.method === 'GET' && url.pathname === '/studio.css') {
-      res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' })
-      return res.end(readFileSync(join(HERE, 'studio.css')))
-    }
-    if (req.method === 'GET' && url.pathname === '/state') {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ world, state, decisionLog: decisionLog.slice(-20) }))
-    }
-    if (req.method === 'GET' && url.pathname === '/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' })
-      clients.add(res)
-      if (lastLine) res.write(lastLine)
-      res.write(`event: state\ndata: ${JSON.stringify({ type: 'frame', moves: state.moves, reachedGoal: state.reachedGoal, running: state.running, hero, coins: world.coins, goal: world.goal, walls: world.walls, size: world.size, decisionLog: decisionLog.slice(-20), speed: world.speed, model: state.model, client: state.client })}\n\n`)
-      req.on('close', () => clients.delete(res))
-      return
-    }
-    if (req.method === 'POST' && url.pathname === '/control') {
-      let body = ''
-      for await (const c of req) { body += c; if (body.length > 1024) break }
-      const cmd = JSON.parse(body || '{}').cmd
-      if (cmd === 'pause') pause()
-      if (cmd === 'start') start()
-      if (cmd === 'reset') reset()
-      if (cmd === 'step') await step()
-      res.writeHead(200, { 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ ok: true }))
-    }
-    res.writeHead(404)
-    res.end('Not found')
   })
 
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(port, '127.0.0.1', resolve)
-  })
+  await new Promise((ok, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', ok) })
 
-  tail()
+  push(true)
+  running = true
   schedule()
 
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     async close() {
-      stopped = true
-      clearTimeout(timer)
+      stopped = true; running = false
+      clearTimeout(timer); clearTimeout(watchTimer)
       watcher.close()
       for (const c of clients) c.end()
       server.closeAllConnections()

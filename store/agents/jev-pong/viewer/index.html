@@ -4,45 +4,62 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Jev Pong</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
   <div id="topbar">
-    <div class="brand"><span class="dot"></span><h1>Jev Pong</h1></div>
+    <div class="brand"><span class="dot"></span><h1 id="title">Jev Pong</h1><span class="sub">synthetic court · Jev is the paddle</span></div>
     <div class="stats">
-      <div class="stat"><label>Rally</label><span id="rally">0</span></div>
-      <div class="stat"><label>Best</label><span id="best">0</span></div>
-      <div class="stat"><label>Misses</label><span id="misses">0</span></div>
-      <div class="stat"><label>Move</label><span id="move">HOLD</span></div>
-      <div class="stat"><label>Speed</label><span id="speed">6</span></div>
+      <div class="stat rally"><label>Rally</label><span id="s-rally">0</span></div>
+      <div class="stat"><label>Best</label><span id="s-best">0</span></div>
+      <div class="stat"><label>Misses</label><span id="s-misses">0</span></div>
+      <div class="stat"><label>Ball pace</label><span id="s-pace">6.0</span></div>
+      <div class="stat big"><label>Decisions / s</label><span id="s-rate">—</span></div>
+      <div class="stat big"><label>Decisions</label><span id="s-dec">0</span></div>
+      <div class="stat big"><label>Cost so far</label><span id="s-cost">$0</span></div>
     </div>
     <div class="controls">
       <button id="pause">Pause</button>
-      <button id="tick">Step</button>
-      <button class="primary" id="reset">Reset</button>
+      <button id="step">Step</button>
+      <button id="reset" class="primary">Reset</button>
     </div>
   </div>
+  <div id="cfgError" class="cfg-error hidden"></div>
   <main>
     <section id="stage">
-      <div class="panel balancer">
-        <canvas id="court"></canvas>
-        <div id="gauge">watching…</div>
+      <div class="canvas-wrap" id="wrap">
+        <canvas id="scene" aria-label="The pong court. Click to shove the ball."></canvas>
+      </div>
+      <div class="toolbar panel">
+        <button id="burst" title="Make the ball faster right now, as if it had been returned four more times">Speed burst +4</button>
+        <button id="serve" class="ghost" title="Throw this ball away and serve a new one">New serve</button>
+        <label class="slider">Start pace <input id="d-speed" type="range" min="2" max="30" step="0.5" value="6"> <b id="v-speed">6.0</b></label>
+        <label class="slider">Paddle speed <input id="d-maxSpeed" type="range" min="0.5" max="6" step="0.25" value="2"> <b id="v-maxSpeed">2.0</b></label>
+        <label class="slider">Paddle size <input id="d-paddleH" type="range" min="8" max="60" step="1" value="26"> <b id="v-paddleH">26</b></label>
+        <span class="hint"><b>Click the court</b> to shove the ball that way. The sliders change the court while it runs; an edit to <code>pong.json</code> resets them.</span>
       </div>
     </section>
     <aside id="rail">
       <div class="panel">
-        <div class="panel-title">Jev, the paddle</div>
+        <div class="panel-title">What Jev reads <span class="right pill" id="phase">RALLY</span></div>
+        <pre id="stateText" class="statetext"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-title">How it works</div>
         <div class="how">
-          Jev defends the left wall. Every tick it reads the ball and moves the paddle to predict
-          where it crosses. The ball <b>speeds up with every return</b> — so a long rally is a
-          losing battle, and the faster Jev is chased, the sooner it drops one.<br><br>
-          Edit <code>pong.json</code> on the right: raise <code>speed</code> to start Jev behind,
-          or turn it down to watch a long streak before the rally outruns it.
+          Jev never sees pixels. About sixteen times a second the court is written as the text
+          above, and Jev answers <b>two typed questions in one call</b>: which paddle <b>move</b> to
+          make, and whether it will <b>reach</b> the ball. The faint paddles are its five options,
+          lit by probability. The ring on its wall is where the ball will cross.<br><br>
+          Every return makes the ball faster. The paddle never gets faster. Once the ball is past
+          the red mark on the pace meter, a ball at the far end of the wall cannot be reached, and
+          the rally ends there. The court is made up. The decision loop is the demo.
         </div>
       </div>
       <div class="panel">
-        <div class="panel-title">Decision log</div>
-        <ul id="log"></ul>
+        <div class="panel-title">Rally history <span class="right" id="histNote"></span></div>
+        <div id="hist" class="hist"></div>
       </div>
     </aside>
   </main>

@@ -1,15 +1,17 @@
 {
   "title": "Jev Shopper",
-  "description": "Jev watches prices stream in and calls the best buy, live.",
+  "description": "Jev watches made-up prices stream in and calls the best buy on every tick.",
   "instrument": "SHOPPER",
-  "tickMs": 500,
-  "vol": 0.08,
-  "cash": 100,
+  "tickMs": 250,
+  "vol": 0.03,
+  "cash": 600,
+  "minDeal": 0.08,
+  "seed": 616,
   "products": [
-    { "name": "Espresso Machine", "price": 240, "drift": 0.02 },
-    { "name": "Hiking Boots", "price": 120, "drift": -0.05 },
-    { "name": "Noise Cancellers", "price": 180, "drift": 0.01 },
-    { "name": "Desk Lamp", "price": 45, "drift": -0.03 }
+    { "name": "Espresso Machine", "price": 240, "drift": 0.0005 },
+    { "name": "Hiking Boots", "price": 120, "drift": -0.0015 },
+    { "name": "Noise Cancellers", "price": 180, "drift": 0 },
+    { "name": "Desk Lamp", "price": 45, "drift": -0.0005 }
   ],
-  "style": "Watch the recent price stream and pick the product whose price is most likely still falling — the best value right now. Be decisive."
+  "style": "Pick the product that is the best deal right now: the one furthest below its own usual price. Say spend now only when the deal looks real and not a one-tick wobble."
 }
