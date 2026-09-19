@@ -1,0 +1,32 @@
+{
+  "spec": 1,
+  "id": "autonomous/jev-browser",
+  "name": "Jev Browser",
+  "category": "AI",
+  "author": "Autonomous",
+  "description": "Jev operates a web browser, live. On a made-up travel site it books flights in seconds: each step the page is written out as text and Jev, TypeSafe's System One model, picks one element from the list. Add pop-ups and layout shifts, or click the page yourself, and watch it cope.",
+  "engine": "claude",
+  "workspace": {
+    "template": "template",
+    "marker": "site.json",
+    "init": "toolchain/init-workspace.sh"
+  },
+  "agent": {
+    "instructions": "AGENTS.md",
+    "skills": ["skills"],
+    "env": {
+      "JEV_DSH": "${dsh}",
+      "JEV_MODEL": "jev-latest"
+    }
+  },
+  "toolchain": {
+    "setup": "toolchain/setup.sh",
+    "doctor": "toolchain/doctor.sh"
+  },
+  "viewer": {
+    "command": "toolchain/viewer.sh",
+    "url": "http://127.0.0.1:${port}/",
+    "artifactExtensions": [".json"]
+  },
+  "verdict": ".harness/verdict.json"
+}
