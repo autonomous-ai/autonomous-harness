@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/lab-bench",
+  "license": "MIT",
+  "tagline": "Explore an experiment with reproducible synthetic data",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/lab-bench/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Build a synthetic catalyst experiment. Let me vary the true effect and noise, compare groups, inspect uncertainty, and export the observations.",
+      "caption": "Signal · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/lab-bench/starter.jpg"
+    }
+  ]
+}

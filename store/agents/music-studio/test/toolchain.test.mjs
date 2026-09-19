@@ -56,11 +56,11 @@ test('seed-verdict reflects whether a piece exists', () => {
   mkdirSync(join(ws, 'piece'), { recursive: true })
   writeFileSync(join(ws, 'piece/index.html'), '<!doctype html>')
   assert.equal(spawnSync(seedScript, [ws], { cwd: ws, encoding: 'utf8' }).status, 0)
-  assert.equal(JSON.parse(readFileSync(join(ws, '.harness/verdict.json'), 'utf8')).ready, true)
+  assert.equal(JSON.parse(readFileSync(join(ws, '.harness/verdict.json'), 'utf8')).ready, false)
 })
 
-test('the template placeholder embeds a seeded PRNG and Web Audio', () => {
-  const html = readFileSync(join(here, 'template/piece/index.html'), 'utf8')
-  assert.match(html, /mulberry32/)
-  assert.match(html, /AudioContext/)
+
+test('the manifest routes the actual nested artifact through the shared viewer', () => {
+  assert.equal(manifest.viewer.url, 'http://127.0.0.1:${port}/?file=${artifact}')
+  assert.ok(manifest.workspace.marker.endsWith('/index.html'))
 })

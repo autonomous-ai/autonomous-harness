@@ -4,7 +4,7 @@
   "name": "Creative Direction",
   "category": "Design",
   "author": "Autonomous",
-  "description": "Give a look-and-feel — a moodboard, a brand voice, a film palette — and get a living moodboard in the pane: seeded palettes, type, layout directions and a re-seed, all in one frame.",
+  "description": "Build a coherent visual identity with coordinated posters, typography and palettes. Compare art directions, lock colors, customize a name, and export SVG posters and design tokens.",
   "engine": "claude",
   "workspace": {
     "template": "template",
@@ -13,12 +13,20 @@
   },
   "agent": {
     "instructions": "AGENTS.md",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
   },
   "toolchain": {
     "setup": "toolchain/setup.sh",
     "doctor": "toolchain/doctor.sh"
   },
-  "viewer": { "use": "autonomous/web-viewer", "artifactExtensions": [".html"] },
+  "viewer": {
+    "use": "autonomous/web-viewer",
+    "artifactExtensions": [
+      ".html"
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
+  },
   "verdict": ".harness/verdict.json"
 }

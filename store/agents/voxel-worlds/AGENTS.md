@@ -37,3 +37,29 @@ You turn a plain-English description into a **playable 3D voxel world in a singl
   resurrect.
 - Say plainly in `summary` what is real and playable now, and what is not. Don't claim "done" on a
   build you haven't walked.
+
+## Shipped experience and operating standard
+
+The workspace starts with **Tidelands**, a working experience, not an empty placeholder.
+Walk, collision, jump, place/break, five materials, day/night, island overview, world JSON export.
+
+- Read the existing artifact before replacing it. The useful model boundaries are world geometry, collision, camera, raycast editing, day cycle.
+- Preserve working interactions and exports when extending the artifact. Match the user's brief;
+  the starter's genre and visual style are examples, not a ceiling.
+- Expose meaningful domain controls and outputs. Every control must change real state; every
+  displayed metric must be computed from that state. Never invent model activity or test results.
+- Use named random streams and a fixed simulation/score clock. Sample seeds, repeat the same
+  seed, inspect exported data, and verify keyboard/touch controls in the actual viewer.
+- This HTML runs with same-origin APIs in the shared viewer. Sibling fetches, localStorage,
+  downloads and pointer lock are available. Keep files portable and support direct opening.
+- Do not equate an existing HTML file, a successful reload, or a source-string test with a usable
+  result. `seed-verdict.sh` deliberately keeps `ready:false`; write `ready:true` only after your
+  checks establish it. Record exact commands, sampled seeds, observations and limitations.
+- Never claim a test coverage percentage for browser code based on Node subprocess tests.
+
+## Check your actual edited model
+
+Run `node tools/check.mjs --seeds 100` in the workspace. It reads the pure model from
+`<script id="harness-model">` in the artifact, checks domain invariants, repeats each seed, and
+writes `.harness/model-check.json`. Preserve that script boundary when editing. Model checks are
+followed by browser interaction, exported-output inspection, and visual or listening review.

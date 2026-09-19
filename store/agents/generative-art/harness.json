@@ -4,11 +4,11 @@
   "name": "Generative Art",
   "category": "Original art",
   "author": "Autonomous",
-  "description": "Describe a piece or a series — a flow field, a study in sand, a raymarched world — and get a seedable, reproducible artwork with a live preview in the pane. Rendered on your machine, exportable to print, video, or an onchain edition.",
+  "description": "Design reproducible generative editions. Explore contour fields, dunes and orbital studies, tune their geometry and palettes, and export prints up to 3200 \u00d7 4000.",
   "engine": "claude",
   "workspace": {
     "template": "template",
-    "marker": "sketch/main.js",
+    "marker": "sketch/index.html",
     "init": "toolchain/init-workspace.sh"
   },
   "agent": {
@@ -28,7 +28,8 @@
     "use": "autonomous/web-viewer",
     "artifactExtensions": [
       ".html"
-    ]
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
   },
   "verdict": ".harness/verdict.json"
 }

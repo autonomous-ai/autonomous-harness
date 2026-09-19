@@ -1,5 +1,4 @@
-# World
+# Tidelands workspace
 
-Describe a world here in plain English, or in the chat. The agent writes it to `world/index.html`
-and seeds `.harness/verdict.json`.
-
+Open `world/index.html` in the pane, try the controls, then describe what you want to create.
+Keep your decisions in `world/DESIGN.md`. Save the exported result when you are ready.

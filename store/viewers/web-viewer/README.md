@@ -36,10 +36,21 @@ node --test store/viewers/web-viewer/test/*.test.mjs
 HARNESS_WORKSPACE=/absolute/path/to/project HARNESS_VIEWER_PORT=4310 node store/viewers/web-viewer/viewer.mjs
 ```
 
-HTML, CSS, images, and classic JavaScript scripts are supported. The preview uses a sandboxed iframe
-with scripts enabled but no same-origin access; it cannot read the viewer shell. Features requiring
-a same-origin application, such as module imports, fetch, and local storage, need their own app
-server/viewer. Absolute asset paths should use `/files/`; ordinary relative asset paths work directly.
+HTML, CSS, images, JavaScript modules, sibling `fetch()` requests and `localStorage` work in the
+preview. The iframe enables scripts, same-origin access, forms, pointer lock and downloads, so
+interactive workspace apps behave like local apps. This is a **trusted workspace preview**:
+`allow-scripts` plus `allow-same-origin` is not a security boundary from the shell. Preview only
+workspace code you intend to run. Absolute asset paths should use `/files/`; relative paths work.
+
+The shell preserves artifact query parameters (including `seed`) when files change. It offers
+manual reload, pause/resume of automatic reloads, phone/tablet widths and open-in-new-tab. Missing
+files recover when created, failed requests are visible, and the live connection status is explicit.
+
+An artifact can post `{ type: 'harness:state', seed }` to its parent when its seed changes; the shell
+preserves it in the URL and subsequent reloads. `{ type: 'harness:error', message }` adds a visible
+error report. The seven interactive starters use this small protocol; other HTML apps need no
+integration. See the [browser test guide](../../tools/experience-tests/README.md) for sibling-fetch,
+storage, module, control and export regressions.
 
 The server is read-only, bound to `127.0.0.1`, and rejects paths and symlinks outside the workspace.
 Dotfiles and `node_modules` are not served or watched for reloads. Individual files are limited to

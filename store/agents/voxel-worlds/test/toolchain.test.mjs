@@ -55,16 +55,21 @@ test('the manifest names a viewer package and an HTML artifact', () => {
   assert.deepEqual(manifest.viewer.artifactExtensions, ['.html'])
 })
 
-test('seed-verdict reflects whether a world exists', () => {
+test('seed-verdict reports artifact presence without inventing verification', () => {
   const workspace = tempDir()
   run(manifest.workspace.init, { cwd: workspace })
   // the script takes the workspace by argument and writes the feed inside it
   const script = join(here, 'skills/world-builder/scripts/seed-verdict.sh')
   assert.equal(spawnSync(script, [workspace], { cwd: workspace, encoding: 'utf8' }).status, 0)
   assert.equal(JSON.parse(readFileSync(join(workspace, '.harness/verdict.json'), 'utf8')).ready, false)
-  // a world appears; the feed should flip to ready
+  // HTML presence alone must not assert that gameplay was verified
   mkdirSync(join(workspace, 'world'), { recursive: true })
   writeFileSync(join(workspace, 'world/index.html'), '<!doctype html><title>w</title>')
   assert.equal(spawnSync(script, [workspace], { cwd: workspace, encoding: 'utf8' }).status, 0)
-  assert.equal(JSON.parse(readFileSync(join(workspace, '.harness/verdict.json'), 'utf8')).ready, true)
+  assert.equal(JSON.parse(readFileSync(join(workspace, '.harness/verdict.json'), 'utf8')).ready, false)
+})
+
+test('the manifest routes the actual nested artifact through the shared viewer', () => {
+  assert.equal(manifest.viewer.url, 'http://127.0.0.1:${port}/?file=${artifact}')
+  assert.ok(manifest.workspace.marker.endsWith('/index.html'))
 })

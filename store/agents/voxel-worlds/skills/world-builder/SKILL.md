@@ -53,3 +53,21 @@ Write `.harness/verdict.json` (in the workspace) at every change:
              { "id": "polish", "name": "Polish", "state": "pending" }],
   "updatedAt": "2026-09-18T00:00:00Z" }
 ```
+
+## Starting from Tidelands
+
+The template is functional: Walk, collision, jump, place/break, five materials, day/night, island overview, world JSON export.
+
+Keep its useful controls and exports when making a user's creation. Test the behavioral core
+(world geometry, collision, camera, raycast editing, day cycle) as well as the visible result. A self-contained HTML file can still have well-separated
+model, rendering, input and export functions. Do not turn a finished starter into a waiting screen.
+
+Presence-only helpers do not prove correctness or reproducibility. Record actual evidence before
+marking the result ready. Export and reopen the result as part of the handoff to the user.
+
+## Check your actual edited model
+
+Run `node tools/check.mjs --seeds 100` in the workspace. It reads the pure model from
+`<script id="harness-model">` in the artifact, checks domain invariants, repeats each seed, and
+writes `.harness/model-check.json`. Preserve that script boundary when editing. Model checks are
+followed by browser interaction, exported-output inspection, and visual or listening review.

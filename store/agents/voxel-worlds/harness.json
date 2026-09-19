@@ -4,7 +4,7 @@
   "name": "Voxel Worlds",
   "category": "Games",
   "author": "Autonomous",
-  "description": "Turn a sentence into a playable 3D voxel world in one HTML file — describe a village, a volcano, a spaceport — and walk it in the pane. Place and break blocks, day/night cycle, live in the browser.",
+  "description": "Build and walk a seeded voxel island. Sculpt terrain, place and break blocks, explore a cabin and lighthouse, change the light, and save your world.",
   "engine": "claude",
   "workspace": {
     "template": "template",
@@ -28,7 +28,8 @@
     "use": "autonomous/web-viewer",
     "artifactExtensions": [
       ".html"
-    ]
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
   },
   "verdict": ".harness/verdict.json"
 }

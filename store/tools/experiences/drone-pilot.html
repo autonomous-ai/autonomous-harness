@@ -1,0 +1,77 @@
+<section class="intro">
+  <div>
+    <p class="eyebrow">Training ground / Canyon sector 07</p>
+    <h1>Find your line.</h1>
+    <p>
+      Fly it yourself. Study the autopilot. Every gate, correction and split is
+      yours to inspect.
+    </p>
+  </div>
+  <button id="export-flight">Export telemetry ↗</button>
+</section>
+<main class="flight-layout">
+  <section class="cockpit">
+    <canvas
+      id="flight"
+      tabindex="0"
+      aria-label="First person drone flight. Use W and S to climb and descend, A and D to steer, Space to brake."
+    ></canvas>
+    <div class="hud-top">
+      <span
+        ><i class="dot"></i
+        ><span id="flight-mode">READY / AUTOPILOT</span></span
+      ><span id="flight-clock">00:00.00</span>
+    </div>
+    <div class="reticle" aria-hidden="true">＋</div>
+    <div class="gate-hint" id="gate-hint">12 gates. One clean line.</div>
+    <div class="hud-bottom">
+      <div><strong id="velocity">0</strong><span>m/s · airspeed</span></div>
+      <div><strong id="altitude">13.0</strong><span>m · altitude</span></div>
+      <div><strong id="gates">0 / 12</strong><span>gates cleared</span></div>
+    </div>
+    <div id="flight-summary" class="flight-summary" hidden role="status"></div>
+  </section>
+  <aside class="flight-aside">
+    <div class="flight-actions">
+      <button class="primary" id="start-flight">▶ Watch autopilot</button
+      ><button id="manual">Take control</button
+      ><button id="reset-flight">↻ Restart course</button>
+    </div>
+    <section class="section">
+      <p class="eyebrow">The racing line</p>
+      <canvas
+        id="minimap"
+        aria-label="Course overview and recorded flight path"
+      ></canvas>
+    </section>
+    <section class="section">
+      <h3>Flight controls</h3>
+      <p class="small muted">
+        W / S · climb / descend<br />A / D · steer left / right<br />Shift ·
+        boost &nbsp; Space · brake
+      </p>
+      <div class="flight-pad">
+        <button data-axis="y" data-value="1" aria-label="Climb">↑</button
+        ><button data-axis="x" data-value="-1" aria-label="Steer left">←</button
+        ><button data-axis="y" data-value="-1" aria-label="Descend">↓</button
+        ><button data-axis="x" data-value="1" aria-label="Steer right">
+          →
+        </button>
+      </div>
+    </section>
+    <section class="section small muted">
+      <p>
+        Fixed-step browser simulation. The autopilot is a local tracking
+        controller you can inspect and replace.
+      </p>
+      <p style="margin-top: 8px">
+        Flight dynamics are illustrative. This does not control a physical
+        drone.
+      </p>
+    </section>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>60 Hz SIMULATION / SEEDED COURSE</span
+  ><span>PRECISION IS A FEELING YOU CAN LEARN.</span>
+</footer>

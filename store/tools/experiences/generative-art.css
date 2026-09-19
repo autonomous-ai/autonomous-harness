@@ -1,0 +1,125 @@
+:root {
+  color-scheme: light;
+  --bg: #e9e8e1;
+  --panel: #f5f3eb;
+  --line: #242d292a;
+  --ink: #26342d;
+  --muted: #646d62;
+  --accent: #314b3a;
+}
+button.primary {
+  color: #f4f1e7;
+}
+.mark {
+  border-radius: 50%;
+}
+.intro h1 {
+  font-weight: 450;
+}
+.intro em {
+  font-family: Georgia, serif;
+  font-weight: 400;
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 230px;
+  max-width: 1320px;
+  margin: auto;
+  gap: 40px;
+}
+.intro {
+  max-width: 1320px;
+  margin: auto;
+}
+.paper-stage {
+  background: #dbdcd4;
+  padding: 30px 50px 18px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  min-width: 0;
+}
+.paper-stage > canvas {
+  width: min(100%, 620px);
+  aspect-ratio: 4/5;
+  height: auto;
+  box-shadow: 0 13px 28px #28302620;
+}
+.caption {
+  font:
+    9px ui-monospace,
+    monospace;
+  letter-spacing: 0.08em;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 18px;
+  gap: 8px;
+}
+.palettes {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+.palettes button {
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 3px solid var(--bg);
+  outline: 1px solid var(--line);
+}
+.palettes button[aria-pressed="true"] {
+  outline: 2px solid var(--ink);
+}
+.editions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.editions button {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.editions canvas {
+  width: 100%;
+}
+.editions span {
+  font:
+    9px ui-monospace,
+    monospace;
+  display: block;
+  margin-top: 6px;
+}
+.side h2 {
+  font:
+    27px/1.15 Georgia,
+    serif;
+}
+.seed-form button:hover {
+  background: #0000000b;
+}
+.actions select {
+  background: #e9e8e1;
+  font-size: 12px;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .paper-stage {
+    padding: 24px 32px 16px;
+  }
+}
+@media (max-width: 480px) {
+  .paper-stage {
+    padding: 18px;
+  }
+  .intro {
+    padding-top: 22px;
+  }
+  .intro h1 {
+    font-size: 42px;
+  }
+}

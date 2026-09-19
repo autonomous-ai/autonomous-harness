@@ -50,10 +50,28 @@ Write `.harness/verdict.json` at every change:
 
 ```json
 { "spec": 1, "ready": false, "summary": "seeded slalom run · re-seed live · census 0–99 clean",
-  "findings": [{ "severity": "info", "kind": "reproducibility", "message": "same-machine verified; frame-timing physics not provable bit-identical" }],
+  "findings": [{ "severity": "info", "kind": "reproducibility", "message": "same-machine verification pending; frame-timing physics not provable bit-identical" }],
   "artifact": "flight/index.html",
   "phases": [{ "id": "seed", "name": "Seeded core", "state": "done" },
              { "id": "flight", "name": "The flight", "state": "active" },
              { "id": "edition", "name": "Edition", "state": "pending" }],
   "updatedAt": "2026-09-18T00:00:00Z" }
 ```
+
+## Starting from Vector
+
+The template is functional: Twelve gates, fixed-step dynamics, first-person projection, autopilot/manual handoff, brake/boost, minimap, finite flight and telemetry export.
+
+Keep its useful controls and exports when making a user's creation. Test the behavioral core
+(flightCourse, flightStep, fixed 1/60 simulation ticks) as well as the visible result. A self-contained HTML file can still have well-separated
+model, rendering, input and export functions. Do not turn a finished starter into a waiting screen.
+
+Presence-only helpers do not prove correctness or reproducibility. Record actual evidence before
+marking the result ready. Export and reopen the result as part of the handoff to the user.
+
+## Check your actual edited model
+
+Run `node tools/check.mjs --seeds 100` in the workspace. It reads the pure model from
+`<script id="harness-model">` in the artifact, checks domain invariants, repeats each seed, and
+writes `.harness/model-check.json`. Preserve that script boundary when editing. Model checks are
+followed by browser interaction, exported-output inspection, and visual or listening review.

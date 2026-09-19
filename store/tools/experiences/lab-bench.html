@@ -1,0 +1,119 @@
+<section class="intro">
+  <div>
+    <p class="eyebrow">Experiment 024 / Synthetic materials lab</p>
+    <h1>Find the signal.</h1>
+    <p>
+      Does a catalyst improve yield? Change the experiment, inspect each
+      observation, and see what the data supports.
+    </p>
+  </div>
+  <button id="export-csv" class="primary">Export observations ↗</button>
+</section>
+<main class="workspace">
+  <div>
+    <div class="metrics">
+      <div class="metric">
+        <strong id="sample-count"></strong><span>Visible samples</span>
+      </div>
+      <div class="metric">
+        <strong id="effect-estimate"></strong><span>Observed uplift · pp</span>
+      </div>
+      <div class="metric">
+        <strong id="r-squared"></strong><span>Visible fit · R²</span>
+      </div>
+    </div>
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <span class="small">Temperature × reaction yield</span>
+        <div class="actions">
+          <button class="filter" id="control" aria-pressed="true">
+            <i class="key control-key"></i>Control</button
+          ><button class="filter" id="treatment" aria-pressed="true">
+            <i class="key treatment-key"></i>Catalyst
+          </button>
+        </div>
+      </div>
+      <canvas
+        id="chart"
+        tabindex="0"
+        role="img"
+        aria-label="Scatter plot of temperature against yield. Exact observations are available in the table below."
+      ></canvas>
+      <p id="probe" class="probe mono" role="status">
+        Hover a point to inspect an observation.
+      </p>
+    </section>
+    <section class="inference">
+      <div>
+        <p class="eyebrow">What the experiment says</p>
+        <h2 id="conclusion"></h2>
+        <p class="small muted" id="interval"></p>
+      </div>
+      <canvas
+        id="interval-chart"
+        aria-label="Confidence interval for the observed treatment difference"
+      ></canvas>
+    </section>
+    <details>
+      <summary>
+        Inspect observations <span class="muted">/ first 12 visible rows</span>
+      </summary>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Sample</th>
+              <th>Group</th>
+              <th>Temp · °C</th>
+              <th>Yield · %</th>
+            </tr>
+          </thead>
+          <tbody id="observations"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">Design the experiment</p>
+      <label class="field"
+        ><span>True catalyst effect <output id="effect-value"></output></span
+        ><input id="effect" type="range" min="-20" max="30" value="12" /></label
+      ><label class="field"
+        ><span>Measurement noise <output id="noise-value"></output></span
+        ><input id="noise" type="range" min="1" max="20" value="9" /></label
+      ><label class="field"
+        ><span>Sample size <output id="count-value"></output></span
+        ><input
+          id="count"
+          type="range"
+          min="48"
+          max="240"
+          step="12"
+          value="120" /></label
+      ><button id="run" style="width: 100%">Replay collection</button>
+    </div>
+    <div class="section">
+      <h3>A model you can inspect</h3>
+      <p class="formula">
+        yield = 28 + 0.48 × temperature<br />+ catalyst effect + noise
+      </p>
+      <p class="small muted" style="margin-top: 12px">
+        Balanced groups, seeded temperatures, independent Gaussian measurement
+        noise. The observed difference can depart from the true effect.
+      </p>
+    </div>
+    <div class="section small muted">
+      <strong>Synthetic data, by design.</strong>
+      <p style="margin-top: 8px">
+        The 95% interval uses a normal approximation for the unadjusted
+        difference of means. It illustrates uncertainty; it is not a real
+        experimental finding.
+      </p>
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>REPRODUCIBLE OBSERVATIONS</span
+  ><span>SEED / PROBE / QUESTION / REPEAT</span>
+</footer>

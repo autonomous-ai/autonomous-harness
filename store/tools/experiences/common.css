@@ -1,0 +1,384 @@
+:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}

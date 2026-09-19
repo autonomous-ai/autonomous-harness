@@ -1,0 +1,12 @@
+{
+  "name": "harness-experience-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test models.test.mjs",
+    "browser": "node browser.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

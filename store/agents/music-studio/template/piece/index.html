@@ -1,65 +1,1180 @@
 <!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Music Studio — seeded placeholder</title>
-<style>
-  :root { color-scheme: light dark; font: 15px system-ui, sans-serif; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         background: linear-gradient(160deg, #16132b, #0c0a18); color: #eee;
-         font-family: ui-monospace, Menlo, monospace; }
-  .card { text-align: center; padding: 40px; max-width: 560px; }
-  h1 { font-size: 22px; margin: 0 0 10px; letter-spacing: .02em; }
-  p { opacity: .7; line-height: 1.6; margin: 0 0 20px; }
-  #replay { padding: 10px 20px; border-radius: 8px; border: 0; cursor: pointer;
-            font: inherit; color: #0c0a18; background: #7c5cff; font-weight: 650; }
-</style>
-<div class="card">
-  <h1>Music Studio · placeholder</h1>
-  <p>A real, seedable track will play here. This placeholder is a short seeded loop:
-     four kick hits and a rising arpeggio on the low A — confirm audio, then replace it.</p>
-  <button id="replay">Play seed</button>
-</div>
-<script>
-  // Seeded PRNG (mulberry32) so the placeholder is deterministic.
-  const seed = () => {
-    const s = new URLSearchParams(location.search).get('seed') || '0';
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
-    return h >>> 0;
-  };
-  const mulberry32 = (a) => () => {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light"><title>AFTERHOURS — Music Studio</title>
+<!-- Built by store/tools/build-experiences.mjs. Edit this file freely in your workspace. -->
+<style>:root {
+  color-scheme: dark;
+  --bg: #111414;
+  --panel: #191e1c;
+  --line: #ffffff1c;
+  --ink: #f4f2e9;
+  --muted: #a1aaa4;
+  --accent: #d0f28a;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 9px 13px;
+}
+button:hover {
+  background: #ffffff0c;
+  border-color: var(--muted);
+}
+button.primary {
+  background: var(--accent);
+  color: #142015;
+  border-color: transparent;
+  font-weight: 650;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+input[type="range"] {
+  accent-color: var(--accent);
+  padding: 0;
+  min-width: 0;
+}
+input[type="number"] {
+  width: 80px;
+}
+select {
+  background: var(--panel);
+}
+label {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 64px);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 550;
+}
+h2 {
+  font-weight: 550;
+  letter-spacing: -0.03em;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.mono,
+.eyebrow {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 19px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.mark {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  font-size: 17px;
+}
+.seed-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.seed-form label {
+  font:
+    10px ui-monospace,
+    monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.seed-form input {
+  width: 74px;
+  padding: 6px 8px;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.seed-form button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.intro {
+  padding: 32px 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.intro p {
+  max-width: 440px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.intro .eyebrow {
+  margin-bottom: 12px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 22px;
+  padding: 0 28px 28px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.section {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.section h3 {
+  margin-bottom: 15px;
+}
+.field {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.metric {
+  background: var(--bg);
+  padding: 13px 15px;
+}
+.metric strong {
+  display: block;
+  font:
+    24px ui-monospace,
+    monospace;
+  letter-spacing: -0.06em;
+}
+.metric span {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+canvas {
+  display: block;
+  max-width: 100%;
+}
+.status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  font:
+    10px ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.toast {
+  position: fixed;
+  z-index: 99;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: var(--ink);
+  color: var(--bg);
+  padding: 11px 18px;
+  border-radius: 6px;
+  box-shadow: 0 3px 30px #0004;
+  font-size: 12px;
+}
+.toast:empty {
+  display: none;
+}
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .intro h1 {
+    font-size: 44px;
+  }
+}
+@media (max-width: 480px) {
+  .masthead {
+    padding: 13px 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .intro {
+    padding: 26px 16px;
+  }
+  .intro h1 {
+    font-size: 38px;
+  }
+  .workspace {
+    padding: 0 16px 20px;
+    gap: 18px;
+  }
+  .side {
+    grid-template-columns: 1fr;
+  }
+  .seed-form label {
+    display: none;
+  }
+  .status-line {
+    padding: 12px 16px;
+  }
+  .status-line span:last-child {
+    display: none;
+  }
+  .metrics .metric {
+    padding: 12px 10px;
+  }
+  .panel-head {
+    padding: 12px;
+  }
+  .actions {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+:root {
+  --bg: #201c1b;
+  --panel: #2b2522;
+  --ink: #f0e6d7;
+  --muted: #b5a496;
+  --line: #af958332;
+  --accent: #eda776;
+}
+.intro {
+  padding-top: 34px;
+  padding-bottom: 30px;
+}
+.intro h1 {
+  font-size: clamp(48px, 7vw, 80px);
+}
+.intro h1 em {
+  font-family: Georgia, serif;
+  font-weight: 400;
+}
+.record {
+  width: 166px;
+  height: 166px;
+  border-radius: 50%;
+  background: repeating-radial-gradient(
+    circle,
+    #211f1f 0,
+    #211f1f 2px,
+    #393431 3px,
+    #161515 4px
+  );
+  display: grid;
+  place-items: center;
+  margin-right: 10px;
+  transform: rotate(-13deg);
+  box-shadow: 5px 8px 20px #0005;
+}
+.record-label {
+  width: 65px;
+  height: 65px;
+  border-radius: 50%;
+  background: #c88860;
+  color: #241c18;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.record-label span {
+  font: 7px monospace;
+  margin-top: 5px;
+}
+.transport {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 18px;
+}
+.transport .mono {
+  font-size: 11px;
+  margin: 0 4px;
+}
+#export-wav {
+  margin-left: auto;
+  font-size: 12px;
+}
+.wave-panel {
+  background: #181615;
+  border: 1px solid var(--line);
+  padding: 16px 16px 10px;
+  border-radius: 6px;
+}
+.wave-panel canvas {
+  width: 100%;
+  height: 126px;
+}
+.sections {
+  display: flex;
+  justify-content: space-between;
+  font:
+    8px ui-monospace,
+    monospace;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.sequencer {
+  margin-top: 18px;
+}
+.sequencer .panel-head {
+  padding: 12px 0;
+  border: 0;
+}
+.step-grid {
+  display: grid;
+  grid-template-columns: 70px repeat(16, minmax(0, 1fr));
+  gap: 5px;
+  align-items: center;
+}
+.step-grid .track {
+  font-size: 10px;
+  text-align: left;
+  border: 0;
+  padding: 8px 0;
+  color: var(--muted);
+}
+.step-grid .step {
+  height: 30px;
+  border-radius: 3px;
+  padding: 0;
+  background: #312a27;
+  border: 1px solid #504138;
+}
+.step-grid .step.beat {
+  background: #3a302b;
+}
+.step-grid .step[aria-pressed="true"] {
+  background: #d59063;
+  border-color: #e5a67e;
+}
+.step-grid .step.current {
+  outline: 2px solid #f9e8c7;
+  outline-offset: 0;
+}
+.step-grid .step-num {
+  font: 8px monospace;
+  text-align: center;
+  color: #a99181;
+}
+.music-note {
+  border-top: 1px solid var(--line);
+  padding: 20px 0;
+}
+.music-note p {
+  font:
+    17px Georgia,
+    serif;
+  margin-top: 8px;
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 30px;
+}
+#mixer .field {
+  margin: 12px 0;
+}
+#mixer input {
+  width: 100%;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .intro {
+    flex-direction: row;
+  }
+  .record {
+    width: 125px;
+    height: 125px;
+    flex-shrink: 0;
+  }
+}
+@media (max-width: 480px) {
+  .record {
+    width: 94px;
+    height: 94px;
+    margin: 10px 0;
+  }
+  .record-label {
+    width: 46px;
+    height: 46px;
+    font-size: 8px;
+  }
+  .intro h1 {
+    font-size: 42px;
+  }
+  .intro p {
+    font-size: 12px;
+  }
+  .step-grid {
+    grid-template-columns: 47px repeat(16, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .step-grid .step {
+    height: 25px;
+  }
+  .step-grid .track {
+    font-size: 8px;
+  }
+  .transport .mono {
+    font-size: 10px;
+  }
+  #key {
+    display: none;
+  }
+  .sections {
+    font-size: 7px;
+  }
+}
+</style></head><body>
+<header class="masthead"><div class="identity"><span class="mark" aria-hidden="true">Ⅱ</span>AFTERHOURS</div>
+<form class="seed-form" id="seed-form"><label for="seed">Seed</label><input id="seed" aria-label="Seed" maxlength="128" autocomplete="off" spellcheck="false"><button type="submit">Apply</button><button id="next-seed" type="button" title="Next seed">↗ Next</button></form></header>
+<section class="intro">
+  <div>
+    <p class="eyebrow">A small room for big ideas / Vol. 01</p>
+    <h1>Stay a little<br /><em>longer.</em></h1>
+    <p>
+      Eight bars after midnight. Shape the rhythm, find the pocket, take the
+      whole thing with you.
+    </p>
+  </div>
+  <div class="record" aria-hidden="true">
+    <div class="record-label">AFTER<br />HOURS<span>33 ⅓</span></div>
+  </div>
+</section>
+<main class="workspace">
+  <div>
+    <section class="transport">
+      <button id="play" class="primary">▶ Play</button
+      ><button id="stop" aria-label="Stop playback">■</button
+      ><span class="mono" id="time">0:00 / 0:00</span
+      ><span id="key" class="muted mono"></span
+      ><button id="export-wav">Export WAV ↗</button>
+    </section>
+    <section class="wave-panel">
+      <canvas
+        id="waveform"
+        aria-label="Waveform of the full arrangement"
+      ></canvas>
+      <div class="sections">
+        <span>01 / ARRIVE</span><span>02 / FIND THE POCKET</span
+        ><span>03 / LET GO</span>
+      </div>
+    </section>
+    <section class="sequencer">
+      <div class="panel-head">
+        <h3>The pattern</h3>
+        <span class="eyebrow" id="bar">8 bars / 16 steps</span>
+      </div>
+      <div class="step-grid" id="steps"></div>
+      <p class="small muted" style="padding: 12px 0">
+        Tap a step to write the pattern. Tap a track name to mute it.
+      </p>
+    </section>
+    <div class="music-note">
+      <span class="eyebrow">Your arrangement</span>
+      <p id="audio-status">Your score is ready. Press Play to hear it.</p>
+    </div>
+  </div>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">The pocket</p>
+      <label class="field"
+        ><span>Tempo <output id="tempo-value"></output></span
+        ><input id="tempo" type="range" min="66" max="132" value="86" /></label
+      ><label class="field"
+        ><span>Swing <output id="swing-value">16%</output></span
+        ><input id="swing" type="range" min="0" max="45" value="16" /></label
+      ><label class="field"
+        ><span>Listening level <output id="volume-value">70%</output></span
+        ><input id="volume" type="range" min="0" max="100" value="70"
+      /></label>
+    </div>
+    <div class="section">
+      <h3>The mix</h3>
+      <div id="mixer"></div>
+    </div>
+    <div class="section small muted">
+      <p>
+        Original, locally synthesized audio. No samples to download, no account,
+        no network.
+      </p>
+      <p style="margin-top: 10px">
+        The same score and settings produce the same PCM samples here. WAV
+        exports are mono, 22.05 kHz.
+      </p>
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>LISTEN FIRST. THEN MAKE IT YOURS.</span
+  ><span id="peak"></span>
+</footer>
+<div class="toast" id="toast" role="status"></div>
+<script id="harness-model">
+'use strict';
+// Shared deterministic primitives. Domain models use named streams so unrelated edits stay stable.
+function hash(value) {
+  let h = 2166136261;
+  for (const c of String(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+function random(seed, stream = "main") {
+  let a = hash(`${seed}:${stream}`);
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  let ctx;
-  const rnd = mulberry32(seed());
-  const play = () => {
-    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-    const now = ctx.currentTime;
-    // a low kick at the start of each bar, four bars
-    for (let b = 0; b < 4; b++) {
-      const t = now + b;
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.frequency.value = 55;
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
-      o.connect(g).connect(ctx.destination);
-      o.start(t); o.stop(t + 0.45);
-      // a drifting note from the seeded rng
-      const note = 220 * Math.pow(2, Math.floor(rnd() * 7) / 12);
-      const o2 = ctx.createOscillator(), g2 = ctx.createGain();
-      o2.frequency.value = note;
-      g2.gain.setValueAtTime(0.0001, t + 0.05);
-      g2.gain.exponentialRampToValueAtTime(0.2, t + 0.06);
-      g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-      o2.connect(g2).connect(ctx.destination);
-      o2.start(t + 0.05); o2.stop(t + 0.55);
-    }
+}
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const lerp = (a, b, t) => a + (b - a) * t;
+const pick = (items, rng) => items[Math.floor(rng() * items.length)];
+function normal(rng) {
+  return (
+    Math.sqrt(-2 * Math.log(Math.max(1e-9, rng()))) *
+    Math.cos(2 * Math.PI * rng())
+  );
+}
+
+const trackNames = ["Kick", "Snare", "Hi-hat", "Bass", "Keys"];
+function musicScore(seed) {
+  const rhythm = random(seed, "rhythm"),
+    melody = random(seed, "melody"),
+    harmony = random(seed, "harmony");
+  const root = pick([45, 48, 50, 52], harmony),
+    scale = [0, 3, 5, 7, 10];
+  const patterns = [
+    Array.from(
+      { length: 16 },
+      (_, i) => i % 4 === 0 || (i === 14 && rhythm() > 0.5),
+    ),
+    Array.from({ length: 16 }, (_, i) => i === 4 || i === 12),
+    Array.from({ length: 16 }, (_, i) => i % 2 === 0 || rhythm() > 0.64),
+    Array.from({ length: 16 }, (_, i) => [0, 6, 8, 14].includes(i)),
+    Array.from({ length: 16 }, (_, i) => i % 2 === 0 && melody() > 0.18),
+  ];
+  return {
+    seed: String(seed),
+    root,
+    tempo: pick([82, 86, 90, 94], harmony),
+    bars: 8,
+    patterns,
+    notes: Array.from({ length: 16 }, () => root + 24 + pick(scale, melody)),
+    chords: [0, 0, 5, 5, 3, 3, 7, 0],
   };
-  document.querySelector('#replay').addEventListener('click', play);
+}
+function scoreEvents(
+  score,
+  {
+    tempo = score.tempo,
+    swing = 16,
+    patterns = score.patterns,
+    muted = [],
+  } = {},
+) {
+  const beat = 60 / tempo,
+    step = beat / 4,
+    events = [];
+  for (let bar = 0; bar < score.bars; bar++)
+    for (let tick = 0; tick < 16; tick++)
+      for (let track = 0; track < 5; track++) {
+        if (
+          !patterns[track][tick] ||
+          muted[track] ||
+          (bar === 0 && track === 1) ||
+          (bar === 7 && tick > 11 && track < 3)
+        )
+          continue;
+        const time =
+          (bar * 16 + tick) * step + (tick % 2 ? (step * swing) / 100 : 0);
+        events.push({
+          track,
+          time,
+          note:
+            track === 3
+              ? score.root - 12 + score.chords[bar]
+              : score.notes[tick] + score.chords[bar],
+          duration:
+            track === 4 ? beat * 1.1 : track === 3 ? beat * 0.7 : beat * 0.35,
+          bar,
+          tick,
+        });
+      }
+  return { events, duration: score.bars * 4 * beat + 1, beat };
+}
+function renderMusic(score, options = {}, sampleRate = 22050) {
+  const { events, duration } = scoreEvents(score, options),
+    samples = new Float32Array(Math.ceil(duration * sampleRate));
+  const levels = options.levels ?? [0.85, 0.5, 0.32, 0.6, 0.5];
+  for (const event of events) {
+    const { track, time, note } = event,
+      start = Math.round(time * sampleRate),
+      length = Math.min(
+        samples.length - start,
+        Math.ceil((track < 3 ? 0.24 : event.duration + 0.3) * sampleRate),
+      );
+    const frequency = 440 * 2 ** ((note - 69) / 12),
+      noise = random(score.seed, `hit:${track}:${event.bar}:${event.tick}`);
+    let phase = 0;
+    for (let i = 0; i < length; i++) {
+      const t = i / sampleRate;
+      let value = 0;
+      if (track === 0) {
+        phase += (2 * Math.PI * (48 + 125 * Math.exp(-t * 38))) / sampleRate;
+        value = Math.sin(phase) * Math.exp(-t * 18) * 0.8;
+      }
+      if (track === 1)
+        value =
+          ((noise() * 2 - 1) * 0.66 + Math.sin(2 * Math.PI * 180 * t) * 0.34) *
+          Math.exp(-t * 23) *
+          0.55;
+      if (track === 2) value = (noise() * 2 - 1) * Math.exp(-t * 75) * 0.27;
+      if (track === 3)
+        value =
+          (Math.sin(2 * Math.PI * frequency * t) +
+            0.18 * Math.sin(4 * Math.PI * frequency * t)) *
+          Math.min(1, t * 90) *
+          Math.exp(-t * 5) *
+          0.5;
+      if (track === 4)
+        value =
+          (Math.sin(2 * Math.PI * frequency * t) * 0.6 +
+            Math.sin(2 * Math.PI * frequency * 2.002 * t) * 0.15 +
+            Math.sin(2 * Math.PI * frequency * 0.5 * t) * 0.25) *
+          Math.min(1, t * 120) *
+          Math.exp(-t * 3.8) *
+          0.4;
+      samples[start + i] += value * levels[track];
+    }
+  }
+  // Fixed soft ceiling, no seed-dependent normalization pumping. Leave headroom for playback.
+  let peak = 0,
+    energy = 0;
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = Math.tanh(samples[i] * 1.25) * 0.9;
+    peak = Math.max(peak, Math.abs(samples[i]));
+    energy += samples[i] ** 2;
+  }
+  return {
+    samples,
+    sampleRate,
+    duration,
+    peak,
+    rms: Math.sqrt(energy / samples.length),
+  };
+}
+function wavFile(samples, sampleRate) {
+  const out = new ArrayBuffer(44 + samples.length * 2),
+    v = new DataView(out);
+  const text = (offset, s) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i));
+  };
+  text(0, "RIFF");
+  v.setUint32(4, 36 + samples.length * 2, true);
+  text(8, "WAVE");
+  text(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  text(36, "data");
+  v.setUint32(40, samples.length * 2, true);
+  samples.forEach((s, i) =>
+    v.setInt16(44 + i * 2, Math.round(clamp(s, -1, 1) * 32767), true),
+  );
+  return out;
+}
+
 </script>
-</html>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const params = new URLSearchParams(location.search);
+let seed = (params.get("seed") || "42").slice(0, 128);
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const parentMessage = (message) => {
+  if (parent !== window) parent.postMessage(message, "*");
+};
+function toast(message) {
+  $("#toast").textContent = message;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => {
+    $("#toast").textContent = "";
+  }, 3500);
+}
+function saveFile(name, content, type = "application/json") {
+  const blob =
+    content instanceof Blob ? content : new Blob([content], { type });
+  const url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function canvasPNG(canvas, name) {
+  canvas.toBlob((blob) => {
+    if (blob) saveFile(name, blob);
+    else toast("Image export failed. Please try again.");
+  });
+}
+function setSeed(value) {
+  seed = String(value).trim().slice(0, 128) || "42";
+  $("#seed").value = seed;
+  const url = new URL(location.href);
+  url.searchParams.set("seed", seed);
+  try {
+    history.replaceState(null, "", url);
+  } catch {
+    /* Opaque-origin iframe: the shell owns its URL. */
+  }
+  parentMessage({ type: "harness:state", seed });
+  dispatchEvent(new CustomEvent("seedchange", { detail: seed }));
+}
+$("#seed").value = seed;
+$("#seed-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  setSeed($("#seed").value);
+});
+$("#next-seed").addEventListener("click", () =>
+  setSeed(/^\d{1,9}$/.test(seed) ? Number(seed) + 1 : hash(seed)),
+);
+function fitCanvas(canvas, draw, maxDpr = 2) {
+  const observer = new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect(),
+      dpr = Math.min(devicePixelRatio || 1, maxDpr);
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    draw?.();
+  });
+  observer.observe(canvas);
+  return observer;
+}
+const editable = (target) =>
+  target instanceof Element &&
+  !!target.closest("input,textarea,select,[contenteditable=true]");
+addEventListener("error", (e) =>
+  parentMessage({ type: "harness:error", message: e.message }),
+);
+addEventListener("unhandledrejection", (e) =>
+  parentMessage({
+    type: "harness:error",
+    message: String(e.reason?.message || e.reason),
+  }),
+);
+function ready() {
+  document.body.dataset.ready = "true";
+  parentMessage({ type: "harness:ready", title: document.title, seed });
+}
+
+let score,
+  patterns,
+  rendered,
+  audioContext,
+  source,
+  master,
+  started = 0,
+  offset = 0,
+  playing = false,
+  muted = [false, false, false, false, false],
+  levels = [0.85, 0.5, 0.32, 0.6, 0.5];
+const clockText = (s) =>
+  `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const musicOptions = () => ({
+  tempo: +$("#tempo").value,
+  swing: +$("#swing").value,
+  patterns,
+  muted,
+  levels,
+});
+function stopMusic(reset = true) {
+  if (source) {
+    source.onended = null;
+    source.stop();
+    source = null;
+  }
+  if (playing && audioContext) offset = audioContext.currentTime - started;
+  playing = false;
+  if (reset) offset = 0;
+  $("#play").textContent = "▶ Play";
+  drawWave();
+}
+function rebuildMusic() {
+  stopMusic();
+  rendered = renderMusic(score, musicOptions());
+  $("#tempo-value").value = `${$("#tempo").value} BPM`;
+  $("#swing-value").value = `${$("#swing").value}%`;
+  $("#time").textContent = `0:00 / ${clockText(rendered.duration)}`;
+  $("#peak").textContent =
+    `PEAK ${rendered.peak ? (20 * Math.log10(rendered.peak)).toFixed(1) : "−∞"} dBFS`;
+  $("#audio-status").textContent =
+    "Your score is ready. Press Play to hear it.";
+  drawWave();
+}
+function drawWave() {
+  if (!rendered) return;
+  const c = $("#waveform"),
+    ctx = c.getContext("2d"),
+    w = c.width,
+    h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  const pos = playing ? audioContext.currentTime - started : offset;
+  const played = (pos / rendered.duration) * w;
+  const stride = Math.max(1, Math.floor(rendered.samples.length / w));
+  ctx.lineWidth = 1.4;
+  for (let x = 0; x < w; x += 3) {
+    let peak = 0;
+    for (
+      let i = x * stride;
+      i < Math.min((x + 3) * stride, rendered.samples.length);
+      i += 8
+    )
+      peak = Math.max(peak, Math.abs(rendered.samples[i]));
+    ctx.strokeStyle = x < played ? "#efb082" : "#836650";
+    ctx.beginPath();
+    ctx.moveTo(x, h / 2 - peak * h * 0.7);
+    ctx.lineTo(x, h / 2 + peak * h * 0.7);
+    ctx.stroke();
+  }
+  if (playing) {
+    ctx.strokeStyle = "#f7e7d0";
+    ctx.beginPath();
+    ctx.moveTo(played, 0);
+    ctx.lineTo(played, h);
+    ctx.stroke();
+  }
+}
+function renderGrid() {
+  const grid = $("#steps");
+  grid.replaceChildren();
+  grid.append(document.createElement("span"));
+  for (let i = 0; i < 16; i++) {
+    const s = document.createElement("span");
+    s.className = "step-num";
+    s.textContent = i + 1;
+    grid.append(s);
+  }
+  trackNames.forEach((name, track) => {
+    const b = document.createElement("button");
+    b.className = "track";
+    b.textContent = muted[track] ? `${name} ×` : name;
+    b.setAttribute("aria-label", `${muted[track] ? "Unmute" : "Mute"} ${name}`);
+    b.onclick = () => {
+      muted[track] = !muted[track];
+      renderGrid();
+      rebuildMusic();
+    };
+    grid.append(b);
+    patterns[track].forEach((on, tick) => {
+      const s = document.createElement("button");
+      s.className = `step ${tick % 4 === 0 ? "beat" : ""}`;
+      s.dataset.tick = tick;
+      s.setAttribute("aria-pressed", on);
+      s.setAttribute("aria-label", `${name} step ${tick + 1}`);
+      s.onclick = () => {
+        patterns[track][tick] = !patterns[track][tick];
+        renderGrid();
+        rebuildMusic();
+      };
+      grid.append(s);
+    });
+  });
+}
+async function playMusic() {
+  if (playing) {
+    stopMusic(false);
+    return;
+  }
+  try {
+    audioContext ??= new (window.AudioContext || window.webkitAudioContext)();
+    await audioContext.resume();
+    master ??= audioContext.createGain();
+    master.disconnect();
+    master.connect(audioContext.destination);
+    master.gain.value = +$("#volume").value / 100;
+    const buffer = audioContext.createBuffer(
+      1,
+      rendered.samples.length,
+      rendered.sampleRate,
+    );
+    buffer.copyToChannel(rendered.samples, 0);
+    source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(master);
+    if (offset >= rendered.duration) offset = 0;
+    started = audioContext.currentTime - offset;
+    source.start(0, offset);
+    source.onended = () => {
+      playing = false;
+      source = null;
+      offset = 0;
+      $("#play").textContent = "▶ Play";
+      $("#audio-status").textContent =
+        "That was your take. Play it again, or change a step.";
+    };
+    playing = true;
+    $("#play").textContent = "Ⅱ Pause";
+    $("#audio-status").textContent = "Playing your eight-bar arrangement.";
+  } catch (e) {
+    toast("Audio could not start: " + e.message);
+  }
+}
+function newScore() {
+  score = musicScore(seed);
+  patterns = score.patterns.map((row) => [...row]);
+  $("#tempo").value = score.tempo;
+  $("#key").textContent =
+    ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"][
+      score.root % 12
+    ] + " minor";
+  renderGrid();
+  rebuildMusic();
+}
+trackNames.forEach((name, i) => {
+  const label = document.createElement("label");
+  label.className = "field";
+  const span = document.createElement("span");
+  span.textContent = name;
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = 0;
+  input.max = 100;
+  input.value = levels[i] * 100;
+  input.setAttribute("aria-label", `${name} level`);
+  input.onchange = () => {
+    levels[i] = +input.value / 100;
+    rebuildMusic();
+  };
+  label.append(span, input);
+  $("#mixer").append(label);
+});
+$("#play").onclick = playMusic;
+$("#stop").onclick = () => {
+  stopMusic();
+  $("#time").textContent = `0:00 / ${clockText(rendered.duration)}`;
+  $("#audio-status").textContent =
+    "Stopped. Press Play to start at the beginning.";
+};
+for (const id of ["tempo", "swing"]) $("#" + id).onchange = rebuildMusic;
+$("#volume").oninput = () => {
+  $("#volume-value").value = `${$("#volume").value}%`;
+  if (master)
+    master.gain.setTargetAtTime(
+      +$("#volume").value / 100,
+      audioContext.currentTime,
+      0.02,
+    );
+};
+$("#export-wav").onclick = () => {
+  saveFile(
+    `afterhours-${hash(seed)}.wav`,
+    wavFile(rendered.samples, rendered.sampleRate),
+    "audio/wav",
+  );
+  toast("WAV rendered from your current score and mix.");
+};
+let lastTick = -1;
+function musicFrame() {
+  if (playing) {
+    const t = Math.min(rendered.duration, audioContext.currentTime - started),
+      tick = Math.floor(t / (60 / +$("#tempo").value / 4)) % 16;
+    $("#time").textContent =
+      `${clockText(t)} / ${clockText(rendered.duration)}`;
+    $("#bar").textContent =
+      `Bar ${Math.min(8, Math.floor(t / ((60 / +$("#tempo").value) * 4)) + 1)} / 8`;
+    if (tick !== lastTick) {
+      $$(".step").forEach((b) =>
+        b.classList.toggle("current", +b.dataset.tick === tick),
+      );
+      lastTick = tick;
+    }
+    drawWave();
+  } else if (lastTick !== -1) {
+    $$(".step.current").forEach((b) => b.classList.remove("current"));
+    lastTick = -1;
+  }
+  requestAnimationFrame(musicFrame);
+}
+fitCanvas($("#waveform"), drawWave);
+addEventListener("seedchange", newScore);
+addEventListener("pagehide", () => {
+  stopMusic();
+  audioContext?.close();
+});
+newScore();
+musicFrame();
+ready();
+
+</script></body></html>

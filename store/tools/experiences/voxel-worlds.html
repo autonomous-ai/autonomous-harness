@@ -1,0 +1,59 @@
+<main class="world-stage">
+  <canvas
+    id="world"
+    tabindex="0"
+    aria-label="Walkable voxel island. Click to look around, use WASD to walk, Space to jump. Use the buttons to place or break blocks."
+  ></canvas>
+  <div class="world-heading">
+    <p class="eyebrow">A place worth getting lost in</p>
+    <h1>A little<br />wild.</h1>
+    <p>Walk the shoreline. Find the cabin.<br />Leave something of your own.</p>
+  </div>
+  <div class="world-toolbar">
+    <button id="overview">Island overview</button
+    ><button id="export-world">Save world ↗</button
+    ><button id="import-world">Open saved world</button
+    ><input
+      id="world-file"
+      type="file"
+      accept=".json,application/json"
+      hidden
+    /><button id="home">Return home</button>
+  </div>
+  <div class="world-crosshair" aria-hidden="true">＋</div>
+  <div class="world-coordinates">
+    <span id="coordinates"></span><span id="world-clock"></span>
+  </div>
+  <div class="world-bottom">
+    <p id="target" role="status">
+      Click the world to look around · WASD to walk · Space to jump
+    </p>
+    <div
+      class="hotbar"
+      id="hotbar"
+      role="group"
+      aria-label="Building materials"
+    ></div>
+    <div class="build-actions">
+      <button id="break">Break block</button
+      ><button id="place" class="primary">Place block</button>
+    </div>
+  </div>
+  <div class="world-pad">
+    <button data-key="w" aria-label="Walk forward">↑</button
+    ><button data-key="a" aria-label="Walk left">←</button
+    ><button data-key="s" aria-label="Walk backward">↓</button
+    ><button data-key="d" aria-label="Walk right">→</button
+    ><button data-key=" " aria-label="Jump">↟</button>
+  </div>
+  <div class="world-time">
+    <label for="daylight">Time of day</label
+    ><input id="daylight" type="range" min="0" max="100" value="32" /><button
+      id="cycle"
+      aria-pressed="false"
+    >
+      Day cycle
+    </button>
+  </div>
+  <div class="world-error" id="world-error" hidden></div>
+</main>

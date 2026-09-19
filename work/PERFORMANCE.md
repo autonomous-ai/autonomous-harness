@@ -1,27 +1,44 @@
-# Performance: measured, near-zero, with headroom analysis
+# Measured preview performance
 
-Measured against the **installed** web-viewer runtime (the same one the daemon runs) on this machine.
+Measured 2026-09-19 on this macOS development machine, Chrome 153.0.8010.48, headless,
+native graphics (AMD Radeon Pro 5500 XT through ANGLE Metal), Node 26.7.0.
+These are local measurements, not cross-device performance guarantees.
 
-## Request latency (server, 200 warm requests each)
-| Route | median | p95 | p99 |
-|---|---|---|---|
-| SHELL (/) | 0.54 ms | 2.05 ms | 4.88 ms |
-| FILES (/files/sketch/index.html) | 1.56 ms | 4.06 ms | 5.12 ms |
+| Experience | File request median | File request p95 | Save → ready + paint median | Maximum of 5 saves |
+|---|---:|---:|---:|---:|
+| generative-art | 2.46 ms | 2.87 ms | 216.5 ms | 231.9 ms |
+| creative-direction | 2.39 ms | 4.48 ms | 217.2 ms | 219.5 ms |
+| lab-bench | 1.91 ms | 8.87 ms | 218.3 ms | 233.7 ms |
+| music-studio | 1.46 ms | 3.62 ms | 532.6 ms | 667.4 ms |
+| game-master | 1.62 ms | 2.31 ms | 233.4 ms | 239.0 ms |
+| drone-pilot | 2.85 ms | 4.91 ms | 231.6 ms | 233.4 ms |
+| voxel-worlds | 3.09 ms | 5.08 ms | 233.9 ms | 252.8 ms |
 
-Sub-millisecond median; all well under the 10ms "feels instant" bar. Server side is not a bottleneck.
+## Method
 
-## User-visible re-seed latency (write → pane starts new frame), real browser
-5/5 writes detected; avg **106ms** (93–118ms).
-- Bounded almost entirely by the watcher's 80ms debounce (batches rapid writes).
-- Remainder (~26ms) is SSE change delivery + shell `reload()` + fresh `GET ?v=` + start of paint.
-- Comfortably under the 100–200ms "instantaneous" interaction threshold.
+`store/tools/experience-tests/performance.mjs` materializes each real template in a temporary
+workspace and starts the checkout viewer. It makes 40 sequential artifact requests, discards the
+first 10, and measures receipt of the full response body. It then saves five distinct document
+revisions, waits for the changed iframe body to report ready, and waits two animation frames.
+The timer starts immediately before each file write. Browser polling adds measurement overhead.
 
-## Hill-climb analysis
-- No server-side hotspot: the viewer is a thin fs read + createReadStream pipe; requests are memory-bound.
-- The one tuning lever is the 80ms debounce. Lowering to 40ms would shave ~40ms off re-seed feel but
-  reduces write-burst coalescing; 80ms is a reasonable default and already <100ms perceived latency.
-- If a harness needs tighter re-seed feel, the fix is per-harness debounce, not a server rewrite.
+The watcher retains its 80 ms debounce. The remaining time includes fetching, parsing, generating
+the experience and painting. Music includes rendering the complete audio buffer. Art drawing
+batches paths and uses a reusable seeded grain texture; the voxel scene stops drawing when idle.
 
-## How to re-measure
-- `node /tmp/wv_ui/perf.cjs` — request latency.
-- `node /tmp/wv_ui/re_seed_latency.cjs` — user-visible re-seed latency in real Chrome.
+The earlier 106 ms number measured an iframe URL change, not a completed visible preview.
+It is superseded here. The original software-rendered run exposed costly art drawing and idle
+voxel redraws; native and software rendering timings are not directly comparable.
+
+## Reproduce
+
+Install the pinned browser-test dependency as described in
+`store/tools/experience-tests/README.md`, then run:
+
+```sh
+node store/tools/experience-tests/performance.mjs
+```
+
+`BROWSER_EXECUTABLE` selects Chrome; `PLAYWRIGHT_MODULE` selects an existing Playwright Core
+installation. `SOFTWARE_WEBGL=1` explicitly selects SwiftShader. Raw per-save samples are written
+to `work/experience-evidence/performance.json` and intentionally stay out of source control.

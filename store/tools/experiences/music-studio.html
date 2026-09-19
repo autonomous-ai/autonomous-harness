@@ -1,0 +1,81 @@
+<section class="intro">
+  <div>
+    <p class="eyebrow">A small room for big ideas / Vol. 01</p>
+    <h1>Stay a little<br /><em>longer.</em></h1>
+    <p>
+      Eight bars after midnight. Shape the rhythm, find the pocket, take the
+      whole thing with you.
+    </p>
+  </div>
+  <div class="record" aria-hidden="true">
+    <div class="record-label">AFTER<br />HOURS<span>33 ⅓</span></div>
+  </div>
+</section>
+<main class="workspace">
+  <div>
+    <section class="transport">
+      <button id="play" class="primary">▶ Play</button
+      ><button id="stop" aria-label="Stop playback">■</button
+      ><span class="mono" id="time">0:00 / 0:00</span
+      ><span id="key" class="muted mono"></span
+      ><button id="export-wav">Export WAV ↗</button>
+    </section>
+    <section class="wave-panel">
+      <canvas
+        id="waveform"
+        aria-label="Waveform of the full arrangement"
+      ></canvas>
+      <div class="sections">
+        <span>01 / ARRIVE</span><span>02 / FIND THE POCKET</span
+        ><span>03 / LET GO</span>
+      </div>
+    </section>
+    <section class="sequencer">
+      <div class="panel-head">
+        <h3>The pattern</h3>
+        <span class="eyebrow" id="bar">8 bars / 16 steps</span>
+      </div>
+      <div class="step-grid" id="steps"></div>
+      <p class="small muted" style="padding: 12px 0">
+        Tap a step to write the pattern. Tap a track name to mute it.
+      </p>
+    </section>
+    <div class="music-note">
+      <span class="eyebrow">Your arrangement</span>
+      <p id="audio-status">Your score is ready. Press Play to hear it.</p>
+    </div>
+  </div>
+  <aside class="side">
+    <div>
+      <p class="eyebrow">The pocket</p>
+      <label class="field"
+        ><span>Tempo <output id="tempo-value"></output></span
+        ><input id="tempo" type="range" min="66" max="132" value="86" /></label
+      ><label class="field"
+        ><span>Swing <output id="swing-value">16%</output></span
+        ><input id="swing" type="range" min="0" max="45" value="16" /></label
+      ><label class="field"
+        ><span>Listening level <output id="volume-value">70%</output></span
+        ><input id="volume" type="range" min="0" max="100" value="70"
+      /></label>
+    </div>
+    <div class="section">
+      <h3>The mix</h3>
+      <div id="mixer"></div>
+    </div>
+    <div class="section small muted">
+      <p>
+        Original, locally synthesized audio. No samples to download, no account,
+        no network.
+      </p>
+      <p style="margin-top: 10px">
+        The same score and settings produce the same PCM samples here. WAV
+        exports are mono, 22.05 kHz.
+      </p>
+    </div>
+  </aside>
+</main>
+<footer class="status-line">
+  <span><i class="dot"></i>LISTEN FIRST. THEN MAKE IT YOURS.</span
+  ><span id="peak"></span>
+</footer>

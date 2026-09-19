@@ -1,0 +1,122 @@
+:root {
+  --bg: #111b20;
+  --panel: #17242b;
+  --ink: #e9efe9;
+  --muted: #98abb1;
+  --line: #8ea4aa30;
+  --accent: #efc273;
+}
+.intro h1 {
+  font-weight: 450;
+}
+.mark {
+  border-radius: 50%;
+  color: var(--accent);
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 28px;
+}
+.chart-panel {
+  margin-top: 18px;
+}
+.chart-panel canvas {
+  width: 100%;
+  height: 390px;
+}
+.filter {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.key {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+}
+.control-key {
+  background: #73b3b5;
+}
+.treatment-key {
+  background: #efc273;
+}
+.probe {
+  padding: 10px 18px;
+  font-size: 10px;
+  min-height: 38px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+.inference {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 20px;
+  padding: 24px 0;
+}
+.inference h2 {
+  font-size: 22px;
+  margin: 7px 0;
+}
+.inference canvas {
+  width: 100%;
+  height: 115px;
+}
+.formula {
+  padding: 15px 12px;
+  background: #0b151b;
+  font:
+    11px/1.9 ui-monospace,
+    monospace;
+  border-left: 2px solid var(--accent);
+  color: var(--accent);
+}
+details {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+}
+summary {
+  font-size: 12px;
+  cursor: pointer;
+}
+.table-scroll {
+  overflow: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font:
+    11px ui-monospace,
+    monospace;
+  margin-top: 14px;
+  text-align: left;
+}
+td,
+th {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  color: var(--muted);
+  font-weight: 400;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .chart-panel canvas {
+    height: 300px;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+  .inference {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+  .metric strong {
+    font-size: 21px;
+  }
+}

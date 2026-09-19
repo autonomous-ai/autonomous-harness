@@ -1,16 +1,12 @@
 #!/bin/sh
-# Runs once in a fresh workspace after the template is copied. Harness sets HARNESS_WORKSPACE and
-# HARNESS_DSH_DIR. Seed a first verdict so the pane header has a state before the first prompt.
-mkdir -p .harness world
-cat > .harness/verdict.json <<JSON
-{ "spec": 1, "ready": false, "summary": "no world yet — describe one and I'll build it",
-  "phases": [ { "id": "world", "name": "World", "state": "pending" } ],
-  "updatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)" }
+# Harness copies the template before this runs. Preserve the user's design log on repeat calls.
+set -eu
+ws="${1:-$PWD}"
+mkdir -p "$ws/world" "$ws/.harness"
+if [ ! -f "$ws/world/DESIGN.md" ]; then
+  printf '# Design log — Voxel Worlds\n\nRecord date, USER or AI, decision, rationale, and whether it remains in the build.\n' > "$ws/world/DESIGN.md"
+fi
+cat > "$ws/.harness/verdict.json" <<JSON
+{"spec":1,"ready":false,"summary":"Tidelands starter available — describe what you want to create","artifact":"world/index.html","findings":[{"severity":"info","kind":"review_pending","message":"Starter provided; personalized changes need browser verification."}],"phases":[{"id":"build","name":"Build","state":"active"},{"id":"verify","name":"Verify","state":"pending"}],"updatedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
-cat > world/DESIGN.md <<MD
-# Design log
-
-Every crafted decision is tagged USER or AI so a discarded idea doesn't resurrect.
-
-MD
-printf 'initialized by %s\n' "${HARNESS_DSH:-?}" > .harness-initialized
+printf 'initialized by %s\n' "${HARNESS_DSH:-autonomous/voxel-worlds}" > "$ws/.harness-initialized"

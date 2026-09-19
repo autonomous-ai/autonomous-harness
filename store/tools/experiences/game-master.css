@@ -1,0 +1,156 @@
+:root {
+  --bg: #161c23;
+  --panel: #1d2731;
+  --ink: #e7e8e3;
+  --muted: #99a7b3;
+  --line: #7c90a42b;
+  --accent: #aadad1;
+}
+.mark {
+  border: 0;
+  font-size: 30px;
+}
+.workspace {
+  grid-template-columns: minmax(0, 1fr) 235px;
+  gap: 26px;
+}
+.scoreboard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 25px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: #1b242d;
+}
+.team {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.team .eyebrow {
+  color: inherit;
+  font-size: 9px;
+}
+.team strong {
+  font:
+    44px ui-monospace,
+    monospace;
+  letter-spacing: -0.08em;
+}
+.ember {
+  color: #df896f;
+}
+.tide {
+  color: #74c8c2;
+  flex-direction: row-reverse;
+}
+.match-state {
+  text-align: center;
+  font:
+    9px/1.8 ui-monospace,
+    monospace;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.match-state p {
+  color: var(--ink);
+}
+.arena-stage {
+  background: radial-gradient(ellipse at center, #273743, #111a22);
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+.arena-stage canvas {
+  width: 100%;
+  height: 445px;
+}
+.arena-legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  font:
+    10px ui-monospace,
+    monospace;
+  padding: 12px;
+  color: var(--muted);
+}
+.arena-legend i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+}
+.replay-controls input {
+  flex: 1;
+  width: 50px;
+}
+.replay-controls button,
+.replay-controls select {
+  font-size: 11px;
+  padding: 7px 9px;
+}
+.event-log {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+#events {
+  margin-top: 8px;
+  min-height: 108px;
+  font:
+    10px/1.8 ui-monospace,
+    monospace;
+  color: var(--muted);
+}
+#events p {
+  overflow-wrap: anywhere;
+}
+.tournament-result {
+  font:
+    12px/1.8 ui-monospace,
+    monospace;
+  color: var(--accent);
+  margin-top: 14px;
+}
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .arena-stage canvas {
+    height: 420px;
+  }
+}
+@media (max-width: 480px) {
+  .scoreboard {
+    padding: 12px;
+  }
+  .team {
+    gap: 8px;
+    flex-direction: column;
+  }
+  .team strong {
+    font-size: 33px;
+  }
+  .arena-stage canvas {
+    height: 320px;
+  }
+  .arena-legend {
+    font-size: 8px;
+    gap: 10px;
+  }
+  .replay-controls {
+    gap: 5px;
+  }
+  .replay-controls button {
+    padding: 7px;
+  }
+}

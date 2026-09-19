@@ -1,0 +1,15 @@
+{
+  "homepage": "https://github.com/autonomous-ai/openharness/tree/main/store/agents/generative-art",
+  "license": "MIT",
+  "tagline": "Design reproducible generative editions",
+  "screenshots": [
+    "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/generative-art/starter.jpg"
+  ],
+  "examples": [
+    {
+      "prompt": "Create an edition of 12 tidal contour prints in indigo and burnt orange. Keep the paper quiet and make each seed feel related but distinct.",
+      "caption": "Fieldwork · interactive offline starter",
+      "image": "https://raw.githubusercontent.com/autonomous-ai/openharness/main/store/showcase/generative-art/starter.jpg"
+    }
+  ]
+}

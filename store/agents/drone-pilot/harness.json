@@ -1,10 +1,10 @@
 {
   "spec": 1,
   "id": "autonomous/drone-pilot",
-  "name": "Drone / FPV Pilot",
+  "name": "Drone Pilot",
   "category": "Simulation",
   "author": "Autonomous",
-  "description": "Describe a flight — a course, a line, a stunt, an obstacle run — and get a deterministic, seedable first-person drone sim in the pane with throttle/steer controls and a re-seed.",
+  "description": "Fly a seeded canyon course in first person. Switch between manual controls and a tracking autopilot, inspect gate results and the flight path, and export telemetry.",
   "engine": "claude",
   "workspace": {
     "template": "template",
@@ -25,7 +25,8 @@
     "use": "autonomous/web-viewer",
     "artifactExtensions": [
       ".html"
-    ]
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
   },
   "verdict": ".harness/verdict.json"
 }

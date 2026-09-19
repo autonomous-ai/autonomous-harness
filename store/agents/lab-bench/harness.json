@@ -1,10 +1,10 @@
 {
   "spec": 1,
   "id": "autonomous/lab-bench",
-  "name": "Lab Bench / Experiment Log",
+  "name": "Lab Bench",
   "category": "Science",
   "author": "Autonomous",
-  "description": "Describe an experiment — a variable, a hypothesis, a dataset — and get a deterministic, seedable bench page in the pane with seeded synthetic data, interactive charts and a re-seed.",
+  "description": "Explore an experiment with reproducible synthetic data. Change effect, noise and sample size, probe observations, filter groups, inspect computed uncertainty, and export CSV.",
   "engine": "claude",
   "workspace": {
     "template": "template",
@@ -25,7 +25,8 @@
     "use": "autonomous/web-viewer",
     "artifactExtensions": [
       ".html"
-    ]
+    ],
+    "url": "http://127.0.0.1:${port}/?file=${artifact}"
   },
   "verdict": ".harness/verdict.json"
 }

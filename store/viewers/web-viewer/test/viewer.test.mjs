@@ -36,7 +36,7 @@ after(async () => {
 test('serves the actual Hello World page and a sandboxed preview shell', async () => {
   const shell = await fetch(base);
   assert.equal(shell.status, 200);
-  assert.match(await shell.text(), /sandbox="allow-scripts"/);
+  assert.match(await shell.text(), /sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-downloads"/);
   const page = await fetch(base + '/files/index.html');
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /text\/html/);
