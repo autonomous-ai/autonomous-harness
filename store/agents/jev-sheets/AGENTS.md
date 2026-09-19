@@ -56,6 +56,29 @@ real customers, real candidates or real advice.
 - **`context`**: one sentence about what a row is. It is put in front of every question.
 - **`suggestions`**: headers shown as chips in the pane. The demo loop types them one at a time.
 
+## The person's own data
+
+The template's rows are made up. The real use is the person's own file. If they have a spreadsheet
+export or a log, have them drop it in the workspace, then point the sheet at it:
+
+```jsonc
+{
+  "title": "Inbound leads, week 38",
+  "source": "leads.csv",          // .csv, .tsv, .jsonl or .json, inside the workspace, up to 8 MB
+  "textColumn": "message",        // optional. Default: a column named text, message, body, ... or the longest one
+  "columns": ["Worth a call today?", "Segment: enterprise = 200+ seats | smb = small team | hobby"]
+}
+```
+
+Up to 2,000 rows are used. One column is the row's text. Every other column rides along as a plain
+field that Jev also reads, so "Seats" or "Plan" can inform an answer. The viewer watches the file:
+save it again and the sheet reloads. `rows` may be left out when `source` is set. Rows from the
+file have no truth labels, so the pane shows confidence and review flags, not accuracy.
+
+Look at the file before you write questions: read its header and a few rows, then write columns
+about what is really in it. Never copy the person's data into your replies beyond what you need,
+and never send it anywhere else.
+
 ## The header grammar
 
 | Header | Type |

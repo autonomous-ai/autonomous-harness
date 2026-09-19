@@ -11,6 +11,13 @@ call, so a new column fills the sheet in a wave, top to bottom, in about a secon
 All the data is made up. The template is 60 inbound sales and support messages for Fernhill Cloud,
 a file sync company that does not exist. The names, the messages and the truth labels are synthetic.
 
+## Bring your own file
+
+The starter rows are made up. Put your own `leads.csv` (or `.tsv`, `.jsonl`, `.json`) in the workspace
+and set `"source": "leads.csv"` in `sheet.json`. Up to 2,000 rows load, one column becomes the row's
+text and the others ride along as fields Jev also reads. Then type any question as a column header.
+With a live key that is a few seconds and a fraction of a cent for a question over every row.
+
 ## The header grammar
 
 | You type | It becomes |

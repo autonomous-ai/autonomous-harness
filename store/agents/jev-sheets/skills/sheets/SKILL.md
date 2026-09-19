@@ -49,6 +49,14 @@ In `sheet.json` a column is a header string or `{ "id": "team", "header": "Team:
 6. Add six to ten `suggestions`: more headers a person could try on the same rows.
 7. Run `node "$JEV_DSH/toolchain/check.mjs"`.
 
+## Working on the person's own file
+
+Set `"source": "<file in the workspace>"` (csv, tsv, jsonl or json) and optionally `"textColumn"`.
+Read the file's header and a few rows first. Write columns about what is really there. The other
+columns are part of what Jev reads for each row, so questions can lean on them ("Worth a call
+today?" can use a `seats` column). There are no truth labels, so judge the questions by the review
+count and by reading the flagged rows in the verdict.
+
 ## Reading the verdict
 
 The viewer writes `.harness/verdict.json`. Read `sheet.columns[]`:

@@ -4,8 +4,9 @@
 //   node toolchain/check.mjs            checks $HARNESS_WORKSPACE/sheet.json (or ./sheet.json)
 //   node toolchain/check.mjs path.json  checks that file
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { parseHeader, LIMITS } from '../viewer/grammar.mjs'
+import { loadSource } from '../viewer/source.mjs'
 
 const file = process.argv[2] || join(process.env.HARNESS_WORKSPACE || '.', 'sheet.json')
 let errors = 0, warnings = 0
@@ -43,10 +44,20 @@ else {
 }
 
 // ---- rows: 1 to 2000, each with text -----------------------------------------------------------
-const rows = sheet.rows
+// A sheet may take its rows from the person's own file in the workspace: "source": "leads.csv".
+let sourceRows = 0
+if (sheet.source !== undefined) {
+  if (typeof sheet.source !== 'string' || !sheet.source.trim()) error('"source" must be a file name inside the workspace')
+  else {
+    const got = loadSource(resolve(dirname(file)), sheet.source.trim(), { textColumn: sheet.textColumn, limit: LIMITS.maxRows })
+    if (got.error) error(got.error)
+    else { sourceRows = got.rows.length; console.log(`info   source ${got.info.name}: ${got.info.used} of ${got.info.total} rows, text column "${got.info.textColumn}"`) }
+  }
+}
+const rows = sheet.rows === undefined && sheet.source !== undefined ? [] : sheet.rows
 if (!Array.isArray(rows)) error('"rows" must be a list')
 else {
-  if (rows.length < 1 || rows.length > LIMITS.maxRows) error(`rows must number 1 to ${LIMITS.maxRows} (found ${rows.length})`)
+  if (rows.length + sourceRows < 1 || rows.length > LIMITS.maxRows) error(`rows must number 1 to ${LIMITS.maxRows} (found ${rows.length + sourceRows})`)
   const ids = new Set()
   let labelled = 0
   rows.forEach((r, i) => {
@@ -64,7 +75,7 @@ else {
       if (col.type === 'score' && !(Number.isInteger(v) ? v >= 0 && v < col.levels.length : col.levels.some((l) => l.toLowerCase() === String(v).toLowerCase()))) error(`${where}: truth.${cid} "${v}" is not one of ${col.levels.join(' < ')}`)
     }
   })
-  if (rows.length && !labelled) warn('no truth labels, so the pane cannot show accuracy')
+  if (rows.length && !labelled && !sourceRows) warn('no truth labels, so the pane cannot show accuracy')
 }
 
 // ---- settings ----------------------------------------------------------------------------------

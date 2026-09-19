@@ -76,7 +76,8 @@ function renderHead() {
   }
   headText.children[0].textContent = S.textLabel
   const shownRows = order.length === S.rows.length ? `${S.rows.length} rows` : `${order.length} of ${S.rows.length} rows`
-  headText.children[1].textContent = `${shownRows} · made-up data · double-click to edit`
+  headText.children[1].textContent = S.source ? `${shownRows} · your file ${S.source.name} · text column "${S.source.textColumn}"${S.source.total > S.source.used ? ` · first ${S.source.used} of ${S.source.total}` : ''}` : `${shownRows} · made-up data · double-click to edit`
+  const pill = document.getElementById('synthPill'); if (pill) { pill.textContent = S.source ? 'your data' : 'synthetic data'; pill.title = S.source ? `Rows come from ${S.source.name} in the workspace.` : 'Every name, message and truth label in this sheet is made up.' }
   for (const [id, el] of headCells) if (!colIndex.has(id)) { leave(el); headCells.delete(id) }
   let prev = headText
   for (const col of S.columns) {

@@ -371,3 +371,42 @@ test('the pane files are served, and nothing else', async () => {
     for (const f of ['/mock.mjs', '/viewer.mjs', '/../toolchain/jev.mjs', '/sheet.json']) assert.equal((await fetch(v.viewer.url + f)).status, 404, f)
   } finally { await v.viewer.close() }
 })
+
+test("rows can come from the person's own CSV in the workspace, and the file is watched", async () => {
+  const { loadSource, parseDelimited } = await import('../viewer/source.mjs')
+  assert.deepEqual(parseDelimited('a,b\n"x, ""quoted""",2\r\n3,4\n'), [['a', 'b'], ['x, "quoted"', '2'], ['3', '4']])
+  const v = await fresh({ rows: undefined, source: 'leads.csv', columns: ['Urgent?'], demo: false }, { autostart: false })
+  try {
+    // No file yet: the demo stays up and says what is wrong.
+    let s = await v.state()
+    assert.match(String(s.configError ?? s.error ?? JSON.stringify(s)), /leads\.csv/)
+    writeFileSync(join(v.ws, 'leads.csv'), 'company,message,seats\nAcme,"Our checkout is down, please call today",40\nBolt,Just browsing for next year,3\n')
+    writeFileSync(v.file, JSON.stringify({ ...TEMPLATE, rows: undefined, source: 'leads.csv', columns: ['Urgent?'], demo: false }))
+    s = await v.until((x) => x.rows?.length === 2)
+    assert.equal(s.source.name, 'leads.csv'); assert.equal(s.source.textColumn, 'message')
+    assert.equal(s.rows[0].text, 'Our checkout is down, please call today')
+    assert.deepEqual(s.rows[0].meta, { company: 'Acme', seats: 40 })
+    // Editing the CSV reloads the sheet.
+    writeFileSync(join(v.ws, 'leads.csv'), 'company,message,seats\nAcme,"Our checkout is down, please call today",40\nBolt,Just browsing for next year,3\nCato,Invoice question,12\n')
+    s = await v.until((x) => x.rows?.length === 3)
+    assert.equal(s.rows[2].meta.company, 'Cato')
+    // A named text column, and a column that does not exist.
+    assert.equal(loadSource(v.ws, 'leads.csv', { textColumn: 'company' }).rows[0].text, 'Acme')
+    assert.match(loadSource(v.ws, 'leads.csv', { textColumn: 'nope' }).error, /not a column/)
+  } finally { await v.viewer.close() }
+})
+
+test('a source file must stay inside the workspace, and JSONL works too', async () => {
+  const { loadSource } = await import('../viewer/source.mjs')
+  const ws = mkdtempSync(join(tmpdir(), 'jev-sheets-src-'))
+  assert.match(loadSource(ws, '../../etc/passwd').error, /inside the workspace/)
+  assert.match(loadSource(ws, '/etc/passwd').error, /inside the workspace/)
+  assert.match(loadSource(ws, '.harness/verdict.json').error, /\.harness/)
+  assert.match(loadSource(ws, 'notes.pdf').error, /cannot be read|must be a/)
+  writeFileSync(join(ws, 'tickets.jsonl'), '{"id":"T1","body":"Refund me now","plan":"pro"}\n"a bare string row"\n{"body":""}\n')
+  const got = loadSource(ws, 'tickets.jsonl')
+  assert.equal(got.error, null)
+  assert.equal(got.rows.length, 2, 'rows without text are skipped')
+  assert.deepEqual(got.rows[0], { text: 'Refund me now', id_: 'T1', plan: 'pro' })
+  assert.equal(got.info.textColumn, 'body')
+})

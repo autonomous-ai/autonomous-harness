@@ -11,6 +11,8 @@ import { evaluate, jev, toWire, PRICE_PER_MTOK } from '../toolchain/jev.mjs'
 import { serveViewer, writeVerdict, watchConfig, mulberry32, clean } from './kit.mjs'
 import { parseHeader, normalizeSheet, columnKey, judge, confidenceOf, levelOf, describeColumn, LIMITS } from './grammar.mjs'
 import { sheetMock } from './mock.mjs'
+import { loadSource } from './source.mjs'
+import { watch as watchFile } from 'node:fs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const MARKER = 'sheet.json'
@@ -22,6 +24,7 @@ const r3 = (x) => Math.round(x * 1000) / 1000
 export async function startSheetsViewer({ workspace, port = 0, autostart = true, paceMs = Number(process.env.JEV_SHEETS_PACE_MS ?? 90) } = {}) {
   // Every `let` lives here, above the first call that could touch it.
   let server = null, watcher = null
+  let sourceWatcher = null, sourceFile = null, sourceInfo = null, sourceError = null, sourceTimer = null // the person's own file, if sheet.json names one
   let sheet = normalizeSheet({ rows: [] }), configError = null, jevError = null
   let rows = [], rowById = new Map(), columns = []
   let cells = new Map()      // row id -> Map(column id -> cell)
@@ -173,6 +176,7 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
     }
     return {
       title: sheet.title, description: sheet.description, textLabel: sheet.textLabel, client: mockMode ? 'mock' : 'typesafe',
+      source: sourceInfo, // set when the rows come from the person's own file
       concurrency: sheet.concurrency, limits: LIMITS,
       suggestions: sheet.suggestions.length ? sheet.suggestions : FALLBACK_SUGGESTIONS,
       columns: columns.map((c) => ({ id: c.id, header: c.header, name: c.name, type: c.type, options: c.options, descriptions: c.descriptions, levels: c.levels, bare: !!c.bare, source: c.source, kind: describeColumn(c) })),
@@ -355,9 +359,23 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
     refill(); changed()
     return { edited: id }
   }
+  /** sheet.json may name a file in the workspace ("source": "leads.csv"); its rows join the sheet. */
+  function expandSource(raw) {
+    if (!raw || typeof raw !== 'object' || typeof raw.source !== 'string' || !raw.source.trim()) { watchSource(null); sourceInfo = null; sourceError = null; return raw }
+    const got = loadSource(workspace, raw.source.trim(), { textColumn: raw.textColumn, limit: LIMITS.maxRows })
+    sourceInfo = got.info; sourceError = got.error
+    watchSource(got.file)
+    return { ...raw, rows: [...(Array.isArray(raw.rows) ? raw.rows : []), ...got.rows] }
+  }
+  function watchSource(file) {
+    if (file === sourceFile) return
+    sourceWatcher?.close(); sourceWatcher = null; sourceFile = file
+    if (!file) return
+    try { sourceWatcher = watchFile(file, () => { clearTimeout(sourceTimer); sourceTimer = setTimeout(() => { if (!stopped) applySheet(watcher.get(), false) }, 80) }) } catch { /* the file may vanish; the next edit to sheet.json retries */ }
+  }
   function applySheet(raw, fresh) {
-    const next = normalizeSheet(raw)
-    const problems = next.errors.slice(0, 3).join('; ')
+    const next = normalizeSheet(expandSource(raw))
+    const problems = [sourceError, ...next.errors].filter(Boolean).slice(0, 3).join('; ')
     if (!next.rows.length && rows.length && !fresh) { configError = `${MARKER}: ${problems || 'needs at least one row with text'}. Showing the last good sheet`; pushView(); verdictSoon(); return }
     configError = problems ? `${MARKER}: ${problems}` : null
     sheet = next
@@ -510,6 +528,7 @@ export async function startSheetsViewer({ workspace, port = 0, autostart = true,
   return {
     url: server.url,
     async close() {
+      sourceWatcher?.close(); clearTimeout(sourceTimer)
       stopped = true
       clearInterval(ghostTimer); clearTimeout(patchTimer); clearTimeout(verdictTimer); clearTimeout(retryTimer)
       watcher.close()
