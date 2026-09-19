@@ -27,16 +27,19 @@ Closing the **real E2E** gap through the live Harness daemon/CLI. Just verified:
 - `harness dsh install /private/tmp/harness-store-voxel/store/agents/generative-art --link` **SUCCEEDED**
   → `autonomous/generative-art` shows `installed (linked) @ 718b7f7c` in `harness dsh list`
   → its viewer dependency `autonomous/web-viewer` cloned to `/Users/d/.harness/dsh/autonomous/web-viewer/` and `harness dsh doctor` passed (`ok node v26.7.0`, setup+install done)
-- **NEXT / NOT YET DONE:** launch the *actually-installed* runtime (viewer command per installed `harness.json`: `./viewer.sh`, url `http://127.0.0.1:${port}/?file=index.html`) and drive it in real Chrome — the full install → pane → live re-seed E2E. This is the main outstanding item.
+- **DONE (this session continued):** real E2E through the *installed* runtime is now proven. `harness dsh install --link generative-art` succeeded; `harness dsh doctor` passed; the actually-installed viewer (cloned to `/Users/d/.harness/dsh/autonomous/web-viewer/`) was launched and driven in real Chrome. Script: `work/e2e_live_reseed.cjs` (commit 605eb96d). It simulates the daemon — agent rewrites artifact → fs.watch → SSE change → pane re-issues iframe src with a fresh `?v=` cache-bust — and PASSED: artifact iframe loads, two consecutive re-seeds each reload the pane, and the manual Reload button works. Seed-at-file-level determinism confirmed (`/tmp/wv_ui/seedvar.cjs`: seeds 1/2/99 → different frames).
 
 ## Testing already done (evidence)
 - Unit: `(cd store/agents/<name> && node --test test/*.test.mjs)` → all green.
 - Conformance: `harness dsh check store/agents/<name>` → conforms, no marker warnings.
-- Viewer coverage: `node --test --experimental-test-coverage test/viewer.test.mjs test/process.test.mjs` → viewer.mjs **97.8% lines** (uncovered lines 30, 70).
+- Viewer coverage: `node --test --experimental-test-coverage test/viewer.test.mjs test/process.test.mjs` → viewer.mjs **97.8% lines** (uncovered lines 30, 70 = the `watch-error` handler + the fallback 404 branch — easy to push to 100%).
 - Latency (web-viewer, measured): SHELL median 0.38ms p95 1.00ms; FILES median 0.66ms p95 1.74ms → sub-millisecond.
 - Real-browser smoke: `/tmp/wv_ui/browser_smoke.cjs` → all 7 marker files render in headless Chrome.
 - Determinism: `/tmp/wv_ui/determinism.cjs` → voxel-worlds 6/6 identical screenshot hash; animated placeholders mismatch is a measurement artifact (rAF/setTimeout), not a defect.
 - See also `/tmp/wv_ui/`: `grid.cjs` (seed-grid PNGs), `census.cjs` (generic census — unreliable blank-detection, superseded by grid+determinism).
+
+## REAL FINDING worth a fix (viewer)
+The **installed** upstream `web-viewer` shell previews in `<iframe sandbox="allow-scripts">` (no `allow-same-origin`). That's fine for display but **blocks the page/host from reading the artifact's canvas pixels** (cross-origin SecurityError, so getImageData-based census tools fail against it) and the shell can't inspect the frame DOM. My store's rewritten shell (in the worktree store, commit 8048fda6) does NOT have this problem and has the nicer UX (status pill, "Building…" overlay, open-in-new-tab, R-reload). Note: the installed copy comes from the remote openharness repo, not the worktree store — re-installing from the worktree store or a future publish would pull the improved shell.
 
 ## KNOWN PITFALLS / HARD LESSONS (do not relitigate)
 1. **`init-workspace.sh` must NOT copy the template into the workspace** — the framework copies it. Copying flips the placeholder marker → verdict `ready:true` prematurely (music-studio hit this; fixed).
@@ -46,6 +49,10 @@ Closing the **real E2E** gap through the live Harness daemon/CLI. Just verified:
 5. **Do NOT `cp` marker files by hand in determinism/smoke scripts** — use a function-based runner (spaces in the `for spec` string broke it).
 6. **Bash/Write classifier intermittently returns "DeepSeek-V4-Flash-0731 temporarily unavailable"** — retry after a short wait, or do read-only work (Read/Glob, Explore agent) until it clears.
 7. **Robot-arm research is ALREADY covered** by existing `autonomous/mujoco` + `mujoco-viewer` — do NOT duplicate.
+8. **Animated template artifacts (generative-art etc.) always differ in pixel screenshots** — never use screenshot-diff as the live-reload probe; use the iframe src `?v=` cache-bust (SSE→reload is the real signal).
+9. **Cross-origin sandbox:** `iframe sandbox="allow-scripts"` blocks getImageData from the host — use screenshots / frame-locator, not pixel reads, against sandboxed frames.
+10. **How to launch the installed viewer standalone:** `HARNESS_WORKSPACE=<template-or-linked-dir> HARNESS_VIEWER_PORT=<p> node /Users/d/.harness/dsh/autonomous/web-viewer/viewer.mjs`. Workspace must be where the artifact lives at its root (e.g. the harness `template/`, which contains `sketch/index.html` — the harness dir itself 404s because the artifact is under `template/`).
+
 
 ## Worktree ops
 - Always commit in this worktree; attribution line for commits/PRs per CLAUDE.md (Co-Authored-By: Claude Code <noreply@anthropic.com>).
